@@ -1,0 +1,4 @@
+com/amazonaws/lambda/durable/DurableContext.class
+com/amazonaws/lambda/durable/model/Operation.class
+com/amazonaws/lambda/durable/serde/JacksonSerDes.class
+com/amazonaws/lambda/durable/serde/SerDes.class

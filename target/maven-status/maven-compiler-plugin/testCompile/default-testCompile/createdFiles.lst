@@ -1,0 +1,2 @@
+com/amazonaws/lambda/durable/DurableContextTest.class
+com/amazonaws/lambda/durable/serde/JacksonSerDesTest.class
