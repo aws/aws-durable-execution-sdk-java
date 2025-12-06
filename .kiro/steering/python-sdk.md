@@ -1,5 +1,8 @@
 # Python SDK Design Decisions for AWS Lambda Durable Functions
 
+
+IMPORTANT: You have access to the Python SDK in ../../Projects - so if you need to analyze it further please navigate there
+
 **Source:** aws-durable-execution-sdk-python  
 **Version:** 1.0  
 **Last Analyzed:** December 2, 2025

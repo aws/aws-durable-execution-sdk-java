@@ -1,0 +1,65 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Lambda Durable Execution SDK Examples
+
+Globals:
+  Function:
+    Runtime: java17
+    Timeout: 900
+    MemorySize: 512
+    Architectures:
+      - x86_64
+
+Resources:
+  SimpleStepExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: simple-step-example
+      Handler: com.amazonaws.lambda.durable.examples.SimpleStepExample
+      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      DurableConfig:
+        Enabled: true
+        ExecutionTimeout: 3600
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-step-example'
+
+  WaitExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: wait-example
+      Handler: com.amazonaws.lambda.durable.examples.WaitExample
+      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      DurableConfig:
+        Enabled: true
+        ExecutionTimeout: 3600
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example'
+
+Outputs:
+  SimpleStepExampleFunction:
+    Description: Simple Step Example Function ARN
+    Value: !GetAtt SimpleStepExampleFunction.Arn
+  
+  SimpleStepExampleFunctionName:
+    Description: Simple Step Example Function Name
+    Value: !Ref SimpleStepExampleFunction
+  
+  WaitExampleFunction:
+    Description: Wait Example Function ARN
+    Value: !GetAtt WaitExampleFunction.Arn
+  
+  WaitExampleFunctionName:
+    Description: Wait Example Function Name
+    Value: !Ref WaitExampleFunction

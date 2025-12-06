@@ -1,0 +1,30 @@
+package com.amazonaws.lambda.durable.examples;
+
+import com.amazonaws.lambda.durable.model.ExecutionStatus;
+import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class WaitExampleTest {
+
+    @Test
+    void testWaitExampleStartsAndWaits() {
+        var handler = new WaitExample();
+        var runner = new LocalDurableTestRunner<>(
+            GreetingRequest.class,
+            handler::handleRequest
+        );
+        
+        var input = new GreetingRequest("Bob");
+        
+        // First run - executes first step and hits first wait
+        var result = runner.run(input);
+        
+        // Should be PENDING because of wait operation
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+        
+        // Note: In real Lambda, the function would be re-invoked after the wait period
+        // The LocalDurableTestRunner demonstrates the wait behavior but doesn't simulate time
+    }
+}

@@ -1,0 +1,11 @@
+package com.amazonaws.lambda.durable.checkpoint;
+
+/**
+ * Exception thrown to suspend execution during wait operations.
+ * This is an internal control flow mechanism.
+ */
+public class SuspendExecutionException extends RuntimeException {
+    public SuspendExecutionException() {
+        super("Execution suspended for wait operation");
+    }
+}
