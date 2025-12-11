@@ -1,1 +1,0 @@
-The goal of this project is to build a Java SDK for AWS Lambda Durable Functions
