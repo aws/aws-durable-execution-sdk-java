@@ -21,6 +21,10 @@ buildNumber.properties
 # Kiro
 .kiro
 
+# Local testing
+
+.durable-executions-local
+
 # OS
 .DS_Store
 Thumbs.db
