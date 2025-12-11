@@ -1,6 +1,9 @@
 package com.amazonaws.lambda.durable.checkpoint;
 
+import com.amazonaws.lambda.durable.DurableExecution;
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
@@ -14,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class CheckpointManager {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
-    
+    private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);
     private final ExecutionState state;
     private final DurableExecutionClient client;
     private final BlockingQueue<CheckpointRequest> queue = new LinkedBlockingQueue<>();
@@ -30,12 +33,14 @@ public class CheckpointManager {
     }
     
     public CompletableFuture<Void> checkpoint(OperationUpdate update) {
+        logger.info("Checkpoint request received");
         var future = new CompletableFuture<Void>();
         queue.offer(new CheckpointRequest(update, future));
         
         if (isProcessing.compareAndSet(false, true)) {
             executor.submit(this::processQueue);
         }
+        logger.info("Checkpoint request submitted");
         
         return future;
     }
@@ -60,13 +65,15 @@ public class CheckpointManager {
                 var updates = batch.stream()
                     .map(CheckpointRequest::update)
                     .toList();
-                
+
+                logger.debug("--- Making API call ---");
                 // Make API call
                 var response = client.checkpoint(
                     state.getDurableExecutionArn(),
                     state.getCheckpointToken(), 
                     updates
                 );
+                logger.debug("--- API call done ---");
                 
                 // Update state after success
                 state.updateCheckpointToken(response.checkpointToken());

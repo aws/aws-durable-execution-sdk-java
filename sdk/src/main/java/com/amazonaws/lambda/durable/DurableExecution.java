@@ -30,7 +30,9 @@ public class DurableExecution {
             BiFunction<I, DurableContext, O> handler) {
 
         //Todo: Allow passing client by user
+        logger.debug("Initialize SDK client");
         var client = new LambdaDurableFunctionsClient(null);
+        logger.debug("Done initializing SDK client");
         return execute(input, lambdaContext, inputType, handler, client);
     }
     
@@ -68,13 +70,14 @@ public class DurableExecution {
             input.checkpointToken(),
             operations
         );
-        
+        logger.debug("--- State initialized ---");
         var executor = Executors.newSingleThreadExecutor();
         var checkpointManager = new CheckpointManager(state, client, executor);
         var context = new DurableContext(checkpointManager, serDes, lambdaContext);
-        
+        logger.debug("--- Context initialized ---");
         try {
             var result = handler.apply(userInput, context);
+            logger.debug("--- Handler returned ---");
             return DurableExecutionOutput.success(serDes.serialize(result));
             
         } catch (SuspendExecutionException e) {

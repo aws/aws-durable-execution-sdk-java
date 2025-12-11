@@ -55,7 +55,9 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
         var inputString = new String(inputStream.readAllBytes());
         logger.debug("Raw input from durable handler: {}", inputString);
         var input = this.objectMapper.readValue(inputString, DurableExecutionInput.class);
+        logger.debug("--Converted input from durable handler --");
         var output = durableExecution(context, input);
+        logger.debug("--Converted input from durable handler --");
         outputStream.write(objectMapper.writeValueAsBytes(output));
     }
 
