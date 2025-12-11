@@ -35,11 +35,8 @@ public class DurableContext {
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return serDes.deserialize(existing.get().stepDetails().result(), resultType);
         }
-        
-        // Execute
+
         var result = func.get();
-        
-        // Checkpoint
         checkpoint(operationId, OperationType.STEP, OperationAction.SUCCEED, result);
         
         return result;
@@ -74,10 +71,7 @@ public class DurableContext {
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return; // Wait already completed
         }
-        
-        // Checkpoint START with null payload
-        // Note: Real AWS SDK will use WaitOptions with WaitSeconds
-        // For Level 1 with mock types, we just checkpoint the operation
+
         checkpoint(operationId, OperationType.WAIT, OperationAction.START, null);
         throw new SuspendExecutionException();
     }

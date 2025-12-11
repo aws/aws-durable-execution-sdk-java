@@ -22,28 +22,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Date;
 
-/**
- * Base class for durable Lambda handlers.
- * 
- * <p>Extend this class and implement the {@link #handleRequest(Object, DurableContext)} method
- * to create a durable Lambda function.
- * 
- * <p>Example:
- * <pre>
- * public class MyHandler extends DurableHandler&lt;MyInput, MyOutput&gt; {
- *     {@literal @}Override
- *     protected MyOutput handleRequest(MyInput input, DurableContext context) {
- *         var result = context.step("process", String.class, () -&gt; processData(input));
- *         return new MyOutput(result);
- *     }
- * }
- * </pre>
- * 
- * @param <I> Input type
- * @param <O> Output type
- */
-public abstract class DurableHandler<I, O> 
-    implements RequestStreamHandler {
+public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     
     private final Class<I> inputType;
     private final DurableExecutionClient client;
@@ -97,7 +76,7 @@ public abstract class DurableHandler<I, O>
      */
     protected abstract O handleRequest(I input, DurableContext context);
 
-
+    //From Russel - Todo: See also Serialization of AWS Operation in serde package
     public static ObjectMapper createObjectMapper() {
         var dateModule = new SimpleModule();
         dateModule.addDeserializer(Date.class, new JsonDeserializer<>() {

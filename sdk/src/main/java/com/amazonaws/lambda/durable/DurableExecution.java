@@ -23,51 +23,6 @@ import java.util.function.BiFunction;
 public class DurableExecution {
     private static final Logger logger = LoggerFactory.getLogger(DurableExecution.class);
     
-    /**
-     * Wrap a handler function as a Lambda RequestHandler.
-     * 
-     * <p>Example:
-     * <pre>
-     * public class MyHandler {
-     *     public static final RequestHandler&lt;DurableExecutionInput, DurableExecutionOutput&gt; HANDLER =
-     *         DurableExecution.wrap(MyInput.class, MyHandler::handleRequest);
-     *     
-     *     private static MyOutput handleRequest(MyInput input, DurableContext context) {
-     *         var result = context.step("process", String.class, () -&gt; processData(input));
-     *         return new MyOutput(result);
-     *     }
-     * }
-     * </pre>
-     * 
-     * @param inputType Input type class
-     * @param handler Handler function
-     * @param <I> Input type
-     * @param <O> Output type
-     * @return Lambda RequestHandler
-     */
-    public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
-            Class<I> inputType,
-            BiFunction<I, DurableContext, O> handler) {
-        return (input, context) -> execute(input, context, inputType, handler);
-    }
-    
-    /**
-     * Wrap a handler function as a Lambda RequestHandler with a custom client.
-     * 
-     * @param inputType Input type class
-     * @param handler Handler function
-     * @param client Durable execution client
-     * @param <I> Input type
-     * @param <O> Output type
-     * @return Lambda RequestHandler
-     */
-    public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
-            Class<I> inputType,
-            BiFunction<I, DurableContext, O> handler,
-            DurableExecutionClient client) {
-        return (input, context) -> execute(input, context, inputType, handler, client);
-    }
-    
     public static <I, O> DurableExecutionOutput execute(
             DurableExecutionInput input,
             Context lambdaContext,
@@ -93,10 +48,8 @@ public class DurableExecution {
             input.initialExecutionState() != null && input.initialExecutionState().operations() != null 
                 ? input.initialExecutionState().operations().size() 
                 : 0);
-        
-        // Load all operations with pagination
+
         var operations = loadAllOperations(input, client);
-        
         logger.debug("Total operations loaded: {}", operations.size());
         
         // Validate and extract EXECUTION operation
@@ -161,5 +114,18 @@ public class DurableExecution {
         
         var inputPayload = executionOp.executionDetails().inputPayload();
         return serDes.deserialize(inputPayload, inputType);
+    }
+
+    public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
+            Class<I> inputType,
+            BiFunction<I, DurableContext, O> handler) {
+        return (input, context) -> execute(input, context, inputType, handler);
+    }
+
+    public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
+            Class<I> inputType,
+            BiFunction<I, DurableContext, O> handler,
+            DurableExecutionClient client) {
+        return (input, context) -> execute(input, context, inputType, handler, client);
     }
 }
