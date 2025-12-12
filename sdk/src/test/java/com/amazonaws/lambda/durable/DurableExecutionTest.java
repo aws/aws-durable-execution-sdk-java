@@ -1,8 +1,9 @@
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.client.LocalMemoryExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
+import com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient;
+
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
 
