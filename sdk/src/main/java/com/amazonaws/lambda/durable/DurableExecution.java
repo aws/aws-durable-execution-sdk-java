@@ -94,11 +94,9 @@ public class DurableExecution {
         if (input.initialExecutionState() == null || input.initialExecutionState().operations() == null) {
             return new ArrayList<>();
         }
-        
         var operations = new ArrayList<>(input.initialExecutionState().operations());
         var nextMarker = input.initialExecutionState().nextMarker();
-        
-        while (nextMarker != null) {
+        while (nextMarker != null && !nextMarker.isEmpty()) {
             var response = client.getExecutionState(input.durableExecutionArn(), nextMarker);
             operations.addAll(response.operations());
             nextMarker = response.nextMarker();

@@ -10,7 +10,7 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
     
     public LambdaDurableFunctionsClient(LambdaClient AWSLambdaSDKClient) {
         if (AWSLambdaSDKClient == null) {
-            this.AWSLambdaSDKClient =  LambdaClient.create();;
+            this.AWSLambdaSDKClient =  LambdaClient.create();
         } else {
             this.AWSLambdaSDKClient = AWSLambdaSDKClient;
         }
