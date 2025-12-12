@@ -1,7 +1,6 @@
 package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.*;
-import com.amazonaws.lambda.durable.client.LocalMemoryExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;

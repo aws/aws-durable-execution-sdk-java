@@ -1,4 +1,4 @@
-package com.amazonaws.lambda.durable.client;
+package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import software.amazon.awssdk.services.lambda.model.*;
