@@ -1,4 +1,4 @@
-package com.amazonaws.lambda.durable;
+package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;

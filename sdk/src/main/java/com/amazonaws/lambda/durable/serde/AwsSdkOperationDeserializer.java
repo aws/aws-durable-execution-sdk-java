@@ -11,7 +11,7 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 
-//Todo: Check how to serialize out of the box
+// TODO: Check how to serialize out of the box
 public class AwsSdkOperationDeserializer extends JsonDeserializer<Operation> {
     
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = new DateTimeFormatterBuilder()
@@ -48,9 +48,24 @@ public class AwsSdkOperationDeserializer extends JsonDeserializer<Operation> {
         
         if (node.has("StepDetails")) {
             var details = node.get("StepDetails");
-            builder.stepDetails(StepDetails.builder()
-                .result(details.has("Result") ? details.get("Result").asText() : null)
-                .build());
+            var stepDetailsBuilder = StepDetails.builder()
+                .result(details.has("Result") ? details.get("Result").asText() : null);
+            
+            // Handle attempt number if present
+            if (details.has("Attempt")) {
+                stepDetailsBuilder.attempt(details.get("Attempt").asInt());
+            }
+            
+            // Handle error if present
+            if (details.has("Error")) {
+                var error = details.get("Error");
+                stepDetailsBuilder.error(ErrorObject.builder()
+                    .errorType(error.has("ErrorType") ? error.get("ErrorType").asText() : null)
+                    .errorMessage(error.has("ErrorMessage") ? error.get("ErrorMessage").asText() : null)
+                    .build());
+            }
+            
+            builder.stepDetails(stepDetailsBuilder.build());
         }
         
         return builder.build();
