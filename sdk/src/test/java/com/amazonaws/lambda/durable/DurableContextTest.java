@@ -9,6 +9,7 @@ import com.amazonaws.lambda.durable.checkpoint.ExecutionState;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 
 import java.time.Duration;
 import java.util.List;
@@ -194,6 +195,26 @@ class DurableContextTest {
         // Wait should complete immediately (no exception)
         assertDoesNotThrow(() -> {
             context.wait(Duration.ofSeconds(30));
+        });
+    }
+    
+    @Test
+    void testNamedWait() {
+        var ctx = createTestContext();
+        
+        // Named wait should throw SuspendExecutionException
+        assertThrows(SuspendExecutionException.class, () -> {
+            ctx.wait("my-wait", Duration.ofSeconds(5));
+        });
+        
+        // Verify it works without error (basic functionality test)
+        assertDoesNotThrow(() -> {
+            var ctx2 = createTestContext();
+            try {
+                ctx2.wait("another-wait", Duration.ofMinutes(1));
+            } catch (SuspendExecutionException e) {
+                // Expected - this means the method worked
+            }
         });
     }
 }

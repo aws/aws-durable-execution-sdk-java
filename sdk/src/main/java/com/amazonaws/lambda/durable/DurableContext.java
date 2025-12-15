@@ -79,6 +79,10 @@ public class DurableContext {
     }
     
     public void wait(Duration duration) {
+        wait(null, duration);
+    }
+    
+    public void wait(String name, Duration duration) {
         var operationId = nextOperationId();
         
         // Check replay through checkpoint manager
@@ -86,14 +90,14 @@ public class DurableContext {
         
         // Validate replay consistency
         if (existing.isPresent()) {
-            validateReplay(operationId, OperationType.WAIT, null, existing.get());
+            validateReplay(operationId, OperationType.WAIT, name, existing.get());
         }
         
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return; // Wait already completed
         }
 
-        checkpoint(operationId, null, OperationType.WAIT, OperationAction.START, null);
+        checkpoint(operationId, name, OperationType.WAIT, OperationAction.START, null);
         throw new SuspendExecutionException();
     }
     
