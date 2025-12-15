@@ -46,7 +46,7 @@ public class DurableContext {
         }
 
         var result = func.get();
-        checkpoint(operationId, OperationType.STEP, OperationAction.SUCCEED, result);
+        checkpoint(operationId, name, OperationType.STEP, OperationAction.SUCCEED, result);
         
         return result;
     }
@@ -71,7 +71,7 @@ public class DurableContext {
         // Execute async
         var future = CompletableFuture.supplyAsync(() -> {
             var result = func.get();
-            checkpoint(operationId, OperationType.STEP, OperationAction.SUCCEED, result);
+            checkpoint(operationId, name, OperationType.STEP, OperationAction.SUCCEED, result);
             return result;
         });
         
@@ -93,7 +93,7 @@ public class DurableContext {
             return; // Wait already completed
         }
 
-        checkpoint(operationId, OperationType.WAIT, OperationAction.START, null);
+        checkpoint(operationId, "wait-" + operationId, OperationType.WAIT, OperationAction.START, null);
         throw new SuspendExecutionException();
     }
     
@@ -126,9 +126,10 @@ public class DurableContext {
         return String.valueOf(operationCounter.incrementAndGet());
     }
     
-    private void checkpoint(String operationId, OperationType type, OperationAction action, Object result) {
+    private void checkpoint(String operationId, String name, OperationType type, OperationAction action, Object result) {
         var update = OperationUpdate.builder()
                 .id(operationId)
+                .name(name)
                 .type(type)
                 .action(action)
                 .payload(serDes.serialize(result))
