@@ -93,7 +93,7 @@ public class DurableContext {
             return; // Wait already completed
         }
 
-        checkpoint(operationId, "wait-" + operationId, OperationType.WAIT, OperationAction.START, null);
+        checkpoint(operationId, null, OperationType.WAIT, OperationAction.START, null);
         throw new SuspendExecutionException();
     }
     
