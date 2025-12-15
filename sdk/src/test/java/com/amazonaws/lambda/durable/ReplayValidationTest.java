@@ -131,10 +131,9 @@ class ReplayValidationTest {
             durableContext.step("changed", String.class, () -> "result")
         );
         
-        assertThat(exception.getMessage())
-            .contains("Operation name mismatch")
-            .contains("Expected \"original\"")
-            .contains("got \"changed\"");
+        assertTrue(exception.getMessage().contains("Operation name mismatch"));
+        assertTrue(exception.getMessage().contains("Expected \"original\""));
+        assertTrue(exception.getMessage().contains("got \"changed\""));
     }
     
     @Test
@@ -174,11 +173,10 @@ class ReplayValidationTest {
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
             durableContext.step("newName", String.class, () -> "result")
         );
-        
-        assertThat(exception.getMessage())
-            .contains("Operation name mismatch")
-            .contains("Expected \"null\"")
-            .contains("got \"newName\"");
+
+        assertTrue(exception.getMessage().contains("Operation name mismatch"));
+        assertTrue(exception.getMessage().contains("Expected \"null\""));
+        assertTrue(exception.getMessage().contains("got \"newName\""));
     }
     
     @Test
@@ -198,11 +196,10 @@ class ReplayValidationTest {
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
             durableContext.step(null, String.class, () -> "result")
         );
-        
-        assertThat(exception.getMessage())
-            .contains("Operation name mismatch")
-            .contains("Expected \"existingName\"")
-            .contains("got \"null\"");
+
+        assertTrue(exception.getMessage().contains("Operation name mismatch"));
+        assertTrue(exception.getMessage().contains("Expected \"existingName\""));
+        assertTrue(exception.getMessage().contains("got \"null\""));
     }
     
     @Test
@@ -221,11 +218,10 @@ class ReplayValidationTest {
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
             durableContext.stepAsync("test", String.class, () -> "result")
         );
-        
-        assertThat(exception.getMessage())
-            .contains("Operation type mismatch")
-            .contains("Expected WAIT")
-            .contains("got STEP");
+
+        assertTrue(exception.getMessage().contains("Operation type mismatch"));
+        assertTrue(exception.getMessage().contains("Expected WAIT"));
+        assertTrue(exception.getMessage().contains("got STEP"));
     }
     
     @Test
