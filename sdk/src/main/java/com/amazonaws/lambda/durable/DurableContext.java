@@ -79,10 +79,14 @@ public class DurableContext {
     }
     
     public void wait(Duration duration) {
-        wait(null, duration);
+        wait(duration, null);
     }
     
     public void wait(String name, Duration duration) {
+        wait(duration, name);
+    }
+    
+    private void wait(Duration duration, String name) {
         var operationId = nextOperationId();
         
         // Check replay through checkpoint manager
@@ -97,7 +101,7 @@ public class DurableContext {
             return; // Wait already completed
         }
 
-        checkpoint(operationId, name, OperationType.WAIT, OperationAction.START, null);
+        checkpointWithoutResult(operationId, name, OperationType.WAIT, OperationAction.START);
         throw new SuspendExecutionException();
     }
     
@@ -130,15 +134,30 @@ public class DurableContext {
         return String.valueOf(operationCounter.incrementAndGet());
     }
     
-    private void checkpoint(String operationId, String name, OperationType type, OperationAction action, Object result) {
-        var update = OperationUpdate.builder()
+    private void checkpointWithoutResult(String operationId, String name, OperationType type, OperationAction action) {
+        var builder = OperationUpdate.builder()
                 .id(operationId)
-                .name(name)
+                .type(type)
+                .action(action);
+        
+        if (name != null) {
+            builder.name(name);
+        }
+
+        checkpointManager.checkpoint(builder.build()).join();
+    }
+    
+    private void checkpoint(String operationId, String name, OperationType type, OperationAction action, Object result) {
+        var builder = OperationUpdate.builder()
+                .id(operationId)
                 .type(type)
                 .action(action)
-                .payload(serDes.serialize(result))
-                .build();
+                .payload(serDes.serialize(result));
+        
+        if (name != null) {
+            builder.name(name);
+        }
 
-        checkpointManager.checkpoint(update).join(); //Todo: Currently blocked until checkpointed
+        checkpointManager.checkpoint(builder.build()).join();
     }
 }
