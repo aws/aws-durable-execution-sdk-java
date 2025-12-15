@@ -2,14 +2,17 @@ package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
+import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -32,6 +35,12 @@ public class DurableContext {
         
         // Check replay through checkpoint manager
         var existing = checkpointManager.getOperation(operationId);
+        
+        // Validate replay consistency
+        if (existing.isPresent()) {
+            validateReplay(operationId, OperationType.STEP, name, existing.get());
+        }
+        
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return serDes.deserialize(existing.get().stepDetails().result(), resultType);
         }
@@ -47,6 +56,12 @@ public class DurableContext {
         
         // Check replay through checkpoint manager
         var existing = checkpointManager.getOperation(operationId);
+        
+        // Validate replay consistency
+        if (existing.isPresent()) {
+            validateReplay(operationId, OperationType.STEP, name, existing.get());
+        }
+        
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return new DurableFuture<>(CompletableFuture.completedFuture(
                 serDes.deserialize(existing.get().stepDetails().result(), resultType)
@@ -68,6 +83,12 @@ public class DurableContext {
         
         // Check replay through checkpoint manager
         var existing = checkpointManager.getOperation(operationId);
+        
+        // Validate replay consistency
+        if (existing.isPresent()) {
+            validateReplay(operationId, OperationType.WAIT, null, existing.get());
+        }
+        
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return; // Wait already completed
         }
@@ -78,6 +99,27 @@ public class DurableContext {
     
     public Context getLambdaContext() {
         return lambdaContext;
+    }
+    
+    /**
+     * Validates that current operation matches checkpointed operation during replay.
+     */
+    private void validateReplay(String operationId, OperationType expectedType, String expectedName, Operation checkpointed) {
+        if (checkpointed == null || checkpointed.type() == null) {
+            return; // First execution, no validation needed
+        }
+        
+        if (!checkpointed.type().equals(expectedType)) {
+            throw new NonDeterministicExecutionException(
+                String.format("Operation type mismatch for \"%s\". Expected %s, got %s", 
+                    operationId, checkpointed.type(), expectedType));
+        }
+        
+        if (!Objects.equals(checkpointed.name(), expectedName)) {
+            throw new NonDeterministicExecutionException(
+                String.format("Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"", 
+                    operationId, checkpointed.name(), expectedName));
+        }
     }
     
     private String nextOperationId() {
