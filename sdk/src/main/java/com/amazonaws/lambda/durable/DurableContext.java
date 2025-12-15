@@ -2,14 +2,17 @@ package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
+import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -32,12 +35,18 @@ public class DurableContext {
         
         // Check replay through checkpoint manager
         var existing = checkpointManager.getOperation(operationId);
+        
+        // Validate replay consistency
+        if (existing.isPresent()) {
+            validateReplay(operationId, OperationType.STEP, name, existing.get());
+        }
+        
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return serDes.deserialize(existing.get().stepDetails().result(), resultType);
         }
 
         var result = func.get();
-        checkpoint(operationId, OperationType.STEP, OperationAction.SUCCEED, result);
+        checkpoint(operationId, name, OperationType.STEP, OperationAction.SUCCEED, result);
         
         return result;
     }
@@ -47,6 +56,12 @@ public class DurableContext {
         
         // Check replay through checkpoint manager
         var existing = checkpointManager.getOperation(operationId);
+        
+        // Validate replay consistency
+        if (existing.isPresent()) {
+            validateReplay(operationId, OperationType.STEP, name, existing.get());
+        }
+        
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return new DurableFuture<>(CompletableFuture.completedFuture(
                 serDes.deserialize(existing.get().stepDetails().result(), resultType)
@@ -56,7 +71,7 @@ public class DurableContext {
         // Execute async
         var future = CompletableFuture.supplyAsync(() -> {
             var result = func.get();
-            checkpoint(operationId, OperationType.STEP, OperationAction.SUCCEED, result);
+            checkpoint(operationId, name, OperationType.STEP, OperationAction.SUCCEED, result);
             return result;
         });
         
@@ -64,15 +79,29 @@ public class DurableContext {
     }
     
     public void wait(Duration duration) {
+        wait(duration, null);
+    }
+    
+    public void wait(String name, Duration duration) {
+        wait(duration, name);
+    }
+    
+    private void wait(Duration duration, String name) {
         var operationId = nextOperationId();
         
         // Check replay through checkpoint manager
         var existing = checkpointManager.getOperation(operationId);
+        
+        // Validate replay consistency
+        if (existing.isPresent()) {
+            validateReplay(operationId, OperationType.WAIT, name, existing.get());
+        }
+        
         if (existing.isPresent() && existing.get().status() == OperationStatus.SUCCEEDED) {
             return; // Wait already completed
         }
 
-        checkpoint(operationId, OperationType.WAIT, OperationAction.START, null);
+        checkpointWithoutResult(operationId, name, OperationType.WAIT, OperationAction.START);
         throw new SuspendExecutionException();
     }
     
@@ -80,18 +109,55 @@ public class DurableContext {
         return lambdaContext;
     }
     
+    /**
+     * Validates that current operation matches checkpointed operation during replay.
+     */
+    private void validateReplay(String operationId, OperationType expectedType, String expectedName, Operation checkpointed) {
+        if (checkpointed == null || checkpointed.type() == null) {
+            return; // First execution, no validation needed
+        }
+        
+        if (!checkpointed.type().equals(expectedType)) {
+            throw new NonDeterministicExecutionException(
+                String.format("Operation type mismatch for \"%s\". Expected %s, got %s", 
+                    operationId, checkpointed.type(), expectedType));
+        }
+        
+        if (!Objects.equals(checkpointed.name(), expectedName)) {
+            throw new NonDeterministicExecutionException(
+                String.format("Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"", 
+                    operationId, checkpointed.name(), expectedName));
+        }
+    }
+    
     private String nextOperationId() {
         return String.valueOf(operationCounter.incrementAndGet());
     }
     
-    private void checkpoint(String operationId, OperationType type, OperationAction action, Object result) {
-        var update = OperationUpdate.builder()
+    private void checkpointWithoutResult(String operationId, String name, OperationType type, OperationAction action) {
+        var builder = OperationUpdate.builder()
+                .id(operationId)
+                .type(type)
+                .action(action);
+        
+        if (name != null) {
+            builder.name(name);
+        }
+
+        checkpointManager.checkpoint(builder.build()).join();
+    }
+    
+    private void checkpoint(String operationId, String name, OperationType type, OperationAction action, Object result) {
+        var builder = OperationUpdate.builder()
                 .id(operationId)
                 .type(type)
                 .action(action)
-                .payload(serDes.serialize(result))
-                .build();
+                .payload(serDes.serialize(result));
+        
+        if (name != null) {
+            builder.name(name);
+        }
 
-        checkpointManager.checkpoint(update).join(); //Todo: Currently blocked until checkpointed
+        checkpointManager.checkpoint(builder.build()).join();
     }
 }

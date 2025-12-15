@@ -30,4 +30,8 @@ public class TestResult<O> {
     public LocalMemoryExecutionClient getStorage() {
         return storage;
     }
+    
+    public DurableExecutionOutput getOutput() {
+        return output;
+    }
 }

@@ -31,7 +31,7 @@ public class DurableExecution {
 
         //Todo: Allow passing client by user
         logger.debug("Initialize SDK client");
-        var client = new LambdaDurableFunctionsClient(null);
+        var client = new LambdaDurableFunctionsClient();
         logger.debug("Done initializing SDK client");
         return execute(input, lambdaContext, inputType, handler, client);
     }

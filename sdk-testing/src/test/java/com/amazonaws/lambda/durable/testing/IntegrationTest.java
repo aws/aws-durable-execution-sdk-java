@@ -1,18 +1,13 @@
-package com.amazonaws.lambda.durable;
+package com.amazonaws.lambda.durable.testing;
 
-import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
-import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
-import com.amazonaws.lambda.durable.serde.JacksonSerDes;
-import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.services.lambda.model.*;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class IntegrationTest {
     
@@ -106,6 +101,9 @@ class IntegrationTest {
         
         // Second execution - should replay
         var output2 = runner.run(new TestInput("replay-test"));
+        if (output2.getStatus() == ExecutionStatus.FAILED) {
+            System.out.println("Second execution failed with error: " + output2.getOutput().error());
+        }
         assertEquals(ExecutionStatus.SUCCEEDED, output2.getStatus());
         
         // Handler executed twice, but step only executed once (replayed from cache)
