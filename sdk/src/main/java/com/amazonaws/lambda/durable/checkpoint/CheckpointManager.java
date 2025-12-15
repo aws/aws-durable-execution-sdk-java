@@ -78,7 +78,8 @@ public class CheckpointManager {
                 // Update state after success
                 state.updateCheckpointToken(response.checkpointToken());
                 state.updateOperations(response.newExecutionState().operations());
-                
+
+                logger.debug("--- After checkpoint ---");
                 // Complete all futures
                 batch.forEach(req -> req.completion().complete(null));
             }

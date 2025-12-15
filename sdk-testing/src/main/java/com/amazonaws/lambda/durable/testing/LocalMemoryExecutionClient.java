@@ -64,9 +64,10 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
     
     private Operation toOperation(OperationUpdate update) {
-        //Todo: Currently we only use the StepDetails - should that depend on type actually?
+        // TODO: Currently we only use the StepDetails - should that depend on type actually?
         return Operation.builder().
                 id(update.id())
+                .name(update.name())
                 .type(update.type())
                 .status(deriveStatus(update.action()))
                 .stepDetails(StepDetails.builder().result(update.payload()).build())

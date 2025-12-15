@@ -1,20 +1,21 @@
 package com.amazonaws.lambda.durable.client;
 
+import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.SystemPropertyCredentialsProvider;
+import software.amazon.awssdk.core.SdkSystemSetting;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.*;
+
+import java.net.URI;
 import java.util.List;
 
 public class LambdaDurableFunctionsClient implements DurableExecutionClient {
 
-    private final LambdaClient AWSLambdaSDKClient;
-    
-    public LambdaDurableFunctionsClient(LambdaClient AWSLambdaSDKClient) {
-        if (AWSLambdaSDKClient == null) {
-            this.AWSLambdaSDKClient =  LambdaClient.create();
-        } else {
-            this.AWSLambdaSDKClient = AWSLambdaSDKClient;
-        }
-    }
+    private final LambdaClient AWSLambdaSDKClient = LambdaClient.builder()
+            .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
+            .region(Region.of(System.getenv(SdkSystemSetting.AWS_REGION.environmentVariable())))
+            .build();;
     
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {

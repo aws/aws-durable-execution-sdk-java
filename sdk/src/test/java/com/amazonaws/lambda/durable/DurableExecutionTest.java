@@ -129,6 +129,7 @@ class DurableExecutionTest {
         // Second execution with replay
         var completedStep = Operation.builder()
             .id("1")
+            .name("step1")
             .type(OperationType.STEP)
             .status(OperationStatus.SUCCEEDED)
             .stepDetails(StepDetails.builder()

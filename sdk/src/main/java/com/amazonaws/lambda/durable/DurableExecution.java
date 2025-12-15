@@ -31,7 +31,7 @@ public class DurableExecution {
 
         //Todo: Allow passing client by user
         logger.debug("Initialize SDK client");
-        var client = new LambdaDurableFunctionsClient(null);
+        var client = new LambdaDurableFunctionsClient();
         logger.debug("Done initializing SDK client");
         return execute(input, lambdaContext, inputType, handler, client);
     }
@@ -79,7 +79,6 @@ public class DurableExecution {
             var result = handler.apply(userInput, context);
             logger.debug("--- Handler returned ---");
             return DurableExecutionOutput.success(serDes.serialize(result));
-            
         } catch (SuspendExecutionException e) {
             return DurableExecutionOutput.pending();
         } catch (Exception e) {
