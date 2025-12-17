@@ -23,13 +23,4 @@ public class DurableFuture<T> {
     public T get() {
         return operation.get();
     }
-
-    /**
-     * Checks if the operation is done.
-     * 
-     * @return true if the operation has completed (phaser phase > 0)
-     */
-    public boolean isDone() {
-        return operation.getPhaser().getPhase() > 0;
-    }
 }

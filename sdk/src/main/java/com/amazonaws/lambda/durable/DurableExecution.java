@@ -1,22 +1,20 @@
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
-import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient;
-import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
+import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.model.ErrorObject;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.lambda.durable.checkpoint.ExecutionState;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+
 import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
@@ -65,59 +63,50 @@ public class DurableExecution {
         var serDes = new JacksonSerDes();
         var userInput = extractUserInput(executionOp, serDes, inputType);
         
-        // Create state and checkpoint manager
-        var state = new ExecutionState(
+        // Create single executor for both handler and steps
+        // TODO: Allow passing executor by user through DurableHandler
+        var executor = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r);
+            t.setName("durable-exec-" + t.getId());
+            t.setDaemon(true);
+            return t;
+        });
+        
+        // Create execution manager (consolidates state, checkpointing, and coordination)
+        var executionManager = new ExecutionManager(
             input.durableExecutionArn(),
             input.checkpointToken(),
-            operations
+            operations,
+            client,
+            executor
         );
-        logger.debug("--- State initialized ---");
-        // Create executor for checkpoint manager
-        var checkpointExecutor = Executors.newSingleThreadExecutor();
-        var checkpointManager = new CheckpointManager(state, client, checkpointExecutor);
-        
-        // Create coordinator with its own managed executor for steps
-        var coordinator = new ExecutionCoordinator(checkpointManager);
-        
-        // Connect checkpoint manager to coordinator (for phaser advancement)
-        checkpointManager.setCoordinator(coordinator);
+        logger.debug("--- ExecutionManager initialized ---");
         
         // Create context
-        var context = new DurableContext(checkpointManager, serDes, lambdaContext, coordinator);
+        var context = new DurableContext(executionManager, serDes, lambdaContext);
         logger.debug("--- Context initialized ---");
         
         try {
-            // Run customer handler in a separate thread
-            var handlerExecutor = Executors.newSingleThreadExecutor();
-            var handlerFuture = CompletableFuture.supplyAsync(
-                () -> {
-                    try {
-                        return handler.apply(userInput, context);
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                },
-                handlerExecutor
-            );
+            var handlerFuture = CompletableFuture.supplyAsync(() -> handler.apply(userInput, context), executor);
             
             // Get suspend future from coordinator. If this future completes, it indicates
             // that no threads are active and we can safely suspend. This is useful for 
             // async scenarios where multiple operations are scheduled concurrently and awaited
             // at a later point.
-            var suspendFuture = coordinator.getSuspendExecutionFuture();
+            var suspendFuture = executionManager.getSuspendExecutionFuture();
             
             // Wait for either handler to complete or suspension to occur
             CompletableFuture.anyOf(handlerFuture, suspendFuture).join();
             
             if (suspendFuture.isDone()) {
                 logger.debug("--- Execution suspended ---");
-                handlerExecutor.shutdownNow();
+                executor.shutdownNow();
                 return DurableExecutionOutput.pending();
             }
             
             // Handler completed
             logger.debug("--- Handler returned ---");
-            handlerExecutor.shutdown();
+            executor.shutdown();
             
             if (handlerFuture.isCompletedExceptionally()) {
                 try {
@@ -131,10 +120,11 @@ public class DurableExecution {
             var result = handlerFuture.get();
             return DurableExecutionOutput.success(serDes.serialize(result));
         } catch (Exception e) {
-            return DurableExecutionOutput.failure(ErrorObject.fromException(e));
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            return DurableExecutionOutput.failure(ErrorObject.fromException(cause));
         } finally {
-            checkpointManager.shutdown();
-            checkpointExecutor.shutdown();
+            executionManager.shutdown();
+            executor.shutdown();
         }
     }
     

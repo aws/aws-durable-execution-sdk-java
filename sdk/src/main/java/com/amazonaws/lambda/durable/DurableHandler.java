@@ -4,7 +4,6 @@ import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.services.lambda.runtime.Context;
-import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
@@ -19,7 +18,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
 import java.util.Date;
 
 public abstract class DurableHandler<I, O> implements RequestStreamHandler {
@@ -29,7 +27,6 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     private final ObjectMapper objectMapper = createObjectMapper();
     private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);
     
-    @SuppressWarnings("unchecked")
     protected DurableHandler() {
         this(null);
     }

@@ -1,58 +1,44 @@
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
-import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
-import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.services.lambda.runtime.Context;
-import org.junit.jupiter.api.BeforeEach;
+import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+
+import java.util.List;
+import java.util.concurrent.Executors;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 
 import java.time.Duration;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.when;
 
 class ReplayValidationTest {
     
-    @Mock
-    private CheckpointManager checkpointManager;
-    
-    @Mock
-    private SerDes serDes;
-    
-    @Mock
-    private Context lambdaContext;
-    
-    private DurableContext durableContext;
-    
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-        var coordinator = new ExecutionCoordinator(checkpointManager);
-        durableContext = new DurableContext(checkpointManager, serDes, lambdaContext, coordinator);
+    private DurableContext createTestContext(List<Operation> initialOperations) {
+        var client = new com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient();
+        var executor = Executors.newCachedThreadPool();
+        var executionManager = new ExecutionManager(
+            "arn:aws:lambda:us-east-1:123456789012:function:test",
+            "test-token",
+            initialOperations,
+            client,
+            executor
+        );
+        var serDes = new com.amazonaws.lambda.durable.serde.JacksonSerDes();
+        return new DurableContext(executionManager, serDes, null);
     }
     
     @Test
     void shouldPassValidationWhenNoCheckpointExists() {
         // Given: No existing operation
-        when(checkpointManager.getOperation(anyString())).thenReturn(Optional.empty());
-        when(serDes.serialize(anyString())).thenReturn("serialized");
-        when(checkpointManager.checkpoint(any())).thenReturn(CompletableFuture.completedFuture(null));
+        var context = createTestContext(List.of());
         
         // When & Then: Should not throw
         assertDoesNotThrow(() -> 
-            durableContext.step("test", String.class, () -> "result")
+            context.step("test", String.class, () -> "result")
         );
     }
     
@@ -64,15 +50,14 @@ class ReplayValidationTest {
                 .name("test")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder().result("serialized").build())
+                .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
-        when(serDes.deserialize("serialized", String.class)).thenReturn("result");
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should not throw
         assertDoesNotThrow(() -> 
-            durableContext.step("test", String.class, () -> "result")
+            context.step("test", String.class, () -> "result")
         );
     }
     
@@ -85,11 +70,11 @@ class ReplayValidationTest {
                 .status(OperationStatus.SUCCEEDED)
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should not throw
         assertDoesNotThrow(() -> 
-            durableContext.wait(Duration.ofSeconds(1))
+            context.wait(Duration.ofSeconds(1))
         );
     }
     
@@ -103,11 +88,11 @@ class ReplayValidationTest {
                 .status(OperationStatus.SUCCEEDED)
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should throw NonDeterministicExecutionException
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
-            durableContext.step("test", String.class, () -> "result")
+            context.step("test", String.class, () -> "result")
         );
         
         assertTrue(exception.getMessage().contains("Operation type mismatch"));
@@ -123,14 +108,14 @@ class ReplayValidationTest {
                 .name("original")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder().result("serialized").build())
+                .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should throw NonDeterministicExecutionException
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
-            durableContext.step("changed", String.class, () -> "result")
+            context.step("changed", String.class, () -> "result")
         );
         
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
@@ -146,15 +131,14 @@ class ReplayValidationTest {
                 .name(null)
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder().result("serialized").build())
+                .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
-        when(serDes.deserialize("serialized", String.class)).thenReturn("result");
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should not throw when both names are null
         assertDoesNotThrow(() -> 
-            durableContext.step(null, String.class, () -> "result")
+            context.step(null, String.class, () -> "result")
         );
     }
     
@@ -166,14 +150,14 @@ class ReplayValidationTest {
                 .name(null)
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder().result("serialized").build())
+                .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should throw when name changes from null to value
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
-            durableContext.step("newName", String.class, () -> "result")
+            context.step("newName", String.class, () -> "result")
         );
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
@@ -189,14 +173,14 @@ class ReplayValidationTest {
                 .name("existingName")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder().result("serialized").build())
+                .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should throw when name changes from value to null
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
-            durableContext.step(null, String.class, () -> "result")
+            context.step(null, String.class, () -> "result")
         );
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
@@ -214,11 +198,11 @@ class ReplayValidationTest {
                 .status(OperationStatus.SUCCEEDED)
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should throw NonDeterministicExecutionException
         var exception = assertThrows(NonDeterministicExecutionException.class, () -> 
-            durableContext.stepAsync("test", String.class, () -> "result")
+            context.stepAsync("test", String.class, () -> "result")
         );
 
         assertTrue(exception.getMessage().contains("Operation type mismatch"));
@@ -234,15 +218,14 @@ class ReplayValidationTest {
                 .name("test")
                 .type((OperationType) null)
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder().result("serialized").build())
+                .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();
         
-        when(checkpointManager.getOperation("1")).thenReturn(Optional.of(existingOp));
-        when(serDes.deserialize("serialized", String.class)).thenReturn("result");
+        var context = createTestContext(List.of(existingOp));
         
         // When & Then: Should not throw (validation skipped)
         assertDoesNotThrow(() -> 
-            durableContext.step("test", String.class, () -> "result")
+            context.step("test", String.class, () -> "result")
         );
     }
 }

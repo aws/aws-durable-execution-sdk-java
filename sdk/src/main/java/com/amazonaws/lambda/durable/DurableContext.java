@@ -2,13 +2,11 @@ package com.amazonaws.lambda.durable;
 
 import java.time.Duration;
 import java.util.Objects;
-import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
-import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
-import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
+import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
@@ -19,22 +17,19 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 public class DurableContext {
-    private final CheckpointManager checkpointManager;
+    private final ExecutionManager executionManager;
     private final SerDes serDes;
     private final Context lambdaContext;
     private final AtomicInteger operationCounter;
-    private final ExecutionCoordinator coordinator;
 
-    DurableContext(CheckpointManager checkpointManager, SerDes serDes, Context lambdaContext,
-            ExecutionCoordinator coordinator) {
-        this.checkpointManager = checkpointManager;
+    DurableContext(ExecutionManager executionManager, SerDes serDes, Context lambdaContext) {
+        this.executionManager = executionManager;
         this.serDes = serDes;
         this.lambdaContext = lambdaContext;
         this.operationCounter = new AtomicInteger(0);
-        this.coordinator = coordinator;
 
         // Register root context thread as active
-        coordinator.registerActiveThread("Root", ThreadType.CONTEXT);
+        executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
@@ -54,13 +49,13 @@ public class DurableContext {
         var operationId = nextOperationId();
 
         // Validate replay consistency
-        var existing = checkpointManager.getOperation(operationId);
-        if (existing.isPresent()) {
-            validateReplay(operationId, OperationType.STEP, name, existing.get());
+        var existing = executionManager.getOperation(operationId);
+        if (existing != null) {
+            validateReplay(operationId, OperationType.STEP, name, existing);
         }
 
         // Create phaser for this operation
-        Phaser phaser = coordinator.startPhaser(operationId);
+        executionManager.startPhaser(operationId);
 
         // Create and start step operation
         StepOperation<T> operation = new StepOperation<>(
@@ -69,8 +64,7 @@ public class DurableContext {
                 func,
                 resultType,
                 config,
-                phaser,
-                coordinator,
+                executionManager,
                 serDes);
 
         operation.execute(); // Start the step (returns immediately)
@@ -86,21 +80,20 @@ public class DurableContext {
         var operationId = nextOperationId();
 
         // Validate replay consistency
-        var existing = checkpointManager.getOperation(operationId);
-        if (existing.isPresent()) {
-            validateReplay(operationId, OperationType.WAIT, waitName, existing.get());
+        var existing = executionManager.getOperation(operationId);
+        if (existing != null) {
+            validateReplay(operationId, OperationType.WAIT, waitName, existing);
         }
 
         // Create phaser for this operation
-        Phaser phaser = coordinator.startPhaser(operationId);
+        executionManager.startPhaser(operationId);
 
         // Create and start wait operation
         WaitOperation operation = new WaitOperation(
                 operationId,
                 waitName,
                 duration,
-                phaser,
-                coordinator);
+                executionManager);
 
         operation.execute(); // Checkpoint the wait
         operation.get(); // Block (will throw SuspendExecutionException if needed)

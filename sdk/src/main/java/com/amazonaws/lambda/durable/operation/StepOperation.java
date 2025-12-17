@@ -1,5 +1,7 @@
 package com.amazonaws.lambda.durable.operation;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Phaser;
 import java.util.function.Supplier;
@@ -8,7 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.StepConfig;
-import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
+import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 
@@ -29,8 +31,7 @@ public class StepOperation<T> implements DurableOperation<T> {
     private final Supplier<T> function;
     private final Class<T> resultType;
     private final StepConfig config;
-    private final Phaser phaser;
-    private final ExecutionCoordinator coordinator;
+    private final ExecutionManager executionManager;
     private final SerDes serDes;
 
     public StepOperation(
@@ -39,16 +40,14 @@ public class StepOperation<T> implements DurableOperation<T> {
             Supplier<T> function,
             Class<T> resultType,
             StepConfig config,
-            Phaser phaser,
-            ExecutionCoordinator coordinator,
+            ExecutionManager executionManager,
             SerDes serDes) {
         this.operationId = operationId;
         this.name = name;
         this.function = function;
         this.resultType = resultType;
         this.config = config;
-        this.phaser = phaser;
-        this.coordinator = coordinator;
+        this.executionManager = executionManager;
         this.serDes = serDes;
     }
 
@@ -64,25 +63,26 @@ public class StepOperation<T> implements DurableOperation<T> {
 
     @Override
     public Phaser getPhaser() {
-        return phaser;
+        return executionManager.getPhaser(operationId);
     }
 
     @Override
     public void execute() {
         // Check replay
-        var existing = coordinator.getOperation(operationId);
+        var existing = executionManager.getOperation(operationId);
 
         if (existing != null) {
             switch (existing.status()) {
                 case SUCCEEDED, FAILED -> {
                     // Already done, complete phaser immediately
-                    phaser.arriveAndDeregister();
+                    getPhaser().arriveAndDeregister();
                     return;
                 }
                 case STARTED -> {
-                    // Step was interrupted - this is an error
-                    phaser.arriveAndDeregister();
-                    return;
+                    // If the step was already STARTED, and we're using AT_MOST_ONCE_PER_RETRY
+                    // semantics, throw an error.
+                    throw new RuntimeException(
+                            String.format("step '%s' interrupted", name == null ? operationId : name));
                 }
                 case PENDING -> {
                     // Step is pending retry - setup polling
@@ -95,10 +95,10 @@ public class StepOperation<T> implements DurableOperation<T> {
                     // Start polling for PENDING -> READY transition
                     var nextAttemptTime = existing.stepDetails().nextAttemptTimestamp();
                     if (nextAttemptTime == null) {
-                        nextAttemptTime = java.time.Instant.now().plusSeconds(1);
+                        nextAttemptTime = Instant.now().plusSeconds(1);
                     }
-                    coordinator.pollForUpdates(operationId, pendingFuture, nextAttemptTime,
-                            java.time.Duration.ofSeconds(1));
+                    executionManager.pollForUpdates(operationId, pendingFuture, nextAttemptTime,
+                            Duration.ofSeconds(1));
                     return;
                 }
                 case READY -> {
@@ -107,7 +107,7 @@ public class StepOperation<T> implements DurableOperation<T> {
                     return;
                 }
                 default -> {
-                    phaser.arriveAndDeregister();
+                    getPhaser().arriveAndDeregister();
                     return;
                 }
             }
@@ -120,13 +120,13 @@ public class StepOperation<T> implements DurableOperation<T> {
     private void executeStepLogic(int attempt) {
         // Register step thread as active
         String stepThreadId = operationId + "-step";
-        coordinator.registerActiveThread(stepThreadId, ThreadType.STEP);
+        executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
 
         // Execute in managed executor
-        coordinator.getManagedExecutor().execute(() -> {
+        executionManager.getManagedExecutor().execute(() -> {
             try {
                 // Check if we need to send START
-                var existing = coordinator.getOperation(operationId);
+                var existing = executionManager.getOperation(operationId);
                 if (existing == null || existing.status() != OperationStatus.STARTED) {
                     var startUpdate = OperationUpdate.builder()
                             .id(operationId)
@@ -135,7 +135,7 @@ public class StepOperation<T> implements DurableOperation<T> {
                             .type(OperationType.STEP)
                             .action(OperationAction.START)
                             .build();
-                    coordinator.sendOperationUpdate(startUpdate).join();
+                    executionManager.sendOperationUpdate(startUpdate).join();
                 }
 
                 // Execute the function
@@ -150,16 +150,16 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .action(OperationAction.SUCCEED)
                         .payload(serDes.serialize(result))
                         .build();
-                coordinator.sendOperationUpdate(successUpdate).join();
+                executionManager.sendOperationUpdate(successUpdate).join();
 
                 // Two-phase completion (critical!)
-                phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1 (notify waiters)
-                phaser.arriveAndAwaitAdvance(); // Phase 1 -> 2 (wait for reactivation)
+                getPhaser().arriveAndAwaitAdvance(); // Phase 0 -> 1 (notify waiters)
+                getPhaser().arriveAndAwaitAdvance(); // Phase 1 -> 2 (wait for reactivation)
 
             } catch (Throwable e) {
                 handleStepError(e, attempt);
             } finally {
-                coordinator.deregisterActiveThread(stepThreadId);
+                executionManager.deregisterActiveThread(stepThreadId);
             }
         });
     }
@@ -186,20 +186,17 @@ public class StepOperation<T> implements DurableOperation<T> {
                                 .nextAttemptDelaySeconds(Math.toIntExact(retryDecision.delay().toSeconds()))
                                 .build())
                         .build();
-                coordinator.sendOperationUpdate(retryUpdate).join();
+                executionManager.sendOperationUpdate(retryUpdate).join();
 
                 // Setup polling for retry
                 var pendingFuture = new CompletableFuture<Void>();
                 pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
 
-                var nextAttemptTime = java.time.Instant.now()
+                var nextAttemptTime = Instant.now()
                         .plus(retryDecision.delay())
                         .plusMillis(25);
-                coordinator.pollForUpdates(operationId, pendingFuture, nextAttemptTime,
-                        java.time.Duration.ofMillis(200));
-
-                // DON'T throw SuspendExecutionException here!
-                // Just return - phaser stays in phase 0, caller will block on get()
+                executionManager.pollForUpdates(operationId, pendingFuture, nextAttemptTime,
+                        Duration.ofMillis(200));
                 return;
             } else {
                 // Send FAIL - retries exhausted
@@ -211,11 +208,11 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .action(OperationAction.FAIL)
                         .error(errorObject)
                         .build();
-                coordinator.sendOperationUpdate(failUpdate).join();
+                executionManager.sendOperationUpdate(failUpdate).join();
 
                 // Complete phaser for failed step
-                phaser.arriveAndAwaitAdvance();
-                phaser.arriveAndAwaitAdvance();
+                getPhaser().arriveAndAwaitAdvance();
+                getPhaser().arriveAndAwaitAdvance();
             }
         } else {
             // No retry - send FAIL
@@ -227,35 +224,35 @@ public class StepOperation<T> implements DurableOperation<T> {
                     .action(OperationAction.FAIL)
                     .error(errorObject)
                     .build();
-            coordinator.sendOperationUpdate(failUpdate).join();
+            executionManager.sendOperationUpdate(failUpdate).join();
 
             // Complete phaser for failed step
-            phaser.arriveAndAwaitAdvance();
-            phaser.arriveAndAwaitAdvance();
+            getPhaser().arriveAndAwaitAdvance();
+            getPhaser().arriveAndAwaitAdvance();
         }
     }
 
     @Override
     public T get() {
-        if (phaser.getPhase() == 0) {
+        if (getPhaser().getPhase() == 0) {
             // Operation not done yet
-            phaser.register();
+            getPhaser().register();
 
             // Deregister current thread - allows suspension
-            coordinator.deregisterActiveThread("Root");
+            executionManager.deregisterActiveThread("Root");
 
             // Block until operation completes
-            phaser.arriveAndAwaitAdvance(); // Wait for phase 0
+            getPhaser().arriveAndAwaitAdvance(); // Wait for phase 0
 
             // Reactivate current thread
-            coordinator.registerActiveThread("Root", ThreadType.CONTEXT);
+            executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
 
             // Complete phase 1
-            phaser.arriveAndDeregister();
+            getPhaser().arriveAndDeregister();
         }
 
         // Get result from coordinator
-        Operation op = coordinator.getOperation(operationId);
+        Operation op = executionManager.getOperation(operationId);
         if (op == null) {
             throw new RuntimeException("Step '" + name + "' operation not found");
         }

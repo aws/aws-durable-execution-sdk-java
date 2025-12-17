@@ -1,13 +1,11 @@
 package com.amazonaws.lambda.durable.client;
 
 import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
-import software.amazon.awssdk.auth.credentials.SystemPropertyCredentialsProvider;
 import software.amazon.awssdk.core.SdkSystemSetting;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.*;
 
-import java.net.URI;
 import java.util.List;
 
 public class LambdaDurableFunctionsClient implements DurableExecutionClient {

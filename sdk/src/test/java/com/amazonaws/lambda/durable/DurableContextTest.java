@@ -1,16 +1,12 @@
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
-import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
-import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
+import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient;
-import com.amazonaws.lambda.durable.checkpoint.ExecutionState;
 
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 
 import java.time.Duration;
 import java.util.List;
@@ -21,13 +17,21 @@ import static org.junit.jupiter.api.Assertions.*;
 class DurableContextTest {
     
     private DurableContext createTestContext() {
+        return createTestContext(List.of());
+    }
+    
+    private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = new LocalMemoryExecutionClient();
-        var state = new ExecutionState("arn", "token", List.of());
-        var executor = Executors.newSingleThreadExecutor();
-        var checkpointManager = new CheckpointManager(state, client, executor);
-        var coordinator = new com.amazonaws.lambda.durable.execution.ExecutionCoordinator(checkpointManager);
+        var executor = Executors.newCachedThreadPool();
+        var executionManager = new com.amazonaws.lambda.durable.execution.ExecutionManager(
+            "arn:aws:lambda:us-east-1:123456789012:function:test",
+            "test-token",
+            initialOperations,
+            client,
+            executor
+        );
         var serDes = new JacksonSerDes();
-        return new DurableContext(checkpointManager, serDes, null, coordinator);
+        return new DurableContext(executionManager, serDes, null);
     }
     
     @Test
@@ -50,7 +54,6 @@ class DurableContextTest {
     @Test
     void testStepReplay() {
         // Create context with existing operation
-        var client = new LocalMemoryExecutionClient();
         var existingOp = Operation.builder()
                 .id("1")
                 .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
@@ -58,13 +61,7 @@ class DurableContextTest {
                         .result("\"Cached Result\"")
                         .build())
                 .build();
-        
-        var state = new ExecutionState("arn", "token", List.of(existingOp));
-        var executor = Executors.newSingleThreadExecutor();
-        var checkpointManager = new CheckpointManager(state, client, executor);
-        var coordinator = new ExecutionCoordinator(checkpointManager);
-        var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
+        var context = createTestContext(List.of(existingOp));
         
         // This should return cached result, not execute the function
         var result = context.step("test", String.class, () -> "New Result");
@@ -85,7 +82,6 @@ class DurableContextTest {
     @Test
     void testStepAsyncReplay() throws Exception {
         // Create context with existing operation
-        var client = new LocalMemoryExecutionClient();
         var existingOp = Operation.builder()
                 .id("1")
                 .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
@@ -93,18 +89,10 @@ class DurableContextTest {
                         .result("\"Cached Async Result\"")
                         .build())
                 .build();
-        
-        var state = new ExecutionState("arn", "token", List.of(existingOp));
-        var executor = Executors.newSingleThreadExecutor();
-        var checkpointManager = new CheckpointManager(state, client, executor);
-        var coordinator = new ExecutionCoordinator(checkpointManager);
-        var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
+        var context = createTestContext(List.of(existingOp));
         
         // This should return cached result immediately
         var future = context.stepAsync("async-test", String.class, () -> "New Async Result");
-        
-        assertTrue(future.isDone());
         assertEquals("Cached Async Result", future.get());
     }
     
@@ -121,18 +109,11 @@ class DurableContextTest {
     @Test
     void testWaitReplay() {
         // Create context with completed wait operation
-        var client = new LocalMemoryExecutionClient();
         var existingOp = Operation.builder()
                 .id("1")
                 .status(OperationStatus.SUCCEEDED)
                 .build();
-        
-        var state = new ExecutionState("arn", "token", List.of(existingOp));
-        var executor = Executors.newSingleThreadExecutor();
-        var checkpointManager = new CheckpointManager(state, client, executor);
-        var coordinator = new ExecutionCoordinator(checkpointManager);
-        var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
+        var context = createTestContext(List.of(existingOp));
         
         // Wait should complete immediately (no exception)
         assertDoesNotThrow(() -> {
@@ -161,7 +142,6 @@ class DurableContextTest {
     @Test
     void testCombinedReplay() throws Exception {
         // Create context with all operations completed
-        var client = new LocalMemoryExecutionClient();
         var syncOp = Operation.builder()
                 .id("1")
                 .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
@@ -169,7 +149,6 @@ class DurableContextTest {
                         .result("\"Replayed Sync\"")
                         .build())
                 .build();
-        
         var asyncOp = Operation.builder()
                 .id("2")
                 .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
@@ -177,25 +156,17 @@ class DurableContextTest {
                         .result("100")
                         .build())
                 .build();
-        
         var waitOp = Operation.builder()
                 .id("3")
                 .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
                 .build();
-        
-        var state = new ExecutionState("arn", "token", List.of(syncOp, asyncOp, waitOp));
-        var executor = Executors.newSingleThreadExecutor();
-        var checkpointManager = new CheckpointManager(state, client, executor);
-        var coordinator = new ExecutionCoordinator(checkpointManager);
-        var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
+        var context = createTestContext(List.of(syncOp, asyncOp, waitOp));
         
         // All operations should replay from cache
         var syncResult = context.step("sync-step", String.class, () -> "New Sync");
         assertEquals("Replayed Sync", syncResult);
         
         var asyncFuture = context.stepAsync("async-step", Integer.class, () -> 999);
-        assertTrue(asyncFuture.isDone());
         assertEquals(100, asyncFuture.get());
         
         // Wait should complete immediately (no exception)
