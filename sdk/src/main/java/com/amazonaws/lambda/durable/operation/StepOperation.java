@@ -106,10 +106,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                     executeStepLogic(existing.stepDetails().attempt());
                     return;
                 }
-                default -> {
-                    getPhaser().arriveAndDeregister();
-                    return;
-                }
+                default -> throw new RuntimeException(
+                        String.format("Unrecognized step status '%s'", existing.status()));
             }
         } else {
             // First execution

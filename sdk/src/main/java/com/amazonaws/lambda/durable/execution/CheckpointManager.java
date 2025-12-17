@@ -7,6 +7,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,13 +21,16 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  * calls.
  * 
  * Single responsibility: Queue and batch checkpoint requests efficiently.
- * All coordination logic is in ExecutionManager.
+ * Uses CheckpointCallback to notify when checkpoints complete, avoiding cyclic
+ * dependency.
  */
 class CheckpointManager {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
     private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);
 
-    private final ExecutionManager executionManager;
+    private final CheckpointCallback callback;
+    private final Supplier<String> tokenSupplier;
+    private final String durableExecutionArn;
     private final DurableExecutionClient client;
     private final BlockingQueue<CheckpointRequest> queue = new LinkedBlockingQueue<>();
     private final ExecutorService executor;
@@ -35,10 +39,14 @@ class CheckpointManager {
     record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {
     }
 
-    CheckpointManager(ExecutionManager executionManager, DurableExecutionClient client, ExecutorService executor) {
-        this.executionManager = executionManager;
+    CheckpointManager(DurableExecutionClient client, ExecutorService executor,
+            String durableExecutionArn, java.util.function.Supplier<String> tokenSupplier,
+            CheckpointCallback callback) {
         this.client = client;
         this.executor = executor;
+        this.durableExecutionArn = durableExecutionArn;
+        this.tokenSupplier = tokenSupplier;
+        this.callback = callback;
     }
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
@@ -74,14 +82,15 @@ class CheckpointManager {
 
                 logger.debug("--- Making API call ---");
                 var response = client.checkpoint(
-                        executionManager.getDurableExecutionArn(),
-                        executionManager.getCheckpointToken(),
+                        durableExecutionArn,
+                        tokenSupplier.get(),
                         updates);
                 logger.debug("--- API call done ---");
 
-                // Update execution manager state
-                executionManager.updateCheckpointToken(response.checkpointToken());
-                executionManager.updateOperations(response.newExecutionState().operations());
+                // Notify callback of completion
+                callback.onComplete(
+                        response.checkpointToken(),
+                        response.newExecutionState().operations());
 
                 logger.debug("--- After checkpoint ---");
                 batch.forEach(req -> req.completion().complete(null));

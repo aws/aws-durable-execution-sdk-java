@@ -1,7 +1,6 @@
 package com.amazonaws.lambda.durable.examples;
 
 import java.time.Duration;
-import java.util.concurrent.ExecutionException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,14 +14,11 @@ import com.amazonaws.lambda.durable.retry.RetryStrategies;
 /**
  * Example demonstrating concurrent stepAsync() with wait() operations.
  * 
- * This example shows the race condition fix:
+ * This example shows suspension behavior with pending async steps:
  * - stepAsync() starts a background operation (takes 2 seconds)
  * - wait() is called immediately (3 second duration)
  * - The step completes successfully before suspension
- * - Execution suspends for the remaining wait time
- * 
- * Before the fix: The step would be interrupted and fail
- * After the fix: The step completes successfully using Phaser coordination
+ * - Execution suspends for the wait time
  */
 public class WaitAtLeastExample extends DurableHandler<GreetingRequest, String> {
 

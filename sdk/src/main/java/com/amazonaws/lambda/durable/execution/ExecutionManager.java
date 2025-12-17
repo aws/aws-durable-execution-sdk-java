@@ -66,8 +66,26 @@ public class ExecutionManager {
         this.managedExecutor = executor;
 
         // Create checkpoint manager (package-private)
+        // Pass method references to avoid cyclic dependency
         var checkpointExecutor = Executors.newSingleThreadExecutor();
-        this.checkpointManager = new CheckpointManager(this, client, checkpointExecutor);
+        this.checkpointManager = new CheckpointManager(
+            client,
+            checkpointExecutor,
+            durableExecutionArn,
+            this::getCheckpointToken,
+            this::onCheckpointComplete
+        );
+    }
+    
+    // ===== Checkpoint Completion Handler =====
+    
+    /**
+     * Called by CheckpointManager when a checkpoint completes.
+     * Updates state and advances phasers.
+     */
+    private void onCheckpointComplete(String newToken, List<Operation> newOperations) {
+        updateCheckpointToken(newToken);
+        updateOperations(newOperations);
     }
 
     // ===== State Management =====
