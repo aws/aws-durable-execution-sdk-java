@@ -2,6 +2,7 @@ package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
+import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient;
 import com.amazonaws.lambda.durable.checkpoint.ExecutionState;
@@ -24,8 +25,9 @@ class DurableContextTest {
         var state = new ExecutionState("arn", "token", List.of());
         var executor = Executors.newSingleThreadExecutor();
         var checkpointManager = new CheckpointManager(state, client, executor);
+        var coordinator = new com.amazonaws.lambda.durable.execution.ExecutionCoordinator(checkpointManager);
         var serDes = new JacksonSerDes();
-        return new DurableContext(checkpointManager, serDes, null);
+        return new DurableContext(checkpointManager, serDes, null, coordinator);
     }
     
     @Test
@@ -60,8 +62,9 @@ class DurableContextTest {
         var state = new ExecutionState("arn", "token", List.of(existingOp));
         var executor = Executors.newSingleThreadExecutor();
         var checkpointManager = new CheckpointManager(state, client, executor);
+        var coordinator = new ExecutionCoordinator(checkpointManager);
         var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null);
+        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
         
         // This should return cached result, not execute the function
         var result = context.step("test", String.class, () -> "New Result");
@@ -94,8 +97,9 @@ class DurableContextTest {
         var state = new ExecutionState("arn", "token", List.of(existingOp));
         var executor = Executors.newSingleThreadExecutor();
         var checkpointManager = new CheckpointManager(state, client, executor);
+        var coordinator = new ExecutionCoordinator(checkpointManager);
         var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null);
+        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
         
         // This should return cached result immediately
         var future = context.stepAsync("async-test", String.class, () -> "New Async Result");
@@ -126,8 +130,9 @@ class DurableContextTest {
         var state = new ExecutionState("arn", "token", List.of(existingOp));
         var executor = Executors.newSingleThreadExecutor();
         var checkpointManager = new CheckpointManager(state, client, executor);
+        var coordinator = new ExecutionCoordinator(checkpointManager);
         var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null);
+        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
         
         // Wait should complete immediately (no exception)
         assertDoesNotThrow(() -> {
@@ -181,8 +186,9 @@ class DurableContextTest {
         var state = new ExecutionState("arn", "token", List.of(syncOp, asyncOp, waitOp));
         var executor = Executors.newSingleThreadExecutor();
         var checkpointManager = new CheckpointManager(state, client, executor);
+        var coordinator = new ExecutionCoordinator(checkpointManager);
         var serDes = new JacksonSerDes();
-        var context = new DurableContext(checkpointManager, serDes, null);
+        var context = new DurableContext(checkpointManager, serDes, null, coordinator);
         
         // All operations should replay from cache
         var syncResult = context.step("sync-step", String.class, () -> "New Sync");

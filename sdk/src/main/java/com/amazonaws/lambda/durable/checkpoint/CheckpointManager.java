@@ -1,7 +1,8 @@
 package com.amazonaws.lambda.durable.checkpoint;
 
-import com.amazonaws.lambda.durable.DurableExecution;
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -23,6 +24,7 @@ public class CheckpointManager {
     private final BlockingQueue<CheckpointRequest> queue = new LinkedBlockingQueue<>();
     private final ExecutorService executor;
     private final AtomicBoolean isProcessing = new AtomicBoolean(false);
+    private ExecutionCoordinator coordinator;
     
     record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {}
     
@@ -30,6 +32,10 @@ public class CheckpointManager {
         this.state = state;
         this.client = client;
         this.executor = executor;
+    }
+    
+    public void setCoordinator(com.amazonaws.lambda.durable.execution.ExecutionCoordinator coordinator) {
+        this.coordinator = coordinator;
     }
     
     public CompletableFuture<Void> checkpoint(OperationUpdate update) {
@@ -62,12 +68,16 @@ public class CheckpointManager {
         try {
             var batch = collectBatch();
             if (!batch.isEmpty()) {
+                // Filter out null updates. A null update is sent when polling.
+                // During polling, we are only interested in receiving operation updates from
+                // the backend.
                 var updates = batch.stream()
                     .map(CheckpointRequest::update)
+                    .filter(u -> u != null)
                     .toList();
 
                 logger.debug("--- Making API call ---");
-                // Make API call
+                // Make API call (even with empty updates for polling)
                 var response = client.checkpoint(
                     state.getDurableExecutionArn(),
                     state.getCheckpointToken(), 
@@ -78,6 +88,11 @@ public class CheckpointManager {
                 // Update state after success
                 state.updateCheckpointToken(response.checkpointToken());
                 state.updateOperations(response.newExecutionState().operations());
+                
+                // Advance phasers for completed operations (critical!)
+                if (coordinator != null) {
+                    coordinator.updateOperations(response.newExecutionState().operations());
+                }
 
                 logger.debug("--- After checkpoint ---");
                 // Complete all futures
@@ -121,6 +136,11 @@ public class CheckpointManager {
     }
     
     private int estimateSize(OperationUpdate update) {
+        // Will be null when used for polling
+        if (update == null) {
+            return 0;
+        }
+
         return update.id().length() + 
                update.type().toString().length() + 
                update.action().toString().length() + 

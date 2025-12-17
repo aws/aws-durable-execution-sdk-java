@@ -2,6 +2,7 @@ package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
+import com.amazonaws.lambda.durable.execution.ExecutionCoordinator;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +39,8 @@ class ReplayValidationTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        durableContext = new DurableContext(checkpointManager, serDes, lambdaContext);
+        var coordinator = new ExecutionCoordinator(checkpointManager);
+        durableContext = new DurableContext(checkpointManager, serDes, lambdaContext, coordinator);
     }
     
     @Test

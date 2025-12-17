@@ -1,52 +1,35 @@
 package com.amazonaws.lambda.durable;
 
-import java.util.concurrent.*;
-import java.util.function.Function;
+import com.amazonaws.lambda.durable.operation.DurableOperation;
 
-public class DurableFuture<T> implements Future<T> {
-    private final CompletableFuture<T> delegate;
-    
-    DurableFuture(CompletableFuture<T> delegate) {
-        this.delegate = delegate;
+public class DurableFuture<T> {
+    private final DurableOperation<T> operation;
+
+    public DurableFuture(DurableOperation<T> operation) {
+        this.operation = operation;
     }
-    
-    public T join() {
-        return delegate.join();
+
+    /**
+     * Blocks until the operation completes and returns the result.
+     * 
+     * This delegates to operation.get() which handles:
+     * - Phaser blocking (arriveAndAwaitAdvance)
+     * - Thread deregistration (allows suspension)
+     * - Thread reactivation (resumes execution)
+     * - Result retrieval
+     * 
+     * @return the operation result
+     */
+    public T get() {
+        return operation.get();
     }
-    
-    @Override
-    public T get() throws InterruptedException, ExecutionException {
-        return delegate.get();
-    }
-    
-    @Override
-    public T get(long timeout, TimeUnit unit) 
-            throws InterruptedException, ExecutionException, TimeoutException {
-        return delegate.get(timeout, unit);
-    }
-    
-    @Override
-    public boolean cancel(boolean mayInterruptIfRunning) {
-        return delegate.cancel(mayInterruptIfRunning);
-    }
-    
-    @Override
-    public boolean isCancelled() {
-        return delegate.isCancelled();
-    }
-    
-    @Override
+
+    /**
+     * Checks if the operation is done.
+     * 
+     * @return true if the operation has completed (phaser phase > 0)
+     */
     public boolean isDone() {
-        return delegate.isDone();
-    }
-    
-    public <U> DurableFuture<U> thenCompose(Function<T, DurableFuture<U>> fn) {
-        return new DurableFuture<>(
-            delegate.thenCompose(t -> fn.apply(t).delegate)
-        );
-    }
-    
-    CompletableFuture<T> toCompletableFuture() {
-        return delegate;
+        return operation.getPhaser().getPhase() > 0;
     }
 }
