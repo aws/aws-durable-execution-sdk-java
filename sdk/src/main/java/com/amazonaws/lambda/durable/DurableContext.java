@@ -22,6 +22,7 @@ public class DurableContext {
     private final SerDes serDes;
     private final Context lambdaContext;
     private final AtomicInteger operationCounter;
+    private final ExecutionCoordinator coordinator;
 
     DurableContext(ExecutionManager executionManager, SerDes serDes, Context lambdaContext) {
         this.executionManager = executionManager;
