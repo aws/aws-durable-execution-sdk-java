@@ -39,8 +39,8 @@ class CheckpointManager {
     record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {
     }
 
-    CheckpointManager(DurableExecutionClient client, ExecutorService executor,
-            String durableExecutionArn, java.util.function.Supplier<String> tokenSupplier,
+    CheckpointManager(DurableExecutionClient client, ExecutorService executor, String durableExecutionArn,
+            Supplier<String> tokenSupplier,
             CheckpointCallback callback) {
         this.client = client;
         this.executor = executor;
