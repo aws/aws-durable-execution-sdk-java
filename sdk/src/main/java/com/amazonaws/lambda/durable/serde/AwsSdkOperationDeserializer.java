@@ -51,16 +51,18 @@ public class AwsSdkOperationDeserializer extends JsonDeserializer<Operation> {
         // Handle ExecutionDetails
         if (node.has("ExecutionDetails")) {
             var details = node.get("ExecutionDetails");
-            builder.executionDetails(ExecutionDetails.builder()
+            var executionDetails = ExecutionDetails.builder()
                     .inputPayload(details.has("InputPayload") ? details.get("InputPayload").asText() : null)
-                    .build());
+                    .build();
+            builder.executionDetails(executionDetails);
         }
 
         // Handle ContextDetails
         if (node.has("ContextDetails")) {
-            builder.contextDetails(ContextDetails.builder()
+            var contextDetails = ContextDetails.builder()
                     // Add context-specific fields as needed based on ContextDetails structure
-                    .build());
+                    .build();
+            builder.contextDetails(contextDetails);
         }
 
         // Handle StepDetails
@@ -77,10 +79,11 @@ public class AwsSdkOperationDeserializer extends JsonDeserializer<Operation> {
             // Handle error if present
             if (details.has("Error")) {
                 var error = details.get("Error");
-                stepDetailsBuilder.error(ErrorObject.builder()
+                var errorObject = ErrorObject.builder()
                         .errorType(error.has("ErrorType") ? error.get("ErrorType").asText() : null)
                         .errorMessage(error.has("ErrorMessage") ? error.get("ErrorMessage").asText() : null)
-                        .build());
+                        .build();
+                stepDetailsBuilder.error(errorObject);
             }
 
             builder.stepDetails(stepDetailsBuilder.build());
@@ -93,8 +96,8 @@ public class AwsSdkOperationDeserializer extends JsonDeserializer<Operation> {
 
             // Handle scheduled end timestamp if present
             if (details.has("ScheduledEndTimestamp")) {
-                waitDetailsBuilder.scheduledEndTimestamp(
-                        Instant.from(TIMESTAMP_FORMATTER.parse(details.get("ScheduledEndTimestamp").asText())));
+                var timestamp = Instant.from(TIMESTAMP_FORMATTER.parse(details.get("ScheduledEndTimestamp").asText()));
+                waitDetailsBuilder.scheduledEndTimestamp(timestamp);
             }
 
             builder.waitDetails(waitDetailsBuilder.build());
@@ -118,10 +121,11 @@ public class AwsSdkOperationDeserializer extends JsonDeserializer<Operation> {
             // Handle error if present
             if (details.has("Error")) {
                 var error = details.get("Error");
-                callbackDetailsBuilder.error(ErrorObject.builder()
+                var errorObject = ErrorObject.builder()
                         .errorType(error.has("ErrorType") ? error.get("ErrorType").asText() : null)
                         .errorMessage(error.has("ErrorMessage") ? error.get("ErrorMessage").asText() : null)
-                        .build());
+                        .build();
+                callbackDetailsBuilder.error(errorObject);
             }
 
             builder.callbackDetails(callbackDetailsBuilder.build());
@@ -140,10 +144,11 @@ public class AwsSdkOperationDeserializer extends JsonDeserializer<Operation> {
             // Handle error if present
             if (details.has("Error")) {
                 var error = details.get("Error");
-                chainedInvokeDetailsBuilder.error(ErrorObject.builder()
+                var errorObject = ErrorObject.builder()
                         .errorType(error.has("ErrorType") ? error.get("ErrorType").asText() : null)
                         .errorMessage(error.has("ErrorMessage") ? error.get("ErrorMessage").asText() : null)
-                        .build());
+                        .build();
+                chainedInvokeDetailsBuilder.error(errorObject);
             }
 
             builder.chainedInvokeDetails(chainedInvokeDetailsBuilder.build());

@@ -6,15 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import org.junit.jupiter.api.Test;
 
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
-import com.amazonaws.lambda.durable.retry.RetryStrategy;
 
 class StepConfigTest {
 
     @Test
     void testBuilderWithRetryStrategy() {
-        RetryStrategy strategy = RetryStrategies.Presets.DEFAULT;
+        var strategy = RetryStrategies.Presets.DEFAULT;
 
-        StepConfig config = StepConfig.builder()
+        var config = StepConfig.builder()
                 .retryStrategy(strategy)
                 .build();
 
@@ -23,16 +22,16 @@ class StepConfigTest {
 
     @Test
     void testBuilderWithoutRetryStrategy() {
-        StepConfig config = StepConfig.builder().build();
+        var config = StepConfig.builder().build();
 
         assertNull(config.retryStrategy());
     }
 
     @Test
     void testBuilderChaining() {
-        RetryStrategy strategy = RetryStrategies.Presets.NO_RETRY;
+        var strategy = RetryStrategies.Presets.NO_RETRY;
 
-        StepConfig config = StepConfig.builder()
+        var config = StepConfig.builder()
                 .retryStrategy(strategy)
                 // TODO: Add more chaining here once implemented
                 .build();
@@ -42,7 +41,7 @@ class StepConfigTest {
 
     @Test
     void testBuilderWithNullRetryStrategy() {
-        StepConfig config = StepConfig.builder()
+        var config = StepConfig.builder()
                 .retryStrategy(null)
                 .build();
 

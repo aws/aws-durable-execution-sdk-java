@@ -42,19 +42,19 @@ public class RetryExample extends DurableHandler<Object, String> {
         }
         
         // Step 3: Flaky API call that succeeds after retries
-        String result = context.step("flaky-api-call", String.class,
+        var result = context.step("flaky-api-call", String.class,
             () -> {
                 // Fail for first 8 seconds, then succeed
-                int failForMillis = 8000;
-                Duration elapsed = Duration.between(startTime, Instant.now());
+                var failForMillis = 8000;
+                var elapsed = Duration.between(startTime, Instant.now());
                 
                 if (elapsed.toMillis() < failForMillis) {
-                    String message = String.format("Flaky API failing - elapsed time (%.1fs) < %.1fs", 
+                    var message = String.format("Flaky API failing - elapsed time (%.1fs) < %.1fs", 
                         elapsed.toMillis() / 1000.0, failForMillis / 1000.0);
                     logger.warn(message);
                     throw new RuntimeException(message);
                 } else {
-                    String message = String.format("Flaky API succeeded - elapsed time (%.1fs) >= %.1fs", 
+                    var message = String.format("Flaky API succeeded - elapsed time (%.1fs) >= %.1fs", 
                         elapsed.toMillis() / 1000.0, failForMillis / 1000.0);
                     logger.info(message);
                     return message;

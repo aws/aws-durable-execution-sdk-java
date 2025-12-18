@@ -12,8 +12,8 @@ class RetryDecisionTest {
 
     @Test
     void testRetryDecision() {
-        Duration delay = Duration.ofSeconds(5);
-        RetryDecision decision = RetryDecision.retry(delay);
+        var delay = Duration.ofSeconds(5);
+        var decision = RetryDecision.retry(delay);
 
         assertTrue(decision.shouldRetry());
         assertEquals(delay, decision.delay());
@@ -21,7 +21,7 @@ class RetryDecisionTest {
 
     @Test
     void testFailDecision() {
-        RetryDecision decision = RetryDecision.fail();
+        var decision = RetryDecision.fail();
 
         assertFalse(decision.shouldRetry());
         assertEquals(Duration.ZERO, decision.delay());
@@ -29,7 +29,7 @@ class RetryDecisionTest {
 
     @Test
     void testRetryWithNullDelay() {
-        RetryDecision decision = RetryDecision.retry(null);
+        var decision = RetryDecision.retry(null);
 
         assertTrue(decision.shouldRetry());
         assertEquals(Duration.ZERO, decision.delay());
@@ -37,8 +37,8 @@ class RetryDecisionTest {
 
     @Test
     void testToString() {
-        RetryDecision retry = RetryDecision.retry(Duration.ofSeconds(10));
-        RetryDecision fail = RetryDecision.fail();
+        var retry = RetryDecision.retry(Duration.ofSeconds(10));
+        var fail = RetryDecision.fail();
 
         assertTrue(retry.toString().contains("retry after"));
         assertTrue(retry.toString().contains("10"));
