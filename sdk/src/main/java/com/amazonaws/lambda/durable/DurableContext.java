@@ -10,6 +10,8 @@ import java.util.function.Supplier;
 import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
+import com.amazonaws.lambda.durable.retry.RetryStrategies;
+import com.amazonaws.lambda.durable.retry.RetryStrategy;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.SneakyThrow;
 import com.amazonaws.services.lambda.runtime.Context;
@@ -37,7 +39,8 @@ public class DurableContext {
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
-        return step(name, resultType, func, null);
+        return step(name, resultType, func,
+                StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build());
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
@@ -58,7 +61,8 @@ public class DurableContext {
     }
 
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func) {
-        return stepAsync(name, resultType, func, null);
+        return stepAsync(name, resultType, func,
+                StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build());
     }
 
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
