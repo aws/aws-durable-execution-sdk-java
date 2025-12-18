@@ -33,15 +33,15 @@ class RetryIntegrationTest {
     @Test
     void testStepConfigWithRetryStrategy() {
         // Test that we can create and use StepConfig with retry strategies
-        StepConfig config1 = StepConfig.builder()
+        var config1 = StepConfig.builder()
                 .retryStrategy(RetryStrategies.Presets.DEFAULT)
                 .build();
 
-        StepConfig config2 = StepConfig.builder()
+        var config2 = StepConfig.builder()
                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                 .build();
 
-        StepConfig config3 = StepConfig.builder()
+        var config3 = StepConfig.builder()
                 .retryStrategy(RetryStrategies.exponentialBackoff(
                         3, Duration.ofSeconds(1), Duration.ofSeconds(10), 2.0, JitterStrategy.NONE))
                 .build();
@@ -51,9 +51,9 @@ class RetryIntegrationTest {
         assertNotNull(config3.retryStrategy());
 
         // Test that the strategies work as expected
-        RetryDecision decision1 = config1.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
-        RetryDecision decision2 = config2.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
-        RetryDecision decision3 = config3.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
+        var decision1 = config1.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
+        var decision2 = config2.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
+        var decision3 = config3.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
 
         assertTrue(decision1.shouldRetry()); // DEFAULT should retry
         assertFalse(decision2.shouldRetry()); // NO_RETRY should not retry
@@ -63,7 +63,7 @@ class RetryIntegrationTest {
     @Test
     void testRetryStrategyDelayProgression() {
         // Test that exponential backoff produces expected delay progression
-        RetryStrategy strategy = RetryStrategies.exponentialBackoff(
+        var strategy = RetryStrategies.exponentialBackoff(
                 5, // 5 attempts
                 Duration.ofSeconds(2), // 2 second initial delay
                 Duration.ofSeconds(60), // 60 second max delay
@@ -72,11 +72,11 @@ class RetryIntegrationTest {
         );
 
         // Test delay progression: 2, 4, 8, 16 seconds
-        RetryDecision decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
-        RetryDecision decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
-        RetryDecision decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
-        RetryDecision decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
-        RetryDecision decision4 = strategy.makeRetryDecision(new RuntimeException("test"), 4);
+        var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
+        var decision4 = strategy.makeRetryDecision(new RuntimeException("test"), 4);
 
         assertTrue(decision0.shouldRetry());
         assertEquals(2, decision0.delay().toSeconds());

@@ -1,7 +1,6 @@
 package com.amazonaws.lambda.durable.examples;
 
 import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
-import com.amazonaws.lambda.durable.testing.TestResult;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -11,13 +10,12 @@ class RetryExampleTest {
     @Test
     void testRetryExampleWithTimeBasedFailure() {
         // Test the retry example with time-based failure simulation
-        LocalDurableTestRunner<String, String> runner = 
-            new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
-                RetryExample handler = new RetryExample();
-                return handler.handleRequest(input, ctx);
-            });
+        var runner = new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
+            var handler = new RetryExample();
+            return handler.handleRequest(input, ctx);
+        });
 
-        TestResult<String> result = runner.run("test-input");
+        var result = runner.run("test-input");
         
         // The test will likely result in PENDING due to the time-based failure
         // This demonstrates the retry mechanism in action
@@ -33,13 +31,12 @@ class RetryExampleTest {
         // This test demonstrates the retry behavior without strict assertions
         // It's useful for observing the retry mechanism in action
         
-        LocalDurableTestRunner<String, String> runner = 
-            new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
-                RetryExample handler = new RetryExample();
-                return handler.handleRequest(input, ctx);
-            });
+        var runner = new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
+            var handler = new RetryExample();
+            return handler.handleRequest(input, ctx);
+        });
 
-        TestResult<String> result = runner.run("demo-input");
+        var result = runner.run("demo-input");
         
         System.out.println("Demo execution status: " + result.getStatus());
         
@@ -51,13 +48,12 @@ class RetryExampleTest {
     @Test
     void testRetryExampleShowsRetryBehavior() {
         // Test that shows the different retry behaviors
-        LocalDurableTestRunner<String, String> runner = 
-            new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
-                RetryExample handler = new RetryExample();
-                return handler.handleRequest(input, ctx);
-            });
+        var runner = new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
+            var handler = new RetryExample();
+            return handler.handleRequest(input, ctx);
+        });
 
-        TestResult<String> result = runner.run("retry-behavior-test");
+        var result = runner.run("retry-behavior-test");
         
         System.out.println("Retry behavior test status: " + result.getStatus());
         

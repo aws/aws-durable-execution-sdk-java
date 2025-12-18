@@ -10,6 +10,7 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
+import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
 
@@ -33,7 +34,8 @@ public class DurableContext {
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
-        return step(name, resultType, func, null);
+        return step(name, resultType, func,
+                StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build());
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
@@ -42,7 +44,8 @@ public class DurableContext {
     }
 
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func) {
-        return stepAsync(name, resultType, func, null);
+        return stepAsync(name, resultType, func,
+                StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build());
     }
 
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
