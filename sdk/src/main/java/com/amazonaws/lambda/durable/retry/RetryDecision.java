@@ -5,10 +5,6 @@ import java.time.Duration;
 /**
  * Represents a decision about whether to retry a failed operation and how long
  * to wait.
- * 
- * This class encapsulates the result of a retry strategy evaluation, indicating
- * whether the operation should be retried and the delay before the next
- * attempt.
  */
 public class RetryDecision {
     private final boolean shouldRetry;
