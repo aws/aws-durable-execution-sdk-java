@@ -3,8 +3,8 @@ package com.amazonaws.lambda.durable;
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
+import com.amazonaws.lambda.durable.serde.AwsSdkV2Module;
 import com.amazonaws.services.lambda.runtime.Context;
-import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
@@ -19,7 +19,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.util.Date;
 
 public abstract class DurableHandler<I, O> implements RequestStreamHandler {
@@ -29,7 +31,6 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     private final ObjectMapper objectMapper = createObjectMapper();
     private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);
     
-    @SuppressWarnings("unchecked")
     protected DurableHandler() {
         this(null);
     }
@@ -98,8 +99,21 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
                 jsonGenerator.writeNumber(timestamp);
             }
         });
+        
+        // Needed for deserialization of timestamps for some SDK v2 objects
+        dateModule.addDeserializer(Instant.class, new JsonDeserializer<>() {
+            private static final DateTimeFormatter TIMESTAMP_FORMATTER = new DateTimeFormatterBuilder()
+                .appendPattern("yyyy-MM-dd HH:mm:ss.SSSSSSXXX")
+                .toFormatter();
 
-        return JsonMapper.builder()
+            @Override
+            public Instant deserialize(JsonParser jsonParser, DeserializationContext deserializationContext) throws IOException {
+                String timestampStr = jsonParser.getValueAsString();
+                return Instant.from(TIMESTAMP_FORMATTER.parse(timestampStr));
+            }
+        });
+
+        var baseMapper = JsonMapper.builder()
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
 
@@ -112,5 +126,9 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
                 .addModule(new JavaTimeModule())
                 .addModule(dateModule)
                 .build();
+
+        baseMapper.registerModule(new AwsSdkV2Module(baseMapper));
+        
+        return baseMapper;
     }
 }
