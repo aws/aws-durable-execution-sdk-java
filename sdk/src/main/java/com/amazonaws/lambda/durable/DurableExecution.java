@@ -79,7 +79,6 @@ public class DurableExecution {
             var result = handler.apply(userInput, context);
             logger.debug("--- Handler returned ---");
             return DurableExecutionOutput.success(serDes.serialize(result));
-            
         } catch (SuspendExecutionException e) {
             return DurableExecutionOutput.pending();
         } catch (Exception e) {
