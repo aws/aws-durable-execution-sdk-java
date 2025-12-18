@@ -11,7 +11,6 @@ import com.amazonaws.lambda.durable.checkpoint.CheckpointManager;
 import com.amazonaws.lambda.durable.checkpoint.SuspendExecutionException;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
-import com.amazonaws.lambda.durable.retry.RetryStrategy;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.SneakyThrow;
 import com.amazonaws.services.lambda.runtime.Context;
