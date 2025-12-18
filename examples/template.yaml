@@ -47,6 +47,24 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example'
 
+  RetryExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: retry-example
+      Handler: com.amazonaws.lambda.durable.examples.RetryExample
+      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      DurableConfig:
+        Enabled: true
+        ExecutionTimeout: 3600
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example'
+
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
@@ -63,3 +81,11 @@ Outputs:
   WaitExampleFunctionName:
     Description: Wait Example Function Name
     Value: !Ref WaitExampleFunction
+  
+  RetryExampleFunction:
+    Description: Retry Example Function ARN
+    Value: !GetAtt RetryExampleFunction.Arn
+  
+  RetryExampleFunctionName:
+    Description: Retry Example Function Name
+    Value: !Ref RetryExampleFunction
