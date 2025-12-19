@@ -2,7 +2,6 @@ package com.amazonaws.lambda.durable.execution;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -17,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -40,6 +40,7 @@ public class ExecutionManager {
 
     // ===== Execution State =====
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();
+    private final String executionOperationId;
     private volatile String checkpointToken;
     private final String durableExecutionArn;
 
@@ -52,39 +53,52 @@ public class ExecutionManager {
     private final Executor managedExecutor;
 
     // ===== Checkpoint Batching =====
-    private final CheckpointManager checkpointManager;
+    private final CheckpointBatcher checkpointBatcher;
+    private final DurableExecutionClient client;
 
     public ExecutionManager(String durableExecutionArn, String checkpointToken,
-            List<Operation> initialOperations,
+            InitialExecutionState initialExecutionState,
             DurableExecutionClient client,
             Executor executor) {
         this.durableExecutionArn = durableExecutionArn;
         this.checkpointToken = checkpointToken;
-        initialOperations.forEach(op -> operations.put(op.id(), op));
+        this.client = client;
+        this.executionOperationId = initialExecutionState.operations().get(0).id();
+        loadAllOperations(initialExecutionState);
 
-        // Use the provided executor (same one used for handler)
         this.managedExecutor = executor;
 
         // Create checkpoint manager (package-private)
         // Pass method references to avoid cyclic dependency
         var checkpointExecutor = Executors.newSingleThreadExecutor();
-        this.checkpointManager = new CheckpointManager(
-            client,
-            checkpointExecutor,
-            durableExecutionArn,
-            this::getCheckpointToken,
-            this::onCheckpointComplete
-        );
+        this.checkpointBatcher = new CheckpointBatcher(
+                client,
+                checkpointExecutor,
+                durableExecutionArn,
+                this::getCheckpointToken,
+                this::onCheckpointComplete);
     }
-    
+
+    private void loadAllOperations(InitialExecutionState initialExecutionState) {
+        var initialOperations = initialExecutionState.operations();
+        initialOperations.forEach(op -> operations.put(op.id(), op));
+
+        var nextMarker = initialExecutionState.nextMarker();
+        while (nextMarker != null && !nextMarker.isEmpty()) {
+            var response = client.getExecutionState(durableExecutionArn, nextMarker);
+            response.operations().forEach(op -> operations.put(op.id(), op));
+            nextMarker = response.nextMarker();
+        }
+    }
+
     // ===== Checkpoint Completion Handler =====
-    
+
     /**
      * Called by CheckpointManager when a checkpoint completes.
      * Updates state and advances phasers.
      */
     private void onCheckpointComplete(String newToken, List<Operation> newOperations) {
-        updateCheckpointToken(newToken);
+        this.checkpointToken = newToken;
         updateOperations(newOperations);
     }
 
@@ -98,22 +112,20 @@ public class ExecutionManager {
         return checkpointToken;
     }
 
-    public void updateCheckpointToken(String newToken) {
-        this.checkpointToken = newToken;
-    }
-
-    public void updateOperations(List<Operation> newOperations) {
+    private void updateOperations(List<Operation> newOperations) {
         // Update operation storage
         newOperations.forEach(op -> operations.put(op.id(), op));
 
         // Advance phasers for completed operations
         for (Operation operation : newOperations) {
             if (openPhasers.containsKey(operation.id()) && isTerminalStatus(operation.status())) {
-                Phaser phaser = openPhasers.get(operation.id());
+                var phaser = openPhasers.get(operation.id());
 
                 // Two-phase completion
-                phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1 (notify waiters)
-                phaser.arriveAndAwaitAdvance(); // Phase 1 -> 2 (wait for reactivation)
+                logger.debug("Advancing phaser 0 -> 1: {}", phaser);
+                phaser.arriveAndAwaitAdvance();
+                logger.debug("Advancing phaser 1 -> 2: {}", phaser);
+                phaser.arriveAndAwaitAdvance();
             }
         }
     }
@@ -122,8 +134,8 @@ public class ExecutionManager {
         return operations.get(operationId);
     }
 
-    public Collection<Operation> getAllOperations() {
-        return operations.values();
+    public Operation getExecutionOperation() {
+        return operations.get(executionOperationId);
     }
 
     // ===== Thread Coordination =====
@@ -168,7 +180,7 @@ public class ExecutionManager {
     // ===== Phaser Management =====
 
     public Phaser startPhaser(String operationId) {
-        Phaser phaser = new Phaser(1);
+        var phaser = new Phaser(1);
         openPhasers.put(operationId, phaser);
         logger.debug("Started phaser for operation '{}'", operationId);
         return phaser;
@@ -181,27 +193,30 @@ public class ExecutionManager {
     // ===== Checkpointing =====
 
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
-        return checkpointManager.checkpoint(update);
+        return checkpointBatcher.checkpoint(update);
     }
 
     // ===== Polling =====
 
-    public void pollForUpdates(String operationId, Instant firstPollTime, Duration period) {
+    // This method will poll the operation from the DAR backend until it moves to a
+    // terminal state. This is useful for in-process waits. For example, we want to
+    // wait while another thread is still running and we therefore are not
+    // re-invoked because we never suspended.
+    public void pollForOperationUpdates(String operationId, Instant firstPollTime, Duration period) {
         managedExecutor.execute(() -> {
             // Sleep until the start
             try {
-                Duration sleepDuration = Duration.between(Instant.now(), firstPollTime);
+                var sleepDuration = Duration.between(Instant.now(), firstPollTime);
                 if (!sleepDuration.isNegative()) {
                     logger.debug("Polling for '{}': sleeping {} before polling",
                             operationId, sleepDuration);
                     Thread.sleep(sleepDuration.toMillis());
                 }
             } catch (InterruptedException ignored) {
-                return;
             }
 
             // Poll while phaser is in phase 0
-            while (this.getPhaser(operationId).getPhase() == 0) {
+            while (this.getPhaser(operationId).getPhase() == ExecutionPhase.RUNNING.getValue()) {
                 if (suspendExecutionFuture.isDone()) {
                     logger.debug("Polling for '{}': execution suspended, stopping", operationId);
                     return;
@@ -221,7 +236,13 @@ public class ExecutionManager {
         });
     }
 
-    public void pollForUpdates(String operationId, CompletableFuture<Void> future, Instant firstPollTime,
+    // This method will poll the operation from the DAR backend until we move to a
+    // READY state. If we are ready (based on NextScheduleTimestamp),
+    // the provided future will be completed. This is useful for in-process retries.
+    // For example, we
+    // want to retry while another thread is still running and we therefore are not
+    // re-invoked because we never suspended.
+    public void pollUntilReady(String operationId, CompletableFuture<Void> future, Instant firstPollTime,
             Duration period) {
         managedExecutor.execute(() -> {
             // Sleep until first poll time
@@ -233,8 +254,6 @@ public class ExecutionManager {
                     Thread.sleep(sleepDuration.toMillis());
                 }
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
             }
 
             // Poll while future is not done
@@ -277,7 +296,7 @@ public class ExecutionManager {
     }
 
     public void shutdown() {
-        checkpointManager.shutdown();
+        checkpointBatcher.shutdown();
     }
 
     private boolean isTerminalStatus(OperationStatus status) {

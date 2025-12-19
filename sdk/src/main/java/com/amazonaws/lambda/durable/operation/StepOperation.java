@@ -11,11 +11,11 @@ import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -33,6 +33,7 @@ public class StepOperation<T> implements DurableOperation<T> {
     private final StepConfig config;
     private final ExecutionManager executionManager;
     private final SerDes serDes;
+    private final Phaser phaser;
 
     public StepOperation(
             String operationId,
@@ -49,6 +50,8 @@ public class StepOperation<T> implements DurableOperation<T> {
         this.config = config;
         this.executionManager = executionManager;
         this.serDes = serDes;
+
+        this.phaser = executionManager.startPhaser(operationId);
     }
 
     @Override
@@ -62,20 +65,19 @@ public class StepOperation<T> implements DurableOperation<T> {
     }
 
     @Override
-    public Phaser getPhaser() {
-        return executionManager.getPhaser(operationId);
-    }
-
-    @Override
     public void execute() {
-        // Check replay
         var existing = executionManager.getOperation(operationId);
 
         if (existing != null) {
+            // This means we are in a replay scenario
             switch (existing.status()) {
                 case SUCCEEDED, FAILED -> {
-                    // Already done, complete phaser immediately
-                    getPhaser().arriveAndDeregister();
+                    // Operation is already completed (we are in a replay). We advance and
+                    // deregister from the Phaser
+                    // so that .get() doesn't block and returns the result immediately. See
+                    // StepOperation.get().
+                    logger.debug("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
+                    phaser.arriveAndDeregister(); // Phase 0 -> 1
                     return;
                 }
                 case STARTED -> {
@@ -87,7 +89,7 @@ public class StepOperation<T> implements DurableOperation<T> {
                 case PENDING -> {
                     // Step is pending retry - setup polling
                     // Create a future that will be completed when step transitions to READY
-                    var pendingFuture = new java.util.concurrent.CompletableFuture<Void>();
+                    var pendingFuture = new CompletableFuture<Void>();
 
                     // When future completes, execute the step
                     pendingFuture.thenRun(() -> executeStepLogic(existing.stepDetails().attempt()));
@@ -97,7 +99,7 @@ public class StepOperation<T> implements DurableOperation<T> {
                     if (nextAttemptTime == null) {
                         nextAttemptTime = Instant.now().plusSeconds(1);
                     }
-                    executionManager.pollForUpdates(operationId, pendingFuture, nextAttemptTime,
+                    executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime,
                             Duration.ofSeconds(1));
                     return;
                 }
@@ -117,7 +119,7 @@ public class StepOperation<T> implements DurableOperation<T> {
 
     private void executeStepLogic(int attempt) {
         // Register step thread as active
-        String stepThreadId = operationId + "-step";
+        var stepThreadId = operationId + "-step";
         executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
 
         // Execute in managed executor
@@ -151,8 +153,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                 executionManager.sendOperationUpdate(successUpdate).join();
 
                 // Two-phase completion (critical!)
-                getPhaser().arriveAndAwaitAdvance(); // Phase 0 -> 1 (notify waiters)
-                getPhaser().arriveAndAwaitAdvance(); // Phase 1 -> 2 (wait for reactivation)
+                phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1 (notify waiters)
+                phaser.arriveAndAwaitAdvance(); // Phase 1 -> 2 (wait for reactivation)
 
             } catch (Throwable e) {
                 handleStepError(e, attempt);
@@ -193,7 +195,7 @@ public class StepOperation<T> implements DurableOperation<T> {
                 var nextAttemptTime = Instant.now()
                         .plus(retryDecision.delay())
                         .plusMillis(25);
-                executionManager.pollForUpdates(operationId, pendingFuture, nextAttemptTime,
+                executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime,
                         Duration.ofMillis(200));
                 return;
             } else {
@@ -209,8 +211,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                 executionManager.sendOperationUpdate(failUpdate).join();
 
                 // Complete phaser for failed step
-                getPhaser().arriveAndAwaitAdvance();
-                getPhaser().arriveAndAwaitAdvance();
+                phaser.arriveAndAwaitAdvance();
+                phaser.arriveAndAwaitAdvance();
             }
         } else {
             // No retry - send FAIL
@@ -225,39 +227,44 @@ public class StepOperation<T> implements DurableOperation<T> {
             executionManager.sendOperationUpdate(failUpdate).join();
 
             // Complete phaser for failed step
-            getPhaser().arriveAndAwaitAdvance();
-            getPhaser().arriveAndAwaitAdvance();
+            phaser.arriveAndAwaitAdvance();
+            phaser.arriveAndAwaitAdvance();
         }
     }
 
     @Override
     public T get() {
-        if (getPhaser().getPhase() == 0) {
+        // If we are in a replay where the operation is already complete (SUCCEEDED /
+        // FAILED), the Phaser will be
+        // advanced in .execute() already and we don't block but return the result
+        // immediately.
+        if (phaser.getPhase() == ExecutionPhase.RUNNING.getValue()) {
             // Operation not done yet
-            getPhaser().register();
+            phaser.register();
 
             // Deregister current thread - allows suspension
             executionManager.deregisterActiveThread("Root");
 
             // Block until operation completes
-            getPhaser().arriveAndAwaitAdvance(); // Wait for phase 0
+            logger.debug("Waiting for operation to finish {} (Phaser: {})", operationId, phaser);
+            phaser.arriveAndAwaitAdvance(); // Wait for phase 0
 
             // Reactivate current thread
             executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
 
             // Complete phase 1
-            getPhaser().arriveAndDeregister();
+            phaser.arriveAndDeregister();
         }
 
         // Get result from coordinator
-        Operation op = executionManager.getOperation(operationId);
+        var op = executionManager.getOperation(operationId);
         if (op == null) {
             throw new RuntimeException("Step '" + name + "' operation not found");
         }
 
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();
-            String result = (stepDetails != null) ? stepDetails.result() : null;
+            var result = (stepDetails != null) ? stepDetails.result() : null;
             return serDes.deserialize(result, resultType);
         } else if (op.status() == OperationStatus.FAILED) {
             throw new RuntimeException("Step '" + name + "' failed");

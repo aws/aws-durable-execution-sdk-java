@@ -24,9 +24,9 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  * Uses CheckpointCallback to notify when checkpoints complete, avoiding cyclic
  * dependency.
  */
-class CheckpointManager {
+class CheckpointBatcher {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
-    private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);
+    private static final Logger logger = LoggerFactory.getLogger(CheckpointBatcher.class);
 
     private final CheckpointCallback callback;
     private final Supplier<String> tokenSupplier;
@@ -39,7 +39,7 @@ class CheckpointManager {
     record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {
     }
 
-    CheckpointManager(DurableExecutionClient client, ExecutorService executor, String durableExecutionArn,
+    CheckpointBatcher(DurableExecutionClient client, ExecutorService executor, String durableExecutionArn,
             Supplier<String> tokenSupplier,
             CheckpointCallback callback) {
         this.client = client;
@@ -50,14 +50,13 @@ class CheckpointManager {
     }
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
-        logger.info("Checkpoint request received");
+        logger.debug("Checkpoint request received: Action {}", update.action());
         var future = new CompletableFuture<Void>();
         queue.offer(new CheckpointRequest(update, future));
 
         if (isProcessing.compareAndSet(false, true)) {
             executor.submit(this::processQueue);
         }
-        logger.info("Checkpoint request submitted");
 
         return future;
     }
@@ -67,7 +66,6 @@ class CheckpointManager {
         queue.drainTo(remaining);
         remaining.forEach(
                 req -> req.completion().completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
-        executor.shutdown();
     }
 
     private void processQueue() {
@@ -80,19 +78,18 @@ class CheckpointManager {
                         .filter(u -> u != null)
                         .toList();
 
-                logger.debug("--- Making API call ---");
+                logger.debug("Calling DAR backend with {} updates.", updates.size());
                 var response = client.checkpoint(
                         durableExecutionArn,
                         tokenSupplier.get(),
                         updates);
-                logger.debug("--- API call done ---");
+                logger.debug("DAR backend called.");
 
                 // Notify callback of completion
                 callback.onComplete(
                         response.checkpointToken(),
                         response.newExecutionState().operations());
 
-                logger.debug("--- After checkpoint ---");
                 batch.forEach(req -> req.completion().complete(null));
             }
         } catch (Exception e) {

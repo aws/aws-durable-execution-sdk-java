@@ -7,7 +7,6 @@ import java.util.List;
 /**
  * Functional interface for checkpoint completion notifications.
  * 
- * Breaks the cyclic dependency between ExecutionManager and CheckpointManager.
  * CheckpointManager calls this when a checkpoint completes, allowing
  * ExecutionManager to update state and advance phasers.
  */

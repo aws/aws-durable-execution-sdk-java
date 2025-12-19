@@ -44,12 +44,4 @@ public interface DurableOperation<T> {
      * @return the operation result
      */
     T get();
-
-    /**
-     * Gets the phaser for this operation.
-     * Used by DurableFuture to check if operation is done.
-     * 
-     * @return the operation's phaser
-     */
-    Phaser getPhaser();
 }

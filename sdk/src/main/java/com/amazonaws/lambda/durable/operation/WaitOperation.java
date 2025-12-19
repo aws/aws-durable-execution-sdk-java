@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -24,6 +25,7 @@ public class WaitOperation implements DurableOperation<Void> {
     private final String name;
     private final Duration duration;
     private final ExecutionManager executionManager;
+    private final Phaser phaser;
 
     public WaitOperation(
             String operationId,
@@ -34,6 +36,8 @@ public class WaitOperation implements DurableOperation<Void> {
         this.name = name;
         this.duration = duration;
         this.executionManager = executionManager;
+
+        this.phaser = executionManager.startPhaser(operationId);
     }
 
     @Override
@@ -47,18 +51,13 @@ public class WaitOperation implements DurableOperation<Void> {
     }
 
     @Override
-    public Phaser getPhaser() {
-        return executionManager.getPhaser(operationId);
-    }
-
-    @Override
     public void execute() {
         // Check replay
         var existing = executionManager.getOperation(operationId);
 
         if (existing != null && existing.status() == OperationStatus.SUCCEEDED) {
             // Wait already completed
-            getPhaser().arriveAndDeregister();
+            phaser.arriveAndDeregister();
             return;
         }
 
@@ -97,13 +96,13 @@ public class WaitOperation implements DurableOperation<Void> {
         Instant firstPoll = Instant.now()
                 .plus(remainingWaitTime)
                 .plusMillis(25);
-        executionManager.pollForUpdates(operationId, firstPoll, Duration.ofMillis(200));
+        executionManager.pollForOperationUpdates(operationId, firstPoll, Duration.ofMillis(200));
     }
 
     @Override
     public Void get() {
-        if (getPhaser().getPhase() == 0) {
-            getPhaser().register();
+        if (phaser.getPhase() == ExecutionPhase.RUNNING.getValue()) {
+            phaser.register();
 
             // Deregister current thread - THIS is where suspension can happen!
             // If no other threads are active, this will throw SuspendExecutionException
@@ -111,13 +110,13 @@ public class WaitOperation implements DurableOperation<Void> {
 
             // Complete the wait phaser immediately (we don't actually wait in Lambda)
             // The backend handles the wait duration
-            getPhaser().arriveAndAwaitAdvance(); // Phase 0 -> 1
+            phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1
 
             // Reactivate current thread
             executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
 
             // Complete phase 1
-            getPhaser().arriveAndDeregister();
+            phaser.arriveAndDeregister();
         }
 
         return null;

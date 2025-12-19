@@ -34,7 +34,7 @@ class DurableExecutionWrapperTest {
         
         // Create handler using wrapper
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler = 
-            DurableExecution.wrap(TestInput.class, (input, context) -> {
+            DurableExecutor.wrap(TestInput.class, (input, context) -> {
                 var result = context.step("process", String.class, () -> 
                     "Wrapped: " + input.value
                 );
@@ -76,7 +76,7 @@ class DurableExecutionWrapperTest {
         
         // Create handler using method reference
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler = 
-            DurableExecution.wrap(TestInput.class, DurableExecutionWrapperTest::handleRequest, client);
+            DurableExecutor.wrap(TestInput.class, DurableExecutionWrapperTest::handleRequest, client);
         
         var serDes = new JacksonSerDes();
         

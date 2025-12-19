@@ -30,6 +30,8 @@ public class DurableContext {
         this.operationCounter = new AtomicInteger(0);
 
         // Register root context thread as active
+        // TODO: Once we implement child contexts, the threadId needs to be the ID of
+        // the child context
         executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
     }
 
@@ -56,9 +58,6 @@ public class DurableContext {
         if (existing != null) {
             validateReplay(operationId, OperationType.STEP, name, existing);
         }
-
-        // Create phaser for this operation
-        executionManager.startPhaser(operationId);
 
         // Create and start step operation
         StepOperation<T> operation = new StepOperation<>(
@@ -88,11 +87,8 @@ public class DurableContext {
             validateReplay(operationId, OperationType.WAIT, waitName, existing);
         }
 
-        // Create phaser for this operation
-        executionManager.startPhaser(operationId);
-
         // Create and start wait operation
-        WaitOperation operation = new WaitOperation(
+        var operation = new WaitOperation(
                 operationId,
                 waitName,
                 duration,
