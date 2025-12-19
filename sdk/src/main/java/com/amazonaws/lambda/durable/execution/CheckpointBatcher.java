@@ -79,17 +79,27 @@ class CheckpointBatcher {
                         .filter(u -> u != null)
                         .toList();
 
-                logger.debug("Calling DAR backend with {} updates.", updates.size());
+                logger.debug("Calling DAR backend with {} updates at checkpoint {}: {}.", updates.size(),
+                        tokenSupplier.get(), updates);
                 var response = client.checkpoint(
                         durableExecutionArn,
                         tokenSupplier.get(),
                         updates);
-                logger.debug("DAR backend called.");
+                logger.debug("DAR backend called: {}.", response);
 
                 // Notify callback of completion
-                callback.onComplete(
-                        response.checkpointToken(),
-                        response.newExecutionState().operations());
+                // TODO: sam local backend returns no new execution state when called with zero
+                // updates. WHY?
+                // This means the polling will never receive an operation update and complete
+                // the Phaser.
+                if (response.newExecutionState() != null && response.newExecutionState().operations() != null
+                        && !response.newExecutionState().operations().isEmpty()) {
+                    callback.onComplete(
+                            response.checkpointToken(),
+                            response.newExecutionState().operations());
+                } else {
+                    callback.onComplete(response.checkpointToken(), List.of());
+                }
 
                 batch.forEach(req -> req.completion().complete(null));
             }
