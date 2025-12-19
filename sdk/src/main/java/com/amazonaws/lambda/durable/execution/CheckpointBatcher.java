@@ -50,7 +50,8 @@ class CheckpointBatcher {
     }
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
-        logger.debug("Checkpoint request received: Action {}", update.action());
+        logger.debug("Checkpoint request received: Action {}",
+                update != null ? update.action() : "NULL (Checkpoint request)");
         var future = new CompletableFuture<Void>();
         queue.offer(new CheckpointRequest(update, future));
 
