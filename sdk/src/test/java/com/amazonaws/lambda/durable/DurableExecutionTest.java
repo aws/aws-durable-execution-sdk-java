@@ -31,7 +31,7 @@ class DurableExecutionTest {
             new com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState(List.of(executionOp), null)
         );
         
-        var output = DurableExecution.execute(input, null, String.class,
+        var output = DurableExecutor.execute(input, null, String.class,
             (userInput, ctx) -> {
                 var result = ctx.step("test", String.class, () -> "Hello " + userInput);
                 return result;
@@ -60,7 +60,7 @@ class DurableExecutionTest {
             new com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState(List.of(executionOp), null)
         );
         
-        var output = DurableExecution.execute(input, null, String.class,
+        var output = DurableExecutor.execute(input, null, String.class,
             (userInput, ctx) -> {
                 ctx.step("step1", String.class, () -> "Done");
                 ctx.wait(java.time.Duration.ofSeconds(60));
@@ -89,7 +89,7 @@ class DurableExecutionTest {
             new com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState(List.of(executionOp), null)
         );
         
-        var output = DurableExecution.execute(input, null, String.class,
+        var output = DurableExecutor.execute(input, null, String.class,
             (userInput, ctx) -> {
                 throw new RuntimeException("Test error");
             }, client);
@@ -118,7 +118,7 @@ class DurableExecutionTest {
             new com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState(List.of(executionOp), null)
         );
         
-        var output1 = DurableExecution.execute(input1, null, String.class,
+        var output1 = DurableExecutor.execute(input1, null, String.class,
             (userInput, ctx) -> {
                 var result = ctx.step("step1", String.class, () -> "First");
                 return result;
@@ -144,7 +144,7 @@ class DurableExecutionTest {
                 List.of(executionOp, completedStep), null)
         );
         
-        var output2 = DurableExecution.execute(input2, null, String.class,
+        var output2 = DurableExecutor.execute(input2, null, String.class,
             (userInput, ctx) -> {
                 var result = ctx.step("step1", String.class, () -> "Second");
                 return result;
@@ -164,7 +164,7 @@ class DurableExecutionTest {
         );
         
         var exception = assertThrows(IllegalStateException.class,
-            () -> DurableExecution.execute(input, null, String.class,
+            () -> DurableExecutor.execute(input, null, String.class,
                 (userInput, ctx) -> "result", client));
         
         assertEquals("First operation must be EXECUTION", exception.getMessage());
@@ -189,7 +189,7 @@ class DurableExecutionTest {
         );
         
         var exception = assertThrows(IllegalStateException.class,
-            () -> DurableExecution.execute(input, null, String.class,
+            () -> DurableExecutor.execute(input, null, String.class,
                 (userInput, ctx) -> "result", client));
         
         assertEquals("First operation must be EXECUTION", exception.getMessage());
@@ -211,7 +211,7 @@ class DurableExecutionTest {
         );
         
         var exception = assertThrows(IllegalStateException.class,
-            () -> DurableExecution.execute(input, null, String.class,
+            () -> DurableExecutor.execute(input, null, String.class,
                 (userInput, ctx) -> "result", client));
         
         assertEquals("EXECUTION operation missing executionDetails", exception.getMessage());

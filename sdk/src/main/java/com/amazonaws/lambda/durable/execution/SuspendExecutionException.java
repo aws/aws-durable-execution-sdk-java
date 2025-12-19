@@ -1,4 +1,4 @@
-package com.amazonaws.lambda.durable.checkpoint;
+package com.amazonaws.lambda.durable.execution;
 
 /**
  * Exception thrown to suspend execution during wait operations.

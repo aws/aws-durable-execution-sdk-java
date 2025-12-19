@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: AWS Lambda Durable Execution SDK Examples
 
@@ -18,7 +18,6 @@ Resources:
       Handler: com.amazonaws.lambda.durable.examples.SimpleStepExample
       CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
       DurableConfig:
-        Enabled: true
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
       Policies:
@@ -27,7 +26,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-step-example'
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-step-example"
 
   WaitExampleFunction:
     Type: AWS::Serverless::Function
@@ -36,7 +35,6 @@ Resources:
       Handler: com.amazonaws.lambda.durable.examples.WaitExample
       CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
       DurableConfig:
-        Enabled: true
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
       Policies:
@@ -45,7 +43,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example'
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example"
 
   RetryExampleFunction:
     Type: AWS::Serverless::Function
@@ -54,7 +52,6 @@ Resources:
       Handler: com.amazonaws.lambda.durable.examples.RetryExample
       CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
       DurableConfig:
-        Enabled: true
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
       Policies:
@@ -63,29 +60,104 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example'
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example"
+
+  WaitAtLeastExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: wait-at-least-example
+      Handler: com.amazonaws.lambda.durable.examples.WaitAtLeastExample
+      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      DurableConfig:
+        ExecutionTimeout: 3600
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example"
+
+  WaitAtLeastInProcessExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: wait-at-least-in-process-example
+      Handler: com.amazonaws.lambda.durable.examples.WaitAtLeastInProcessExample
+      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      DurableConfig:
+        ExecutionTimeout: 3600
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example"
+
+  RetryInProcessExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: retry-in-process-example
+      Handler: com.amazonaws.lambda.durable.examples.RetryInProcessExample
+      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      DurableConfig:
+        ExecutionTimeout: 3600
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example"
 
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
     Value: !GetAtt SimpleStepExampleFunction.Arn
-  
+
   SimpleStepExampleFunctionName:
     Description: Simple Step Example Function Name
     Value: !Ref SimpleStepExampleFunction
-  
+
   WaitExampleFunction:
     Description: Wait Example Function ARN
     Value: !GetAtt WaitExampleFunction.Arn
-  
+
   WaitExampleFunctionName:
     Description: Wait Example Function Name
     Value: !Ref WaitExampleFunction
-  
+
   RetryExampleFunction:
     Description: Retry Example Function ARN
     Value: !GetAtt RetryExampleFunction.Arn
-  
+
   RetryExampleFunctionName:
     Description: Retry Example Function Name
     Value: !Ref RetryExampleFunction
+
+  WaitAtLeastExampleFunction:
+    Description: Wait At Least Example Function ARN
+    Value: !GetAtt WaitAtLeastExampleFunction.Arn
+
+  WaitAtLeastExampleFunctionName:
+    Description: Wait At Least Example Function Name
+    Value: !Ref WaitAtLeastExampleFunction
+
+  WaitAtLeastInProcessExampleFunction:
+    Description: Wait At Least In Process Example Function ARN
+    Value: !GetAtt WaitAtLeastInProcessExampleFunction.Arn
+
+  WaitAtLeastInProcessExampleFunctionName:
+    Description: Wait At Least In Process Example Function Name
+    Value: !Ref WaitAtLeastInProcessExampleFunction
+
+  RetryInProcessExampleFunction:
+    Description: Retry In Process Example Function ARN
+    Value: !GetAtt RetryInProcessExampleFunction.Arn
+
+  RetryInProcessExampleFunctionName:
+    Description: Retry In Process Example Function Name
+    Value: !Ref RetryInProcessExampleFunction

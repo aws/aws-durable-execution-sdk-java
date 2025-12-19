@@ -29,7 +29,7 @@ public class LocalDurableTestRunner<I, O> {
     
     public TestResult<O> run(I input) {
         var durableInput = createDurableInput(input);
-        var output = DurableExecution.execute(durableInput, mockLambdaContext(), inputType, handler, storage);
+        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, storage);
         
         return new TestResult<>(output, storage);
     }

@@ -1,7 +1,7 @@
 # AWS Lambda Durable Execution Java SDK - Design
 
 **Version:** 1.0  
-**Date:** December 15, 2025
+**Date:** December 17, 2025
 
 ## Overview
 
@@ -16,58 +16,86 @@ This SDK enables Java developers to build fault-tolerant, long-running workflows
 **Responsibility:** Lambda function entry point
 
 - Abstract base class for user Lambda functions
-- Implements `RequestStreamHandler` for Lambda runtime integration
-- Extracts generic types (I, O) from subclass for type safety
-- Handles JSON serialization with custom ObjectMapper
 - Delegates execution to `DurableExecution`
-
-```java
-public abstract class MyFunction extends DurableHandler<MyInput, String> {
-    protected String handleRequest(MyInput input, DurableContext context) {
-        // User code here
-    }
-}
-```
 
 #### 2. **DurableExecution**
 **Package:** `com.amazonaws.lambda.durable`  
 **Responsibility:** Execution lifecycle orchestration
 
-- Static entry point for execution logic
-- Loads all operation state (with pagination)
-- Validates EXECUTION operation and extracts user input
-- Creates `ExecutionState` and `CheckpointManager`
-- Executes user handler with `DurableContext`
+- Loads operation state and creates `ExecutionManager`
+- Runs handler in separate thread
 - Returns `SUCCESS`/`PENDING`/`FAILED` status
 
 #### 3. **DurableContext**
 **Package:** `com.amazonaws.lambda.durable`  
 **Responsibility:** User-facing durable operations API
 
-- `step(name, type, func)` - Execute code with checkpointing
-- `wait(duration)` - Suspend execution cost-effectively
-- Handles replay detection (skips completed operations)
-- Manages operation IDs with `AtomicInteger`
-- Delegates checkpointing to `CheckpointManager`
+- `step(name, type, func)` / `stepAsync()` - Execute with checkpointing
+- `wait(duration)` - Suspend execution
+- Delegates to operation classes (`StepOperation`, `WaitOperation`)
 
-#### 4. **CheckpointManager**
-**Package:** `com.amazonaws.lambda.durable.checkpoint`  
-**Responsibility:** State persistence coordination
+#### 4. **ExecutionManager**
+**Package:** `com.amazonaws.lambda.durable.execution`  
+**Responsibility:** Execution coordination (single entry point)
 
-- Batches checkpoint requests for API efficiency
-- Manages checkpoint tokens and state updates
-- Provides async checkpointing with `CompletableFuture`
-- Handles AWS API calls via `DurableExecutionClient`
-- Queues operations with size limits (750KB batches)
+- **State:** Operations, current checkpoint token, durable execution ARN
+- **Thread Coordination:** Register/deregister active threads, suspension logic
+- **Phaser Management:** Create and advance phasers for operation coordination
+- **Polling:** Background polling for waits and retries
+- **Checkpointing:** Delegates to CheckpointManager via callback
 
-#### 5. **ExecutionState**
-**Package:** `com.amazonaws.lambda.durable.checkpoint`  
-**Responsibility:** Current execution state storage
+#### 5. **CheckpointManager**
+**Package:** `com.amazonaws.lambda.durable.execution` (package-private)  
+**Responsibility:** Checkpoint batching and API calls
 
-- Stores `DurableExecutionArn` and `CheckpointToken`
-- Maintains `Map<String, Operation>` for operation lookup
-- Enables O(1) replay detection by operation ID
-- Tracks state changes during execution
+- Queues and batches checkpoint requests (750KB limit)
+- Makes AWS API calls via `DurableExecutionClient`
+- Notifies `ExecutionManager` via callback (breaks cyclic dependency)
+
+#### 6. **Operation Classes**
+**Package:** `com.amazonaws.lambda.durable.operation`  
+**Responsibility:** Operation-specific logic
+
+- `StepOperation` - Step execution with retry logic
+- `WaitOperation` - Wait checkpointing and polling
+- Each implements `DurableOperation<T>` interface with `execute()` and `get()`
+
+### Phaser-Based Thread Coordination
+
+**Java Phaser:** A synchronization barrier that allows threads to wait for each other at specific phases.
+
+**Our Usage:**
+- **Phase 0:** Operation is running
+- **Phase 1:** Operation complete, waiters reactivate (prevents suspension race)
+- **Phase 2+:** Operation fully done
+
+**Example - Preventing Race Condition:**
+```java
+// stepAsync() starts background thread
+StepOperation.execute() {
+    executionManager.registerActiveThread("1-step", STEP);
+    executor.execute(() -> {
+        checkpoint(START);
+        result = function.get();
+        checkpoint(SUCCEED);
+        phaser.arriveAndAwaitAdvance();  // Phase 0->1: notify waiters
+        phaser.arriveAndAwaitAdvance();  // Phase 1->2: wait for reactivation
+        executionManager.deregisterActiveThread("1-step");
+    });
+}
+
+// wait() called immediately after
+WaitOperation.get() {
+    phaser.register();
+    executionManager.deregisterActiveThread("Root");  // Allow suspension
+    phaser.arriveAndAwaitAdvance();  // Block until step completes
+    executionManager.registerActiveThread("Root");    // Reactivate
+}
+
+// Result: Step completes and checkpoints before suspension from wait() occurs
+```
+
+**Key Insight:** Phase 1 ensures the calling thread reactivates BEFORE the step thread deregisters, preventing premature suspension.
 
 ### Supporting Components
 
@@ -111,7 +139,7 @@ public abstract class MyFunction extends DurableHandler<MyInput, String> {
    ↓
 3. DurableExecution.execute()
    ├── Load all operations (with pagination)
-   ├── Create ExecutionState & CheckpointManager
+   ├── Create ExecutionManager
    ├── Create DurableContext
    └── Execute user handler
        ↓
@@ -130,7 +158,7 @@ public abstract class MyFunction extends DurableHandler<MyInput, String> {
 
 ### Checkpoint-and-Replay
 - Operations are assigned sequential IDs
-- Completed operations are stored in `ExecutionState`
+- Completed operations are stored in `ExecutionManager`
 - On replay, completed operations return cached results
 - New operations execute normally and checkpoint
 
