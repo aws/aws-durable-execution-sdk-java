@@ -62,6 +62,8 @@ public class WaitOperation implements DurableOperation<Void> {
         }
 
         // Calculate remaining wait time
+        // TODO: if the checkpoint is slow remaining wait time might be off. Track
+        // endTimestamp instead and move calculation in front of polling start.
         Duration remainingWaitTime;
         if (existing == null) {
             // First execution - checkpoint with full duration

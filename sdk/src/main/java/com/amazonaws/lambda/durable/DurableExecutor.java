@@ -12,7 +12,6 @@ import com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
-import com.amazonaws.lambda.durable.model.ErrorObject;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
@@ -51,6 +50,11 @@ public class DurableExecutor {
                         : 0);
 
         // Validate initial operation is an EXECUTION operation
+        // TODO: Double check if very large inputs (close to 6MB) have a null
+        // initialExecutionState.
+        // Potentially, we need to call the backend to fetch it. Give it to the manager,
+        // have it load it from the
+        // if null.
         if (input.initialExecutionState() == null || input.initialExecutionState().operations() == null
                 || input.initialExecutionState().operations().isEmpty()
                 || input.initialExecutionState().operations().get(0).type() != OperationType.EXECUTION) {
@@ -85,7 +89,8 @@ public class DurableExecutor {
         try {
             var handlerFuture = CompletableFuture.supplyAsync(() -> handler.apply(userInput, context), executor);
 
-            // Get suspend future from coordinator. If this future completes, it indicates
+            // Get suspend future from ExecutionManager. If this future completes, it
+            // indicates
             // that no threads are active and we can safely suspend. This is useful for
             // async scenarios where multiple operations are scheduled concurrently and
             // awaited
@@ -105,15 +110,18 @@ public class DurableExecutor {
                     handlerFuture.join(); // Will throw the exception
                 } catch (Exception e) {
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
-                    return DurableExecutionOutput.failure(ErrorObject.fromException(cause));
+                    return DurableExecutionOutput.failure(cause);
                 }
             }
 
             var result = handlerFuture.get();
+
+            // TODO: Understand if we need to checkpoint the EXECUTION operation here.
+
             return DurableExecutionOutput.success(serDes.serialize(result));
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            return DurableExecutionOutput.failure(ErrorObject.fromException(cause));
+            return DurableExecutionOutput.failure(cause);
         } finally {
             executionManager.shutdown();
             executor.shutdown();
