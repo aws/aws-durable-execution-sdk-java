@@ -1,6 +1,9 @@
 package com.amazonaws.lambda.durable.serde;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.List;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
@@ -17,54 +20,79 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 
 public class AwsSdkV2Module extends SimpleModule {
 
+    /**
+     * List of AWS SDK v2 classes that require custom serialization/deserialization.
+     * Add new SDK classes here to automatically register serializers and
+     * deserializers.
+     * 
+     * See
+     * https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
+     */
+    private static final List<Class<?>> SDK_CLASSES = List.of(
+            Operation.class,
+            ErrorObject.class);
+
     public AwsSdkV2Module(ObjectMapper sharedMapper) {
         super("AwsSdkV2Module");
-        addDeserializer(Operation.class, new OperationDeserializer(sharedMapper));
-        addDeserializer(ErrorObject.class, new ErrorObjectDeserializer(sharedMapper));
-        addSerializer(ErrorObject.class, new ErrorObjectSerializer());
+
+        // Register serializers and deserializers for all SDK classes
+        for (Class<?> sdkClass : SDK_CLASSES) {
+            registerSdkClass(sdkClass, sharedMapper);
+        }
     }
 
-    private static class OperationDeserializer extends JsonDeserializer<Operation> {
+    private <T> void registerSdkClass(Class<T> sdkClass, ObjectMapper sharedMapper) {
+        addDeserializer(sdkClass, new SdkDeserializer<>(sdkClass, sharedMapper));
+        addSerializer(sdkClass, new SdkSerializer<>());
+    }
+
+    private static class SdkDeserializer<T> extends JsonDeserializer<T> {
+        private final Class<T> sdkClass;
         private final ObjectMapper mapper;
 
-        OperationDeserializer(ObjectMapper mapper) {
+        SdkDeserializer(Class<T> sdkClass, ObjectMapper mapper) {
+            this.sdkClass = sdkClass;
             this.mapper = mapper;
         }
 
         @Override
-        public Operation deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+        @SuppressWarnings("unchecked")
+        public T deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
             JsonNode node = p.readValueAsTree();
 
-            // See
-            // https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
-            return mapper.readValue(node.toString(), Operation.serializableBuilderClass()).build();
+            try {
+                // Call serializableBuilderClass() method on the SDK class
+                Method serializableBuilderClassMethod = sdkClass.getMethod("serializableBuilderClass");
+                serializableBuilderClassMethod.setAccessible(true);
+                Class<?> builderClass = (Class<?>) serializableBuilderClassMethod.invoke(null);
+
+                // Deserialize to builder and build the final object
+                Object builder = mapper.readValue(node.toString(), builderClass);
+                Method buildMethod = builderClass.getMethod("build");
+                buildMethod.setAccessible(true);
+                return (T) buildMethod.invoke(builder);
+            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                throw new IOException("Failed to deserialize " + sdkClass.getSimpleName() +
+                        " using AWS SDK v2 builder pattern", e);
+            }
         }
     }
 
-    private static class ErrorObjectDeserializer extends JsonDeserializer<ErrorObject> {
-        private final ObjectMapper mapper;
-
-        ErrorObjectDeserializer(ObjectMapper mapper) {
-            this.mapper = mapper;
-        }
-
+    private static class SdkSerializer<T> extends JsonSerializer<T> {
         @Override
-        public ErrorObject deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
-            JsonNode node = p.readValueAsTree();
+        public void serialize(T value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            try {
+                // Call toBuilder() method on the SDK object
+                Method toBuilderMethod = value.getClass().getMethod("toBuilder");
+                toBuilderMethod.setAccessible(true);
+                Object builder = toBuilderMethod.invoke(value);
 
-            // See
-            // https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
-            return mapper.readValue(node.toString(), ErrorObject.serializableBuilderClass()).build();
-        }
-    }
-
-    private static class ErrorObjectSerializer extends JsonSerializer<ErrorObject> {
-        @Override
-        public void serialize(ErrorObject value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
-            // Use toBuilder() method as recommended by AWS SDK v2 documentation
-            // See
-            // https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
-            serializers.defaultSerializeValue(value.toBuilder(), gen);
+                // Serialize the builder
+                serializers.defaultSerializeValue(builder, gen);
+            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+                throw new IOException("Failed to serialize " + value.getClass().getSimpleName() +
+                        " using AWS SDK v2 builder pattern", e);
+            }
         }
     }
 }
