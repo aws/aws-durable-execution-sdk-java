@@ -4,13 +4,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
 import com.amazonaws.lambda.durable.DurableHandler;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
+import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
+import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -118,5 +122,65 @@ class AwsSdkV2ModuleTest {
         assertEquals(Instant.parse("2025-12-18T10:54:00.553627Z"), waitOp.endTimestamp());
         assertNotNull(waitOp.waitDetails());
         assertEquals(Instant.parse("2025-12-18T10:53:58.374035Z"), waitOp.waitDetails().scheduledEndTimestamp());
+    }
+
+    @Test
+    void testErrorObjectSerializationAndDeserialization() throws Exception {
+        ObjectMapper mapper = DurableHandler.createObjectMapper();
+
+        // Create an ErrorObject using the builder
+        var errorObject = ErrorObject.builder()
+                .errorType("StepFailedException")
+                .errorMessage("Step execution failed")
+                .stackTrace(List.of(
+                    "com.example.MyClass|myMethod|MyClass.java|123",
+                    "com.example.OtherClass|otherMethod|OtherClass.java|456"
+                ))
+                .build();
+
+        var output = new DurableExecutionOutput(ExecutionStatus.FAILED, null, errorObject);
+
+        // Serialize to JSON
+        var json = mapper.writeValueAsString(output);
+
+        // Verify serialization contains expected fields
+        assertNotNull(json);
+        System.out.println("Serialized ErrorObject: " + json);
+
+        // Deserialize back
+        var deserialized = mapper.readValue(json, DurableExecutionOutput.class);
+
+        // Verify deserialization
+        assertNotNull(deserialized);
+        assertEquals(ExecutionStatus.FAILED, deserialized.status());
+        assertNotNull(deserialized.error());
+        assertEquals("StepFailedException", deserialized.error().errorType());
+        assertEquals("Step execution failed", deserialized.error().errorMessage());
+        assertNotNull(deserialized.error().stackTrace());
+        assertEquals(2, deserialized.error().stackTrace().size());
+        assertEquals("com.example.MyClass|myMethod|MyClass.java|123", deserialized.error().stackTrace().get(0));
+        assertEquals("com.example.OtherClass|otherMethod|OtherClass.java|456", deserialized.error().stackTrace().get(1));
+    }
+
+    @Test
+    void testErrorObjectRoundTripWithNullFields() throws Exception {
+        ObjectMapper mapper = DurableHandler.createObjectMapper();
+
+        // Create an ErrorObject with minimal fields
+        var errorObject = ErrorObject.builder()
+                .errorType("CustomError")
+                .errorMessage("Something went wrong")
+                .build();
+
+        var output = new DurableExecutionOutput(ExecutionStatus.FAILED, null, errorObject);
+
+        // Serialize and deserialize
+        var json = mapper.writeValueAsString(output);
+        var deserialized = mapper.readValue(json, DurableExecutionOutput.class);
+
+        // Verify
+        assertNotNull(deserialized.error());
+        assertEquals("CustomError", deserialized.error().errorType());
+        assertEquals("Something went wrong", deserialized.error().errorMessage());
     }
 }
