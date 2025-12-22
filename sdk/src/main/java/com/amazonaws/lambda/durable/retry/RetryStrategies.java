@@ -94,6 +94,7 @@ public class RetryStrategies {
             };
 
             // Round to nearest second, minimum 1
+            // Same rounding logic as TS SDK: https://tinyurl.com/4ntxsefu
             long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));
 
             return RetryDecision.retry(Duration.ofSeconds(finalDelaySeconds));
