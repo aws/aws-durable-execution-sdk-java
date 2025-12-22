@@ -18,7 +18,9 @@ import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 public class DurableExecutor {
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutor.class);
@@ -115,10 +117,16 @@ public class DurableExecutor {
             }
 
             var result = handlerFuture.get();
+            var outputPayload = serDes.serialize(result);
 
-            // TODO: Understand if we need to checkpoint the EXECUTION operation here.
+            executionManager.sendOperationUpdate(OperationUpdate.builder()
+                    .type(OperationType.EXECUTION)
+                    .id(executionOp.id())
+                    .action(OperationAction.SUCCEED)
+                    .payload(outputPayload)
+                    .build());
 
-            return DurableExecutionOutput.success(serDes.serialize(result));
+            return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             return DurableExecutionOutput.failure(cause);
