@@ -1,5 +1,6 @@
 package com.amazonaws.lambda.durable.serde;
 
+import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -21,7 +22,7 @@ public class JacksonSerDes implements SerDes {
         try {
             return mapper.writeValueAsString(value);
         } catch (Exception e) {
-            throw new RuntimeException("Serialization failed", e);
+            throw new SerDesException("Serialization failed for type: " + value.getClass().getName(), e);
         }
     }
     
@@ -31,7 +32,7 @@ public class JacksonSerDes implements SerDes {
         try {
             return mapper.readValue(data, type);
         } catch (Exception e) {
-            throw new RuntimeException("Deserialization failed", e);
+            throw new SerDesException("Deserialization failed for type: " + type.getName(), e);
         }
     }
 }

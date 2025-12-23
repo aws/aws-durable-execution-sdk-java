@@ -10,6 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.StepConfig;
+import com.amazonaws.lambda.durable.exception.StepFailedException;
+import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
@@ -83,7 +85,7 @@ public class StepOperation<T> implements DurableOperation<T> {
                 case STARTED -> {
                     // If the step was already STARTED, and we're using AT_MOST_ONCE_PER_RETRY
                     // semantics, throw an error.
-                    throw new RuntimeException(
+                    throw new StepInterruptedException(
                             String.format("step '%s' interrupted", name == null ? operationId : name));
                 }
                 case PENDING -> {
@@ -137,6 +139,9 @@ public class StepOperation<T> implements DurableOperation<T> {
                             .build();
                     executionManager.sendOperationUpdate(startUpdate).join();
                 }
+                // TODO: Depending on step semantics we should always send this but for
+                // AT_LEAST_ONCE we fire and forget
+                // about it but still send it
 
                 // Execute the function
                 T result = function.get();
@@ -151,11 +156,6 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .payload(serDes.serialize(result))
                         .build();
                 executionManager.sendOperationUpdate(successUpdate).join();
-
-                // Two-phase completion (critical!)
-                phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1 (notify waiters)
-                phaser.arriveAndAwaitAdvance(); // Phase 1 -> 2 (wait for reactivation)
-
             } catch (Throwable e) {
                 handleStepError(e, attempt);
             } finally {
@@ -168,6 +168,8 @@ public class StepOperation<T> implements DurableOperation<T> {
         var errorObject = ErrorObject.builder()
                 .errorType(e.getClass().getSimpleName())
                 .errorMessage(e.getMessage())
+                .stackTrace(StepFailedException.serializeStackTrace(e.getStackTrace()))
+                // TODO: Add errorData object once we support polymorphic object mappers
                 .build();
 
         if (config != null && config.retryStrategy() != null) {
@@ -183,6 +185,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .action(OperationAction.RETRY)
                         .error(errorObject)
                         .stepOptions(StepOptions.builder()
+                                // RetryDecisions always produce integer number of seconds greater or equals to
+                                // 1 (no sub-second numbers)
                                 .nextAttemptDelaySeconds(Math.toIntExact(retryDecision.delay().toSeconds()))
                                 .build())
                         .build();
@@ -209,10 +213,6 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .error(errorObject)
                         .build();
                 executionManager.sendOperationUpdate(failUpdate).join();
-
-                // Complete phaser for failed step
-                phaser.arriveAndAwaitAdvance();
-                phaser.arriveAndAwaitAdvance();
             }
         } else {
             // No retry - send FAIL
@@ -225,10 +225,6 @@ public class StepOperation<T> implements DurableOperation<T> {
                     .error(errorObject)
                     .build();
             executionManager.sendOperationUpdate(failUpdate).join();
-
-            // Complete phaser for failed step
-            phaser.arriveAndAwaitAdvance();
-            phaser.arriveAndAwaitAdvance();
         }
     }
 
@@ -243,6 +239,8 @@ public class StepOperation<T> implements DurableOperation<T> {
             phaser.register();
 
             // Deregister current thread - allows suspension
+            // TODO: The threadId here should be the (potential childContext) thread id that
+            // is calling .get()
             executionManager.deregisterActiveThread("Root");
 
             // Block until operation completes
@@ -259,17 +257,34 @@ public class StepOperation<T> implements DurableOperation<T> {
         // Get result from coordinator
         var op = executionManager.getOperation(operationId);
         if (op == null) {
-            throw new RuntimeException("Step '" + name + "' operation not found");
+            throw new IllegalStateException("Step '" + name + "' operation not found");
         }
 
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();
             var result = (stepDetails != null) ? stepDetails.result() : null;
             return serDes.deserialize(result, resultType);
-        } else if (op.status() == OperationStatus.FAILED) {
-            throw new RuntimeException("Step '" + name + "' failed");
         } else {
-            throw new RuntimeException("Step '" + name + "' in unexpected status: " + op.status());
+            // It failed so there's some kind of throwable. If we're using a serDes with
+            // type info, deserialize and rethrow the original
+            // throwable. Otherwise, throw a new StepFailedException that includes info
+            // about the original throwable.
+
+            // TODO: Enable this feature after introducing polymorphic object mapper
+            // support.
+            // String errorData = op.stepDetails().error().errorData();
+            // if (errorData != null && serDes.supportsIncludingTypeInfo()) {
+            // SneakyThrow.sneakyThrow((Throwable)
+            // serDes.deserializeWithTypeInfo(errorData));
+            // }
+            var e = new StepFailedException(String.format(
+                    "Step failed with error of type %s. Message: %s",
+                    op.stepDetails().error().errorType(),
+                    op.stepDetails().error().errorMessage()),
+                    null,
+                    // Preserve original stack trace
+                    StepFailedException.deserializeStackTrace(op.stepDetails().error().stackTrace()));
+            throw e;
         }
     }
 }

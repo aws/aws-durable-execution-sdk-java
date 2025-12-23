@@ -18,7 +18,7 @@ This SDK enables Java developers to build fault-tolerant, long-running workflows
 - Abstract base class for user Lambda functions
 - Delegates execution to `DurableExecution`
 
-#### 2. **DurableExecution**
+#### 2. **DurableExecutor**
 **Package:** `com.amazonaws.lambda.durable`  
 **Responsibility:** Execution lifecycle orchestration
 
@@ -44,7 +44,7 @@ This SDK enables Java developers to build fault-tolerant, long-running workflows
 - **Polling:** Background polling for waits and retries
 - **Checkpointing:** Delegates to CheckpointManager via callback
 
-#### 5. **CheckpointManager**
+#### 5. **CheckpointBatcher**
 **Package:** `com.amazonaws.lambda.durable.execution` (package-private)  
 **Responsibility:** Checkpoint batching and API calls
 
@@ -69,33 +69,36 @@ This SDK enables Java developers to build fault-tolerant, long-running workflows
 - **Phase 1:** Operation complete, waiters reactivate (prevents suspension race)
 - **Phase 2+:** Operation fully done
 
-**Example - Preventing Race Condition:**
-```java
-// stepAsync() starts background thread
-StepOperation.execute() {
-    executionManager.registerActiveThread("1-step", STEP);
-    executor.execute(() -> {
-        checkpoint(START);
-        result = function.get();
-        checkpoint(SUCCEED);
-        phaser.arriveAndAwaitAdvance();  // Phase 0->1: notify waiters
-        phaser.arriveAndAwaitAdvance();  // Phase 1->2: wait for reactivation
-        executionManager.deregisterActiveThread("1-step");
-    });
-}
+**Example - Preventing Race Condition (Pseudo-code):**
+```
+Thread 1 (Main/Root):
+  stepAsync() starts background thread
+    → Register "1-step" thread as active
+    → Submit background task to executor
+    → Return immediately to user code
+  
+  wait() called immediately after
+    → Register with step's phaser
+    → Deregister "Root" thread (allow suspension check)
+    → Block at phaser (wait for step to complete)
+    → [BLOCKED until Phase 1]
+    → Reactivate: Register "Root" thread again
+    → Continue execution
 
-// wait() called immediately after
-WaitOperation.get() {
-    phaser.register();
-    executionManager.deregisterActiveThread("Root");  // Allow suspension
-    phaser.arriveAndAwaitAdvance();  // Block until step completes
-    executionManager.registerActiveThread("Root");    // Reactivate
-}
+Thread 2 (Step Background):
+  execute step function
+    → Checkpoint START
+    → Execute user function
+    → Checkpoint SUCCEED
+    → Advance phaser to Phase 1 (notify waiters)
+    → [BLOCKED at Phase 2 until waiters reactivate]
+    → Deregister "1-step" thread
+    → Complete
 
-// Result: Step completes and checkpoints before suspension from wait() occurs
+Result: Step completes and checkpoints BEFORE suspension check occurs
 ```
 
-**Key Insight:** Phase 1 ensures the calling thread reactivates BEFORE the step thread deregisters, preventing premature suspension.
+**Most important criterion:** Phase 1 ensures the calling thread reactivates BEFORE the step thread deregisters, preventing premature suspension.
 
 ### Supporting Components
 
@@ -137,14 +140,14 @@ WaitOperation.get() {
    ↓
 2. DurableHandler.handleRequest()
    ↓
-3. DurableExecution.execute()
+3. DurableExecutor.execute()
    ├── Load all operations (with pagination)
    ├── Create ExecutionManager
    ├── Create DurableContext
    └── Execute user handler
        ↓
 4. User Code
-   ├── context.step() → CheckpointManager.checkpoint()
+   ├── context.step() → CheckpointBatcher.checkpoint()
    ├── context.wait() → throw SuspendExecutionException
    └── Replay detection (skip completed operations)
        ↓
@@ -163,7 +166,7 @@ WaitOperation.get() {
 - New operations execute normally and checkpoint
 
 ### Async Checkpointing
-- `CheckpointManager` uses `CompletableFuture` for non-blocking API calls
+- `CheckpointBatcher` uses `CompletableFuture` for non-blocking API calls
 - Operations batch for efficiency (750KB limit)
 - Checkpoint tokens ensure consistency
 
@@ -174,7 +177,7 @@ WaitOperation.get() {
 
 ### Suspension Model
 - `wait()` operations throw `SuspendExecutionException`
-- Exception propagates to `DurableExecution`
+- Exception propagates to `DurableExecutor`
 - Returns `PENDING` status to Lambda runtime
 - Lambda service resumes execution after wait period
 
@@ -193,12 +196,12 @@ WaitOperation.get() {
 ## Error Handling
 
 ### User Code Errors
-- Caught by `DurableExecution`
-- Converted to `ErrorObject`
+- Caught by `DurableExecutor`
+- Converted to error representation
 - Returns `FAILED` status
 
 ### API Errors
-- Handled by `CheckpointManager`
+- Handled by `CheckpointBatcher`
 - Retries with exponential backoff
 - Propagates terminal failures
 

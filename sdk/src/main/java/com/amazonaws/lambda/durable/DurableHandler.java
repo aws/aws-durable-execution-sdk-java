@@ -85,7 +85,6 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
      */
     protected abstract O handleRequest(I input, DurableContext context);
 
-    // From Russel - Todo: See also Serialization of AWS Operation in serde package
     public static ObjectMapper createObjectMapper() {
         var dateModule = new SimpleModule();
         dateModule.addDeserializer(Date.class, new JsonDeserializer<>() {

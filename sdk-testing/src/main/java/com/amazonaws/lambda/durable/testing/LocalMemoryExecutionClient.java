@@ -15,9 +15,11 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, String> nextMarkers = new ConcurrentHashMap<>();
     private final AtomicReference<String> checkpointToken = 
         new AtomicReference<>(UUID.randomUUID().toString());
+    private final List<OperationUpdate> operationUpdates = new java.util.concurrent.CopyOnWriteArrayList<>();
     
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
+        operationUpdates.addAll(updates);
         updates.forEach(this::applyUpdate);
         
         var newToken = UUID.randomUUID().toString();
@@ -56,6 +58,14 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         if (nextMarker != null) {
             nextMarkers.put(marker, nextMarker);
         }
+    }
+    
+    /**
+     * Get all operation updates that have been sent to this client.
+     * Useful for testing and verification.
+     */
+    public List<OperationUpdate> getOperationUpdates() {
+        return List.copyOf(operationUpdates);
     }
     
     private void applyUpdate(OperationUpdate update) {
