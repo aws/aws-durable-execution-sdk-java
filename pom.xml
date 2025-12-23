@@ -113,6 +113,7 @@
                                 <formatJavadoc>true</formatJavadoc>
                             </palantirJavaFormat>
                             <formatAnnotations />
+                            <importOrder />
                             <licenseHeader>
                                 <file>${maven.multiModuleProjectDirectory}/license-header</file>
                             </licenseHeader>

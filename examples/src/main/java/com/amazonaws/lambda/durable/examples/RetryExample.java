@@ -14,8 +14,13 @@ import org.slf4j.LoggerFactory;
 /**
  * Simple example demonstrating retry strategies with a flaky API.
  *
- * <p>This example shows: - A step that never retries (fails immediately) - A step that retries with default exponential
- * backoff - Time-based failure simulation for realistic retry behavior
+ * <p>This example shows:
+ *
+ * <ul>
+ *   <li>A step that never retries (fails immediately)
+ *   <li>A step that retries with default exponential backoff
+ *   <li>Time-based failure simulation for realistic retry behavior
+ * </ul>
  */
 public class RetryExample extends DurableHandler<Object, String> {
 
