@@ -79,8 +79,6 @@ class CheckpointBatcher {
                         .filter(u -> u != null)
                         .toList();
 
-                logger.debug("Calling DAR backend with {} updates at checkpoint {}: {}.", updates.size(),
-                        tokenSupplier.get(), updates);
                 var response = client.checkpoint(
                         durableExecutionArn,
                         tokenSupplier.get(),

@@ -2,6 +2,9 @@ package com.amazonaws.lambda.durable.client;
 
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
 import software.amazon.awssdk.core.SdkSystemSetting;
 import software.amazon.awssdk.regions.Region;
@@ -13,6 +16,8 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResp
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 public class LambdaDurableFunctionsClient implements DurableExecutionClient {
+
+    private static final Logger logger = LoggerFactory.getLogger(LambdaDurableFunctionsClient.class);
 
     private final LambdaClient AWSLambdaSDKClient = LambdaClient.builder()
             .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
@@ -26,6 +31,7 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
                 .checkpointToken(token)
                 .updates(updates)
                 .build();
+        logger.debug("Calling DAR backend with {} updates: {}", updates.size(), request);
 
         return AWSLambdaSDKClient.checkpointDurableExecution(request);
     }
