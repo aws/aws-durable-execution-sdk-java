@@ -216,4 +216,78 @@ class DurableExecutionTest {
         
         assertEquals("EXECUTION operation missing executionDetails", exception.getMessage());
     }
+    
+    @Test
+    void testLargePayloadCheckpointing() {
+        var client = new LocalMemoryExecutionClient();
+        var executionOp = Operation.builder()
+            .id("0")
+            .type(OperationType.EXECUTION)
+            .status(OperationStatus.STARTED)
+            .executionDetails(ExecutionDetails.builder()
+                .inputPayload("\"test-input\"")
+                .build())
+            .build();
+        
+        var input = new DurableExecutionInput(
+            "arn:aws:lambda:us-east-1:123456789012:function:test",
+            "token1",
+            new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null)
+        );
+        
+        // Create a large result that exceeds 6MB limit
+        var largeString = "x".repeat(7 * 1024 * 1024); // 7MB string
+        
+        var output = DurableExecutor.execute(input, null, String.class,
+            (userInput, ctx) -> largeString, client);
+        
+        // Should succeed but return empty result since payload was checkpointed
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals("", output.result());
+        
+        // Verify that the checkpoint was sent with the large payload
+        var updates = client.getOperationUpdates();
+        assertFalse(updates.isEmpty(), "Expected checkpoint updates but got none");
+        var lastUpdate = updates.get(updates.size() - 1);
+        assertEquals(OperationType.EXECUTION, lastUpdate.type());
+        assertEquals(OperationAction.SUCCEED, lastUpdate.action());
+        assertNotNull(lastUpdate.payload());
+        assertTrue(lastUpdate.payload().length() > 6 * 1024 * 1024);
+    }
+    
+    @Test
+    void testSmallPayloadNoExtraCheckpoint() {
+        var client = new LocalMemoryExecutionClient();
+        var executionOp = Operation.builder()
+            .id("0")
+            .type(OperationType.EXECUTION)
+            .status(OperationStatus.STARTED)
+            .executionDetails(ExecutionDetails.builder()
+                .inputPayload("\"test-input\"")
+                .build())
+            .build();
+        
+        var input = new DurableExecutionInput(
+            "arn:aws:lambda:us-east-1:123456789012:function:test",
+            "token1",
+            new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null)
+        );
+        
+        var smallResult = "Small result";
+        
+        var output = DurableExecutor.execute(input, null, String.class,
+            (userInput, ctx) -> smallResult, client);
+        
+        // Should succeed and return the result directly (no extra checkpoint)
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertNotNull(output.result());
+        assertTrue(output.result().contains(smallResult));
+        
+        // Verify no EXECUTION checkpoint was sent (backend will auto-checkpoint)
+        var updates = client.getOperationUpdates();
+        var executionUpdates = updates.stream()
+            .filter(u -> u.type() == OperationType.EXECUTION)
+            .toList();
+        assertTrue(executionUpdates.isEmpty(), "No explicit EXECUTION checkpoint should be sent for small payloads");
+    }
 }

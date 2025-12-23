@@ -1,5 +1,6 @@
 package com.amazonaws.lambda.durable;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.function.BiFunction;
@@ -24,6 +25,9 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 public class DurableExecutor {
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutor.class);
+    
+    // Lambda response size limit is 6MB minus small epsilon for envelope
+    private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
 
     public static <I, O> DurableExecutionOutput execute(
             DurableExecutionInput input,
@@ -118,14 +122,27 @@ public class DurableExecutor {
 
             var result = handlerFuture.get();
             var outputPayload = serDes.serialize(result);
-
-            executionManager.sendOperationUpdate(OperationUpdate.builder()
-                    .type(OperationType.EXECUTION)
-                    .id(executionOp.id())
-                    .action(OperationAction.SUCCEED)
-                    .payload(outputPayload)
-                    .build());
-
+            
+            // Check if the serialized payload exceeds Lambda response size limit
+            var payloadSize = outputPayload != null ? outputPayload.getBytes(StandardCharsets.UTF_8).length : 0;
+            
+            if (payloadSize > LAMBDA_RESPONSE_SIZE_LIMIT) {
+                logger.debug("Response size ({} bytes) exceeds Lambda limit ({} bytes). Checkpointing result.",
+                        payloadSize, LAMBDA_RESPONSE_SIZE_LIMIT);
+                
+                // Checkpoint the large result and wait for it to complete
+                executionManager.sendOperationUpdate(OperationUpdate.builder()
+                        .type(OperationType.EXECUTION)
+                        .id(executionOp.id())
+                        .action(OperationAction.SUCCEED)
+                        .payload(outputPayload)
+                        .build()).join();
+                
+                // Return empty result, we checkpointed the data manually
+                return DurableExecutionOutput.success("");
+            }
+            
+            // If response size is acceptable, return the result directly
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
