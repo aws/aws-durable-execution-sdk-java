@@ -16,7 +16,7 @@ import com.amazonaws.lambda.durable.retry.RetryStrategies;
  * suspension occurs.
  * 
  * This example shows in-process wait behavior:
- * - stepAsync() starts a background operation (takes 4 seconds)
+ * - stepAsync() starts a background operation (takes 10 seconds)
  * - wait() is called immediately (3 second duration)
  * - The async step takes longer than the wait duration
  * - No suspension occurs because we've already waited long enough
