@@ -145,7 +145,6 @@ class AwsSdkV2ModuleTest {
 
         // Verify serialization contains expected fields
         assertNotNull(json);
-        System.out.println("Serialized ErrorObject: " + json);
 
         // Deserialize back
         var deserialized = mapper.readValue(json, DurableExecutionOutput.class);
