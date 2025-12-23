@@ -1,13 +1,11 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.model;
 
 import com.amazonaws.lambda.durable.exception.StepFailedException;
-
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 
-public record DurableExecutionOutput(
-        ExecutionStatus status,
-        String result,
-        ErrorObject error) {
+public record DurableExecutionOutput(ExecutionStatus status, String result, ErrorObject error) {
     public static DurableExecutionOutput success(String result) {
         return new DurableExecutionOutput(ExecutionStatus.SUCCEEDED, result, null);
     }

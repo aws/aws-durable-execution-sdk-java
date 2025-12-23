@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.serde;
 
 import com.amazonaws.lambda.durable.exception.SerDesException;
@@ -8,24 +10,25 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 public class JacksonSerDes implements SerDes {
     private final ObjectMapper mapper;
-    
+
     public JacksonSerDes() {
         this.mapper = new ObjectMapper()
-            .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }
-    
+
     @Override
     public String serialize(Object value) {
         if (value == null) return null;
         try {
             return mapper.writeValueAsString(value);
         } catch (Exception e) {
-            throw new SerDesException("Serialization failed for type: " + value.getClass().getName(), e);
+            throw new SerDesException(
+                    "Serialization failed for type: " + value.getClass().getName(), e);
         }
     }
-    
+
     @Override
     public <T> T deserialize(String data, Class<T> type) {
         if (data == null) return null;

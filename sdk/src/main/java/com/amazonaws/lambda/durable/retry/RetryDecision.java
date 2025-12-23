@@ -1,11 +1,10 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.retry;
 
 import java.time.Duration;
 
-/**
- * Represents a decision about whether to retry a failed operation and how long
- * to wait.
- */
+/** Represents a decision about whether to retry a failed operation and how long to wait. */
 public class RetryDecision {
     private final boolean shouldRetry;
     private final Duration delay;
@@ -16,9 +15,8 @@ public class RetryDecision {
     }
 
     /**
-     * Creates a retry decision indicating the operation should be retried after the
-     * specified delay.
-     * 
+     * Creates a retry decision indicating the operation should be retried after the specified delay.
+     *
      * @param delay the duration to wait before retrying
      * @return a RetryDecision indicating retry with the specified delay
      */
@@ -28,31 +26,25 @@ public class RetryDecision {
 
     /**
      * Creates a retry decision indicating the operation should not be retried.
-     * 
+     *
      * @return a RetryDecision indicating no retry should be attempted
      */
     public static RetryDecision fail() {
         return new RetryDecision(false, Duration.ZERO);
     }
 
-    /**
-     * @return true if the operation should be retried, false otherwise
-     */
+    /** @return true if the operation should be retried, false otherwise */
     public boolean shouldRetry() {
         return shouldRetry;
     }
 
-    /**
-     * @return the duration to wait before retrying, or Duration.ZERO if no retry
-     */
+    /** @return the duration to wait before retrying, or Duration.ZERO if no retry */
     public Duration delay() {
         return delay;
     }
 
     @Override
     public String toString() {
-        return shouldRetry
-                ? String.format("RetryDecision{retry after %s}", delay)
-                : "RetryDecision{fail}";
+        return shouldRetry ? String.format("RetryDecision{retry after %s}", delay) : "RetryDecision{fail}";
     }
 }

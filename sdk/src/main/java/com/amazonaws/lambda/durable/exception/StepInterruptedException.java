@@ -1,10 +1,8 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.exception;
 
-/**
- * Exception thrown when a step with AT_MOST_ONCE_PER_RETRY semantics was
- * started but interrupted
- * before completion.
- */
+/** Exception thrown when a step with AT_MOST_ONCE_PER_RETRY semantics was started but interrupted before completion. */
 public class StepInterruptedException extends DurableExecutionException {
     private final String operationId;
     private final String stepName;

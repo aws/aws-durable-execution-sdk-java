@@ -1,16 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.reflect.ParameterizedType;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeFormatterBuilder;
-import java.util.Date;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
@@ -32,6 +22,16 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.ParameterizedType;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.util.Date;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public abstract class DurableHandler<I, O> implements RequestStreamHandler {
 
@@ -57,10 +57,8 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     }
 
     @Override
-    public final void handleRequest(
-            InputStream inputStream,
-            OutputStream outputStream,
-            Context context) throws IOException {
+    public final void handleRequest(InputStream inputStream, OutputStream outputStream, Context context)
+            throws IOException {
         var inputString = new String(inputStream.readAllBytes());
         logger.debug("Raw input from durable handler: {}", inputString);
         var input = this.objectMapper.readValue(inputString, DurableExecutionInput.class);
@@ -78,8 +76,8 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
 
     /**
      * Handle the durable execution.
-     * 
-     * @param input   User input
+     *
+     * @param input User input
      * @param context Durable context for operations
      * @return Result
      */

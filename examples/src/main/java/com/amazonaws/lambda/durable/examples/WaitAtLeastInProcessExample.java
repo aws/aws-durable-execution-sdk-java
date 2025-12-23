@@ -1,25 +1,22 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.examples;
-
-import java.time.Duration;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.DurableFuture;
 import com.amazonaws.lambda.durable.DurableHandler;
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
+import java.time.Duration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Example demonstrating concurrent stepAsync() with wait() operations where no
- * suspension occurs.
- * 
- * This example shows in-process wait behavior:
- * - stepAsync() starts a background operation (takes 10 seconds)
- * - wait() is called immediately (3 second duration)
- * - The async step takes longer than the wait duration
- * - No suspension occurs because we've already waited long enough
+ * Example demonstrating concurrent stepAsync() with wait() operations where no suspension occurs.
+ *
+ * <p>This example shows in-process wait behavior: - stepAsync() starts a background operation (takes 10 seconds) -
+ * wait() is called immediately (3 second duration) - The async step takes longer than the wait duration - No suspension
+ * occurs because we've already waited long enough
  */
 public class WaitAtLeastInProcessExample extends DurableHandler<GreetingRequest, String> {
 
@@ -30,19 +27,25 @@ public class WaitAtLeastInProcessExample extends DurableHandler<GreetingRequest,
         logger.info("Starting concurrent step + wait example for: {}", input.getName());
 
         // Start an async step that takes 10 seconds
-        DurableFuture<String> asyncStep = context.stepAsync("async-operation", String.class, () -> {
-            logger.info("Async operation starting in thread: {}", Thread.currentThread().getName());
-            try {
-                Thread.sleep(10000); // 10 seconds
-                logger.info("Async operation completed successfully");
-                return "Processed: " + input.getName();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("Operation interrupted", e);
-            }
-        }, StepConfig.builder()
-                .retryStrategy(RetryStrategies.Presets.DEFAULT)
-                .build());
+        DurableFuture<String> asyncStep = context.stepAsync(
+                "async-operation",
+                String.class,
+                () -> {
+                    logger.info(
+                            "Async operation starting in thread: {}",
+                            Thread.currentThread().getName());
+                    try {
+                        Thread.sleep(10000); // 10 seconds
+                        logger.info("Async operation completed successfully");
+                        return "Processed: " + input.getName();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Operation interrupted", e);
+                    }
+                },
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.DEFAULT)
+                        .build());
 
         // Immediately wait for 3 seconds
         // The async step will still be running and will complete after the wait

@@ -1,21 +1,20 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.time.Duration;
-import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.stream.Stream;
-
-import org.junit.jupiter.api.Test;
-
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
-
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -31,9 +30,8 @@ class ReplayValidationTest {
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build();
-        var operations = Stream.concat(
-                Stream.of(executionOp),
-                initialOperations.stream()).toList();
+        var operations = Stream.concat(Stream.of(executionOp), initialOperations.stream())
+                .toList();
         var initialExecutionState = new InitialExecutionState(operations, null);
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
@@ -99,8 +97,8 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should throw NonDeterministicExecutionException
-        var exception = assertThrows(NonDeterministicExecutionException.class,
-                () -> context.step("test", String.class, () -> "result"));
+        var exception = assertThrows(
+                NonDeterministicExecutionException.class, () -> context.step("test", String.class, () -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation type mismatch"));
         assertTrue(exception.getMessage().contains("Expected WAIT"));
@@ -121,8 +119,8 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should throw NonDeterministicExecutionException
-        var exception = assertThrows(NonDeterministicExecutionException.class,
-                () -> context.step("changed", String.class, () -> "result"));
+        var exception = assertThrows(
+                NonDeterministicExecutionException.class, () -> context.step("changed", String.class, () -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
         assertTrue(exception.getMessage().contains("Expected \"original\""));
@@ -160,8 +158,8 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should throw when name changes from null to value
-        var exception = assertThrows(NonDeterministicExecutionException.class,
-                () -> context.step("newName", String.class, () -> "result"));
+        var exception = assertThrows(
+                NonDeterministicExecutionException.class, () -> context.step("newName", String.class, () -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
         assertTrue(exception.getMessage().contains("Expected \"null\""));
@@ -182,8 +180,8 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should throw when name changes from value to null
-        var exception = assertThrows(NonDeterministicExecutionException.class,
-                () -> context.step(null, String.class, () -> "result"));
+        var exception = assertThrows(
+                NonDeterministicExecutionException.class, () -> context.step(null, String.class, () -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
         assertTrue(exception.getMessage().contains("Expected \"existingName\""));
@@ -203,7 +201,8 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should throw NonDeterministicExecutionException
-        var exception = assertThrows(NonDeterministicExecutionException.class,
+        var exception = assertThrows(
+                NonDeterministicExecutionException.class,
                 () -> context.stepAsync("test", String.class, () -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation type mismatch"));

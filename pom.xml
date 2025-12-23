@@ -28,6 +28,7 @@
         <mockito.version>5.20.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
         <jacoco.version>0.8.14</jacoco.version>
+        <spotless.version>3.1.0</spotless.version>
     </properties>
 
     <dependencyManagement>
@@ -102,6 +103,25 @@
                     <artifactId>jacoco-maven-plugin</artifactId>
                     <version>${jacoco.version}</version>
                 </plugin>
+                <plugin>
+                    <groupId>com.diffplug.spotless</groupId>
+                    <artifactId>spotless-maven-plugin</artifactId>
+                    <version>${spotless.version}</version>
+                    <configuration>
+                        <java>
+                            <palantirJavaFormat>
+                                <formatJavadoc>true</formatJavadoc>
+                            </palantirJavaFormat>
+                            <formatAnnotations />
+                            <licenseHeader>
+                                <file>${maven.multiModuleProjectDirectory}/license-header</file>
+                            </licenseHeader>
+                            <trimTrailingWhitespace />
+                            <endWithNewline />
+                            <removeUnusedImports />
+                        </java>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
 
@@ -123,6 +143,10 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
             </plugin>
         </plugins>
     </build>

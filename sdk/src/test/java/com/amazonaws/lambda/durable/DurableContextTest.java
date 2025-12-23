@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -6,18 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.time.Duration;
-import java.util.List;
-import java.util.concurrent.Executors;
-
-import org.junit.jupiter.api.Test;
-
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient;
-
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.Executors;
+import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -122,10 +121,8 @@ class DurableContextTest {
     @Test
     void testWaitReplay() {
         // Create context with completed wait operation
-        var existingOp = Operation.builder()
-                .id("1")
-                .status(OperationStatus.SUCCEEDED)
-                .build();
+        var existingOp =
+                Operation.builder().id("1").status(OperationStatus.SUCCEEDED).build();
         var context = createTestContext(List.of(existingOp));
 
         // Wait should complete immediately (no exception)

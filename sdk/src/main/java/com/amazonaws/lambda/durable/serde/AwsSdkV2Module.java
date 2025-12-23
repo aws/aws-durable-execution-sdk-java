@@ -1,9 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.serde;
-
-import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.List;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
@@ -14,23 +11,22 @@ import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.List;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 
 public class AwsSdkV2Module extends SimpleModule {
 
     /**
-     * List of AWS SDK v2 classes that require custom serialization/deserialization.
-     * Add new SDK classes here to automatically register serializers and
-     * deserializers.
-     * 
-     * See
-     * https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
+     * List of AWS SDK v2 classes that require custom serialization/deserialization. Add new SDK classes here to
+     * automatically register serializers and deserializers.
+     *
+     * <p>See https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
      */
-    private static final List<Class<?>> SDK_CLASSES = List.of(
-            Operation.class,
-            ErrorObject.class);
+    private static final List<Class<?>> SDK_CLASSES = List.of(Operation.class, ErrorObject.class);
 
     public AwsSdkV2Module(ObjectMapper sharedMapper) {
         super("AwsSdkV2Module");
@@ -72,8 +68,8 @@ public class AwsSdkV2Module extends SimpleModule {
                 buildMethod.setAccessible(true);
                 return (T) buildMethod.invoke(builder);
             } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-                throw new IOException("Failed to deserialize " + sdkClass.getSimpleName() +
-                        " using AWS SDK v2 builder pattern", e);
+                throw new IOException(
+                        "Failed to deserialize " + sdkClass.getSimpleName() + " using AWS SDK v2 builder pattern", e);
             }
         }
     }
@@ -90,8 +86,9 @@ public class AwsSdkV2Module extends SimpleModule {
                 // Serialize the builder
                 serializers.defaultSerializeValue(builder, gen);
             } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-                throw new IOException("Failed to serialize " + value.getClass().getSimpleName() +
-                        " using AWS SDK v2 builder pattern", e);
+                throw new IOException(
+                        "Failed to serialize " + value.getClass().getSimpleName() + " using AWS SDK v2 builder pattern",
+                        e);
             }
         }
     }
