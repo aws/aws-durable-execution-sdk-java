@@ -17,7 +17,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final AtomicReference<String> checkpointToken =
             new AtomicReference<>(UUID.randomUUID().toString());
     private final List<OperationUpdate> operationUpdates = new java.util.concurrent.CopyOnWriteArrayList<>();
-         
+
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
         operationUpdates.addAll(updates);
