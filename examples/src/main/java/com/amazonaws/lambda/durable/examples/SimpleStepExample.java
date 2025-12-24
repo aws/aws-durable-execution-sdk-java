@@ -8,8 +8,13 @@ import com.amazonaws.lambda.durable.DurableHandler;
 /**
  * Simple example demonstrating basic step execution with the Durable Execution SDK.
  *
- * <p>This handler processes a greeting request through three sequential steps: 1. Create greeting message 2. Transform
- * to uppercase 3. Add punctuation
+ * <p>This handler processes a greeting request through three sequential steps:
+ *
+ * <ol>
+ *   <li>Create greeting message
+ *   <li>Transform to uppercase
+ *   <li>Add punctuation
+ * </ol>
  */
 public class SimpleStepExample extends DurableHandler<GreetingRequest, String> {
 

@@ -14,9 +14,14 @@ import org.slf4j.LoggerFactory;
 /**
  * Example demonstrating concurrent stepAsync() with wait() operations.
  *
- * <p>This example shows suspension behavior with pending async steps: - stepAsync() starts a background operation
- * (takes 2 seconds) - wait() is called immediately (3 second duration) - The step completes successfully before
- * suspension - Execution suspends for the wait time
+ * <p>This example shows suspension behavior with pending async steps:
+ *
+ * <ul>
+ *   <li>stepAsync() starts a background operation (takes 2 seconds)
+ *   <li>wait() is called immediately (3 second duration)
+ *   <li>The step completes successfully before suspension
+ *   <li>Execution suspends for the wait time
+ * </ul>
  */
 public class WaitAtLeastExample extends DurableHandler<GreetingRequest, String> {
 

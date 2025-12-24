@@ -5,10 +5,20 @@ package com.amazonaws.lambda.durable.operation;
 /**
  * Base interface for all durable operations (STEP, WAIT, etc.).
  *
- * <p>- execute() starts the operation (returns immediately) - get() blocks until complete and returns the result
+ * <p>Key methods:
  *
- * <p>The separation allows: - Starting multiple async operations quickly - Blocking on results later when needed -
- * Proper thread coordination via Phasers
+ * <ul>
+ *   <li>{@code execute()} starts the operation (returns immediately)
+ *   <li>{@code get()} blocks until complete and returns the result
+ * </ul>
+ *
+ * <p>The separation allows:
+ *
+ * <ul>
+ *   <li>Starting multiple async operations quickly
+ *   <li>Blocking on results later when needed
+ *   <li>Proper thread coordination via Phasers
+ * </ul>
  */
 public interface DurableOperation<T> {
 
@@ -24,8 +34,14 @@ public interface DurableOperation<T> {
     /**
      * Blocks until the operation completes and returns the result.
      *
-     * <p>Handles: - Thread deregistration (allows suspension) - Phaser blocking (waits for operation to complete) -
-     * Thread reactivation (resumes execution) - Result retrieval
+     * <p>Handles:
+     *
+     * <ul>
+     *   <li>Thread deregistration (allows suspension)
+     *   <li>Phaser blocking (waits for operation to complete)
+     *   <li>Thread reactivation (resumes execution)
+     *   <li>Result retrieval
+     * </ul>
      *
      * @return the operation result
      */

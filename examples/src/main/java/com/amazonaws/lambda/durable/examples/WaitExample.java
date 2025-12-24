@@ -9,8 +9,15 @@ import java.time.Duration;
 /**
  * Example demonstrating step execution with wait operations.
  *
- * <p>This handler processes a request through steps with delays: 1. Start processing 2. Wait 10 seconds 3. Continue
- * processing 4. Wait 5 seconds 5. Complete
+ * <p>This handler processes a request through steps with delays:
+ *
+ * <ol>
+ *   <li>Start processing
+ *   <li>Wait 10 seconds
+ *   <li>Continue processing
+ *   <li>Wait 5 seconds
+ *   <li>Complete
+ * </ol>
  */
 public class WaitExample extends DurableHandler<GreetingRequest, String> {
 

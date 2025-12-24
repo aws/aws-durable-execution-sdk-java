@@ -14,9 +14,14 @@ import org.slf4j.LoggerFactory;
 /**
  * Example demonstrating concurrent stepAsync() with wait() operations where no suspension occurs.
  *
- * <p>This example shows in-process wait behavior: - stepAsync() starts a background operation (takes 10 seconds) -
- * wait() is called immediately (3 second duration) - The async step takes longer than the wait duration - No suspension
- * occurs because we've already waited long enough
+ * <p>This example shows in-process wait behavior:
+ *
+ * <ul>
+ *   <li>stepAsync() starts a background operation (takes 10 seconds)
+ *   <li>wait() is called immediately (3 second duration)
+ *   <li>The async step takes longer than the wait duration
+ *   <li>No suspension occurs because we've already waited long enough
+ * </ul>
  */
 public class WaitAtLeastInProcessExample extends DurableHandler<GreetingRequest, String> {
 

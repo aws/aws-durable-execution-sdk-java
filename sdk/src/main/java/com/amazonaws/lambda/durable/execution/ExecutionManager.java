@@ -24,8 +24,15 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 /**
  * Central manager for durable execution coordination.
  *
- * <p>Consolidates: - Execution state (operations, checkpoint token) - Thread lifecycle (registration/deregistration) -
- * Phaser management (coordination) - Checkpoint batching (via CheckpointManager) - Polling (for waits and retries)
+ * <p>Consolidates:
+ *
+ * <ul>
+ *   <li>Execution state (operations, checkpoint token)
+ *   <li>Thread lifecycle (registration/deregistration)
+ *   <li>Phaser management (coordination)
+ *   <li>Checkpoint batching (via CheckpointManager)
+ *   <li>Polling (for waits and retries)
+ * </ul>
  *
  * <p>This is the single entry point for all execution coordination.
  */

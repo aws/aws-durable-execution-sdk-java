@@ -16,8 +16,13 @@ import org.slf4j.LoggerFactory;
 /**
  * Example demonstrating in-process retry behavior with concurrent operations.
  *
- * <p>This example shows: - An async step that fails and retries while other work continues - A long-running synchronous
- * step that keeps the process busy - Retry happens in-process without suspension because main thread is active
+ * <p>This example shows:
+ *
+ * <ul>
+ *   <li>An async step that fails and retries while other work continues
+ *   <li>A long-running synchronous step that keeps the process busy
+ *   <li>Retry happens in-process without suspension because main thread is active
+ * </ul>
  */
 public class RetryInProcessExample extends DurableHandler<Object, String> {
 
