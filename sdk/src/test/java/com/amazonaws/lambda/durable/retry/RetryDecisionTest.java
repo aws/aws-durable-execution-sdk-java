@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.retry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -5,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
-
 import org.junit.jupiter.api.Test;
 
 class RetryDecisionTest {

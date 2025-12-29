@@ -1,13 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.operation;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Phaser;
-import java.util.function.Supplier;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
@@ -16,7 +9,13 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
-
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Phaser;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -94,15 +93,15 @@ public class StepOperation<T> implements DurableOperation<T> {
                     var pendingFuture = new CompletableFuture<Void>();
 
                     // When future completes, execute the step
-                    pendingFuture.thenRun(() -> executeStepLogic(existing.stepDetails().attempt()));
+                    pendingFuture.thenRun(
+                            () -> executeStepLogic(existing.stepDetails().attempt()));
 
                     // Start polling for PENDING -> READY transition
                     var nextAttemptTime = existing.stepDetails().nextAttemptTimestamp();
                     if (nextAttemptTime == null) {
                         nextAttemptTime = Instant.now().plusSeconds(1);
                     }
-                    executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime,
-                            Duration.ofSeconds(1));
+                    executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
                     return;
                 }
                 case READY -> {
@@ -110,8 +109,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                     executeStepLogic(existing.stepDetails().attempt());
                     return;
                 }
-                default -> throw new RuntimeException(
-                        String.format("Unrecognized step status '%s'", existing.status()));
+                default ->
+                    throw new RuntimeException(String.format("Unrecognized step status '%s'", existing.status()));
             }
         } else {
             // First execution
@@ -187,7 +186,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .stepOptions(StepOptions.builder()
                                 // RetryDecisions always produce integer number of seconds greater or equals to
                                 // 1 (no sub-second numbers)
-                                .nextAttemptDelaySeconds(Math.toIntExact(retryDecision.delay().toSeconds()))
+                                .nextAttemptDelaySeconds(
+                                        Math.toIntExact(retryDecision.delay().toSeconds()))
                                 .build())
                         .build();
                 executionManager.sendOperationUpdate(retryUpdate).join();
@@ -196,11 +196,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                 var pendingFuture = new CompletableFuture<Void>();
                 pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
 
-                var nextAttemptTime = Instant.now()
-                        .plus(retryDecision.delay())
-                        .plusMillis(25);
-                executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime,
-                        Duration.ofMillis(200));
+                var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
+                executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofMillis(200));
                 return;
             } else {
                 // Send FAIL - retries exhausted
@@ -277,13 +274,15 @@ public class StepOperation<T> implements DurableOperation<T> {
             // SneakyThrow.sneakyThrow((Throwable)
             // serDes.deserializeWithTypeInfo(errorData));
             // }
-            var e = new StepFailedException(String.format(
-                    "Step failed with error of type %s. Message: %s",
-                    op.stepDetails().error().errorType(),
-                    op.stepDetails().error().errorMessage()),
+            var e = new StepFailedException(
+                    String.format(
+                            "Step failed with error of type %s. Message: %s",
+                            op.stepDetails().error().errorType(),
+                            op.stepDetails().error().errorMessage()),
                     null,
                     // Preserve original stack trace
-                    StepFailedException.deserializeStackTrace(op.stepDetails().error().stackTrace()));
+                    StepFailedException.deserializeStackTrace(
+                            op.stepDetails().error().stackTrace()));
             throw e;
         }
     }

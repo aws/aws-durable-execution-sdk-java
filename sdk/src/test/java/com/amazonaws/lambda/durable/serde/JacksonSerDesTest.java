@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.serde;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -6,14 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.junit.jupiter.api.Test;
-
 import com.amazonaws.lambda.durable.exception.SerDesException;
+import org.junit.jupiter.api.Test;
 
 class JacksonSerDesTest {
 
-    record TestData(String name, int value) {
-    }
+    record TestData(String name, int value) {}
 
     @Test
     void testRoundTrip() {

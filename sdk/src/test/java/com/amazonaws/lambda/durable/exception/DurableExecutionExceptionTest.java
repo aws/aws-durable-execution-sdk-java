@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.exception;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -5,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.util.List;
-
 import org.junit.jupiter.api.Test;
 
 class DurableExecutionExceptionTest {
@@ -30,9 +31,8 @@ class DurableExecutionExceptionTest {
     @Test
     void testConstructorWithMessageCauseAndStackTrace() {
         var cause = new RuntimeException("Cause message");
-        var stackTrace = new StackTraceElement[] {
-                new StackTraceElement("TestClass", "testMethod", "TestClass.java", 42)
-        };
+        var stackTrace =
+                new StackTraceElement[] {new StackTraceElement("TestClass", "testMethod", "TestClass.java", 42)};
         var exception = new DurableExecutionException("Test message", cause, stackTrace);
 
         assertEquals("Test message", exception.getMessage());
@@ -43,8 +43,8 @@ class DurableExecutionExceptionTest {
     @Test
     void testSerializeStackTrace() {
         var stackTrace = new StackTraceElement[] {
-                new StackTraceElement("com.example.MyClass", "myMethod", "MyClass.java", 123),
-                new StackTraceElement("com.example.OtherClass", "otherMethod", "OtherClass.java", 456)
+            new StackTraceElement("com.example.MyClass", "myMethod", "MyClass.java", 123),
+            new StackTraceElement("com.example.OtherClass", "otherMethod", "OtherClass.java", 456)
         };
 
         var serialized = DurableExecutionException.serializeStackTrace(stackTrace);
@@ -75,9 +75,8 @@ class DurableExecutionExceptionTest {
 
     @Test
     void testSerializeDeserializeRoundTrip() {
-        var original = new StackTraceElement[] {
-                new StackTraceElement("TestClass", "testMethod", "TestClass.java", 100)
-        };
+        var original =
+                new StackTraceElement[] {new StackTraceElement("TestClass", "testMethod", "TestClass.java", 100)};
 
         var serialized = DurableExecutionException.serializeStackTrace(original);
         var deserialized = DurableExecutionException.deserializeStackTrace(serialized);

@@ -1,5 +1,8 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.execution;
 
+import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -8,21 +11,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
-
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 /**
- * Package-private checkpoint manager for batching and queueing checkpoint API
- * calls.
- * 
- * Single responsibility: Queue and batch checkpoint requests efficiently.
- * Uses CheckpointCallback to notify when checkpoints complete, avoiding cyclic
- * dependency.
+ * Package-private checkpoint manager for batching and queueing checkpoint API calls.
+ *
+ * <p>Single responsibility: Queue and batch checkpoint requests efficiently. Uses CheckpointCallback to notify when
+ * checkpoints complete, avoiding cyclic dependency.
  */
 class CheckpointBatcher {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
@@ -36,10 +33,12 @@ class CheckpointBatcher {
     private final ExecutorService executor;
     private final AtomicBoolean isProcessing = new AtomicBoolean(false);
 
-    record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {
-    }
+    record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {}
 
-    CheckpointBatcher(DurableExecutionClient client, ExecutorService executor, String durableExecutionArn,
+    CheckpointBatcher(
+            DurableExecutionClient client,
+            ExecutorService executor,
+            String durableExecutionArn,
             Supplier<String> tokenSupplier,
             CheckpointCallback callback) {
         this.client = client;
@@ -50,7 +49,8 @@ class CheckpointBatcher {
     }
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
-        logger.debug("Checkpoint request received: Action {}",
+        logger.debug(
+                "Checkpoint request received: Action {}",
                 update != null ? update.action() : "NULL (Checkpoint request)");
         var future = new CompletableFuture<Void>();
         queue.offer(new CheckpointRequest(update, future));
@@ -79,10 +79,7 @@ class CheckpointBatcher {
                         .filter(u -> u != null)
                         .toList();
 
-                var response = client.checkpoint(
-                        durableExecutionArn,
-                        tokenSupplier.get(),
-                        updates);
+                var response = client.checkpoint(durableExecutionArn, tokenSupplier.get(), updates);
                 logger.debug("DAR backend called: {}.", response);
 
                 // Notify callback of completion
@@ -90,7 +87,8 @@ class CheckpointBatcher {
                 // updates. WHY?
                 // This means the polling will never receive an operation update and complete
                 // the Phaser.
-                if (response.newExecutionState() != null && response.newExecutionState().operations() != null
+                if (response.newExecutionState() != null
+                        && response.newExecutionState().operations() != null
                         && !response.newExecutionState().operations().isEmpty()) {
                     callback.onComplete(
                             response.checkpointToken(),
@@ -138,10 +136,10 @@ class CheckpointBatcher {
         if (update == null) {
             return 0;
         }
-        return update.id().length() +
-                update.type().toString().length() +
-                update.action().toString().length() +
-                (update.payload() != null ? update.payload().length() : 0) +
-                100;
+        return update.id().length()
+                + update.type().toString().length()
+                + update.action().toString().length()
+                + (update.payload() != null ? update.payload().length() : 0)
+                + 100;
     }
 }

@@ -1,9 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
-
-import java.time.Duration;
-import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
@@ -13,7 +10,10 @@ import com.amazonaws.lambda.durable.operation.WaitOperation;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
-
+import java.time.Duration;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
@@ -36,8 +36,13 @@ public class DurableContext {
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
-        return step(name, resultType, func,
-                StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build());
+        return step(
+                name,
+                resultType,
+                func,
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                        .build());
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
@@ -46,8 +51,13 @@ public class DurableContext {
     }
 
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func) {
-        return stepAsync(name, resultType, func,
-                StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build());
+        return stepAsync(
+                name,
+                resultType,
+                func,
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                        .build());
     }
 
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
@@ -60,14 +70,8 @@ public class DurableContext {
         }
 
         // Create and start step operation
-        StepOperation<T> operation = new StepOperation<>(
-                operationId,
-                name,
-                func,
-                resultType,
-                config,
-                executionManager,
-                serDes);
+        StepOperation<T> operation =
+                new StepOperation<>(operationId, name, func, resultType, config, executionManager, serDes);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -88,11 +92,7 @@ public class DurableContext {
         }
 
         // Create and start wait operation
-        var operation = new WaitOperation(
-                operationId,
-                waitName,
-                duration,
-                executionManager);
+        var operation = new WaitOperation(operationId, waitName, duration, executionManager);
 
         operation.execute(); // Checkpoint the wait
         operation.get(); // Block (will throw SuspendExecutionException if needed)
@@ -106,27 +106,23 @@ public class DurableContext {
         return String.valueOf(operationCounter.incrementAndGet());
     }
 
-    /**
-     * Validates that current operation matches checkpointed operation during
-     * replay.
-     */
-    private void validateReplay(String operationId, OperationType expectedType, String expectedName,
-            Operation checkpointed) {
+    /** Validates that current operation matches checkpointed operation during replay. */
+    private void validateReplay(
+            String operationId, OperationType expectedType, String expectedName, Operation checkpointed) {
         if (checkpointed == null || checkpointed.type() == null) {
             return; // First execution, no validation needed
         }
 
         if (!checkpointed.type().equals(expectedType)) {
-            throw new NonDeterministicExecutionException(
-                    String.format("Operation type mismatch for \"%s\". Expected %s, got %s",
-                            operationId, checkpointed.type(), expectedType));
+            throw new NonDeterministicExecutionException(String.format(
+                    "Operation type mismatch for \"%s\". Expected %s, got %s",
+                    operationId, checkpointed.type(), expectedType));
         }
 
         if (!Objects.equals(checkpointed.name(), expectedName)) {
-            throw new NonDeterministicExecutionException(
-                    String.format("Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                            operationId, checkpointed.name(), expectedName));
+            throw new NonDeterministicExecutionException(String.format(
+                    "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
+                    operationId, checkpointed.name(), expectedName));
         }
     }
-
 }

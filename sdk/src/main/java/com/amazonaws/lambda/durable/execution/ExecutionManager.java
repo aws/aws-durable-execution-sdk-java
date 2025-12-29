@@ -1,5 +1,9 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.execution;
 
+import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
@@ -11,28 +15,26 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Phaser;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
-import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
-
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 /**
  * Central manager for durable execution coordination.
- * 
- * Consolidates:
- * - Execution state (operations, checkpoint token)
- * - Thread lifecycle (registration/deregistration)
- * - Phaser management (coordination)
- * - Checkpoint batching (via CheckpointManager)
- * - Polling (for waits and retries)
- * 
- * This is the single entry point for all execution coordination.
+ *
+ * <p>Consolidates:
+ *
+ * <ul>
+ *   <li>Execution state (operations, checkpoint token)
+ *   <li>Thread lifecycle (registration/deregistration)
+ *   <li>Phaser management (coordination)
+ *   <li>Checkpoint batching (via CheckpointManager)
+ *   <li>Polling (for waits and retries)
+ * </ul>
+ *
+ * <p>This is the single entry point for all execution coordination.
  */
 public class ExecutionManager {
 
@@ -56,7 +58,9 @@ public class ExecutionManager {
     private final CheckpointBatcher checkpointBatcher;
     private final DurableExecutionClient client;
 
-    public ExecutionManager(String durableExecutionArn, String checkpointToken,
+    public ExecutionManager(
+            String durableExecutionArn,
+            String checkpointToken,
             InitialExecutionState initialExecutionState,
             DurableExecutionClient client,
             Executor executor) {
@@ -72,11 +76,7 @@ public class ExecutionManager {
         // Pass method references to avoid cyclic dependency
         var checkpointExecutor = Executors.newSingleThreadExecutor();
         this.checkpointBatcher = new CheckpointBatcher(
-                client,
-                checkpointExecutor,
-                durableExecutionArn,
-                this::getCheckpointToken,
-                this::onCheckpointComplete);
+                client, checkpointExecutor, durableExecutionArn, this::getCheckpointToken, this::onCheckpointComplete);
     }
 
     private void loadAllOperations(InitialExecutionState initialExecutionState) {
@@ -93,10 +93,7 @@ public class ExecutionManager {
 
     // ===== Checkpoint Completion Handler =====
 
-    /**
-     * Called by CheckpointManager when a checkpoint completes.
-     * Updates state and advances phasers.
-     */
+    /** Called by CheckpointManager when a checkpoint completes. Updates state and advances phasers. */
     private void onCheckpointComplete(String newToken, List<Operation> newOperations) {
         this.checkpointToken = newToken;
         updateOperations(newOperations);
@@ -148,8 +145,11 @@ public class ExecutionManager {
 
         synchronized (this) {
             activeThreads.put(threadId, threadType);
-            logger.debug("Registered thread '{}' ({}) as active. Active threads: {}",
-                    threadId, threadType, activeThreads.size());
+            logger.debug(
+                    "Registered thread '{}' ({}) as active. Active threads: {}",
+                    threadId,
+                    threadType,
+                    activeThreads.size());
         }
     }
 
@@ -166,8 +166,7 @@ public class ExecutionManager {
 
         synchronized (this) {
             ThreadType type = activeThreads.remove(threadId);
-            logger.debug("Deregistered thread '{}' ({}). Active threads: {}",
-                    threadId, type, activeThreads.size());
+            logger.debug("Deregistered thread '{}' ({}). Active threads: {}", threadId, type, activeThreads.size());
 
             if (activeThreads.isEmpty()) {
                 logger.info("No active threads remaining - suspending execution");
@@ -208,8 +207,7 @@ public class ExecutionManager {
             try {
                 var sleepDuration = Duration.between(Instant.now(), firstPollTime);
                 if (!sleepDuration.isNegative()) {
-                    logger.debug("Polling for '{}': sleeping {} before polling",
-                            operationId, sleepDuration);
+                    logger.debug("Polling for '{}': sleeping {} before polling", operationId, sleepDuration);
                     Thread.sleep(sleepDuration.toMillis());
                 }
             } catch (InterruptedException ignored) {
@@ -242,15 +240,14 @@ public class ExecutionManager {
     // For example, we
     // want to retry while another thread is still running and we therefore are not
     // re-invoked because we never suspended.
-    public void pollUntilReady(String operationId, CompletableFuture<Void> future, Instant firstPollTime,
-            Duration period) {
+    public void pollUntilReady(
+            String operationId, CompletableFuture<Void> future, Instant firstPollTime, Duration period) {
         managedExecutor.execute(() -> {
             // Sleep until first poll time
             try {
                 Duration sleepDuration = Duration.between(Instant.now(), firstPollTime);
                 if (!sleepDuration.isNegative()) {
-                    logger.debug("Polling for '{}': sleeping {} before first poll",
-                            operationId, sleepDuration);
+                    logger.debug("Polling for '{}': sleeping {} before first poll", operationId, sleepDuration);
                     Thread.sleep(sleepDuration.toMillis());
                 }
             } catch (InterruptedException e) {
@@ -300,10 +297,10 @@ public class ExecutionManager {
     }
 
     private boolean isTerminalStatus(OperationStatus status) {
-        return status == OperationStatus.SUCCEEDED ||
-                status == OperationStatus.FAILED ||
-                status == OperationStatus.CANCELLED ||
-                status == OperationStatus.TIMED_OUT ||
-                status == OperationStatus.STOPPED;
+        return status == OperationStatus.SUCCEEDED
+                || status == OperationStatus.FAILED
+                || status == OperationStatus.CANCELLED
+                || status == OperationStatus.TIMED_OUT
+                || status == OperationStatus.STOPPED;
     }
 }

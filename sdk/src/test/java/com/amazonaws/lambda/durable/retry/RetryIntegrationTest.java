@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.retry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -5,21 +7,19 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.time.Duration;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.DurableHandler;
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 /**
- * Integration tests for retry strategy functionality.
- * Tests retry strategy configuration, delay progression, and integration with DurableContext.
+ * Integration tests for retry strategy functionality. Tests retry strategy configuration, delay progression, and
+ * integration with DurableContext.
  */
 class RetryIntegrationTest {
 
@@ -69,7 +69,7 @@ class RetryIntegrationTest {
                 Duration.ofSeconds(60), // 60 second max delay
                 2.0, // 2x backoff rate
                 JitterStrategy.NONE // no jitter for predictable testing
-        );
+                );
 
         // Test delay progression: 2, 4, 8, 16 seconds
         var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
@@ -105,10 +105,14 @@ class RetryIntegrationTest {
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build();
 
-                return context.step("failing-step", String.class, () -> {
-                    callCount.incrementAndGet();
-                    throw new RuntimeException("Simulated failure");
-                }, config);
+                return context.step(
+                        "failing-step",
+                        String.class,
+                        () -> {
+                            callCount.incrementAndGet();
+                            throw new RuntimeException("Simulated failure");
+                        },
+                        config);
             }
         };
 
@@ -134,10 +138,14 @@ class RetryIntegrationTest {
                         .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                         .build();
 
-                return context.step("no-retry-step", String.class, () -> {
-                    callCount.incrementAndGet();
-                    throw new RuntimeException("Simulated failure");
-                }, config);
+                return context.step(
+                        "no-retry-step",
+                        String.class,
+                        () -> {
+                            callCount.incrementAndGet();
+                            throw new RuntimeException("Simulated failure");
+                        },
+                        config);
             }
         };
 
@@ -163,10 +171,14 @@ class RetryIntegrationTest {
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build();
 
-                return context.step("successful-step", String.class, () -> {
-                    callCount.incrementAndGet();
-                    return "success: " + input;
-                }, config);
+                return context.step(
+                        "successful-step",
+                        String.class,
+                        () -> {
+                            callCount.incrementAndGet();
+                            return "success: " + input;
+                        },
+                        config);
             }
         };
 

@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.retry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -6,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
-
 import org.junit.jupiter.api.Test;
 
 class RetryStrategiesTest {
@@ -50,7 +51,7 @@ class RetryStrategiesTest {
                 Duration.ofSeconds(60), // maxDelay
                 2.0, // backoffRate
                 JitterStrategy.NONE // no jitter for predictable testing
-        );
+                );
 
         // Verify delay calculation: initialDelay * backoffRate^attemptNumber
         var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
@@ -74,7 +75,7 @@ class RetryStrategiesTest {
                 Duration.ofSeconds(20), // maxDelay (cap at 20 seconds)
                 2.0, // backoffRate
                 JitterStrategy.NONE // no jitter
-        );
+                );
 
         // Should be capped at maxDelay
         var decision = strategy.makeRetryDecision(new RuntimeException("test"), 5);
@@ -141,17 +142,25 @@ class RetryStrategiesTest {
 
     @Test
     void testInvalidParameters() {
-        assertThrows(IllegalArgumentException.class, () -> RetryStrategies.exponentialBackoff(0, Duration.ofSeconds(1),
-                Duration.ofSeconds(10), 2.0, JitterStrategy.NONE));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(
+                        0, Duration.ofSeconds(1), Duration.ofSeconds(10), 2.0, JitterStrategy.NONE));
 
-        assertThrows(IllegalArgumentException.class, () -> RetryStrategies.exponentialBackoff(5, Duration.ofSeconds(-1),
-                Duration.ofSeconds(10), 2.0, JitterStrategy.NONE));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(
+                        5, Duration.ofSeconds(-1), Duration.ofSeconds(10), 2.0, JitterStrategy.NONE));
 
-        assertThrows(IllegalArgumentException.class, () -> RetryStrategies.exponentialBackoff(5, Duration.ofSeconds(1),
-                Duration.ofSeconds(-1), 2.0, JitterStrategy.NONE));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(
+                        5, Duration.ofSeconds(1), Duration.ofSeconds(-1), 2.0, JitterStrategy.NONE));
 
-        assertThrows(IllegalArgumentException.class, () -> RetryStrategies.exponentialBackoff(5, Duration.ofSeconds(1),
-                Duration.ofSeconds(10), 0, JitterStrategy.NONE));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(
+                        5, Duration.ofSeconds(1), Duration.ofSeconds(10), 0, JitterStrategy.NONE));
 
         assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(0, Duration.ofSeconds(1)));
 

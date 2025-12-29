@@ -1,19 +1,18 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.serde;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-
-import java.time.Instant;
-import java.util.List;
-
-import org.junit.jupiter.api.Test;
 
 import com.amazonaws.lambda.durable.DurableHandler;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
+import java.time.Instant;
+import java.util.List;
+import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -74,8 +73,8 @@ class AwsSdkV2ModuleTest {
         // Verify top-level fields
         assertNotNull(input);
         assertEquals("c581e164-d7da-4108-8b35-109facaf1cc7", input.durableExecutionArn());
-        assertEquals("eyJhcm4iOiJjNTgxZTE2NC1kN2RhLTQxMDgtOGIzNS0xMDlmYWNhZjFjYzciLCJzZXEiOjZ9",
-                input.checkpointToken());
+        assertEquals(
+                "eyJhcm4iOiJjNTgxZTE2NC1kN2RhLTQxMDgtOGIzNS0xMDlmYWNhZjFjYzciLCJzZXEiOjZ9", input.checkpointToken());
 
         // Verify initial execution state
         assertNotNull(input.initialExecutionState());
@@ -121,7 +120,9 @@ class AwsSdkV2ModuleTest {
         assertEquals(Instant.parse("2025-12-18T10:53:55.374042Z"), waitOp.startTimestamp());
         assertEquals(Instant.parse("2025-12-18T10:54:00.553627Z"), waitOp.endTimestamp());
         assertNotNull(waitOp.waitDetails());
-        assertEquals(Instant.parse("2025-12-18T10:53:58.374035Z"), waitOp.waitDetails().scheduledEndTimestamp());
+        assertEquals(
+                Instant.parse("2025-12-18T10:53:58.374035Z"),
+                waitOp.waitDetails().scheduledEndTimestamp());
     }
 
     @Test
@@ -133,9 +134,8 @@ class AwsSdkV2ModuleTest {
                 .errorType("StepFailedException")
                 .errorMessage("Step execution failed")
                 .stackTrace(List.of(
-                    "com.example.MyClass|myMethod|MyClass.java|123",
-                    "com.example.OtherClass|otherMethod|OtherClass.java|456"
-                ))
+                        "com.example.MyClass|myMethod|MyClass.java|123",
+                        "com.example.OtherClass|otherMethod|OtherClass.java|456"))
                 .build();
 
         var output = new DurableExecutionOutput(ExecutionStatus.FAILED, null, errorObject);
@@ -157,8 +157,12 @@ class AwsSdkV2ModuleTest {
         assertEquals("Step execution failed", deserialized.error().errorMessage());
         assertNotNull(deserialized.error().stackTrace());
         assertEquals(2, deserialized.error().stackTrace().size());
-        assertEquals("com.example.MyClass|myMethod|MyClass.java|123", deserialized.error().stackTrace().get(0));
-        assertEquals("com.example.OtherClass|otherMethod|OtherClass.java|456", deserialized.error().stackTrace().get(1));
+        assertEquals(
+                "com.example.MyClass|myMethod|MyClass.java|123",
+                deserialized.error().stackTrace().get(0));
+        assertEquals(
+                "com.example.OtherClass|otherMethod|OtherClass.java|456",
+                deserialized.error().stackTrace().get(1));
     }
 
     @Test

@@ -1,12 +1,6 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
-
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
-import java.util.function.BiFunction;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient;
@@ -17,7 +11,12 @@ import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.function.BiFunction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -25,7 +24,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 public class DurableExecutor {
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutor.class);
-    
+
     // Lambda response size limit is 6MB minus small epsilon for envelope
     private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
 
@@ -50,8 +49,10 @@ public class DurableExecutor {
         logger.debug("DurableExecution.execute() called");
         logger.debug("DurableExecutionArn: {}", input.durableExecutionArn());
         logger.debug("CheckpointToken: {}", input.checkpointToken());
-        logger.debug("Initial operations count: {}",
-                input.initialExecutionState() != null && input.initialExecutionState().operations() != null
+        logger.debug(
+                "Initial operations count: {}",
+                input.initialExecutionState() != null
+                                && input.initialExecutionState().operations() != null
                         ? input.initialExecutionState().operations().size()
                         : 0);
 
@@ -61,7 +62,8 @@ public class DurableExecutor {
         // Potentially, we need to call the backend to fetch it. Give it to the manager,
         // have it load it from the
         // if null.
-        if (input.initialExecutionState() == null || input.initialExecutionState().operations() == null
+        if (input.initialExecutionState() == null
+                || input.initialExecutionState().operations() == null
                 || input.initialExecutionState().operations().isEmpty()
                 || input.initialExecutionState().operations().get(0).type() != OperationType.EXECUTION) {
             throw new IllegalStateException("First operation must be EXECUTION");
@@ -78,11 +80,7 @@ public class DurableExecutor {
 
         // TODO: Should we pass the whole input instead?
         var executionManager = new ExecutionManager(
-                input.durableExecutionArn(),
-                input.checkpointToken(),
-                input.initialExecutionState(),
-                client,
-                executor);
+                input.durableExecutionArn(), input.checkpointToken(), input.initialExecutionState(), client, executor);
 
         var executionOp = executionManager.getExecutionOperation();
         logger.debug("EXECUTION operation found: {}", executionOp.id());
@@ -122,26 +120,30 @@ public class DurableExecutor {
 
             var result = handlerFuture.get();
             var outputPayload = serDes.serialize(result);
-            
+
             // Check if the serialized payload exceeds Lambda response size limit
             var payloadSize = outputPayload != null ? outputPayload.getBytes(StandardCharsets.UTF_8).length : 0;
-            
+
             if (payloadSize > LAMBDA_RESPONSE_SIZE_LIMIT) {
-                logger.debug("Response size ({} bytes) exceeds Lambda limit ({} bytes). Checkpointing result.",
-                        payloadSize, LAMBDA_RESPONSE_SIZE_LIMIT);
-                
+                logger.debug(
+                        "Response size ({} bytes) exceeds Lambda limit ({} bytes). Checkpointing result.",
+                        payloadSize,
+                        LAMBDA_RESPONSE_SIZE_LIMIT);
+
                 // Checkpoint the large result and wait for it to complete
-                executionManager.sendOperationUpdate(OperationUpdate.builder()
-                        .type(OperationType.EXECUTION)
-                        .id(executionOp.id())
-                        .action(OperationAction.SUCCEED)
-                        .payload(outputPayload)
-                        .build()).join();
-                
+                executionManager
+                        .sendOperationUpdate(OperationUpdate.builder()
+                                .type(OperationType.EXECUTION)
+                                .id(executionOp.id())
+                                .action(OperationAction.SUCCEED)
+                                .payload(outputPayload)
+                                .build())
+                        .join();
+
                 // Return empty result, we checkpointed the data manually
                 return DurableExecutionOutput.success("");
             }
-            
+
             // If response size is acceptable, return the result directly
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
@@ -153,10 +155,7 @@ public class DurableExecutor {
         }
     }
 
-    private static <I> I extractUserInput(
-            Operation executionOp,
-            SerDes serDes,
-            Class<I> inputType) {
+    private static <I> I extractUserInput(Operation executionOp, SerDes serDes, Class<I> inputType) {
 
         if (executionOp.executionDetails() == null) {
             throw new IllegalStateException("EXECUTION operation missing executionDetails");
@@ -167,15 +166,12 @@ public class DurableExecutor {
     }
 
     public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
-            Class<I> inputType,
-            BiFunction<I, DurableContext, O> handler) {
+            Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
         return (input, context) -> execute(input, context, inputType, handler);
     }
 
     public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
-            Class<I> inputType,
-            BiFunction<I, DurableContext, O> handler,
-            DurableExecutionClient client) {
+            Class<I> inputType, BiFunction<I, DurableContext, O> handler, DurableExecutionClient client) {
         return (input, context) -> execute(input, context, inputType, handler, client);
     }
 }

@@ -1,16 +1,15 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.operation;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.concurrent.Phaser;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
-
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.Phaser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -27,11 +26,7 @@ public class WaitOperation implements DurableOperation<Void> {
     private final ExecutionManager executionManager;
     private final Phaser phaser;
 
-    public WaitOperation(
-            String operationId,
-            String name,
-            Duration duration,
-            ExecutionManager executionManager) {
+    public WaitOperation(String operationId, String name, Duration duration, ExecutionManager executionManager) {
         this.operationId = operationId;
         this.name = name;
         this.duration = duration;
@@ -83,9 +78,8 @@ public class WaitOperation implements DurableOperation<Void> {
         } else {
             // Replay - calculate remaining time from scheduledEndTimestamp
             if (existing.waitDetails() != null && existing.waitDetails().scheduledEndTimestamp() != null) {
-                remainingWaitTime = Duration.between(
-                        Instant.now(),
-                        existing.waitDetails().scheduledEndTimestamp());
+                remainingWaitTime =
+                        Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());
             } else {
                 remainingWaitTime = duration;
             }
@@ -95,9 +89,7 @@ public class WaitOperation implements DurableOperation<Void> {
         // Start polling for wait completion
         // Poll starting at scheduledEndTimestamp + 25ms, every 200ms
         // The polling will complete the phaser when the backend reports SUCCEEDED
-        Instant firstPoll = Instant.now()
-                .plus(remainingWaitTime)
-                .plusMillis(25);
+        Instant firstPoll = Instant.now().plus(remainingWaitTime).plusMillis(25);
         executionManager.pollForOperationUpdates(operationId, firstPoll, Duration.ofMillis(200));
     }
 

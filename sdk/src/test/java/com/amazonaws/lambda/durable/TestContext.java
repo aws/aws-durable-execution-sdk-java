@@ -1,13 +1,15 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.services.lambda.runtime.ClientContext;
 import com.amazonaws.services.lambda.runtime.CognitoIdentity;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.LambdaLogger;
-
 import java.nio.charset.StandardCharsets;
 
-// A concrete implementation of Context. We aren't actually going to use most of this so it doesn't matter that it's mostly hardcoded.
+// A concrete implementation of Context. We aren't actually going to use most of this so it doesn't matter that it's
+// mostly hardcoded.
 public class TestContext implements Context {
     @Override
     public String getAwsRequestId() {
