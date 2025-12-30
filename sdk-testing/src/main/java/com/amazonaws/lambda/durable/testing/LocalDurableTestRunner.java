@@ -78,4 +78,9 @@ public class LocalDurableTestRunner<I, O> {
     private Context mockLambdaContext() {
         return null; // Minimal - tests don't need real Lambda context
     }
+
+    /** Get the storage client for test setup (e.g., pre-populating operations). */
+    public LocalMemoryExecutionClient getStorage() {
+        return storage;
+    }
 }
