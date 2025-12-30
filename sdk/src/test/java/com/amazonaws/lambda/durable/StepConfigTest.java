@@ -32,10 +32,11 @@ class StepConfigTest {
 
         var config = StepConfig.builder()
                 .retryStrategy(strategy)
-                // TODO: Add more chaining here once implemented
+                .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                 .build();
 
         assertEquals(strategy, config.retryStrategy());
+        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.semantics());
     }
 
     @Test
@@ -43,5 +44,12 @@ class StepConfigTest {
         var config = StepConfig.builder().retryStrategy(null).build();
 
         assertNull(config.retryStrategy());
+    }
+
+    @Test
+    void testSemanticsDefaultsToAtLeastOnce() {
+        var config = StepConfig.builder().build();
+
+        assertEquals(StepSemantics.AT_LEAST_ONCE_PER_RETRY, config.semantics());
     }
 }

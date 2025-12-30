@@ -7,20 +7,26 @@ import com.amazonaws.lambda.durable.retry.RetryStrategy;
 /**
  * Configuration options for step operations in durable executions.
  *
- * <p>This class provides a builder pattern for configuring various aspects of step execution, including retry behavior.
- * Additional configuration options will be added in future versions.
+ * <p>This class provides a builder pattern for configuring various aspects of step execution, including retry behavior
+ * and delivery semantics.
  */
 public class StepConfig {
     private final RetryStrategy retryStrategy;
-    // TODO: Add other configuration options like SerDes, timeout, etc.
+    private final StepSemantics semantics;
 
     private StepConfig(Builder builder) {
         this.retryStrategy = builder.retryStrategy;
+        this.semantics = builder.semantics;
     }
 
     /** @return the retry strategy for this step, or null if not specified */
     public RetryStrategy retryStrategy() {
         return retryStrategy;
+    }
+
+    /** @return the delivery semantics for this step, defaults to AT_LEAST_ONCE_PER_RETRY if not specified */
+    public StepSemantics semantics() {
+        return semantics != null ? semantics : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
     }
 
     /**
@@ -35,6 +41,7 @@ public class StepConfig {
     /** Builder for creating StepConfig instances. */
     public static class Builder {
         private RetryStrategy retryStrategy;
+        private StepSemantics semantics;
 
         /**
          * Sets the retry strategy for the step.
@@ -44,6 +51,17 @@ public class StepConfig {
          */
         public Builder retryStrategy(RetryStrategy retryStrategy) {
             this.retryStrategy = retryStrategy;
+            return this;
+        }
+
+        /**
+         * Sets the delivery semantics for the step.
+         *
+         * @param semantics the delivery semantics to use, defaults to AT_LEAST_ONCE_PER_RETRY if not specified
+         * @return this builder for method chaining
+         */
+        public Builder semantics(StepSemantics semantics) {
+            this.semantics = semantics;
             return this;
         }
 

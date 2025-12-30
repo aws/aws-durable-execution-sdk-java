@@ -4,6 +4,7 @@ package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.*;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
+import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
@@ -16,6 +17,8 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 public class LocalDurableTestRunner<I, O> {
+    private static final int MAX_INVOCATIONS = 100;
+
     private final Class<I> inputType;
     private final BiFunction<I, DurableContext, O> handler;
     private final LocalMemoryExecutionClient storage;
@@ -28,11 +31,26 @@ public class LocalDurableTestRunner<I, O> {
         this.serDes = new JacksonSerDes();
     }
 
+    /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
         var durableInput = createDurableInput(input);
         var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, storage);
 
         return new TestResult<>(output, storage);
+    }
+
+    /** Run until completion (SUCCEEDED or FAILED), simulating Lambda re-invocations. */
+    public TestResult<O> runUntilComplete(I input) {
+        TestResult<O> result = null;
+        for (int i = 0; i < MAX_INVOCATIONS; i++) {
+            result = run(input);
+            if (result.getStatus() == ExecutionStatus.SUCCEEDED || result.getStatus() == ExecutionStatus.FAILED) {
+                return result;
+            }
+            // Simulate time passing for PENDING operations by advancing any timers
+            storage.advanceReadyOperations();
+        }
+        return result;
     }
 
     private DurableExecutionInput createDurableInput(I input) {

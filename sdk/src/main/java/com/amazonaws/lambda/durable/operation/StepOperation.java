@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.StepConfig;
+import com.amazonaws.lambda.durable.StepSemantics;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
@@ -82,10 +83,15 @@ public class StepOperation<T> implements DurableOperation<T> {
                     return;
                 }
                 case STARTED -> {
-                    // If the step was already STARTED, and we're using AT_MOST_ONCE_PER_RETRY
-                    // semantics, throw an error.
-                    throw new StepInterruptedException(
-                            String.format("step '%s' interrupted", name == null ? operationId : name));
+                    // Handle based on semantics
+                    if (getSemantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                        // AT_MOST_ONCE: treat as interrupted, go through retry logic
+                        handleInterruptedStep(existing.stepDetails().attempt());
+                    } else {
+                        // AT_LEAST_ONCE: re-execute the step
+                        executeStepLogic(existing.stepDetails().attempt());
+                    }
+                    return;
                 }
                 case PENDING -> {
                     // Step is pending retry - setup polling
@@ -136,11 +142,15 @@ public class StepOperation<T> implements DurableOperation<T> {
                             .type(OperationType.STEP)
                             .action(OperationAction.START)
                             .build();
-                    executionManager.sendOperationUpdate(startUpdate).join();
+
+                    if (getSemantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                        // AT_MOST_ONCE: await START checkpoint before executing user code
+                        executionManager.sendOperationUpdate(startUpdate).join();
+                    } else {
+                        // AT_LEAST_ONCE: fire-and-forget START checkpoint
+                        executionManager.sendOperationUpdate(startUpdate);
+                    }
                 }
-                // TODO: Depending on step semantics we should always send this but for
-                // AT_LEAST_ONCE we fire and forget
-                // about it but still send it
 
                 // Execute the function
                 T result = function.get();
@@ -163,16 +173,28 @@ public class StepOperation<T> implements DurableOperation<T> {
         });
     }
 
+    private void handleInterruptedStep(int attempt) {
+        var error = new StepInterruptedException(operationId, name);
+        handleStepFailure(error, attempt + 1);
+    }
+
+    private StepSemantics getSemantics() {
+        return config != null ? config.semantics() : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
+    }
+
     private void handleStepError(Throwable e, int attempt) {
+        handleStepFailure(e, attempt);
+    }
+
+    private void handleStepFailure(Throwable error, int currentAttempt) {
         var errorObject = ErrorObject.builder()
-                .errorType(e.getClass().getSimpleName())
-                .errorMessage(e.getMessage())
-                .stackTrace(StepFailedException.serializeStackTrace(e.getStackTrace()))
-                // TODO: Add errorData object once we support polymorphic object mappers
+                .errorType(error.getClass().getSimpleName())
+                .errorMessage(error.getMessage())
+                .stackTrace(StepFailedException.serializeStackTrace(error.getStackTrace()))
                 .build();
 
         if (config != null && config.retryStrategy() != null) {
-            var retryDecision = config.retryStrategy().makeRetryDecision(e, attempt);
+            var retryDecision = config.retryStrategy().makeRetryDecision(error, currentAttempt);
 
             if (retryDecision.shouldRetry()) {
                 // Send RETRY
@@ -184,17 +206,14 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .action(OperationAction.RETRY)
                         .error(errorObject)
                         .stepOptions(StepOptions.builder()
-                                // RetryDecisions always produce integer number of seconds greater or equals to
-                                // 1 (no sub-second numbers)
-                                .nextAttemptDelaySeconds(
-                                        Math.toIntExact(retryDecision.delay().toSeconds()))
+                                .nextAttemptDelaySeconds(Math.toIntExact(retryDecision.delay().toSeconds()))
                                 .build())
                         .build();
                 executionManager.sendOperationUpdate(retryUpdate).join();
 
                 // Setup polling for retry
                 var pendingFuture = new CompletableFuture<Void>();
-                pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
+                pendingFuture.thenRun(() -> executeStepLogic(currentAttempt + 1));
 
                 var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
                 executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofMillis(200));

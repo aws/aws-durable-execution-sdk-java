@@ -62,6 +62,16 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         return List.copyOf(operationUpdates);
     }
 
+    /** Advance all PENDING operations to READY (simulates time passing for retries/waits). */
+    public void advanceReadyOperations() {
+        operations.replaceAll((id, op) -> {
+            if (op.status() == OperationStatus.PENDING) {
+                return op.toBuilder().status(OperationStatus.READY).build();
+            }
+            return op;
+        });
+    }
+
     private void applyUpdate(OperationUpdate update) {
         var operation = toOperation(update);
         operations.put(update.id(), operation);

@@ -18,8 +18,9 @@ buildNumber.properties
 .project
 .settings/
 
-# Kiro
+# Kiro and SOP
 .kiro
+.sop
 
 # Local testing
 
