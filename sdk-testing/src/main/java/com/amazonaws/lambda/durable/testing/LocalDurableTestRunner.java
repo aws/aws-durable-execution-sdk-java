@@ -2,19 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.testing;
 
-import com.amazonaws.lambda.durable.*;
+import com.amazonaws.lambda.durable.DurableContext;
+import com.amazonaws.lambda.durable.DurableExecutor;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.BiFunction;
 
 public class LocalDurableTestRunner<I, O> {
     private static final int MAX_INVOCATIONS = 100;
@@ -23,12 +25,17 @@ public class LocalDurableTestRunner<I, O> {
     private final BiFunction<I, DurableContext, O> handler;
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
+    private boolean skipTime = true; // Default to skipping time
 
     public LocalDurableTestRunner(Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
         this.inputType = inputType;
         this.handler = handler;
         this.storage = new LocalMemoryExecutionClient();
         this.serDes = new JacksonSerDes();
+    }
+    
+    public void setSkipTime(boolean skipTime) {
+        this.skipTime = skipTime;
     }
 
     /** Run a single invocation (may return PENDING if waiting/retrying). */
@@ -44,13 +51,28 @@ public class LocalDurableTestRunner<I, O> {
         TestResult<O> result = null;
         for (int i = 0; i < MAX_INVOCATIONS; i++) {
             result = run(input);
-            if (result.getStatus() == ExecutionStatus.SUCCEEDED || result.getStatus() == ExecutionStatus.FAILED) {
-                return result;
+            
+            if (result.getStatus() != ExecutionStatus.PENDING) {
+                return result; // SUCCEEDED or FAILED - we're done
             }
-            // Simulate time passing for PENDING operations by advancing any timers
-            storage.advanceReadyOperations();
+            
+            if (skipTime) {
+                storage.advanceReadyOperations(); // Auto-advance and continue loop
+            } else {
+                return result; // Return PENDING - let test manually advance time
+            }
         }
         return result;
+    }
+
+    public TestOperation getOperation(String name) {
+        var op = storage.getOperationByName(name);
+        return op != null ? new TestOperation(op, serDes) : null;
+    }
+    
+    // Manual time advancement for skipTime=false scenarios
+    public void advanceTime() {
+        storage.advanceReadyOperations();
     }
 
     private DurableExecutionInput createDurableInput(I input) {
@@ -63,7 +85,7 @@ public class LocalDurableTestRunner<I, O> {
                         ExecutionDetails.builder().inputPayload(inputJson).build())
                 .build();
 
-        // Simulate what Lambda actually does: load previous operations and include them in InitialExecutionState
+        // Load previous operations and include them in InitialExecutionState
         var existingOps = storage.getExecutionState("arn:aws:lambda:us-east-1:123456789012:function:test", null)
                 .operations();
         var allOps = new ArrayList<>(List.of(executionOp));

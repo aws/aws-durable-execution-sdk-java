@@ -3,17 +3,19 @@
 package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import software.amazon.awssdk.services.lambda.model.*;
+
+import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
-import software.amazon.awssdk.services.lambda.model.*;
 
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();
-    private final Map<String, List<Operation>> paginatedOperations = new ConcurrentHashMap<>();
-    private final Map<String, String> nextMarkers = new ConcurrentHashMap<>();
     private final AtomicReference<String> checkpointToken =
             new AtomicReference<>(UUID.randomUUID().toString());
     private final List<OperationUpdate> operationUpdates = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -36,40 +38,41 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     @Override
     public GetDurableExecutionStateResponse getExecutionState(String arn, String marker) {
-        if (marker == null || !paginatedOperations.containsKey(marker)) {
-            return GetDurableExecutionStateResponse.builder()
-                    .operations(operations.values())
-                    .build();
-        }
-        var paginatedOperations = this.paginatedOperations.get(marker);
-        var nextMarker = nextMarkers.get(marker);
         return GetDurableExecutionStateResponse.builder()
-                .operations(paginatedOperations)
-                .nextMarker(nextMarker)
+                .operations(operations.values())
                 .build();
-    }
-
-    /** Setup pagination for testing. Call this to configure what operations should be returned for each marker. */
-    public void setupPagination(String marker, List<Operation> ops, String nextMarker) {
-        paginatedOperations.put(marker, ops);
-        if (nextMarker != null) {
-            nextMarkers.put(marker, nextMarker);
-        }
     }
 
     /** Get all operation updates that have been sent to this client. Useful for testing and verification. */
     public List<OperationUpdate> getOperationUpdates() {
         return List.copyOf(operationUpdates);
     }
-
-    /** Advance all PENDING operations to READY (simulates time passing for retries/waits). */
+    /** Advance all operations (simulates time passing for retries/waits). */
     public void advanceReadyOperations() {
         operations.replaceAll((id, op) -> {
             if (op.status() == OperationStatus.PENDING) {
                 return op.toBuilder().status(OperationStatus.READY).build();
             }
+            if (op.status() == OperationStatus.STARTED && op.type() == OperationType.WAIT) {
+                return op.toBuilder().status(OperationStatus.SUCCEEDED).build();
+            }
             return op;
         });
+    }
+
+    public Operation getOperationByName(String name) {
+        return operations.values().stream()
+            .filter(op -> name.equals(op.name()))
+            .findFirst()
+            .orElse(null);
+    }
+
+    public List<Operation> getAllOperations() {
+        return operations.values().stream().toList();
+    }
+
+    public void reset() {
+        operations.clear();
     }
 
     private void applyUpdate(OperationUpdate update) {
@@ -78,14 +81,45 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     private Operation toOperation(OperationUpdate update) {
-        // TODO: Currently we only use the StepDetails - should that depend on type actually?
-        return Operation.builder()
+        var builder = Operation.builder()
                 .id(update.id())
                 .name(update.name())
                 .type(update.type())
-                .status(deriveStatus(update.action()))
-                .stepDetails(StepDetails.builder().result(update.payload()).build())
+                .status(deriveStatus(update.action()));
+
+        switch (update.type()) {
+            case WAIT -> builder.waitDetails(buildWaitDetails(update));
+            case STEP -> builder.stepDetails(buildStepDetails(update));
+        }
+
+        return builder.build();
+    }
+
+    private WaitDetails buildWaitDetails(OperationUpdate update) {
+        if (update.waitOptions() == null) return null;
+        
+        var scheduledEnd = Instant.now().plusSeconds(update.waitOptions().waitSeconds());
+        return WaitDetails.builder()
+                .scheduledEndTimestamp(scheduledEnd)
                 .build();
+    }
+
+    private StepDetails buildStepDetails(OperationUpdate update) {
+        var existingOp = operations.get(update.id());
+        var existing = existingOp != null ? existingOp.stepDetails() : null;
+        
+        var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();
+        
+        if (update.action() == OperationAction.RETRY) {
+            var attempt = existing != null && existing.attempt() != null ? existing.attempt() + 1 : 1;
+            detailsBuilder.attempt(attempt).error(update.error());
+        }
+        
+        if (update.payload() != null) {
+            detailsBuilder.result(update.payload());
+        }
+        
+        return detailsBuilder.build();
     }
 
     private OperationStatus deriveStatus(OperationAction action) {
