@@ -57,7 +57,7 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.amazonaws.lambda</groupId>
+            <groupId>.com.amazonaws.lambda</groupId>
             <artifactId>aws-durable-execution-sdk-java-testing</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>

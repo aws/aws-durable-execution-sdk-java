@@ -71,35 +71,6 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             return op;
         });
     }
-    
-    /** Simulate an interrupted step by creating a STARTED operation with proper attempt tracking. */
-    public void simulateInterruptedStep(String operationId, String name, int attempt) {
-        var operation = Operation.builder()
-                .id(operationId)
-                .name(name)
-                .type(OperationType.STEP)
-                .status(OperationStatus.STARTED)
-                .stepDetails(StepDetails.builder()
-                    .attempt(attempt)
-                    .build())
-                .build();
-        operations.put(operationId, operation);
-    }
-    
-    /** Simulate a pending step waiting for retry. */
-    public void simulatePendingStep(String operationId, String name, int attempt, java.time.Instant nextAttemptTime) {
-        var operation = Operation.builder()
-                .id(operationId)
-                .name(name)
-                .type(OperationType.STEP)
-                .status(OperationStatus.PENDING)
-                .stepDetails(StepDetails.builder()
-                    .attempt(attempt)
-                    .nextAttemptTimestamp(nextAttemptTime)
-                    .build())
-                .build();
-        operations.put(operationId, operation);
-    }
 
     private void applyUpdate(OperationUpdate update) {
         var operation = toOperation(update);
@@ -107,44 +78,14 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     private Operation toOperation(OperationUpdate update) {
-        var stepDetailsBuilder = StepDetails.builder();
-        
-        // Set result payload
-        if (update.payload() != null) {
-            stepDetailsBuilder.result(update.payload());
-        }
-        
-        // Set error details for failed operations
-        if (update.error() != null) {
-            stepDetailsBuilder.error(update.error());
-        }
-        
-        // Set attempt number and next attempt timestamp for retries
-        if (update.stepOptions() != null) {
-            stepDetailsBuilder.attempt(getCurrentAttempt(update.id()) + 1);
-            if (update.stepOptions().nextAttemptDelaySeconds() != null) {
-                stepDetailsBuilder.nextAttemptTimestamp(
-                    java.time.Instant.now().plusSeconds(update.stepOptions().nextAttemptDelaySeconds()));
-            }
-        } else {
-            stepDetailsBuilder.attempt(getCurrentAttempt(update.id()));
-        }
-
+        // TODO: Currently we only use the StepDetails - should that depend on type actually?
         return Operation.builder()
                 .id(update.id())
                 .name(update.name())
                 .type(update.type())
                 .status(deriveStatus(update.action()))
-                .stepDetails(stepDetailsBuilder.build())
+                .stepDetails(StepDetails.builder().result(update.payload()).build())
                 .build();
-    }
-    
-    private int getCurrentAttempt(String operationId) {
-        var existing = operations.get(operationId);
-        if (existing != null && existing.stepDetails() != null) {
-            return existing.stepDetails().attempt();
-        }
-        return 0;
     }
 
     private OperationStatus deriveStatus(OperationAction action) {
