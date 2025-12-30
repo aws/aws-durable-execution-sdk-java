@@ -82,13 +82,15 @@ public class StepOperation<T> implements DurableOperation<T> {
                     phaser.arriveAndDeregister(); // Phase 0 -> 1
                 }
                 case STARTED -> {
-                    // Handle based on semantics
+                    var attempt = existing.stepDetails().attempt() != null
+                            ? existing.stepDetails().attempt()
+                            : 0;
                     if (getSemantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
                         // AT_MOST_ONCE: treat as interrupted, go through retry logic
-                        handleInterruptedStep(existing.stepDetails().attempt());
+                        handleInterruptedStep(attempt);
                     } else {
                         // AT_LEAST_ONCE: re-execute the step
-                        executeStepLogic(existing.stepDetails().attempt());
+                        executeStepLogic(attempt);
                     }
                 }
                 case PENDING -> {

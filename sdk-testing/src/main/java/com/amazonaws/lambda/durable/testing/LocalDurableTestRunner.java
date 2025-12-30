@@ -64,6 +64,14 @@ public class LocalDurableTestRunner<I, O> {
         return result;
     }
 
+    public void resetCheckpointToStarted(String stepName) {
+        storage.resetCheckpointToStarted(stepName);
+    }
+
+    public void simulateFireAndForgetCheckpointLoss(String stepName) {
+        storage.simulateFireAndForgetCheckpointLoss(stepName);
+    }
+
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
         return op != null ? new TestOperation(op, serDes) : null;

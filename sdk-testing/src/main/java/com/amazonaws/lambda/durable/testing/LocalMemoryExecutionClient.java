@@ -72,6 +72,23 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         operations.clear();
     }
 
+    /** Simulate checkpoint failure by forcing an operation into STARTED state */
+    public void resetCheckpointToStarted(String stepName) {
+        var op = getOperationByName(stepName);
+        if (op != null) {
+            var startedOp = op.toBuilder().status(OperationStatus.STARTED).build();
+            operations.put(op.id(), startedOp);
+        }
+    }
+
+    /** Simulate fire-and-forget checkpoint loss by removing the operation entirely */
+    public void simulateFireAndForgetCheckpointLoss(String stepName) {
+        var op = getOperationByName(stepName);
+        if (op != null) {
+            operations.remove(op.id());
+        }
+    }
+
     private void applyUpdate(OperationUpdate update) {
         var operation = toOperation(update);
         operations.put(update.id(), operation);
