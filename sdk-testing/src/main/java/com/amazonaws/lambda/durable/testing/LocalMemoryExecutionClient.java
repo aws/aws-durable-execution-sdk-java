@@ -3,16 +3,13 @@
 package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
-import software.amazon.awssdk.services.lambda.model.*;
-
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
+import software.amazon.awssdk.services.lambda.model.*;
 
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();
@@ -62,9 +59,9 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     public Operation getOperationByName(String name) {
         return operations.values().stream()
-            .filter(op -> name.equals(op.name()))
-            .findFirst()
-            .orElse(null);
+                .filter(op -> name.equals(op.name()))
+                .findFirst()
+                .orElse(null);
     }
 
     public List<Operation> getAllOperations() {
@@ -97,28 +94,26 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     private WaitDetails buildWaitDetails(OperationUpdate update) {
         if (update.waitOptions() == null) return null;
-        
+
         var scheduledEnd = Instant.now().plusSeconds(update.waitOptions().waitSeconds());
-        return WaitDetails.builder()
-                .scheduledEndTimestamp(scheduledEnd)
-                .build();
+        return WaitDetails.builder().scheduledEndTimestamp(scheduledEnd).build();
     }
 
     private StepDetails buildStepDetails(OperationUpdate update) {
         var existingOp = operations.get(update.id());
         var existing = existingOp != null ? existingOp.stepDetails() : null;
-        
+
         var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();
-        
+
         if (update.action() == OperationAction.RETRY) {
             var attempt = existing != null && existing.attempt() != null ? existing.attempt() + 1 : 1;
             detailsBuilder.attempt(attempt).error(update.error());
         }
-        
+
         if (update.payload() != null) {
             detailsBuilder.result(update.payload());
         }
-        
+
         return detailsBuilder.build();
     }
 

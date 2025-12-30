@@ -36,7 +36,7 @@ class LocalDurableTestRunnerTest {
         assertEquals(ExecutionStatus.SUCCEEDED, testResult.getStatus());
         assertEquals(25, testResult.getResult(Integer.class)); // (5 + 10) * 2 - 5 = 25
     }
-    
+
     @Test
     void testGetOperation() {
         var runner = new LocalDurableTestRunner<String, String>(String.class, (input, ctx) -> {

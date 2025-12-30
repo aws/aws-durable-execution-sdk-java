@@ -9,14 +9,13 @@ import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.function.BiFunction;
 
 public class LocalDurableTestRunner<I, O> {
     private static final int MAX_INVOCATIONS = 100;
@@ -33,7 +32,7 @@ public class LocalDurableTestRunner<I, O> {
         this.storage = new LocalMemoryExecutionClient();
         this.serDes = new JacksonSerDes();
     }
-    
+
     public void setSkipTime(boolean skipTime) {
         this.skipTime = skipTime;
     }
@@ -51,11 +50,11 @@ public class LocalDurableTestRunner<I, O> {
         TestResult<O> result = null;
         for (int i = 0; i < MAX_INVOCATIONS; i++) {
             result = run(input);
-            
+
             if (result.getStatus() != ExecutionStatus.PENDING) {
                 return result; // SUCCEEDED or FAILED - we're done
             }
-            
+
             if (skipTime) {
                 storage.advanceReadyOperations(); // Auto-advance and continue loop
             } else {
@@ -69,7 +68,7 @@ public class LocalDurableTestRunner<I, O> {
         var op = storage.getOperationByName(name);
         return op != null ? new TestOperation(op, serDes) : null;
     }
-    
+
     // Manual time advancement for skipTime=false scenarios
     public void advanceTime() {
         storage.advanceReadyOperations();

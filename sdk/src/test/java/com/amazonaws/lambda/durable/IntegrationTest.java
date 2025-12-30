@@ -2,19 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
-import java.time.Duration;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-/** Some example test to test end to end behavior **/
+/** Some example test to test end to end behavior * */
 class IntegrationTest {
 
     static class TestInput {
@@ -113,7 +112,9 @@ class IntegrationTest {
         assertEquals(3, result.getSucceededOperations().size());
         assertEquals("Step 1 done", result.getSucceededOperations().get(0).getStepResult(String.class));
         assertEquals(OperationType.WAIT, result.getSucceededOperations().get(1).getType());
-        assertEquals(OperationStatus.SUCCEEDED, result.getSucceededOperations().get(1).getStatus());
+        assertEquals(
+                OperationStatus.SUCCEEDED,
+                result.getSucceededOperations().get(1).getStatus());
         assertEquals("Step 2 done", result.getSucceededOperations().get(2).getStepResult(String.class));
         assertEquals("Step 1 done + Step 2 done", result.getResult(TestOutput.class).result);
     }
@@ -139,9 +140,7 @@ class IntegrationTest {
 
         // Handler executed twice, but step only executed once
         assertEquals(1, executionCount.get());
-        assertEquals(
-                "Execution #1: replay-test",
-                output2.getResult(TestOutput.class).result);
+        assertEquals("Execution #1: replay-test", output2.getResult(TestOutput.class).result);
         assertEquals(1, output2.getSucceededOperations().size());
     }
 
@@ -152,9 +151,9 @@ class IntegrationTest {
             var step2 = context.step("process", String.class, () -> step1 + "-processed");
             return new TestOutput(step2);
         });
-        
+
         var result = runner.runUntilComplete(new TestInput("test"));
-        
+
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(2, result.getOperations().size());
         assertEquals("validated", runner.getOperation("validate").getStepResult(String.class));
@@ -169,9 +168,9 @@ class IntegrationTest {
             return "done";
         });
         runner.setSkipTime(true);
-        
+
         var result = runner.runUntilComplete(new TestInput("test"));
-        
+
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(1, result.getSucceededOperations().size());
         assertEquals(0, result.getFailedOperations().size());
@@ -199,6 +198,5 @@ class IntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals(2, result.getSucceededOperations().size());
-
     }
 }
