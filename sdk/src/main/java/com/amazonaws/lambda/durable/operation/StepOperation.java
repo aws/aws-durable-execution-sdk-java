@@ -80,7 +80,6 @@ public class StepOperation<T> implements DurableOperation<T> {
                     // StepOperation.get().
                     logger.debug("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
                     phaser.arriveAndDeregister(); // Phase 0 -> 1
-                    return;
                 }
                 case STARTED -> {
                     // Handle based on semantics
@@ -91,7 +90,6 @@ public class StepOperation<T> implements DurableOperation<T> {
                         // AT_LEAST_ONCE: re-execute the step
                         executeStepLogic(existing.stepDetails().attempt());
                     }
-                    return;
                 }
                 case PENDING -> {
                     // Step is pending retry - setup polling
@@ -108,12 +106,10 @@ public class StepOperation<T> implements DurableOperation<T> {
                         nextAttemptTime = Instant.now().plusSeconds(1);
                     }
                     executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
-                    return;
                 }
                 case READY -> {
                     // Execute with current attempt
                     executeStepLogic(existing.stepDetails().attempt());
-                    return;
                 }
                 default ->
                     throw new RuntimeException(String.format("Unrecognized step status '%s'", existing.status()));
@@ -209,7 +205,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .stepOptions(StepOptions.builder()
                                 // RetryDecisions always produce integer number of seconds greater or equals to
                                 // 1 (no sub-second numbers)
-                                .nextAttemptDelaySeconds(Math.toIntExact(retryDecision.delay().toSeconds()))
+                                .nextAttemptDelaySeconds(
+                                        Math.toIntExact(retryDecision.delay().toSeconds()))
                                 .build())
                         .build();
                 executionManager.sendOperationUpdate(retryUpdate).join();
@@ -220,7 +217,6 @@ public class StepOperation<T> implements DurableOperation<T> {
 
                 var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
                 executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofMillis(200));
-                return;
             } else {
                 // Send FAIL - retries exhausted
                 var failUpdate = OperationUpdate.builder()
@@ -296,7 +292,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             // SneakyThrow.sneakyThrow((Throwable)
             // serDes.deserializeWithTypeInfo(errorData));
             // }
-            var e = new StepFailedException(
+            throw new StepFailedException(
                     String.format(
                             "Step failed with error of type %s. Message: %s",
                             op.stepDetails().error().errorType(),
@@ -305,7 +301,6 @@ public class StepOperation<T> implements DurableOperation<T> {
                     // Preserve original stack trace
                     StepFailedException.deserializeStackTrace(
                             op.stepDetails().error().stackTrace()));
-            throw e;
         }
     }
 }

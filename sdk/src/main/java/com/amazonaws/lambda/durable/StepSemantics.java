@@ -9,15 +9,15 @@ package com.amazonaws.lambda.durable;
  */
 public enum StepSemantics {
     /**
-     * At-least-once delivery (default). The step may be re-executed if interrupted.
-     * START checkpoint is fire-and-forget.
+     * At-least-once delivery (default). The step may be re-executed if interrupted. START checkpoint is
+     * fire-and-forget.
      */
     AT_LEAST_ONCE_PER_RETRY,
 
     /**
-     * At-most-once delivery per retry attempt. The step will not be re-executed if interrupted.
-     * START checkpoint is awaited before user code runs.
-     * If interrupted, throws {@link com.amazonaws.lambda.durable.exception.StepInterruptedException}.
+     * At-most-once delivery per retry attempt. The step will not be re-executed if interrupted. START checkpoint is
+     * awaited before user code runs. If interrupted, throws
+     * {@link com.amazonaws.lambda.durable.exception.StepInterruptedException}.
      */
     AT_MOST_ONCE_PER_RETRY
 }
