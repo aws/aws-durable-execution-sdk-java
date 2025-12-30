@@ -186,15 +186,16 @@ public class StepOperation<T> implements DurableOperation<T> {
         handleStepFailure(e, attempt);
     }
 
-    private void handleStepFailure(Throwable error, int currentAttempt) {
+    private void handleStepFailure(Throwable error, int attempt) {
         var errorObject = ErrorObject.builder()
                 .errorType(error.getClass().getSimpleName())
                 .errorMessage(error.getMessage())
+                // TODO: Add errorData object once we support polymorphic object mappers
                 .stackTrace(StepFailedException.serializeStackTrace(error.getStackTrace()))
                 .build();
 
         if (config != null && config.retryStrategy() != null) {
-            var retryDecision = config.retryStrategy().makeRetryDecision(error, currentAttempt);
+            var retryDecision = config.retryStrategy().makeRetryDecision(error, attempt);
 
             if (retryDecision.shouldRetry()) {
                 // Send RETRY
@@ -206,6 +207,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                         .action(OperationAction.RETRY)
                         .error(errorObject)
                         .stepOptions(StepOptions.builder()
+                                // RetryDecisions always produce integer number of seconds greater or equals to
+                                // 1 (no sub-second numbers)
                                 .nextAttemptDelaySeconds(Math.toIntExact(retryDecision.delay().toSeconds()))
                                 .build())
                         .build();
@@ -213,7 +216,7 @@ public class StepOperation<T> implements DurableOperation<T> {
 
                 // Setup polling for retry
                 var pendingFuture = new CompletableFuture<Void>();
-                pendingFuture.thenRun(() -> executeStepLogic(currentAttempt + 1));
+                pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
 
                 var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
                 executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofMillis(200));
