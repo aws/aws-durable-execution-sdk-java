@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.retry;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
+import com.amazonaws.lambda.durable.StepConfig;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
@@ -165,5 +163,59 @@ class RetryStrategiesTest {
         assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(0, Duration.ofSeconds(1)));
 
         assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(5, Duration.ofSeconds(-1)));
+    }
+
+    @Test
+    void testStepConfigWithRetryStrategy() {
+        var config1 = StepConfig.builder()
+                .retryStrategy(RetryStrategies.Presets.DEFAULT)
+                .build();
+
+        var config2 = StepConfig.builder()
+                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                .build();
+
+        var config3 = StepConfig.builder()
+                .retryStrategy(RetryStrategies.exponentialBackoff(
+                        3, Duration.ofSeconds(1), Duration.ofSeconds(10), 2.0, JitterStrategy.NONE))
+                .build();
+
+        assertNotNull(config1.retryStrategy());
+        assertNotNull(config2.retryStrategy());
+        assertNotNull(config3.retryStrategy());
+
+        var decision1 = config1.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
+        var decision2 = config2.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
+        var decision3 = config3.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
+
+        assertTrue(decision1.shouldRetry());
+        assertFalse(decision2.shouldRetry());
+        assertTrue(decision3.shouldRetry());
+    }
+
+    @Test
+    void testRetryStrategyDelayProgression() {
+        var strategy = RetryStrategies.exponentialBackoff(
+                5, Duration.ofSeconds(2), Duration.ofSeconds(60), 2.0, JitterStrategy.NONE);
+
+        var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
+        var decision4 = strategy.makeRetryDecision(new RuntimeException("test"), 4);
+
+        assertTrue(decision0.shouldRetry());
+        assertEquals(2, decision0.delay().toSeconds());
+
+        assertTrue(decision1.shouldRetry());
+        assertEquals(4, decision1.delay().toSeconds());
+
+        assertTrue(decision2.shouldRetry());
+        assertEquals(8, decision2.delay().toSeconds());
+
+        assertTrue(decision3.shouldRetry());
+        assertEquals(16, decision3.delay().toSeconds());
+
+        assertFalse(decision4.shouldRetry());
     }
 }

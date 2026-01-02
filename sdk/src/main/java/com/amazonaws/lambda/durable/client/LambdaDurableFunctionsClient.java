@@ -19,7 +19,7 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
 
     private static final Logger logger = LoggerFactory.getLogger(LambdaDurableFunctionsClient.class);
 
-    private final LambdaClient AWSLambdaSDKClient = LambdaClient.builder()
+    private static final LambdaClient AWSLambdaSDKClient = LambdaClient.builder()
             .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
             .region(Region.of(System.getenv(SdkSystemSetting.AWS_REGION.environmentVariable())))
             .build();

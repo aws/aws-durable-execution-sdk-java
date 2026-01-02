@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
+import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
@@ -15,23 +16,19 @@ import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.services.lambda.model.Operation;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.awssdk.services.lambda.model.*;
 
 class ReplayValidationTest {
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
-        var client = new com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient();
+        var client = TestUtils.createMockClient();
         var executor = Executors.newCachedThreadPool();
         var executionOp = Operation.builder()
                 .id("0")
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build();
-        var operations = Stream.concat(Stream.of(executionOp), initialOperations.stream())
-                .toList();
+        var operations = Stream.concat(Stream.of(executionOp), initialOperations.stream()).toList();
         var initialExecutionState = new InitialExecutionState(operations, null);
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
