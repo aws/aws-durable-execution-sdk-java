@@ -65,10 +65,6 @@ public class MyDurableFunction extends DurableHandler<MyRequest, String> {
 </dependency>
 ```
 
-## Documentation
-
-See the [Language SDK Specification](.kiro/steering/LANGUAGE_SDK_SPECIFICATION.md) for detailed implementation requirements.
-
 ## License
 
 This project is licensed under the Apache License 2.0.

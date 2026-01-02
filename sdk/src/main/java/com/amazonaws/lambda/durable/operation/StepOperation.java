@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.StepConfig;
+import com.amazonaws.lambda.durable.StepSemantics;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
@@ -79,13 +80,18 @@ public class StepOperation<T> implements DurableOperation<T> {
                     // StepOperation.get().
                     logger.debug("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
                     phaser.arriveAndDeregister(); // Phase 0 -> 1
-                    return;
                 }
                 case STARTED -> {
-                    // If the step was already STARTED, and we're using AT_MOST_ONCE_PER_RETRY
-                    // semantics, throw an error.
-                    throw new StepInterruptedException(
-                            String.format("step '%s' interrupted", name == null ? operationId : name));
+                    var attempt = existing.stepDetails().attempt() != null
+                            ? existing.stepDetails().attempt()
+                            : 0;
+                    if (getSemantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                        // AT_MOST_ONCE: treat as interrupted, go through retry logic
+                        handleInterruptedStep(attempt);
+                    } else {
+                        // AT_LEAST_ONCE: re-execute the step
+                        executeStepLogic(attempt);
+                    }
                 }
                 case PENDING -> {
                     // Step is pending retry - setup polling
@@ -102,12 +108,10 @@ public class StepOperation<T> implements DurableOperation<T> {
                         nextAttemptTime = Instant.now().plusSeconds(1);
                     }
                     executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
-                    return;
                 }
                 case READY -> {
                     // Execute with current attempt
                     executeStepLogic(existing.stepDetails().attempt());
-                    return;
                 }
                 default ->
                     throw new RuntimeException(String.format("Unrecognized step status '%s'", existing.status()));
@@ -136,11 +140,15 @@ public class StepOperation<T> implements DurableOperation<T> {
                             .type(OperationType.STEP)
                             .action(OperationAction.START)
                             .build();
-                    executionManager.sendOperationUpdate(startUpdate).join();
+
+                    if (getSemantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                        // AT_MOST_ONCE: await START checkpoint before executing user code
+                        executionManager.sendOperationUpdate(startUpdate).join();
+                    } else {
+                        // AT_LEAST_ONCE: fire-and-forget START checkpoint
+                        executionManager.sendOperationUpdate(startUpdate);
+                    }
                 }
-                // TODO: Depending on step semantics we should always send this but for
-                // AT_LEAST_ONCE we fire and forget
-                // about it but still send it
 
                 // Execute the function
                 T result = function.get();
@@ -163,16 +171,29 @@ public class StepOperation<T> implements DurableOperation<T> {
         });
     }
 
+    private void handleInterruptedStep(int attempt) {
+        var error = new StepInterruptedException(operationId, name);
+        handleStepFailure(error, attempt + 1);
+    }
+
+    private StepSemantics getSemantics() {
+        return config != null ? config.semantics() : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
+    }
+
     private void handleStepError(Throwable e, int attempt) {
+        handleStepFailure(e, attempt);
+    }
+
+    private void handleStepFailure(Throwable error, int attempt) {
         var errorObject = ErrorObject.builder()
-                .errorType(e.getClass().getSimpleName())
-                .errorMessage(e.getMessage())
-                .stackTrace(StepFailedException.serializeStackTrace(e.getStackTrace()))
+                .errorType(error.getClass().getSimpleName())
+                .errorMessage(error.getMessage())
                 // TODO: Add errorData object once we support polymorphic object mappers
+                .stackTrace(StepFailedException.serializeStackTrace(error.getStackTrace()))
                 .build();
 
         if (config != null && config.retryStrategy() != null) {
-            var retryDecision = config.retryStrategy().makeRetryDecision(e, attempt);
+            var retryDecision = config.retryStrategy().makeRetryDecision(error, attempt);
 
             if (retryDecision.shouldRetry()) {
                 // Send RETRY
@@ -198,7 +219,6 @@ public class StepOperation<T> implements DurableOperation<T> {
 
                 var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
                 executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofMillis(200));
-                return;
             } else {
                 // Send FAIL - retries exhausted
                 var failUpdate = OperationUpdate.builder()
@@ -274,7 +294,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             // SneakyThrow.sneakyThrow((Throwable)
             // serDes.deserializeWithTypeInfo(errorData));
             // }
-            var e = new StepFailedException(
+            throw new StepFailedException(
                     String.format(
                             "Step failed with error of type %s. Message: %s",
                             op.stepDetails().error().errorType(),
@@ -283,7 +303,6 @@ public class StepOperation<T> implements DurableOperation<T> {
                     // Preserve original stack trace
                     StepFailedException.deserializeStackTrace(
                             op.stepDetails().error().stackTrace()));
-            throw e;
         }
     }
 }
