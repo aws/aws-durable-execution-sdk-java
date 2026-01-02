@@ -15,6 +15,7 @@
     <modules>
         <module>sdk</module>
         <module>sdk-testing</module>
+        <module>sdk-integration-tests</module>
         <module>examples</module>
     </modules>
 

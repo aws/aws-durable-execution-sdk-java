@@ -166,6 +166,37 @@ class AwsSdkV2ModuleTest {
     }
 
     @Test
+    void testActualAWSLambdaPayload() throws Exception {
+        var mapper = DurableHandler.createObjectMapper();
+        var json = """
+                {
+                    "DurableExecutionArn": "c581e164-d7da-4108-8b35-109facaf1cc7",
+                    "CheckpointToken": "eyJhcm4iOiJjNTgxZTX2NCFkNXRhLTQxMDgtOGIzNS0xMDlmYXNhZjFjYzciLCJzZXEiOjZ9",
+                    "InitialExecutionState": {
+                           "Operations": [
+                               {
+                                   "Id": "f9074738-95c0-as3-982a-e82af4ddbb5c",
+                                   "Name": "a10a88cd-6eb5-asd4-afb3-e893ac72ad25",
+                                   "Type": "EXECUTION",
+                                   "StartTimestamp": 1767356934930,
+                                   "Status": "STARTED",
+                                   "ExecutionDetails": {
+                                       "InputPayload": "{\\n  \\"name\\": \\"Alice\\"\\n}\\n"
+                                   }
+                               }
+                           ]
+                       }
+                }
+                """;
+
+        var input = mapper.readValue(json, DurableExecutionInput.class);
+        
+        var operations = input.initialExecutionState().operations();
+        assertEquals(1, operations.size());
+        assertEquals(Instant.parse("2026-01-02T12:28:54.930Z"), operations.get(0).startTimestamp());
+    }
+
+    @Test
     void testErrorObjectRoundTripWithNullFields() throws Exception {
         ObjectMapper mapper = DurableHandler.createObjectMapper();
 

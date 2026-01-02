@@ -2,24 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
-import com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.services.lambda.model.Operation;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.*;
 
 class DurableContextTest {
 
@@ -33,7 +26,7 @@ class DurableContextTest {
     }
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
-        var client = new LocalMemoryExecutionClient();
+        var client = TestUtils.createMockClient();
         var executor = Executors.newCachedThreadPool();
         var initialExecutionState = new InitialExecutionState(initialOperations, null);
         var executionManager = new ExecutionManager(
@@ -68,8 +61,8 @@ class DurableContextTest {
         // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
-                .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
-                .stepDetails(software.amazon.awssdk.services.lambda.model.StepDetails.builder()
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
                         .result("\"Cached Result\"")
                         .build())
                 .build();
@@ -96,8 +89,8 @@ class DurableContextTest {
         // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
-                .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
-                .stepDetails(software.amazon.awssdk.services.lambda.model.StepDetails.builder()
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
                         .result("\"Cached Async Result\"")
                         .build())
                 .build();
@@ -154,21 +147,21 @@ class DurableContextTest {
         // Create context with all operations completed
         var syncOp = Operation.builder()
                 .id("1")
-                .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
-                .stepDetails(software.amazon.awssdk.services.lambda.model.StepDetails.builder()
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
                         .result("\"Replayed Sync\"")
                         .build())
                 .build();
         var asyncOp = Operation.builder()
                 .id("2")
-                .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
-                .stepDetails(software.amazon.awssdk.services.lambda.model.StepDetails.builder()
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
                         .result("100")
                         .build())
                 .build();
         var waitOp = Operation.builder()
                 .id("3")
-                .status(software.amazon.awssdk.services.lambda.model.OperationStatus.SUCCEEDED)
+                .status(OperationStatus.SUCCEEDED)
                 .build();
         var context = createTestContext(List.of(syncOp, asyncOp, waitOp));
 

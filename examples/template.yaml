@@ -4,21 +4,21 @@ Description: AWS Lambda Durable Execution SDK Examples
 
 Globals:
   Function:
-    Runtime: java17
     Timeout: 900
     MemorySize: 512
     Architectures:
-      - x86_64
+      - arm64
 
 Resources:
   SimpleStepExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
+      PackageType: Image
       FunctionName: simple-step-example
-      Handler: com.amazonaws.lambda.durable.examples.SimpleStepExample
-      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.SimpleStepExample::handleRequest"]
       DurableConfig:
-        ExecutionTimeout: 3600
+        ExecutionTimeout: 300
         RetentionPeriodInDays: 7
       Policies:
         - Statement:
@@ -27,13 +27,18 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-step-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
 
   WaitExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
+      PackageType: Image
       FunctionName: wait-example
-      Handler: com.amazonaws.lambda.durable.examples.WaitExample
-      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.WaitExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
@@ -44,13 +49,18 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
 
   RetryExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
+      PackageType: Image
       FunctionName: retry-example
-      Handler: com.amazonaws.lambda.durable.examples.RetryExample
-      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.RetryExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
@@ -61,13 +71,18 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
 
   WaitAtLeastExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
+      PackageType: Image
       FunctionName: wait-at-least-example
-      Handler: com.amazonaws.lambda.durable.examples.WaitAtLeastExample
-      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
@@ -78,13 +93,18 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
 
   WaitAtLeastInProcessExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
+      PackageType: Image
       FunctionName: wait-at-least-in-process-example
-      Handler: com.amazonaws.lambda.durable.examples.WaitAtLeastInProcessExample
-      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastInProcessExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
@@ -95,13 +115,18 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
 
   RetryInProcessExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
+      PackageType: Image
       FunctionName: retry-in-process-example
-      Handler: com.amazonaws.lambda.durable.examples.RetryInProcessExample
-      CodeUri: target/aws-durable-execution-sdk-java-examples-1.0.0-SNAPSHOT.jar
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.RetryInProcessExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 3600
         RetentionPeriodInDays: 7
@@ -112,6 +137,10 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
 
 Outputs:
   SimpleStepExampleFunction:

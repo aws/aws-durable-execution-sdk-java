@@ -4,12 +4,14 @@ package com.amazonaws.lambda.durable;
 
 import static java.util.List.of;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
+import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
-import com.amazonaws.lambda.durable.testing.LocalMemoryExecutionClient;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -36,18 +38,19 @@ class DurableExecutionWrapperTest {
         }
     }
 
+    private DurableExecutionClient mockClient() {
+        return TestUtils.createMockClient();
+    }
+
     @Test
     void testWrapperPattern() {
-        var client = new LocalMemoryExecutionClient();
-
-        // Create handler using wrapper
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler = DurableExecutor.wrap(
                 TestInput.class,
                 (input, context) -> {
                     var result = context.step("process", String.class, () -> "Wrapped: " + input.value);
                     return new TestOutput(result);
                 },
-                client);
+                mockClient());
 
         var serDes = new JacksonSerDes();
 
@@ -79,11 +82,8 @@ class DurableExecutionWrapperTest {
 
     @Test
     void testWrapperWithMethodReference() {
-        var client = new LocalMemoryExecutionClient();
-
-        // Create handler using method reference
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler =
-                DurableExecutor.wrap(TestInput.class, DurableExecutionWrapperTest::handleRequest, client);
+                DurableExecutor.wrap(TestInput.class, DurableExecutionWrapperTest::handleRequest, mockClient());
 
         var serDes = new JacksonSerDes();
 

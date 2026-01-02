@@ -10,6 +10,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonDeserializer;
@@ -90,7 +91,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
             public Date deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
                     throws IOException {
                 // Timestamp is a double value represent seconds since epoch.
-                double timestamp = jsonParser.getDoubleValue();
+                var timestamp = jsonParser.getDoubleValue();
                 // Date expects milliseconds since epoch, so multiply by 1000.
                 return new Date((long) (timestamp * 1000));
             }
@@ -115,7 +116,10 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
             @Override
             public Instant deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
                     throws IOException {
-                String timestampStr = jsonParser.getValueAsString();
+                if (jsonParser.hasToken(JsonToken.VALUE_NUMBER_INT)) {
+                    return Instant.ofEpochMilli(jsonParser.getLongValue());
+                }
+                var timestampStr = jsonParser.getValueAsString();
                 return Instant.from(TIMESTAMP_FORMATTER.parse(timestampStr));
             }
         });
