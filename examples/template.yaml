@@ -40,7 +40,7 @@ Resources:
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitExample::handleRequest"]
       DurableConfig:
-        ExecutionTimeout: 3600
+        ExecutionTimeout: 300
         RetentionPeriodInDays: 7
       Policies:
         - Statement:
@@ -62,7 +62,7 @@ Resources:
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.RetryExample::handleRequest"]
       DurableConfig:
-        ExecutionTimeout: 3600
+        ExecutionTimeout: 300
         RetentionPeriodInDays: 7
       Policies:
         - Statement:
@@ -84,7 +84,7 @@ Resources:
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastExample::handleRequest"]
       DurableConfig:
-        ExecutionTimeout: 3600
+        ExecutionTimeout: 300
         RetentionPeriodInDays: 7
       Policies:
         - Statement:
@@ -106,7 +106,7 @@ Resources:
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastInProcessExample::handleRequest"]
       DurableConfig:
-        ExecutionTimeout: 3600
+        ExecutionTimeout: 300
         RetentionPeriodInDays: 7
       Policies:
         - Statement:
@@ -128,7 +128,7 @@ Resources:
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.RetryInProcessExample::handleRequest"]
       DurableConfig:
-        ExecutionTimeout: 3600
+        ExecutionTimeout: 300
         RetentionPeriodInDays: 7
       Policies:
         - Statement:

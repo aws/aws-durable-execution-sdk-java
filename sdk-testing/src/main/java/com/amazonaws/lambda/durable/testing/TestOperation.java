@@ -4,20 +4,33 @@ package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.serde.SerDes;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 
+import java.util.List;
+
 /** Wrapper for AWS SDK Operation providing convenient access methods. */
 public class TestOperation {
     private final Operation operation;
+    private final List<Event> events;
     private final SerDes serDes;
 
     TestOperation(Operation operation, SerDes serDes) {
+        this(operation, List.of(), serDes);
+    }
+
+    TestOperation(Operation operation, List<Event> events, SerDes serDes) {
         this.operation = operation;
+        this.events = events;
         this.serDes = serDes;
+    }
+
+    public List<Event> getEvents() {
+        return List.copyOf(events);
     }
 
     public String getName() {
