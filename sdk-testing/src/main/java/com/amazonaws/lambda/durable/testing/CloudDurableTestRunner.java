@@ -20,18 +20,20 @@ public class CloudDurableTestRunner<I, O> {
     private final Class<O> outputType;
     private final LambdaClient lambdaClient;
     private final Duration pollInterval;
+    private final Duration timeout;
     private final InvocationType invocationType;
     // Store last execution result for operation inspection
     private TestResult<O> lastResult;
 
     private CloudDurableTestRunner(String functionArn, Class<I> inputType, Class<O> outputType,
-                                  LambdaClient lambdaClient, Duration pollInterval, 
+                                  LambdaClient lambdaClient, Duration pollInterval, Duration timeout,
                                   InvocationType invocationType) {
         this.functionArn = functionArn;
         this.inputType = inputType;
         this.outputType = outputType;
         this.lambdaClient = lambdaClient;
         this.pollInterval = pollInterval;
+        this.timeout = timeout;
         this.invocationType = invocationType;
     }
 
@@ -43,19 +45,26 @@ public class CloudDurableTestRunner<I, O> {
                         .credentialsProvider(DefaultCredentialsProvider.create())
                         .build(),
             Duration.ofSeconds(2),
+            Duration.ofSeconds(300),
             InvocationType.REQUEST_RESPONSE
         );
     }
 
     public CloudDurableTestRunner<I, O> withPollInterval(Duration interval) {
         return new CloudDurableTestRunner<>(
-            functionArn, inputType, outputType, lambdaClient, interval, invocationType
+            functionArn, inputType, outputType, lambdaClient, interval, timeout, invocationType
+        );
+    }
+
+    public CloudDurableTestRunner<I, O> withTimeout(Duration timeout) {
+        return new CloudDurableTestRunner<>(
+            functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType
         );
     }
 
     public CloudDurableTestRunner<I, O> withInvocationType(InvocationType type) {
         return new CloudDurableTestRunner<>(
-            functionArn, inputType, outputType, lambdaClient, pollInterval, type
+            functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type
         );
     }
 
@@ -82,8 +91,7 @@ public class CloudDurableTestRunner<I, O> {
             
             // Poll history until completion
             var poller = new HistoryPoller(lambdaClient);
-            // Todo: Make timeout configurable
-            var events = poller.pollUntilComplete(executionArn, pollInterval, Duration.ofSeconds(300));
+            var events = poller.pollUntilComplete(executionArn, pollInterval, timeout);
             
             // Process events into TestResult
             var processor = new HistoryEventProcessor();

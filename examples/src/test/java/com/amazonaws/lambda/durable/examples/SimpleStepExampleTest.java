@@ -16,7 +16,7 @@ class SimpleStepExampleTest {
         var handler = new SimpleStepExample();
 
         // Create test runner
-        var runner = new LocalDurableTestRunner<>(GreetingRequest.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler::handleRequest);
 
         // Run with input
         var input = new GreetingRequest("Alice");
@@ -30,7 +30,7 @@ class SimpleStepExampleTest {
     @Test
     void testWithDefaultName() {
         var handler = new SimpleStepExample();
-        var runner = new LocalDurableTestRunner<>(GreetingRequest.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler::handleRequest);
 
         var input = new GreetingRequest();
         var result = runner.run(input);
@@ -42,7 +42,7 @@ class SimpleStepExampleTest {
     @Test
     void testReplay() {
         var handler = new SimpleStepExample();
-        var runner = new LocalDurableTestRunner<>(GreetingRequest.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler::handleRequest);
 
         // First execution
         var input = new GreetingRequest("Bob");

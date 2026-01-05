@@ -25,7 +25,7 @@ class SkipTimeTest {
 
     @Test
     void testSkipTime() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var step1 = context.step("step-1", String.class, () -> "step1-done");
             context.wait(Duration.ofMinutes(5));
             var step2 = context.step("step-2", String.class, () -> "step2-done");
@@ -33,7 +33,7 @@ class SkipTimeTest {
         });
 
         // Should automatically advance all operations
-        runner.setSkipTime(true);
+        runner.withSkipTime(true);
         var result = runner.runUntilComplete(new TestInput("test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -43,14 +43,14 @@ class SkipTimeTest {
 
     @Test
     void testManualTimeControl() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var step1 = context.step("step-1", String.class, () -> "step1-done");
             context.wait(Duration.ofMinutes(5));
             var step2 = context.step("step-2", String.class, () -> "step2-done");
             return step1 + "+" + step2;
         });
 
-        runner.setSkipTime(false);
+        runner.withSkipTime(false);
 
         // First run - should execute until wait and return PENDING
         var result1 = runner.runUntilComplete(new TestInput("test"));
@@ -69,7 +69,7 @@ class SkipTimeTest {
     void testManualTimeControlWithRetry() {
         var attempts = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<TestInput, String>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             return context.step(
                     "flaky-step",
                     String.class,
@@ -84,7 +84,7 @@ class SkipTimeTest {
                             .build());
         });
 
-        runner.setSkipTime(false);
+        runner.withSkipTime(false);
 
         // First run - should fail and return PENDING (waiting for retry)
         var result1 = runner.runUntilComplete(new TestInput("test"));

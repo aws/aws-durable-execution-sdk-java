@@ -3,6 +3,9 @@
 package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
+import com.amazonaws.lambda.durable.serde.JacksonSerDes;
+import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,9 +18,9 @@ import software.amazon.awssdk.services.lambda.model.*;
 
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();
-    private final Map<String, List<Event>> operationEvents = new ConcurrentHashMap<>();
     private final List<Event> allEvents = new CopyOnWriteArrayList<>();
     private final EventProcessor eventProcessor = new EventProcessor();
+    private final SerDes serDes = new JacksonSerDes();
     private final AtomicReference<String> checkpointToken =
             new AtomicReference<>(UUID.randomUUID().toString());
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
@@ -57,7 +60,9 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Get events for a specific operation. */
     public List<Event> getEventsForOperation(String operationId) {
-        return List.copyOf(operationEvents.getOrDefault(operationId, List.of()));
+        return allEvents.stream()
+                .filter(e -> operationId.equals(e.id()))
+                .toList();
     }
 
     /** Advance all operations (simulates time passing for retries/waits). */
@@ -77,7 +82,6 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                         .build();
                 var event = eventProcessor.processUpdate(update, succeededOp);
                 allEvents.add(event);
-                operationEvents.computeIfAbsent(id, k -> new ArrayList<>()).add(event);
                 return succeededOp;
             }
             return op;
@@ -97,8 +101,23 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     public void reset() {
         operations.clear();
-        operationEvents.clear();
         allEvents.clear();
+    }
+
+    /** Build TestResult from current state. */
+    public <O> TestResult<O> toTestResult(DurableExecutionOutput output) {
+        var testOperations = operations.values().stream()
+                .filter(op -> op.type() != OperationType.EXECUTION)
+                .map(op -> new TestOperation(op, getEventsForOperation(op.id()), serDes))
+                .toList();
+        return new TestResult<>(
+                output.status(),
+                output.result(),
+                output.error(),
+                testOperations,
+                new ArrayList<>(allEvents),
+                serDes
+        );
     }
 
     /** Simulate checkpoint failure by forcing an operation into STARTED state */
@@ -126,7 +145,6 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
         var event = eventProcessor.processUpdate(update, operation);
         allEvents.add(event);
-        operationEvents.computeIfAbsent(update.id(), k -> new ArrayList<>()).add(event);
     }
 
     private Operation toOperation(OperationUpdate update) {

@@ -5,7 +5,6 @@ package com.amazonaws.lambda.durable.testing;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import software.amazon.awssdk.services.lambda.model.Event;
@@ -69,13 +68,13 @@ public class HistoryEventProcessor {
         }
         
         // Build TestOperations with events
-        var testOperations = new HashMap<String, TestOperation>();
+        var testOperations = new ArrayList<TestOperation>();
         for (var entry : operations.entrySet()) {
             var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());
-            testOperations.put(entry.getValue().name(), new TestOperation(entry.getValue(), opEvents, serDes));
+            testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));
         }
         
-        return new TestResult<>(status, result, testOperations, events, outputType, serDes);
+        return new TestResult<>(status, result, null, testOperations, events, serDes);
     }
     
     private Operation createStepOperation(String id, String name, String stepResult, OperationStatus status, Integer attempt) {
