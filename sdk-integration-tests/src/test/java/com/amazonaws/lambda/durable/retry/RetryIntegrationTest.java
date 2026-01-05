@@ -42,7 +42,7 @@ class RetryIntegrationTest {
             }
         };
 
-        var runner = new LocalDurableTestRunner<>(String.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(String.class, handler::handleRequest);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
@@ -69,7 +69,7 @@ class RetryIntegrationTest {
             }
         };
 
-        var runner = new LocalDurableTestRunner<>(String.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(String.class, handler::handleRequest);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
@@ -96,7 +96,7 @@ class RetryIntegrationTest {
             }
         };
 
-        var runner = new LocalDurableTestRunner<>(String.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(String.class, handler::handleRequest);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());

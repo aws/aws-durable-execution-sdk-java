@@ -40,7 +40,7 @@ class IntegrationTest {
 
     @Test
     void testActualSyncExecution() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var result = context.step("process", String.class, () -> "Processed: " + input.value);
             return new TestOutput(result);
         });
@@ -54,7 +54,7 @@ class IntegrationTest {
 
     @Test
     void testActualAsyncExecution() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var future = context.stepAsync("async-process", String.class, () -> "Async: " + input.value);
             try {
                 var result = future.get();
@@ -72,7 +72,7 @@ class IntegrationTest {
 
     @Test
     void testWaitSuspension() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var step1 = context.step("step1", String.class, () -> "Step 1 done");
 
             // This should throw SuspendExecutionException
@@ -96,7 +96,7 @@ class IntegrationTest {
 
     @Test
     void testFullWaitOperation() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var step1 = context.step("step1", String.class, () -> "Step 1 done");
 
             // This should throw SuspendExecutionException
@@ -106,7 +106,7 @@ class IntegrationTest {
             var step2 = context.step("step2", String.class, () -> "Step 2 done");
             return new TestOutput(step1 + " + " + step2);
         });
-        runner.setSkipTime(true);
+        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete(new TestInput("test"));
 
@@ -125,7 +125,7 @@ class IntegrationTest {
     void testBasicReplay() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var result = context.step("process", String.class, () -> {
                 return "Execution #" + executionCount.incrementAndGet() + ": " + input.value;
             });
@@ -148,7 +148,7 @@ class IntegrationTest {
 
     @Test
     void testMultiStepWorkflowWithOperationInspection() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             var step1 = context.step("validate", String.class, () -> "validated");
             var step2 = context.step("process", String.class, () -> step1 + "-processed");
             return new TestOutput(step2);
@@ -165,11 +165,11 @@ class IntegrationTest {
 
     @Test
     void testOperationFiltering() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             context.step("good-step", String.class, () -> "ok");
             return "done";
         });
-        runner.setSkipTime(true);
+        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete(new TestInput("test"));
 
@@ -181,12 +181,12 @@ class IntegrationTest {
 
     @Test
     void testWaitOperationWithManualAdvance() {
-        var runner = new LocalDurableTestRunner<>(TestInput.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             context.step("good-step", String.class, () -> "ok");
             context.wait(Duration.ofSeconds(5));
             return "done";
         });
-        runner.setSkipTime(false);
+        runner.withSkipTime(false);
 
         var result = runner.runUntilComplete(new TestInput("test"));
 
@@ -199,6 +199,6 @@ class IntegrationTest {
         var result2 = runner.runUntilComplete(new TestInput("test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
-        assertEquals(2, result.getSucceededOperations().size());
+        assertEquals(2, result2.getSucceededOperations().size());
     }
 }

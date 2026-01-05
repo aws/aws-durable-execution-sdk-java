@@ -16,7 +16,7 @@ class StepSemanticsIntegrationTest {
     void testAtLeastOnceCompletesSuccessfully() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(
+        var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step(
                         "my-step",
@@ -39,7 +39,7 @@ class StepSemanticsIntegrationTest {
     void testAtMostOnceCompletesSuccessfully() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(
+        var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step(
                         "my-step",
@@ -62,7 +62,7 @@ class StepSemanticsIntegrationTest {
     void testAtMostOnceNoRetryFailsImmediately() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(
+        var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step(
                         "my-step",
@@ -86,7 +86,7 @@ class StepSemanticsIntegrationTest {
     void testDefaultSemanticsIsAtLeastOnce() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(
+        var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step("my-step", String.class, () -> {
                     executionCount.incrementAndGet();
@@ -103,7 +103,7 @@ class StepSemanticsIntegrationTest {
     void testAtLeastOnceReExecutesAfterCheckpointLoss() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(String.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             return context.step(
                     "step",
                     String.class,
@@ -131,7 +131,7 @@ class StepSemanticsIntegrationTest {
     void testAtLeastOnceReExecutesAfterCheckpointFailure() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(String.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             return context.step(
                     "step",
                     String.class,
@@ -143,7 +143,7 @@ class StepSemanticsIntegrationTest {
                             .semantics(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
                             .build());
         });
-        runner.setSkipTime(true);
+        runner.withSkipTime(true);
 
         runner.run("test");
         assertEquals(1, executionCount.get());
@@ -159,7 +159,7 @@ class StepSemanticsIntegrationTest {
     void testAtMostOnceThrowsExceptionAfterCheckpointFailure() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = new LocalDurableTestRunner<>(String.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             return context.step(
                     "step",
                     String.class,

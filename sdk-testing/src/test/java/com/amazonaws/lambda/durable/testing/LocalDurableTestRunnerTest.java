@@ -11,7 +11,7 @@ class LocalDurableTestRunnerTest {
 
     @Test
     void testSimpleExecution() {
-        var runner = new LocalDurableTestRunner<String, String>(String.class, (input, ctx) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var result = ctx.step("process", String.class, () -> "Hello, " + input);
             return result;
         });
@@ -24,7 +24,7 @@ class LocalDurableTestRunnerTest {
 
     @Test
     void testMultipleSteps() {
-        var runner = new LocalDurableTestRunner<Integer, Integer>(Integer.class, (input, ctx) -> {
+        var runner = LocalDurableTestRunner.create(Integer.class, (input, ctx) -> {
             var step1 = ctx.step("add", Integer.class, () -> input + 10);
             var step2 = ctx.step("multiply", Integer.class, () -> step1 * 2);
             var step3 = ctx.step("subtract", Integer.class, () -> step2 - 5);
@@ -39,7 +39,7 @@ class LocalDurableTestRunnerTest {
 
     @Test
     void testGetOperation() {
-        var runner = new LocalDurableTestRunner<String, String>(String.class, (input, ctx) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             ctx.step("step-1", String.class, () -> "result1");
             ctx.step("step-2", String.class, () -> "result2");
             return "done";

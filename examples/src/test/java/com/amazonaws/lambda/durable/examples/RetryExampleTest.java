@@ -12,7 +12,7 @@ class RetryExampleTest {
     @Test
     void testRetryExampleWithTimeBasedFailure() {
         // Test the retry example with time-based failure simulation
-        var runner = new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var handler = new RetryExample();
             return handler.handleRequest(input, ctx);
         });
@@ -33,7 +33,7 @@ class RetryExampleTest {
         // This test demonstrates the retry behavior without strict assertions
         // It's useful for observing the retry mechanism in action
 
-        var runner = new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var handler = new RetryExample();
             return handler.handleRequest(input, ctx);
         });
@@ -50,7 +50,7 @@ class RetryExampleTest {
     @Test
     void testRetryExampleShowsRetryBehavior() {
         // Test that shows the different retry behaviors
-        var runner = new LocalDurableTestRunner<>(String.class, (input, ctx) -> {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var handler = new RetryExample();
             return handler.handleRequest(input, ctx);
         });

@@ -26,15 +26,20 @@ public class LocalDurableTestRunner<I, O> {
     private final SerDes serDes;
     private boolean skipTime = true; // Default to skipping time
 
-    public LocalDurableTestRunner(Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
+    private LocalDurableTestRunner(Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
         this.inputType = inputType;
         this.handler = handler;
         this.storage = new LocalMemoryExecutionClient();
         this.serDes = new JacksonSerDes();
     }
 
-    public void setSkipTime(boolean skipTime) {
+    public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
+        return new LocalDurableTestRunner<>(inputType, handler);
+    }
+
+    public LocalDurableTestRunner<I, O> withSkipTime(boolean skipTime) {
         this.skipTime = skipTime;
+        return this;
     }
 
     /** Run a single invocation (may return PENDING if waiting/retrying). */
@@ -42,7 +47,7 @@ public class LocalDurableTestRunner<I, O> {
         var durableInput = createDurableInput(input);
         var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, storage);
 
-        return new TestResult<>(output, storage);
+        return storage.toTestResult(output);
     }
 
     /** Run until completion (SUCCEEDED or FAILED), simulating Lambda re-invocations. */
