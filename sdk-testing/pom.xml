@@ -30,10 +30,10 @@
             <artifactId>aws-lambda-java-core</artifactId>
         </dependency>
 
-        <!-- AWS Lambda Java Core -->
+        <!-- AWS SDK v2 Lambda -->
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-lambda-java-core</artifactId>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>lambda</artifactId>
         </dependency>
 
         <dependency>

@@ -1,0 +1,106 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package com.amazonaws.lambda.durable.testing;
+
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
+
+import com.amazonaws.lambda.durable.serde.JacksonSerDes;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.InvocationType;
+import software.amazon.awssdk.services.lambda.model.InvokeRequest;
+import software.amazon.awssdk.core.SdkBytes;
+
+public class CloudDurableTestRunner<I, O> {
+    private final String functionArn;
+    private final Class<I> inputType;
+    private final Class<O> outputType;
+    private final LambdaClient lambdaClient;
+    private final Duration pollInterval;
+    private final InvocationType invocationType;
+    // Store last execution result for operation inspection
+    private TestResult<O> lastResult;
+
+    private CloudDurableTestRunner(String functionArn, Class<I> inputType, Class<O> outputType,
+                                  LambdaClient lambdaClient, Duration pollInterval, 
+                                  InvocationType invocationType) {
+        this.functionArn = functionArn;
+        this.inputType = inputType;
+        this.outputType = outputType;
+        this.lambdaClient = lambdaClient;
+        this.pollInterval = pollInterval;
+        this.invocationType = invocationType;
+    }
+
+    public static <I, O> CloudDurableTestRunner<I, O> create(
+            String functionArn, Class<I> inputType, Class<O> outputType) {
+        return new CloudDurableTestRunner<>(
+            functionArn, inputType, outputType,
+                LambdaClient.builder()
+                        .credentialsProvider(DefaultCredentialsProvider.create())
+                        .build(),
+            Duration.ofSeconds(2),
+            InvocationType.REQUEST_RESPONSE
+        );
+    }
+
+    public CloudDurableTestRunner<I, O> withPollInterval(Duration interval) {
+        return new CloudDurableTestRunner<>(
+            functionArn, inputType, outputType, lambdaClient, interval, invocationType
+        );
+    }
+
+    public CloudDurableTestRunner<I, O> withInvocationType(InvocationType type) {
+        return new CloudDurableTestRunner<>(
+            functionArn, inputType, outputType, lambdaClient, pollInterval, type
+        );
+    }
+
+    public TestResult<O> run(I input) {
+        try {
+            // Serialize input
+            var serDes = new JacksonSerDes();
+            var inputJson = serDes.serialize(input);
+            
+            // Invoke function
+            var invokeRequest = InvokeRequest.builder()
+                .functionName(functionArn)
+                .invocationType(invocationType)
+                .payload(SdkBytes.fromUtf8String(inputJson))
+                .build();
+                
+            var response = lambdaClient.invoke(invokeRequest);
+            
+            // Extract execution ARN from response headers
+            var executionArn = response.durableExecutionArn();
+            if (executionArn == null) {
+                throw new RuntimeException("No durable execution ARN returned - function may not be durable");
+            }
+            
+            // Poll history until completion
+            var poller = new HistoryPoller(lambdaClient);
+            // Todo: Make timeout configurable
+            var events = poller.pollUntilComplete(executionArn, pollInterval, Duration.ofSeconds(300));
+            
+            // Process events into TestResult
+            var processor = new HistoryEventProcessor();
+            var result = processor.processEvents(events, outputType);
+            this.lastResult = result;
+            return result;
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Function invocation failed", e);
+        }
+    }
+
+    public TestOperation getOperation(String name) {
+        if (lastResult == null) {
+            throw new IllegalStateException("No execution has been run yet");
+        }
+        return lastResult.getOperation(name);
+    }
+
+}
