@@ -4,6 +4,7 @@ package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.StepSemantics;
+import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
@@ -32,6 +33,7 @@ public class StepOperation<T> implements DurableOperation<T> {
     private final String name;
     private final Supplier<T> function;
     private final Class<T> resultType;
+    private final TypeToken<T> resultTypeToken;
     private final StepConfig config;
     private final ExecutionManager executionManager;
     private final SerDes serDes;
@@ -45,10 +47,41 @@ public class StepOperation<T> implements DurableOperation<T> {
             StepConfig config,
             ExecutionManager executionManager,
             SerDes serDes) {
+        this(operationId, name, function, resultType, null, config, executionManager, serDes);
+    }
+
+    public StepOperation(
+            String operationId,
+            String name,
+            Supplier<T> function,
+            TypeToken<T> resultTypeToken,
+            StepConfig config,
+            ExecutionManager executionManager,
+            SerDes serDes) {
+        this(operationId, name, function, null, resultTypeToken, config, executionManager, serDes);
+    }
+
+    private StepOperation(
+            String operationId,
+            String name,
+            Supplier<T> function,
+            Class<T> resultType,
+            TypeToken<T> resultTypeToken,
+            StepConfig config,
+            ExecutionManager executionManager,
+            SerDes serDes) {
+        if (resultType == null && resultTypeToken == null) {
+            throw new IllegalArgumentException("Either resultType or resultTypeToken must be provided");
+        }
+        if (resultType != null && resultTypeToken != null) {
+            throw new IllegalArgumentException("Cannot provide both resultType and resultTypeToken");
+        }
+
         this.operationId = operationId;
         this.name = name;
         this.function = function;
         this.resultType = resultType;
+        this.resultTypeToken = resultTypeToken;
         this.config = config;
         this.executionManager = executionManager;
         this.serDes = serDes;
@@ -280,7 +313,13 @@ public class StepOperation<T> implements DurableOperation<T> {
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();
             var result = (stepDetails != null) ? stepDetails.result() : null;
-            return serDes.deserialize(result, resultType);
+
+            // Use TypeToken if provided, otherwise use Class
+            if (resultTypeToken != null) {
+                return serDes.deserialize(result, resultTypeToken);
+            } else {
+                return serDes.deserialize(result, resultType);
+            }
         } else {
             // It failed so there's some kind of throwable. If we're using a serDes with
             // type info, deserialize and rethrow the original

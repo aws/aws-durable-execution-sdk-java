@@ -38,4 +38,5 @@ Thumbs.db
 
 # SAM
 .aws-sam/
+samconfig.toml
 samconfig.toml.bak

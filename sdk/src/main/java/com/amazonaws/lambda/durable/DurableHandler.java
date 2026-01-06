@@ -127,13 +127,10 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
         var baseMapper = JsonMapper.builder()
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-
                 // Looks pretty, and probably needed for tests to be deterministic.
                 .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
                 .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
-
-                // Data passed over the wire from the backend is UpperCamelCase but fields in
-                // our Coral-generated are regularCamelCase.
+                // Data passed over the wire from the backend is UpperCamelCase
                 .propertyNamingStrategy(PropertyNamingStrategies.UPPER_CAMEL_CASE)
                 .addModule(new JavaTimeModule())
                 .addModule(dateModule)

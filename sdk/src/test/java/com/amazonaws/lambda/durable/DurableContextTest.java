@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
+import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.time.Duration;
 import java.util.List;
@@ -187,5 +188,107 @@ class DurableContextTest {
                 // Expected - this means the method worked
             }
         });
+    }
+
+    @Test
+    void testStepWithTypeToken() {
+        var context = createTestContext();
+
+        List<String> result = context.step("test-list", new TypeToken<List<String>>() {}, () -> List.of("a", "b", "c"));
+
+        assertNotNull(result);
+        assertEquals(3, result.size());
+        assertEquals("a", result.get(0));
+    }
+
+    @Test
+    void testStepWithTypeTokenReplay() {
+        // Create context with existing operation
+        var existingOp = Operation.builder()
+                .id("1")
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
+                        .result("[\"cached1\",\"cached2\"]")
+                        .build())
+                .build();
+        var context = createTestContext(List.of(existingOp));
+
+        // This should return cached result, not execute the function
+        List<String> result =
+                context.step("test-list", new TypeToken<List<String>>() {}, () -> List.of("new1", "new2"));
+
+        assertEquals(2, result.size());
+        assertEquals("cached1", result.get(0));
+        assertEquals("cached2", result.get(1));
+    }
+
+    @Test
+    void testStepWithTypeTokenAndConfig() {
+        var context = createTestContext();
+
+        List<Integer> result = context.step(
+                "test-numbers",
+                new TypeToken<List<Integer>>() {},
+                () -> List.of(1, 2, 3),
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.DEFAULT)
+                        .build());
+
+        assertNotNull(result);
+        assertEquals(3, result.size());
+        assertEquals(1, result.get(0));
+    }
+
+    @Test
+    void testStepAsyncWithTypeToken() throws Exception {
+        var context = createTestContext();
+
+        DurableFuture<List<String>> future =
+                context.stepAsync("async-list", new TypeToken<List<String>>() {}, () -> List.of("x", "y", "z"));
+
+        assertNotNull(future);
+        List<String> result = future.get();
+        assertEquals(3, result.size());
+        assertEquals("x", result.get(0));
+    }
+
+    @Test
+    void testStepAsyncWithTypeTokenReplay() throws Exception {
+        // Create context with existing operation
+        var existingOp = Operation.builder()
+                .id("1")
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
+                        .result("[\"async-cached1\",\"async-cached2\"]")
+                        .build())
+                .build();
+        var context = createTestContext(List.of(existingOp));
+
+        // This should return cached result immediately
+        DurableFuture<List<String>> future = context.stepAsync(
+                "async-list", new TypeToken<List<String>>() {}, () -> List.of("async-new1", "async-new2"));
+
+        List<String> result = future.get();
+        assertEquals(2, result.size());
+        assertEquals("async-cached1", result.get(0));
+        assertEquals("async-cached2", result.get(1));
+    }
+
+    @Test
+    void testStepAsyncWithTypeTokenAndConfig() throws Exception {
+        var context = createTestContext();
+
+        DurableFuture<List<Integer>> future = context.stepAsync(
+                "async-numbers",
+                new TypeToken<List<Integer>>() {},
+                () -> List.of(10, 20, 30),
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.DEFAULT)
+                        .build());
+
+        assertNotNull(future);
+        List<Integer> result = future.get();
+        assertEquals(3, result.size());
+        assertEquals(10, result.get(0));
     }
 }

@@ -1,8 +1,0 @@
-version = 0.1
-
-[default.deploy.parameters]
-stack_name = "durable-examples"
-region = "us-east-2"
-capabilities = "CAPABILITY_IAM"
-confirm_changeset = true
-resolve_s3 = true
