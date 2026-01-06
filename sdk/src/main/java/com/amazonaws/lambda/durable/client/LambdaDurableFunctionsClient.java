@@ -3,11 +3,9 @@
 package com.amazonaws.lambda.durable.client;
 
 import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
-import software.amazon.awssdk.core.SdkSystemSetting;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionRequest;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
@@ -18,11 +16,17 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 public class LambdaDurableFunctionsClient implements DurableExecutionClient {
 
     private static final Logger logger = LoggerFactory.getLogger(LambdaDurableFunctionsClient.class);
+    private final LambdaClient lambdaClient;
 
-    private static final LambdaClient AWSLambdaSDKClient = LambdaClient.builder()
-            .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
-            .region(Region.of(System.getenv(SdkSystemSetting.AWS_REGION.environmentVariable())))
-            .build();
+    /**
+     * Creates a LambdaDurableFunctionsClient with the provided LambdaClient.
+     *
+     * @param lambdaClient LambdaClient instance to use for backend communication
+     * @throws NullPointerException if lambdaClient is null
+     */
+    public LambdaDurableFunctionsClient(LambdaClient lambdaClient) {
+        this.lambdaClient = Objects.requireNonNull(lambdaClient, "LambdaClient cannot be null");
+    }
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
@@ -33,7 +37,7 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
                 .build();
         logger.debug("Calling DAR backend with {} updates: {}", updates.size(), request);
 
-        return AWSLambdaSDKClient.checkpointDurableExecution(request);
+        return lambdaClient.checkpointDurableExecution(request);
     }
 
     @Override
@@ -43,6 +47,6 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
                 .marker(marker)
                 .build();
 
-        return AWSLambdaSDKClient.getDurableExecutionState(request);
+        return lambdaClient.getDurableExecutionState(request);
     }
 }

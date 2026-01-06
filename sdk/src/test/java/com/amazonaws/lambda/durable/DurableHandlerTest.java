@@ -173,9 +173,12 @@ class DurableHandlerTest {
     }
 
     // Test handler implementation
-    private static class TestDurableHandler extends DurableHandler<String, String> {
-        public TestDurableHandler() {
-            super();
+    private class TestDurableHandler extends DurableHandler<String, String> {
+        @Override
+        protected DurableConfig createConfiguration() {
+            return DurableConfig.builder()
+                    .withDurableExecutionClient(mockClient)
+                    .build();
         }
 
         @Override

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.testing;
 
+import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.DurableExecutor;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
@@ -22,7 +23,7 @@ public class LocalDurableTestRunner<I, O> {
 
     private final Class<I> inputType;
     private final BiFunction<I, DurableContext, O> handler;
-    private final LocalMemoryExecutionClient storage;
+    private LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private boolean skipTime = true; // Default to skipping time
 
@@ -46,7 +47,8 @@ public class LocalDurableTestRunner<I, O> {
     /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
         var durableInput = createDurableInput(input);
-        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, storage);
+        var config = DurableConfig.builder().withDurableExecutionClient(storage).build();
+        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, config);
 
         return storage.toTestResult(output);
     }

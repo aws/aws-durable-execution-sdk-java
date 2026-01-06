@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
-import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.serde.AwsSdkV2Module;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
@@ -37,16 +35,21 @@ import org.slf4j.LoggerFactory;
 public abstract class DurableHandler<I, O> implements RequestStreamHandler {
 
     private final Class<I> inputType;
-    private final DurableExecutionClient client;
-    private final ObjectMapper objectMapper = createObjectMapper();
+    private final DurableConfig config;
+    private final ObjectMapper objectMapper = createObjectMapper(); // Internal ObjectMapper
     private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);
 
     protected DurableHandler() {
         this(null);
     }
 
-    @SuppressWarnings("unchecked")
-    protected DurableHandler(DurableExecutionClient client) {
+    /**
+     * Constructor for testing that accepts a pre-configured DurableConfig. This constructor is primarily intended for
+     * use by testing frameworks like LocalDurableTestRunner.
+     *
+     * @param config Pre-configured DurableConfig, or null to use createConfiguration()
+     */
+    protected DurableHandler(DurableConfig config) {
         // Extract input type from generic superclass
         var superClass = getClass().getGenericSuperclass();
         if (superClass instanceof ParameterizedType paramType) {
@@ -54,7 +57,45 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
         } else {
             throw new IllegalArgumentException("Cannot determine input type parameter");
         }
-        this.client = client;
+        this.config = config != null ? config : createConfiguration();
+        validateConfiguration();
+    }
+
+    /**
+     * Template method for creating configuration. Override this method to provide custom DurableExecutionClient,
+     * SerDes, or other configuration.
+     *
+     * <p>The SerDes from config is used for customer data serialization (user inputs/outputs). The internal
+     * ObjectMapper is used for DAR backend communication.
+     *
+     * <p>Example:
+     *
+     * <pre>{@code
+     * @Override
+     * protected DurableConfig createConfiguration() {
+     *     return DurableConfig.builder()
+     *         .withDurableExecutionClient(customClient)
+     *         .withSerDes(customSerDes)  // For user data
+     *         .build();
+     * }
+     * }</pre>
+     *
+     * @return DurableConfig with desired configuration
+     */
+    protected DurableConfig createConfiguration() {
+        return DurableConfig.defaultConfig();
+    }
+
+    private void validateConfiguration() {
+        if (config.getDurableExecutionClient() == null) {
+            throw new IllegalStateException("DurableExecutionClient configuration failed");
+        }
+        if (config.getSerDes() == null) {
+            throw new IllegalStateException("SerDes configuration failed");
+        }
+        if (config.getExecutorService() == null) {
+            throw new IllegalStateException("ExecutorService configuration failed");
+        }
     }
 
     @Override
@@ -63,16 +104,8 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
         var inputString = new String(inputStream.readAllBytes());
         logger.debug("Raw input from durable handler: {}", inputString);
         var input = this.objectMapper.readValue(inputString, DurableExecutionInput.class);
-        var output = durableExecution(context, input);
+        var output = DurableExecutor.execute(input, context, inputType, this::handleRequest, config);
         outputStream.write(objectMapper.writeValueAsBytes(output));
-    }
-
-    private DurableExecutionOutput durableExecution(Context context, DurableExecutionInput input) {
-        if (client != null) {
-            return DurableExecutor.execute(input, context, inputType, this::handleRequest, client);
-        } else {
-            return DurableExecutor.execute(input, context, inputType, this::handleRequest);
-        }
     }
 
     /**
@@ -84,6 +117,14 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
      */
     protected abstract O handleRequest(I input, DurableContext context);
 
+    /**
+     * Creates ObjectMapper for DAR backend communication (internal use only). This is for INTERNAL use only - handles
+     * Lambda Durable Functions backend protocol.
+     *
+     * <p>Customer-facing serialization uses SerDes from DurableConfig.
+     *
+     * @return Configured ObjectMapper for DAR backend communication
+     */
     public static ObjectMapper createObjectMapper() {
         var dateModule = new SimpleModule();
         dateModule.addDeserializer(Date.class, new JsonDeserializer<>() {

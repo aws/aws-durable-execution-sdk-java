@@ -14,6 +14,10 @@ import software.amazon.awssdk.services.lambda.model.*;
 /** Integration tests that verify checkpoint behavior using LocalMemoryExecutionClient */
 class DurableExecutionCheckpointTest {
 
+    private DurableConfig configWithMockClient(LocalMemoryExecutionClient client) {
+        return DurableConfig.builder().withDurableExecutionClient(client).build();
+    }
+
     @Test
     void testLargePayloadCheckpointing() {
         var client = new LocalMemoryExecutionClient();
@@ -33,7 +37,8 @@ class DurableExecutionCheckpointTest {
 
         var largeString = "x".repeat(7 * 1024 * 1024); // 7MB string
 
-        var output = DurableExecutor.execute(input, null, String.class, (userInput, ctx) -> largeString, client);
+        var output = DurableExecutor.execute(
+                input, null, String.class, (userInput, ctx) -> largeString, configWithMockClient(client));
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertEquals("", output.result());
@@ -66,7 +71,8 @@ class DurableExecutionCheckpointTest {
 
         var smallResult = "Small result";
 
-        var output = DurableExecutor.execute(input, null, String.class, (userInput, ctx) -> smallResult, client);
+        var output = DurableExecutor.execute(
+                input, null, String.class, (userInput, ctx) -> smallResult, configWithMockClient(client));
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertNotNull(output.result());

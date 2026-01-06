@@ -2,21 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
 
 class DurableExecutionTest {
 
-    private DurableExecutionClient mockClient() {
-        return TestUtils.createMockClient();
+    private DurableConfig configWithMockClient() {
+        return DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .build();
     }
 
     @Test
@@ -40,7 +47,7 @@ class DurableExecutionTest {
                 null,
                 String.class,
                 (userInput, ctx) -> ctx.step("test", String.class, () -> "Hello " + userInput),
-                mockClient());
+                configWithMockClient());
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertNotNull(output.result());
@@ -72,7 +79,7 @@ class DurableExecutionTest {
                     ctx.wait(java.time.Duration.ofSeconds(60));
                     return "Should not reach here";
                 },
-                mockClient());
+                configWithMockClient());
 
         assertEquals(ExecutionStatus.PENDING, output.status());
         assertNull(output.result());
@@ -101,7 +108,7 @@ class DurableExecutionTest {
                 (userInput, ctx) -> {
                     throw new RuntimeException("Test error");
                 },
-                mockClient());
+                configWithMockClient());
 
         assertEquals(ExecutionStatus.FAILED, output.status());
         assertNotNull(output.error());
@@ -138,7 +145,7 @@ class DurableExecutionTest {
                 null,
                 String.class,
                 (userInput, ctx) -> ctx.step("step1", String.class, () -> "Second"),
-                mockClient());
+                configWithMockClient());
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertTrue(output.result().contains("First"));
@@ -153,7 +160,8 @@ class DurableExecutionTest {
 
         var exception = assertThrows(
                 IllegalStateException.class,
-                () -> DurableExecutor.execute(input, null, String.class, (userInput, ctx) -> "result", mockClient()));
+                () -> DurableExecutor.execute(
+                        input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
 
         assertEquals("First operation must be EXECUTION", exception.getMessage());
     }
@@ -172,11 +180,12 @@ class DurableExecutionTest {
                 "token1",
                 new DurableExecutionInput.InitialExecutionState(List.of(stepOp), null));
 
-        var exception = assertThrows(
+        var exception2 = assertThrows(
                 IllegalStateException.class,
-                () -> DurableExecutor.execute(input, null, String.class, (userInput, ctx) -> "result", mockClient()));
+                () -> DurableExecutor.execute(
+                        input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
 
-        assertEquals("First operation must be EXECUTION", exception.getMessage());
+        assertEquals("First operation must be EXECUTION", exception2.getMessage());
     }
 
     @Test
@@ -192,10 +201,11 @@ class DurableExecutionTest {
                 "token1",
                 new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
 
-        var exception = assertThrows(
+        var exception3 = assertThrows(
                 IllegalStateException.class,
-                () -> DurableExecutor.execute(input, null, String.class, (userInput, ctx) -> "result", mockClient()));
+                () -> DurableExecutor.execute(
+                        input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
 
-        assertEquals("EXECUTION operation missing executionDetails", exception.getMessage());
+        assertEquals("EXECUTION operation missing executionDetails", exception3.getMessage());
     }
 }
