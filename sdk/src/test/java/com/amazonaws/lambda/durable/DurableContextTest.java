@@ -62,9 +62,7 @@ class DurableContextTest {
         var existingOp = Operation.builder()
                 .id("1")
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder()
-                        .result("\"Cached Result\"")
-                        .build())
+                .stepDetails(StepDetails.builder().result("\"Cached Result\"").build())
                 .build();
         var context = createTestContext(List.of(existingOp));
 
@@ -90,9 +88,8 @@ class DurableContextTest {
         var existingOp = Operation.builder()
                 .id("1")
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder()
-                        .result("\"Cached Async Result\"")
-                        .build())
+                .stepDetails(
+                        StepDetails.builder().result("\"Cached Async Result\"").build())
                 .build();
         var context = createTestContext(List.of(existingOp));
 
@@ -148,21 +145,15 @@ class DurableContextTest {
         var syncOp = Operation.builder()
                 .id("1")
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder()
-                        .result("\"Replayed Sync\"")
-                        .build())
+                .stepDetails(StepDetails.builder().result("\"Replayed Sync\"").build())
                 .build();
         var asyncOp = Operation.builder()
                 .id("2")
                 .status(OperationStatus.SUCCEEDED)
-                .stepDetails(StepDetails.builder()
-                        .result("100")
-                        .build())
+                .stepDetails(StepDetails.builder().result("100").build())
                 .build();
-        var waitOp = Operation.builder()
-                .id("3")
-                .status(OperationStatus.SUCCEEDED)
-                .build();
+        var waitOp =
+                Operation.builder().id("3").status(OperationStatus.SUCCEEDED).build();
         var context = createTestContext(List.of(syncOp, asyncOp, waitOp));
 
         // All operations should replay from cache

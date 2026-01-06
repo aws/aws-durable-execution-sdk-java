@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.testing;
 
-import software.amazon.awssdk.services.lambda.model.*;
-
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
+import software.amazon.awssdk.services.lambda.model.*;
 
 /** Generates Event objects from OperationUpdate for local testing. */
 class EventProcessor {
@@ -28,24 +27,32 @@ class EventProcessor {
 
     private Event buildStepEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
         return switch (update.action()) {
-            case START -> builder.eventType("StepStarted")
-                    .stepStartedDetails(StepStartedDetails.builder().build())
-                    .build();
-            case SUCCEED -> builder.eventType("StepSucceeded")
-                    .stepSucceededDetails(StepSucceededDetails.builder()
-                            .result(EventResult.builder().payload(update.payload()).build())
-                            .retryDetails(buildRetryDetails(operation))
-                            .build())
-                    .build();
-            case FAIL -> builder.eventType("StepFailed")
-                    .stepFailedDetails(StepFailedDetails.builder()
-                            .error(EventError.builder().payload(update.error()).build())
-                            .retryDetails(buildRetryDetails(operation))
-                            .build())
-                    .build();
-            case RETRY -> builder.eventType("StepStarted")
-                    .stepStartedDetails(StepStartedDetails.builder().build())
-                    .build();
+            case START ->
+                builder.eventType("StepStarted")
+                        .stepStartedDetails(StepStartedDetails.builder().build())
+                        .build();
+            case SUCCEED ->
+                builder.eventType("StepSucceeded")
+                        .stepSucceededDetails(StepSucceededDetails.builder()
+                                .result(EventResult.builder()
+                                        .payload(update.payload())
+                                        .build())
+                                .retryDetails(buildRetryDetails(operation))
+                                .build())
+                        .build();
+            case FAIL ->
+                builder.eventType("StepFailed")
+                        .stepFailedDetails(StepFailedDetails.builder()
+                                .error(EventError.builder()
+                                        .payload(update.error())
+                                        .build())
+                                .retryDetails(buildRetryDetails(operation))
+                                .build())
+                        .build();
+            case RETRY ->
+                builder.eventType("StepStarted")
+                        .stepStartedDetails(StepStartedDetails.builder().build())
+                        .build();
             default -> throw new IllegalArgumentException("Unsupported step action: " + update.action());
         };
     }
@@ -54,7 +61,8 @@ class EventProcessor {
     private Event buildWaitEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
         return switch (update.action()) {
             case START -> {
-                var waitSeconds = update.waitOptions() != null ? update.waitOptions().waitSeconds() : 0;
+                var waitSeconds =
+                        update.waitOptions() != null ? update.waitOptions().waitSeconds() : 0;
                 yield builder.eventType("WaitStarted")
                         .waitStartedDetails(WaitStartedDetails.builder()
                                 .duration(waitSeconds)
@@ -62,31 +70,41 @@ class EventProcessor {
                                 .build())
                         .build();
             }
-            case SUCCEED -> builder.eventType("WaitSucceeded")
-                    .waitSucceededDetails(WaitSucceededDetails.builder().build())
-                    .build();
-            case CANCEL -> builder.eventType("WaitCancelled")
-                    .waitCancelledDetails(WaitCancelledDetails.builder().build())
-                    .build();
+            case SUCCEED ->
+                builder.eventType("WaitSucceeded")
+                        .waitSucceededDetails(WaitSucceededDetails.builder().build())
+                        .build();
+            case CANCEL ->
+                builder.eventType("WaitCancelled")
+                        .waitCancelledDetails(WaitCancelledDetails.builder().build())
+                        .build();
             default -> throw new IllegalArgumentException("Unsupported wait action: " + update.action());
         };
     }
 
     private Event buildExecutionEvent(Event.Builder builder, OperationUpdate update) {
         return switch (update.action()) {
-            case START -> builder.eventType("ExecutionStarted")
-                    .executionStartedDetails(ExecutionStartedDetails.builder().build())
-                    .build();
-            case SUCCEED -> builder.eventType("ExecutionSucceeded")
-                    .executionSucceededDetails(ExecutionSucceededDetails.builder()
-                            .result(EventResult.builder().payload(update.payload()).build())
-                            .build())
-                    .build();
-            case FAIL -> builder.eventType("ExecutionFailed")
-                    .executionFailedDetails(ExecutionFailedDetails.builder()
-                            .error(EventError.builder().payload(update.error()).build())
-                            .build())
-                    .build();
+            case START ->
+                builder.eventType("ExecutionStarted")
+                        .executionStartedDetails(
+                                ExecutionStartedDetails.builder().build())
+                        .build();
+            case SUCCEED ->
+                builder.eventType("ExecutionSucceeded")
+                        .executionSucceededDetails(ExecutionSucceededDetails.builder()
+                                .result(EventResult.builder()
+                                        .payload(update.payload())
+                                        .build())
+                                .build())
+                        .build();
+            case FAIL ->
+                builder.eventType("ExecutionFailed")
+                        .executionFailedDetails(ExecutionFailedDetails.builder()
+                                .error(EventError.builder()
+                                        .payload(update.error())
+                                        .build())
+                                .build())
+                        .build();
             default -> throw new IllegalArgumentException("Unsupported execution action: " + update.action());
         };
     }
@@ -96,6 +114,8 @@ class EventProcessor {
             return RetryDetails.builder().currentAttempt(1).build();
         }
         var attempt = operation.stepDetails().attempt();
-        return RetryDetails.builder().currentAttempt(attempt != null ? attempt : 1).build();
+        return RetryDetails.builder()
+                .currentAttempt(attempt != null ? attempt : 1)
+                .build();
     }
 }

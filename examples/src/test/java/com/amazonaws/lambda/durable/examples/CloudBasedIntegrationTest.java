@@ -1,16 +1,17 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.examples;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.CloudDurableTestRunner;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.services.sts.StsClient;
-
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIf("isEnabled")
 public class CloudBasedIntegrationTest {
@@ -40,7 +41,8 @@ public class CloudBasedIntegrationTest {
         if (account == null || region == null) {
             var sts = StsClient.create();
             if (account == null) account = sts.getCallerIdentity().account();
-            if (region == null) region = sts.serviceClientConfiguration().region().id();
+            if (region == null)
+                region = sts.serviceClientConfiguration().region().id();
         }
 
         System.out.println("☁️  Running cloud integration tests against account " + account + " in " + region);
@@ -141,7 +143,8 @@ public class CloudBasedIntegrationTest {
 
     @Test
     void testWaitAtLeastInProcessExample() {
-        var runner = CloudDurableTestRunner.create(arn("wait-at-least-in-process-example"), GreetingRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("wait-at-least-in-process-example"), GreetingRequest.class, String.class);
         var result = runner.run(new GreetingRequest("TestUser"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());

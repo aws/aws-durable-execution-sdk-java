@@ -60,9 +60,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Get events for a specific operation. */
     public List<Event> getEventsForOperation(String operationId) {
-        return allEvents.stream()
-                .filter(e -> operationId.equals(e.id()))
-                .toList();
+        return allEvents.stream().filter(e -> operationId.equals(e.id())).toList();
     }
 
     /** Advance all operations (simulates time passing for retries/waits). */
@@ -72,7 +70,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 return op.toBuilder().status(OperationStatus.READY).build();
             }
             if (op.status() == OperationStatus.STARTED && op.type() == OperationType.WAIT) {
-                var succeededOp = op.toBuilder().status(OperationStatus.SUCCEEDED).build();
+                var succeededOp =
+                        op.toBuilder().status(OperationStatus.SUCCEEDED).build();
                 // Generate WaitSucceeded event
                 var update = OperationUpdate.builder()
                         .id(id)
@@ -111,13 +110,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 .map(op -> new TestOperation(op, getEventsForOperation(op.id()), serDes))
                 .toList();
         return new TestResult<>(
-                output.status(),
-                output.result(),
-                output.error(),
-                testOperations,
-                new ArrayList<>(allEvents),
-                serDes
-        );
+                output.status(), output.result(), output.error(), testOperations, new ArrayList<>(allEvents), serDes);
     }
 
     /** Simulate checkpoint failure by forcing an operation into STARTED state */
