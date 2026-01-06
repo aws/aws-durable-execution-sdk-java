@@ -84,7 +84,8 @@ public class StepOperation<T> implements DurableOperation<T> {
         this.resultTypeToken = resultTypeToken;
         this.config = config;
         this.executionManager = executionManager;
-        this.serDes = serDes;
+        // Use custom SerDes from config if provided, otherwise use default
+        this.serDes = (config != null && config.serDes() != null) ? config.serDes() : serDes;
 
         this.phaser = executionManager.startPhaser(operationId);
     }

@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.retry.RetryStrategy;
+import com.amazonaws.lambda.durable.serde.SerDes;
 
 /**
  * Configuration options for step operations in durable executions.
@@ -13,10 +14,12 @@ import com.amazonaws.lambda.durable.retry.RetryStrategy;
 public class StepConfig {
     private final RetryStrategy retryStrategy;
     private final StepSemantics semantics;
+    private final SerDes serDes;
 
     private StepConfig(Builder builder) {
         this.retryStrategy = builder.retryStrategy;
         this.semantics = builder.semantics;
+        this.serDes = builder.serDes;
     }
 
     /** @return the retry strategy for this step, or null if not specified */
@@ -27,6 +30,11 @@ public class StepConfig {
     /** @return the delivery semantics for this step, defaults to AT_LEAST_ONCE_PER_RETRY if not specified */
     public StepSemantics semantics() {
         return semantics != null ? semantics : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
+    }
+
+    /** @return the custom serializer for this step, or null if not specified (uses default SerDes) */
+    public SerDes serDes() {
+        return serDes;
     }
 
     /**
@@ -42,6 +50,7 @@ public class StepConfig {
     public static class Builder {
         private RetryStrategy retryStrategy;
         private StepSemantics semantics;
+        private SerDes serDes;
 
         /**
          * Sets the retry strategy for the step.
@@ -62,6 +71,21 @@ public class StepConfig {
          */
         public Builder semantics(StepSemantics semantics) {
             this.semantics = semantics;
+            return this;
+        }
+
+        /**
+         * Sets a custom serializer for the step.
+         *
+         * <p>If not specified, the step will use the default SerDes configured for the handler. This allows per-step
+         * customization of serialization behavior, useful for steps that need special handling (e.g., custom date
+         * formats, encryption, compression).
+         *
+         * @param serDes the custom serializer to use, or null to use the default
+         * @return this builder for method chaining
+         */
+        public Builder serDes(SerDes serDes) {
+            this.serDes = serDes;
             return this;
         }
 
