@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
@@ -28,7 +27,8 @@ class ReplayValidationTest {
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build();
-        var operations = Stream.concat(Stream.of(executionOp), initialOperations.stream()).toList();
+        var operations = Stream.concat(Stream.of(executionOp), initialOperations.stream())
+                .toList();
         var initialExecutionState = new InitialExecutionState(operations, null);
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",

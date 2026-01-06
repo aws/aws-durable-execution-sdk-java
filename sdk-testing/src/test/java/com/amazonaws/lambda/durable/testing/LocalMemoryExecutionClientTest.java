@@ -48,18 +48,18 @@ class LocalMemoryExecutionClientTest {
     @Test
     void testResetCheckpointToStartedThrowsWhenOperationNotFound() {
         var client = new LocalMemoryExecutionClient();
-        
-        var exception = assertThrows(IllegalStateException.class, 
-            () -> client.resetCheckpointToStarted("nonexistent-step"));
+
+        var exception =
+                assertThrows(IllegalStateException.class, () -> client.resetCheckpointToStarted("nonexistent-step"));
         assertEquals("Operation not found: nonexistent-step", exception.getMessage());
     }
 
     @Test
     void testSimulateFireAndForgetCheckpointLossThrowsWhenOperationNotFound() {
         var client = new LocalMemoryExecutionClient();
-        
-        var exception = assertThrows(IllegalStateException.class, 
-            () -> client.simulateFireAndForgetCheckpointLoss("nonexistent-step"));
+
+        var exception = assertThrows(
+                IllegalStateException.class, () -> client.simulateFireAndForgetCheckpointLoss("nonexistent-step"));
         assertEquals("Operation not found: nonexistent-step", exception.getMessage());
     }
 }

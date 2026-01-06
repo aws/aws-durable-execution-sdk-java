@@ -50,6 +50,21 @@ public class DurableContext {
         return stepAsync(name, resultType, func, config).get();
     }
 
+    public <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func) {
+        return step(
+                name,
+                typeToken,
+                func,
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                        .build());
+    }
+
+    public <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config) {
+        // Simply delegate to stepAsync and block on the result
+        return stepAsync(name, typeToken, func, config).get();
+    }
+
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func) {
         return stepAsync(
                 name,
@@ -72,6 +87,34 @@ public class DurableContext {
         // Create and start step operation
         StepOperation<T> operation =
                 new StepOperation<>(operationId, name, func, resultType, config, executionManager, serDes);
+
+        operation.execute(); // Start the step (returns immediately)
+
+        return new DurableFuture<>(operation);
+    }
+
+    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func) {
+        return stepAsync(
+                name,
+                typeToken,
+                func,
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                        .build());
+    }
+
+    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config) {
+        var operationId = nextOperationId();
+
+        // Validate replay consistency
+        var existing = executionManager.getOperation(operationId);
+        if (existing != null) {
+            validateReplay(operationId, OperationType.STEP, name, existing);
+        }
+
+        // Create and start step operation with TypeToken
+        StepOperation<T> operation =
+                new StepOperation<>(operationId, name, func, typeToken, config, executionManager, serDes);
 
         operation.execute(); // Start the step (returns immediately)
 

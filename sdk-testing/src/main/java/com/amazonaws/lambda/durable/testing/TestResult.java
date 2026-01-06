@@ -7,7 +7,6 @@ import com.amazonaws.lambda.durable.serde.SerDes;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
@@ -22,14 +21,19 @@ public class TestResult<O> {
     private final List<Event> allEvents;
     private final SerDes serDes;
 
-    TestResult(ExecutionStatus status, String resultPayload, ErrorObject error,
-               List<TestOperation> operations, List<Event> allEvents, SerDes serDes) {
+    TestResult(
+            ExecutionStatus status,
+            String resultPayload,
+            ErrorObject error,
+            List<TestOperation> operations,
+            List<Event> allEvents,
+            SerDes serDes) {
         this.status = status;
         this.resultPayload = resultPayload;
         this.error = error;
         this.operations = List.copyOf(operations);
-        this.operationsByName = operations.stream()
-                .collect(Collectors.toMap(TestOperation::getName, op -> op, (a, b) -> b));
+        this.operationsByName =
+                operations.stream().collect(Collectors.toMap(TestOperation::getName, op -> op, (a, b) -> b));
         this.allEvents = List.copyOf(allEvents);
         this.serDes = serDes;
     }

@@ -190,10 +190,11 @@ class AwsSdkV2ModuleTest {
                 """;
 
         var input = mapper.readValue(json, DurableExecutionInput.class);
-        
+
         var operations = input.initialExecutionState().operations();
         assertEquals(1, operations.size());
-        assertEquals(Instant.parse("2026-01-02T12:28:54.930Z"), operations.get(0).startTimestamp());
+        assertEquals(
+                Instant.parse("2026-01-02T12:28:54.930Z"), operations.get(0).startTimestamp());
     }
 
     @Test

@@ -33,7 +33,8 @@ public class LocalDurableTestRunner<I, O> {
         this.serDes = new JacksonSerDes();
     }
 
-    public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
+    public static <I, O> LocalDurableTestRunner<I, O> create(
+            Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
         return new LocalDurableTestRunner<>(inputType, handler);
     }
 

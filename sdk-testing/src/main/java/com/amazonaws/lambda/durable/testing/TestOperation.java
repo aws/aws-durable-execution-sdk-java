@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.serde.SerDes;
+import java.util.List;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -10,8 +11,6 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
-
-import java.util.List;
 
 /** Wrapper for AWS SDK Operation providing convenient access methods. */
 public class TestOperation {

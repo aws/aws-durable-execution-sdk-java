@@ -1,16 +1,17 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.examples;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.CloudDurableTestRunner;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.services.sts.StsClient;
-
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIf("isEnabled")
 public class CloudBasedIntegrationTest {
@@ -21,7 +22,7 @@ public class CloudBasedIntegrationTest {
     static boolean isEnabled() {
         var enabled = "true".equals(System.getProperty("test.cloud.enabled"));
         if (!enabled) {
-            System.out.println("⚠️  Cloud integration tests disabled. Enable with -Dtest.cloud.enabled=true");
+            System.out.println("⚠️ Cloud integration tests disabled. Enable with -Dtest.cloud.enabled=true");
         }
         return enabled;
     }
@@ -40,10 +41,11 @@ public class CloudBasedIntegrationTest {
         if (account == null || region == null) {
             var sts = StsClient.create();
             if (account == null) account = sts.getCallerIdentity().account();
-            if (region == null) region = sts.serviceClientConfiguration().region().id();
+            if (region == null)
+                region = sts.serviceClientConfiguration().region().id();
         }
 
-        System.out.println("☁️  Running cloud integration tests against account " + account + " in " + region);
+        System.out.println("☁️ Running cloud integration tests against account " + account + " in " + region);
     }
 
     private static String arn(String functionName) {
@@ -141,7 +143,8 @@ public class CloudBasedIntegrationTest {
 
     @Test
     void testWaitAtLeastInProcessExample() {
-        var runner = CloudDurableTestRunner.create(arn("wait-at-least-in-process-example"), GreetingRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("wait-at-least-in-process-example"), GreetingRequest.class, String.class);
         var result = runner.run(new GreetingRequest("TestUser"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -153,5 +156,42 @@ public class CloudBasedIntegrationTest {
         var asyncOp = runner.getOperation("async-operation");
         assertNotNull(asyncOp);
         assertTrue(asyncOp.getStepResult(String.class).contains("Processed: TestUser"));
+    }
+
+    @Test
+    void testGenericTypesExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("generic-types-example"), GenericTypesExample.Input.class, GenericTypesExample.Output.class);
+        var result = runner.run(new GenericTypesExample.Input("user123"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        GenericTypesExample.Output output = result.getResult(GenericTypesExample.Output.class);
+        assertNotNull(output);
+
+        // Verify items list
+        assertNotNull(output.items);
+        assertEquals(4, output.items.size());
+        assertTrue(output.items.contains("item1"));
+        assertTrue(output.items.contains("item4"));
+
+        // Verify counts map
+        assertNotNull(output.counts);
+        assertEquals(3, output.counts.size());
+        assertEquals(2, output.counts.get("electronics"));
+        assertEquals(1, output.counts.get("books"));
+        assertEquals(1, output.counts.get("clothing"));
+
+        // Verify categories nested map
+        assertNotNull(output.categories);
+        assertEquals(3, output.categories.size());
+        assertEquals(2, output.categories.get("electronics").size());
+        assertTrue(output.categories.get("electronics").contains("laptop"));
+        assertTrue(output.categories.get("electronics").contains("phone"));
+
+        // Verify operations were executed
+        assertNotNull(runner.getOperation("fetch-items"));
+        assertNotNull(runner.getOperation("count-by-category"));
+        assertNotNull(runner.getOperation("fetch-categories"));
     }
 }

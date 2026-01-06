@@ -142,6 +142,28 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  GenericTypesExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: generic-types-example
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.GenericTypesExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
@@ -190,3 +212,11 @@ Outputs:
   RetryInProcessExampleFunctionName:
     Description: Retry In Process Example Function Name
     Value: !Ref RetryInProcessExampleFunction
+
+  GenericTypesExampleFunction:
+    Description: Generic Types Example Function ARN
+    Value: !GetAtt GenericTypesExampleFunction.Arn
+
+  GenericTypesExampleFunctionName:
+    Description: Generic Types Example Function Name
+    Value: !Ref GenericTypesExampleFunction
