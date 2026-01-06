@@ -45,7 +45,8 @@ public class CloudDurableTestRunner<I, O> {
                 inputType,
                 outputType,
                 LambdaClient.builder()
-                        .credentialsProvider(DefaultCredentialsProvider.builder().build())
+                        .credentialsProvider(
+                                DefaultCredentialsProvider.builder().build())
                         .build(),
                 Duration.ofSeconds(2),
                 Duration.ofSeconds(300),
