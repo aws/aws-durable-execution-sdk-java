@@ -45,8 +45,20 @@ public class CloudDurableTestRunner<I, O> {
                 inputType,
                 outputType,
                 LambdaClient.builder()
-                        .credentialsProvider(DefaultCredentialsProvider.create())
+                        .credentialsProvider(DefaultCredentialsProvider.builder().build())
                         .build(),
+                Duration.ofSeconds(2),
+                Duration.ofSeconds(300),
+                InvocationType.REQUEST_RESPONSE);
+    }
+
+    public static <I, O> CloudDurableTestRunner<I, O> create(
+            String functionArn, Class<I> inputType, Class<O> outputType, LambdaClient lambdaClient) {
+        return new CloudDurableTestRunner<>(
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
                 Duration.ofSeconds(2),
                 Duration.ofSeconds(300),
                 InvocationType.REQUEST_RESPONSE);

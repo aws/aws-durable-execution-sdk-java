@@ -3,17 +3,20 @@
 package com.amazonaws.lambda.durable.testing;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 
 class CloudDurableTestRunnerTest {
 
     @Test
     void testConfiguration() {
+        var mockClient = mock(LambdaClient.class);
         var runner = CloudDurableTestRunner.create(
-                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class)
+                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
                 .withPollInterval(Duration.ofSeconds(5))
                 .withInvocationType(InvocationType.EVENT);
 
@@ -22,8 +25,9 @@ class CloudDurableTestRunnerTest {
 
     @Test
     void testPlaceholderMethods() {
-        var runner =
-                CloudDurableTestRunner.create("arn:aws:lambda:us-east-2:123:function:test", String.class, String.class);
+        var mockClient = mock(LambdaClient.class);
+        var runner = CloudDurableTestRunner.create(
+                "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient);
 
         assertThrows(IllegalStateException.class, () -> runner.getOperation("test"));
     }
