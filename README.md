@@ -244,7 +244,7 @@ The SDK includes testing utilities for both local development and cloud-based in
 @Test
 void testOrderProcessing() {
     var handler = new OrderProcessor();
-    var runner = LocalDurableTestRunner.create(Order.class, handler::handleRequest);
+    var runner = LocalDurableTestRunner.create(Order.class, handler);
 
     var result = runner.runUntilComplete(new Order("order-123", items));
 
