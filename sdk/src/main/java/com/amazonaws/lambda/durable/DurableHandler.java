@@ -162,7 +162,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
      * @param context Durable context for operations
      * @return Result
      */
-    protected abstract O handleRequest(I input, DurableContext context);
+    public abstract O handleRequest(I input, DurableContext context);
 
     /**
      * Creates ObjectMapper for DAR backend communication (internal use only). This is for INTERNAL use only - handles

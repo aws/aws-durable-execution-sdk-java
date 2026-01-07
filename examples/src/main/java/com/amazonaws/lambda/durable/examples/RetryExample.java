@@ -29,7 +29,7 @@ public class RetryExample extends DurableHandler<Object, String> {
     private Instant startTime;
 
     @Override
-    protected String handleRequest(Object input, DurableContext context) {
+    public String handleRequest(Object input, DurableContext context) {
         // Step 1: Record start time
         startTime = context.step("record-start-time", Instant.class, Instant::now);
         logger.info("Recorded start time: {}", startTime);

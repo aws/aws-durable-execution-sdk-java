@@ -28,7 +28,7 @@ public class WaitAtLeastInProcessExample extends DurableHandler<GreetingRequest,
     private static final Logger logger = LoggerFactory.getLogger(WaitAtLeastInProcessExample.class);
 
     @Override
-    protected String handleRequest(GreetingRequest input, DurableContext context) {
+    public String handleRequest(GreetingRequest input, DurableContext context) {
         logger.info("Starting concurrent step + wait example for: {}", input.getName());
 
         // Start an async step that takes 10 seconds

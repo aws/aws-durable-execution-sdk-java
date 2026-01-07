@@ -141,7 +141,7 @@ class DurableHandlerTest {
             @SuppressWarnings("rawtypes")
             class InvalidHandler extends DurableHandler {
                 @Override
-                protected Object handleRequest(Object input, DurableContext context) {
+                public Object handleRequest(Object input, DurableContext context) {
                     return null;
                 }
             }
@@ -175,7 +175,7 @@ class DurableHandlerTest {
     // Test handler implementation
     private class TestDurableHandler extends DurableHandler<String, String> {
         @Override
-        protected String handleRequest(String input, DurableContext context) {
+        public String handleRequest(String input, DurableContext context) {
             return "processed: " + input;
         }
     }

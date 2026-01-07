@@ -26,7 +26,7 @@ class RetryIntegrationTest {
     void testStepWithDefaultRetryStrategy_ShouldRetryOnFailure() {
         var handler = new DurableHandler<String, String>() {
             @Override
-            protected String handleRequest(String input, DurableContext context) {
+            public String handleRequest(String input, DurableContext context) {
                 var config = StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build();
@@ -53,7 +53,7 @@ class RetryIntegrationTest {
     void testStepWithNoRetryStrategy_ShouldFailImmediately() {
         var handler = new DurableHandler<String, String>() {
             @Override
-            protected String handleRequest(String input, DurableContext context) {
+            public String handleRequest(String input, DurableContext context) {
                 var config = StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                         .build();
@@ -80,7 +80,7 @@ class RetryIntegrationTest {
     void testSuccessfulStepWithRetryConfig_ShouldNotTriggerRetry() {
         var handler = new DurableHandler<String, String>() {
             @Override
-            protected String handleRequest(String input, DurableContext context) {
+            public String handleRequest(String input, DurableContext context) {
                 var config = StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build();

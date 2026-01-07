@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.examples;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
@@ -14,8 +16,8 @@ class CustomConfigExampleTest {
     void testCustomConfigExample() {
         var handler = new CustomConfigExample();
 
-        // Create test runner using the handler function with the handler's configuration
-        var runner = LocalDurableTestRunner.create(String.class, handler::handleRequest, handler.getConfiguration());
+        // Create test runner from handler (automatically extracts config)
+        var runner = LocalDurableTestRunner.create(String.class, handler);
 
         // Run with input
         var result = runner.run("test-input");

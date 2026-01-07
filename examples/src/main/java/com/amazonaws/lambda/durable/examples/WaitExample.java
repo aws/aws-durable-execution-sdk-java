@@ -22,7 +22,7 @@ import java.time.Duration;
 public class WaitExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
-    protected String handleRequest(GreetingRequest input, DurableContext context) {
+    public String handleRequest(GreetingRequest input, DurableContext context) {
         // Step 1: Start processing
         var started = context.step("start-processing", String.class, () -> "Started processing for " + input.getName());
 

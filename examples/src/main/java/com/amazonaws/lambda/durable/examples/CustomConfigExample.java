@@ -72,7 +72,7 @@ public class CustomConfigExample extends DurableHandler<String, String> {
     }
 
     @Override
-    protected String handleRequest(String input, DurableContext context) {
+    public String handleRequest(String input, DurableContext context) {
         // Step 1: Create a custom object with camelCase fields to demonstrate snake_case serialization
         var customObject = context.step(
                 "create-custom-object",
