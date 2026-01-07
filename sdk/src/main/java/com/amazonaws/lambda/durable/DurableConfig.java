@@ -15,6 +15,7 @@ import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsPro
 import software.amazon.awssdk.core.SdkSystemSetting;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequest;
 
 /**
  * Configuration for DurableHandler initialization. This class provides a builder pattern for configuring SDK components
@@ -151,6 +152,22 @@ public final class DurableConfig {
                 .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
                 .region(Region.of(region))
                 .build();
+
+        try {
+            // Make a dummy call to prime the SDK client. This leads to faster first call times because the HTTP client
+            // is already warmed up when the handler executes. More details, see here:
+            // https://github.com/aws/aws-sdk-java-v2/issues/1340
+            // https://github.com/aws/aws-sdk-java-v2/issues/3801
+            lambdaClient.getDurableExecutionState(GetDurableExecutionStateRequest.builder()
+                    .checkpointToken("dummyToken")
+                    .durableExecutionArn(String.format(
+                            "arn:aws:lambda:%s:123456789012:function:dummy:$LATEST/durable-execution/a0c9cbab-3de6-49ea-8630-0ef3bb4874e4/ed8a29c0-6216-3f4a-ad2e-24e2ad70b2d6",
+                            region))
+                    .maxItems(0)
+                    .build());
+        } catch (Exception e) {
+            // Ignore exceptions since this is a dummy call to prime the SDK client for faster startup times
+        }
 
         logger.debug("Default DurableExecutionClient created for region: {}", region);
         return new LambdaDurableFunctionsClient(lambdaClient);
