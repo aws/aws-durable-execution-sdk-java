@@ -59,15 +59,35 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 Steps execute your code and checkpoint the result. On replay, cached results are returned without re-execution.
 
 ```java
-// Basic step
+// Basic step (blocks until complete)
 var result = ctx.step("fetch-user", User.class, () -> userService.getUser(userId));
 
-// Step with retry strategy
+// Step with custom configuration (retries, semantics, serialization)
 var result = ctx.step("call-api", Response.class, 
     () -> externalApi.call(request),
     StepConfig.builder()
-        .retryStrategy(RetryStrategies.Presets.DEFAULT)
+        .retryStrategy(...)
+        .semantics(...)
         .build());
+```
+
+See [Step Configuration](#step-configuration) for retry strategies, delivery semantics, and per-step serialization options.
+
+### stepAsync() and DurableFuture – Concurrent Operations
+
+`stepAsync()` starts a step in the background and returns a `DurableFuture<T>` immediately. This enables concurrent execution patterns.
+
+```java
+// Start multiple operations concurrently
+DurableFuture<User> userFuture = ctx.stepAsync("fetch-user", User.class, 
+    () -> userService.getUser(userId));
+DurableFuture<List<Order>> ordersFuture = ctx.stepAsync("fetch-orders", 
+    new TypeToken<List<Order>>() {}, () -> orderService.getOrders(userId));
+
+// Both operations run in parallel
+// Block and get results when needed
+User user = userFuture.get();
+List<Order> orders = ordersFuture.get();
 ```
 
 ### wait() – Suspend Without Cost
@@ -82,26 +102,61 @@ ctx.wait(Duration.ofMinutes(30));
 ctx.wait("cooling-off-period", Duration.ofDays(7));
 ```
 
+## Step Configuration
+
+Configure step behavior with `StepConfig`:
+
+```java
+ctx.step("my-step", Result.class, () -> doWork(),
+    StepConfig.builder()
+        .retryStrategy(...)    // How to handle failures
+        .semantics(...)        // At-least-once vs at-most-once
+        .serDes(...)           // Custom serialization
+        .build());
+```
+
 ### Retry Strategies
 
 Configure how steps handle transient failures:
 
 ```java
-// No retry (fail immediately)
+// No retry - fail immediately (default)
 StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build()
 
-// Default exponential backoff
-StepConfig.builder().retryStrategy(RetryStrategies.Presets.DEFAULT).build()
-
-// Custom strategy
+// Exponential backoff with jitter
 StepConfig.builder()
-    .retryStrategy(RetryStrategies.exponentialBackoff()
-        .maxAttempts(5)
-        .initialDelay(Duration.ofSeconds(1))
-        .maxDelay(Duration.ofMinutes(1))
-        .build())
+    .retryStrategy(RetryStrategies.exponentialBackoff(
+        5,                        // max attempts
+        Duration.ofSeconds(2),    // initial delay  
+        Duration.ofSeconds(30),   // max delay
+        2.0,                      // backoff multiplier
+        JitterStrategy.FULL))     // randomize delays
     .build()
 ```
+
+### Step Semantics
+
+Control how steps behave when interrupted mid-execution:
+
+| Semantic | Behavior | Use Case |
+|----------|----------|----------|
+| `AT_LEAST_ONCE_PER_RETRY` (default) | Re-executes step if interrupted before completion | Idempotent operations (database upserts, API calls with idempotency keys) |
+| `AT_MOST_ONCE_PER_RETRY` | Never re-executes; throws `StepInterruptedException` if interrupted | Non-idempotent operations (sending emails, charging payments) |
+
+```java
+// Default: at-least-once (step may re-run if interrupted)
+var result = ctx.step("idempotent-update", Result.class, 
+    () -> database.upsert(record));
+
+// At-most-once: step will not re-run if interrupted
+var result = ctx.step("send-email", Result.class,
+    () -> emailService.send(notification),
+    StepConfig.builder()
+        .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+        .build());
+```
+
+With `AT_MOST_ONCE_PER_RETRY`, if a step starts but the function is interrupted before the result is checkpointed, the SDK throws `StepInterruptedException` on replay instead of re-executing. Handle this to implement your own recovery logic.
 
 ### Generic Types
 
@@ -112,9 +167,65 @@ var users = ctx.step("fetch-users", new TypeToken<List<User>>() {},
     () -> userService.getAllUsers());
 ```
 
+## Configuration
+
+Customize SDK behavior by overriding `createConfiguration()` in your handler:
+
+```java
+@Override
+protected DurableConfig createConfiguration() {
+    // Custom Lambda client with connection pooling
+    var lambdaClient = LambdaClient.builder()
+        .httpClient(ApacheHttpClient.builder()
+            .maxConnections(50)
+            .connectionTimeout(Duration.ofSeconds(30))
+            .build())
+        .build();
+
+    return DurableConfig.builder()
+        .withDurableExecutionClient(new LambdaDurableFunctionsClient(lambdaClient))
+        .withSerDes(new MyCustomSerDes())           // Custom serialization
+        .withExecutorService(Executors.newFixedThreadPool(10))  // Custom thread pool
+        .build();
+}
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `withDurableExecutionClient()` | Client for checkpoint operations | Auto-configured Lambda client |
+| `withSerDes()` | Serializer for step results | Jackson with default settings |
+| `withExecutorService()` | Thread pool for async step execution | Cached daemon thread pool |
+
+## Error Handling
+
+The SDK throws specific exceptions to help you handle different failure scenarios:
+
+| Exception | When Thrown | How to Handle |
+|-----------|-------------|---------------|
+| `StepFailedException` | Step exhausted all retry attempts | Catch to implement fallback logic or let execution fail |
+| `StepInterruptedException` | `AT_MOST_ONCE` step was interrupted before completion | Implement manual recovery (check if operation completed externally) |
+| `NonDeterministicExecutionException` | Code changed between original execution and replay | Fix code to maintain determinism; don't change step order/names |
+
+```java
+try {
+    var result = ctx.step("charge-payment", Payment.class,
+        () -> paymentService.charge(amount),
+        StepConfig.builder()
+            .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+            .build());
+} catch (StepInterruptedException e) {
+    // Step started but we don't know if it completed
+    // Check payment status externally before retrying
+    var status = paymentService.checkStatus(transactionId);
+    if (status.isPending()) {
+        throw e; // Let it fail - manual intervention needed
+    }
+}
+```
+
 ## Testing
 
-The SDK includes testing utilities for fast, local development without deploying to AWS.
+The SDK includes testing utilities for both local development and cloud-based integration testing.
 
 ### Installation
 
@@ -133,7 +244,7 @@ The SDK includes testing utilities for fast, local development without deploying
 @Test
 void testOrderProcessing() {
     var handler = new OrderProcessor();
-    var runner = LocalDurableTestRunner.create(Order.class, handler::handleRequest);
+    var runner = LocalDurableTestRunner.create(Order.class, handler);
 
     var result = runner.runUntilComplete(new Order("order-123", items));
 
@@ -147,14 +258,34 @@ void testOrderProcessing() {
 ```java
 var result = runner.runUntilComplete(input);
 
-// Check all operations
-for (var op : result.getOperations()) {
-    System.out.println(op.getName() + ": " + op.getStatus());
-}
-
-// Get specific operation
+// Verify specific step completed
 var paymentOp = result.getOperation("process-payment");
+assertNotNull(paymentOp);
 assertEquals(OperationStatus.SUCCEEDED, paymentOp.getStatus());
+
+// Get step result
+var paymentResult = paymentOp.getStepResult(Payment.class);
+assertNotNull(paymentResult.getTransactionId());
+
+// Inspect all operations
+List<TestOperation> succeeded = result.getSucceededOperations();
+List<TestOperation> failed = result.getFailedOperations();
+```
+
+### Controlling Time in Tests
+
+By default, `runUntilComplete()` skips wait durations. For testing time-dependent logic, disable this:
+
+```java
+var runner = LocalDurableTestRunner.create(Order.class, handler)
+    .withSkipTime(false);  // Don't auto-advance time
+
+var result = runner.run(input);
+assertEquals(ExecutionStatus.PENDING, result.getStatus());  // Blocked on wait
+
+runner.advanceTime();  // Manually advance past the wait
+result = runner.run(input);
+assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 ```
 
 ### Cloud Testing
@@ -173,41 +304,20 @@ assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
 ## Deployment
 
-### SAM Template
-
-```yaml
-Resources:
-  MyDurableFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      PackageType: Image
-      FunctionName: my-durable-function
-      ImageConfig:
-        Command: ["com.example.OrderProcessor::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 3600        # Max execution time in seconds
-        RetentionPeriodInDays: 7      # How long to keep execution history
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:my-durable-function"
-```
-
-### Build and Deploy
+The [examples](./examples) module includes a complete SAM template and deployment instructions.
 
 ```bash
-# Build the project
+cd examples
 mvn clean package
-
-# Deploy with SAM
 sam build
 sam deploy --guided
 ```
 
-See the [examples](./examples) directory for complete SAM templates and working examples.
+Key deployment requirements:
+- `DurableConfig` in SAM template with `ExecutionTimeout` and `RetentionPeriodInDays`
+- IAM permissions for `lambda:CheckpointDurableExecutions` and `lambda:GetDurableExecutionState`
+
+See [examples/template.yaml](./examples/template.yaml) and [examples/README.md](./examples/README.md) for details.
 
 ## Examples
 
@@ -217,6 +327,10 @@ See the [examples](./examples) directory for complete SAM templates and working 
 | [WaitExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/WaitExample.java) | Using wait operations |
 | [RetryExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/RetryExample.java) | Configuring retry strategies |
 | [GenericTypesExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/GenericTypesExample.java) | Working with generic types |
+| [CustomConfigExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/CustomConfigExample.java) | Custom Lambda client and SerDes |
+| [WaitAtLeastExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastExample.java) | Concurrent stepAsync() with wait() |
+| [RetryInProcessExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/RetryInProcessExample.java) | In-process retry with concurrent operations |
+| [WaitAtLeastInProcessExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
 
 ## Requirements
 
