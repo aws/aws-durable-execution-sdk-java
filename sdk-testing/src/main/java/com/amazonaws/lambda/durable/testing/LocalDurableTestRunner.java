@@ -23,7 +23,7 @@ public class LocalDurableTestRunner<I, O> {
 
     private final Class<I> inputType;
     private final BiFunction<I, DurableContext, O> handler;
-    private LocalMemoryExecutionClient storage;
+    private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private boolean skipTime = true; // Default to skipping time
 
