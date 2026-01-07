@@ -194,4 +194,33 @@ public class CloudBasedIntegrationTest {
         assertNotNull(runner.getOperation("count-by-category"));
         assertNotNull(runner.getOperation("fetch-categories"));
     }
+
+    @Test
+    void testCustomConfigExample() {
+        var runner = CloudDurableTestRunner.create(arn("custom-config-example"), String.class, String.class);
+        var result = runner.run("test-input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult(String.class);
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("Created custom object"));
+        assertTrue(finalResult.contains("user123"));
+        assertTrue(finalResult.contains("John Doe"));
+        assertTrue(finalResult.contains("25"));
+        assertTrue(finalResult.contains("john.doe@example.com"));
+
+        // Verify the step operation was executed
+        var createObjectOp = runner.getOperation("create-custom-object");
+        assertNotNull(createObjectOp);
+        assertEquals("create-custom-object", createObjectOp.getName());
+
+        // The step result should contain the serialized JSON with snake_case
+        var stepResult = createObjectOp.getStepDetails().result();
+        assertNotNull(stepResult);
+        assertTrue(stepResult.contains("user_id"));
+        assertTrue(stepResult.contains("full_name"));
+        assertTrue(stepResult.contains("user_age"));
+        assertTrue(stepResult.contains("email_address"));
+    }
 }

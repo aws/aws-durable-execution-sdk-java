@@ -16,7 +16,6 @@ import com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.util.concurrent.ExecutorService;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -31,13 +30,6 @@ class DurableConfigTest {
         mockClient = mock(DurableExecutionClient.class);
         mockSerDes = mock(SerDes.class);
         mockExecutor = mock(ExecutorService.class);
-    }
-
-    @AfterEach
-    void tearDown() {
-        if (mockExecutor != null && !mockExecutor.isShutdown()) {
-            mockExecutor.shutdown();
-        }
     }
 
     @Test
@@ -179,9 +171,6 @@ class DurableConfigTest {
         var executor = config.getExecutorService();
         assertNotNull(executor);
         assertFalse(executor.isShutdown());
-
-        // Clean up
-        executor.shutdown();
     }
 
     @Test
@@ -196,10 +185,6 @@ class DurableConfigTest {
 
         // ExecutorService should be different instances (each gets its own)
         assertNotSame(config1.getExecutorService(), config2.getExecutorService());
-
-        // Clean up
-        config1.getExecutorService().shutdown();
-        config2.getExecutorService().shutdown();
     }
 
     @Test
@@ -211,9 +196,6 @@ class DurableConfigTest {
                 .build();
 
         assertNotNull(config.getExecutorService());
-
-        // Clean up
-        config.getExecutorService().shutdown();
     }
 
     @Test
@@ -223,10 +205,6 @@ class DurableConfigTest {
 
         assertNotSame(config1, config2);
         assertNotSame(config1.getExecutorService(), config2.getExecutorService());
-
-        // Clean up
-        config1.getExecutorService().shutdown();
-        config2.getExecutorService().shutdown();
     }
 
     @Test
@@ -239,9 +217,6 @@ class DurableConfigTest {
         assertNotNull(config.getSerDes());
         assertInstanceOf(JacksonSerDes.class, config.getSerDes());
         assertNotNull(config.getExecutorService());
-
-        // Clean up
-        config.getExecutorService().shutdown();
     }
 
     @Test
@@ -255,8 +230,5 @@ class DurableConfigTest {
         assertNotNull(config.getDurableExecutionClient());
         assertInstanceOf(LambdaDurableFunctionsClient.class, config.getDurableExecutionClient());
         assertNotNull(config.getExecutorService());
-
-        // Clean up
-        config.getExecutorService().shutdown();
     }
 }

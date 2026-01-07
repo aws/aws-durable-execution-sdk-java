@@ -110,7 +110,6 @@ public class CloudDurableTestRunner<I, O> {
             var result = processor.processEvents(events, outputType);
             this.lastResult = result;
             return result;
-
         } catch (Exception e) {
             throw new RuntimeException("Function invocation failed", e);
         }

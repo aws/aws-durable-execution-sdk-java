@@ -67,25 +67,20 @@ class CustomConfigIntegrationTest {
         // Create custom config with the custom SerDes
         var customConfig = DurableConfig.builder().withSerDes(customSerDes).build();
 
-        try {
-            var runner = LocalDurableTestRunner.create(
-                    String.class,
-                    (input, context) -> {
-                        return context.step("process", String.class, () -> "Custom SerDes: " + input);
-                    },
-                    customConfig);
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    return context.step("process", String.class, () -> "Custom SerDes: " + input);
+                },
+                customConfig);
 
-            var result = runner.run("test-input");
+        var result = runner.run("test-input");
 
-            assertNotNull(result);
-            assertEquals("Custom SerDes: test-input", result.getResult(String.class));
+        assertNotNull(result);
+        assertEquals("Custom SerDes: test-input", result.getResult(String.class));
 
-            // Verify custom SerDes was actually used
-            assertTrue(customSerDes.getSerializeCount() > 0, "Custom SerDes should have been used for serialization");
-        } finally {
-            // Clean up
-            customConfig.getExecutorService().shutdown();
-        }
+        // Verify custom SerDes was actually used
+        assertTrue(customSerDes.getSerializeCount() > 0, "Custom SerDes should have been used for serialization");
     }
 
     @Test
@@ -108,38 +103,33 @@ class CustomConfigIntegrationTest {
         // Create custom config
         var customConfig = DurableConfig.builder().withSerDes(customSerDes).build();
 
-        try {
-            var runner = LocalDurableTestRunner.create(
-                            String.class,
-                            (input, context) -> {
-                                var step1 = context.step("step1", String.class, () -> "Step1: " + input);
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> {
+                            var step1 = context.step("step1", String.class, () -> "Step1: " + input);
 
-                                // Remove wait operation to avoid complexity in this test
-                                var step2 = context.step("step2", String.class, () -> "Step2: " + input);
+                            // Remove wait operation to avoid complexity in this test
+                            var step2 = context.step("step2", String.class, () -> "Step2: " + input);
 
-                                var step3 = context.step("step3", String.class, () -> "Step3: " + input);
+                            var step3 = context.step("step3", String.class, () -> "Step3: " + input);
 
-                                return step1 + " | " + step2 + " | " + step3;
-                            },
-                            customConfig)
-                    .withSkipTime(true);
+                            return step1 + " | " + step2 + " | " + step3;
+                        },
+                        customConfig)
+                .withSkipTime(true);
 
-            var result = runner.run("test");
+        var result = runner.run("test");
 
-            assertNotNull(result);
-            assertEquals("Step1: test | Step2: test | Step3: test", result.getResult(String.class));
+        assertNotNull(result);
+        assertEquals("Step1: test | Step2: test | Step3: test", result.getResult(String.class));
 
-            // Verify all steps executed
-            assertNotNull(result.getOperation("step1"));
-            assertNotNull(result.getOperation("step2"));
-            assertNotNull(result.getOperation("step3"));
+        // Verify all steps executed
+        assertNotNull(result.getOperation("step1"));
+        assertNotNull(result.getOperation("step2"));
+        assertNotNull(result.getOperation("step3"));
 
-            // Verify custom SerDes was used (should be called multiple times for multiple steps)
-            assertTrue(customSerDes.getSerializeCount() >= 3, "Custom SerDes should have been used for all steps");
-        } finally {
-            // Clean up
-            customConfig.getExecutorService().shutdown();
-        }
+        // Verify custom SerDes was used (should be called multiple times for multiple steps)
+        assertTrue(customSerDes.getSerializeCount() >= 3, "Custom SerDes should have been used for all steps");
     }
 
     @Test
@@ -152,40 +142,32 @@ class CustomConfigIntegrationTest {
         // Create custom config
         var customConfig = DurableConfig.builder().withSerDes(customSerDes).build();
 
-        try {
-            var runner = LocalDurableTestRunner.create(
-                            String.class,
-                            (input, context) -> {
-                                return context.step(
-                                        "retry-step",
-                                        String.class,
-                                        () -> {
-                                            int currentAttempt = attemptCount.incrementAndGet();
-                                            // Always fail to test retry behavior (like existing RetryIntegrationTest)
-                                            throw new RuntimeException("Simulated failure attempt " + currentAttempt);
-                                        },
-                                        StepConfig.builder()
-                                                .retryStrategy(
-                                                        com.amazonaws.lambda.durable.retry.RetryStrategies.Presets
-                                                                .DEFAULT)
-                                                .build());
-                            },
-                            customConfig)
-                    .withSkipTime(true);
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> {
+                            return context.step(
+                                    "retry-step",
+                                    String.class,
+                                    () -> {
+                                        int currentAttempt = attemptCount.incrementAndGet();
+                                        // Always fail to test retry behavior (like existing RetryIntegrationTest)
+                                        throw new RuntimeException("Simulated failure attempt " + currentAttempt);
+                                    },
+                                    StepConfig.builder()
+                                            .retryStrategy(
+                                                    com.amazonaws.lambda.durable.retry.RetryStrategies.Presets.DEFAULT)
+                                            .build());
+                        },
+                        customConfig)
+                .withSkipTime(true);
 
-            // First run should return PENDING (retry scheduled) - matching existing RetryIntegrationTest pattern
-            var result = runner.run("test");
-            assertEquals(com.amazonaws.lambda.durable.model.ExecutionStatus.PENDING, result.getStatus());
-            assertEquals(1, attemptCount.get());
+        // First run should return PENDING (retry scheduled) - matching existing RetryIntegrationTest pattern
+        var result = runner.run("test");
+        assertEquals(com.amazonaws.lambda.durable.model.ExecutionStatus.PENDING, result.getStatus());
+        assertEquals(1, attemptCount.get());
 
-            // Verify custom SerDes was used during retry operations
-            assertTrue(
-                    customSerDes.getSerializeCount() > 0,
-                    "Custom SerDes should have been used during retry operations");
-        } finally {
-            // Clean up
-            customConfig.getExecutorService().shutdown();
-        }
+        // Verify custom SerDes was used during retry operations
+        assertTrue(customSerDes.getSerializeCount() > 0, "Custom SerDes should have been used during retry operations");
     }
 
     @Test
@@ -234,11 +216,6 @@ class CustomConfigIntegrationTest {
         assertTrue(customSerDes1.getSerializeCount() > 0, "Custom SerDes 1 should have been used");
         assertTrue(customSerDes2.getSerializeCount() > 0, "Custom SerDes 2 should have been used");
         assertTrue(customSerDes3.getSerializeCount() > 0, "Custom SerDes 3 should have been used");
-
-        // Clean up
-        customConfig1.getExecutorService().shutdown();
-        customConfig2.getExecutorService().shutdown();
-        customConfig3.getExecutorService().shutdown();
     }
 
     @Test
@@ -247,15 +224,10 @@ class CustomConfigIntegrationTest {
         // This verifies the DEFAULT_REGION fallback behavior
         var config = DurableConfig.defaultConfig();
 
-        try {
-            assertNotNull(config);
-            assertNotNull(config.getDurableExecutionClient());
-            assertNotNull(config.getSerDes());
-            assertNotNull(config.getExecutorService());
-        } finally {
-            // Clean up
-            config.getExecutorService().shutdown();
-        }
+        assertNotNull(config);
+        assertNotNull(config.getDurableExecutionClient());
+        assertNotNull(config.getSerDes());
+        assertNotNull(config.getExecutorService());
     }
 
     @Test
@@ -268,43 +240,38 @@ class CustomConfigIntegrationTest {
         var customConfig =
                 DurableConfig.builder().withSerDes(durableConfigSerDes).build();
 
-        try {
-            var runner = LocalDurableTestRunner.create(
-                    String.class,
-                    (input, context) -> {
-                        // Step 1: Use default SerDes (should use DurableConfig SerDes)
-                        var result1 = context.step("default-step", String.class, () -> "default-result");
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    // Step 1: Use default SerDes (should use DurableConfig SerDes)
+                    var result1 = context.step("default-step", String.class, () -> "default-result");
 
-                        // Step 2: Use StepConfig SerDes (should override DurableConfig SerDes)
-                        var result2 = context.step(
-                                "custom-step",
-                                String.class,
-                                () -> "custom-result",
-                                StepConfig.builder().serDes(stepConfigSerDes).build());
+                    // Step 2: Use StepConfig SerDes (should override DurableConfig SerDes)
+                    var result2 = context.step(
+                            "custom-step",
+                            String.class,
+                            () -> "custom-result",
+                            StepConfig.builder().serDes(stepConfigSerDes).build());
 
-                        return result1 + "," + result2;
-                    },
-                    customConfig);
+                    return result1 + "," + result2;
+                },
+                customConfig);
 
-            var result = runner.run("test-input");
+        var result = runner.run("test-input");
 
-            assertNotNull(result);
-            assertEquals("default-result,custom-result", result.getResult(String.class));
+        assertNotNull(result);
+        assertEquals("default-result,custom-result", result.getResult(String.class));
 
-            // Verify DurableConfig SerDes was used for the default step. Can be called more than once also for customer
-            // input deserialization from within LocalDurableTestRunner.
-            assertTrue(
-                    durableConfigSerDes.getSerializeCount() > 0,
-                    "DurableConfig SerDes should have been used for default step serialization");
+        // Verify DurableConfig SerDes was used for the default step. Can be called more than once also for customer
+        // input deserialization from within LocalDurableTestRunner.
+        assertTrue(
+                durableConfigSerDes.getSerializeCount() > 0,
+                "DurableConfig SerDes should have been used for default step serialization");
 
-            // Verify StepConfig SerDes was used for the custom step
-            assertTrue(
-                    stepConfigSerDes.getSerializeCount() == 1,
-                    "StepConfig SerDes should have been used for custom step serialization");
-        } finally {
-            // Clean up
-            customConfig.getExecutorService().shutdown();
-        }
+        // Verify StepConfig SerDes was used for the custom step
+        assertTrue(
+                stepConfigSerDes.getSerializeCount() == 1,
+                "StepConfig SerDes should have been used for custom step serialization");
     }
 
     @Test
@@ -319,13 +286,8 @@ class CustomConfigIntegrationTest {
                     .withDurableExecutionClient(durableClient)
                     .build();
 
-            try {
-                assertNotNull(config);
-                assertEquals(durableClient, config.getDurableExecutionClient());
-            } finally {
-                // Clean up config
-                config.getExecutorService().shutdown();
-            }
+            assertNotNull(config);
+            assertEquals(durableClient, config.getDurableExecutionClient());
         } finally {
             // Clean up lambda client
             lambdaClient.close();

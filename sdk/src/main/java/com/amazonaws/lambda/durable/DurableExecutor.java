@@ -134,8 +134,12 @@ public class DurableExecutor {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             return DurableExecutionOutput.failure(cause);
         } finally {
+            // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
             executionManager.shutdown();
-            executor.shutdown();
+
+            // We DO NOT shutdown the executor since it should stay warm for re-invokes against a warm Lambda runtime.
+            // For example, a re-invoke after a wait should re-use the same executor instance from DurableConfig.
+            // executor.shutdown();
         }
     }
 
