@@ -212,7 +212,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
             }
         });
 
-        var baseMapper = JsonMapper.builder()
+        return JsonMapper.builder()
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 // Looks pretty, and probably needed for tests to be deterministic.
@@ -222,10 +222,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
                 .propertyNamingStrategy(PropertyNamingStrategies.UPPER_CAMEL_CASE)
                 .addModule(new JavaTimeModule())
                 .addModule(dateModule)
+                .addModule(new AwsSdkV2Module())
                 .build();
-
-        baseMapper.registerModule(new AwsSdkV2Module(baseMapper));
-
-        return baseMapper;
     }
 }
