@@ -31,7 +31,7 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
     private final AtomicInteger attemptCount = new AtomicInteger(0);
 
     @Override
-    protected String handleRequest(Object input, DurableContext context) {
+    public String handleRequest(Object input, DurableContext context) {
         logger.info("Starting retry in-process example");
 
         // Start async step that will fail and retry

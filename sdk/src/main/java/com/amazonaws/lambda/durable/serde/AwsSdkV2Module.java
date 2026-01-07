@@ -6,9 +6,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JsonDeserializer;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import java.io.IOException;
@@ -28,42 +26,38 @@ public class AwsSdkV2Module extends SimpleModule {
      */
     private static final List<Class<?>> SDK_CLASSES = List.of(Operation.class, ErrorObject.class);
 
-    public AwsSdkV2Module(ObjectMapper sharedMapper) {
+    public AwsSdkV2Module() {
         super("AwsSdkV2Module");
 
         // Register serializers and deserializers for all SDK classes
         for (Class<?> sdkClass : SDK_CLASSES) {
-            registerSdkClass(sdkClass, sharedMapper);
+            registerSdkClass(sdkClass);
         }
     }
 
-    private <T> void registerSdkClass(Class<T> sdkClass, ObjectMapper sharedMapper) {
-        addDeserializer(sdkClass, new SdkDeserializer<>(sdkClass, sharedMapper));
+    private <T> void registerSdkClass(Class<T> sdkClass) {
+        addDeserializer(sdkClass, new SdkDeserializer<>(sdkClass));
         addSerializer(sdkClass, new SdkSerializer<>());
     }
 
     private static class SdkDeserializer<T> extends JsonDeserializer<T> {
         private final Class<T> sdkClass;
-        private final ObjectMapper mapper;
 
-        SdkDeserializer(Class<T> sdkClass, ObjectMapper mapper) {
+        SdkDeserializer(Class<T> sdkClass) {
             this.sdkClass = sdkClass;
-            this.mapper = mapper;
         }
 
         @Override
         @SuppressWarnings("unchecked")
         public T deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
-            JsonNode node = p.readValueAsTree();
-
             try {
                 // Call serializableBuilderClass() method on the SDK class
                 Method serializableBuilderClassMethod = sdkClass.getMethod("serializableBuilderClass");
                 serializableBuilderClassMethod.setAccessible(true);
                 Class<?> builderClass = (Class<?>) serializableBuilderClassMethod.invoke(null);
 
-                // Deserialize to builder and build the final object
-                Object builder = mapper.readValue(node.toString(), builderClass);
+                // Deserialize to builder using treeToValue (avoids double parsing via toString())
+                Object builder = p.readValueAs(builderClass);
                 Method buildMethod = builderClass.getMethod("build");
                 buildMethod.setAccessible(true);
                 return (T) buildMethod.invoke(builder);

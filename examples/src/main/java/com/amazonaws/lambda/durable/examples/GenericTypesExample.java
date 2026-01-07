@@ -48,7 +48,7 @@ public class GenericTypesExample extends DurableHandler<GenericTypesExample.Inpu
     }
 
     @Override
-    protected Output handleRequest(Input input, DurableContext context) {
+    public Output handleRequest(Input input, DurableContext context) {
         logger.info("Starting generic types example for user: {}", input.userId);
 
         // Step 1: Fetch a list of items (List<String>)

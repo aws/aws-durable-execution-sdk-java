@@ -26,7 +26,7 @@ class RetryIntegrationTest {
     void testStepWithDefaultRetryStrategy_ShouldRetryOnFailure() {
         var handler = new DurableHandler<String, String>() {
             @Override
-            protected String handleRequest(String input, DurableContext context) {
+            public String handleRequest(String input, DurableContext context) {
                 var config = StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build();
@@ -42,7 +42,7 @@ class RetryIntegrationTest {
             }
         };
 
-        var runner = LocalDurableTestRunner.create(String.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(String.class, handler);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
@@ -53,7 +53,7 @@ class RetryIntegrationTest {
     void testStepWithNoRetryStrategy_ShouldFailImmediately() {
         var handler = new DurableHandler<String, String>() {
             @Override
-            protected String handleRequest(String input, DurableContext context) {
+            public String handleRequest(String input, DurableContext context) {
                 var config = StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                         .build();
@@ -69,7 +69,7 @@ class RetryIntegrationTest {
             }
         };
 
-        var runner = LocalDurableTestRunner.create(String.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(String.class, handler);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
@@ -80,7 +80,7 @@ class RetryIntegrationTest {
     void testSuccessfulStepWithRetryConfig_ShouldNotTriggerRetry() {
         var handler = new DurableHandler<String, String>() {
             @Override
-            protected String handleRequest(String input, DurableContext context) {
+            public String handleRequest(String input, DurableContext context) {
                 var config = StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build();
@@ -96,7 +96,7 @@ class RetryIntegrationTest {
             }
         };
 
-        var runner = LocalDurableTestRunner.create(String.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(String.class, handler);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());

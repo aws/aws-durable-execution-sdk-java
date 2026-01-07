@@ -30,6 +30,12 @@
             <artifactId>aws-lambda-java-core</artifactId>
         </dependency>
         
+        <!-- AWS SDK Apache HTTP Client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>apache-client</artifactId>
+        </dependency>
+        
         <!-- SLF4J Simple Logger -->
         <dependency>
             <groupId>org.slf4j</groupId>

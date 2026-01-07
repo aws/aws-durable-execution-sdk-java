@@ -164,6 +164,28 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  CustomConfigExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: custom-config-example
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.CustomConfigExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
@@ -220,3 +242,11 @@ Outputs:
   GenericTypesExampleFunctionName:
     Description: Generic Types Example Function Name
     Value: !Ref GenericTypesExampleFunction
+
+  CustomConfigExampleFunction:
+    Description: Custom Config Example Function ARN
+    Value: !GetAtt CustomConfigExampleFunction.Arn
+
+  CustomConfigExampleFunctionName:
+    Description: Custom Config Example Function Name
+    Value: !Ref CustomConfigExampleFunction

@@ -44,13 +44,15 @@ class DurableExecutionWrapperTest {
 
     @Test
     void testWrapperPattern() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient()).build();
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler = DurableExecutor.wrap(
                 TestInput.class,
                 (input, context) -> {
                     var result = context.step("process", String.class, () -> "Wrapped: " + input.value);
                     return new TestOutput(result);
                 },
-                mockClient());
+                config);
 
         var serDes = new JacksonSerDes();
 
@@ -82,8 +84,10 @@ class DurableExecutionWrapperTest {
 
     @Test
     void testWrapperWithMethodReference() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient()).build();
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler =
-                DurableExecutor.wrap(TestInput.class, DurableExecutionWrapperTest::handleRequest, mockClient());
+                DurableExecutor.wrap(TestInput.class, DurableExecutionWrapperTest::handleRequest, config);
 
         var serDes = new JacksonSerDes();
 

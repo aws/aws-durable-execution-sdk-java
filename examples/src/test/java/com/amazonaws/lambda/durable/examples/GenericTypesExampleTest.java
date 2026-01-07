@@ -12,7 +12,7 @@ class GenericTypesExampleTest {
     @Test
     void testGenericTypesExample() {
         var handler = new GenericTypesExample();
-        var runner = LocalDurableTestRunner.create(GenericTypesExample.Input.class, handler::handleRequest)
+        var runner = LocalDurableTestRunner.create(GenericTypesExample.Input.class, handler)
                 .withSkipTime(true);
 
         var input = new GenericTypesExample.Input("user123");
@@ -48,7 +48,7 @@ class GenericTypesExampleTest {
     @Test
     void testOperationTracking() {
         var handler = new GenericTypesExample();
-        var runner = LocalDurableTestRunner.create(GenericTypesExample.Input.class, handler::handleRequest)
+        var runner = LocalDurableTestRunner.create(GenericTypesExample.Input.class, handler)
                 .withSkipTime(true);
 
         var input = new GenericTypesExample.Input("user456");

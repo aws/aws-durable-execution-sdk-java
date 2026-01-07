@@ -19,7 +19,7 @@ import com.amazonaws.lambda.durable.DurableHandler;
 public class SimpleStepExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
-    protected String handleRequest(GreetingRequest input, DurableContext context) {
+    public String handleRequest(GreetingRequest input, DurableContext context) {
         // Step 1: Create greeting
         var greeting = context.step("create-greeting", String.class, () -> "Hello, " + input.getName());
 

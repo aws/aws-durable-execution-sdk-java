@@ -13,7 +13,7 @@ class WaitExampleTest {
     @Test
     void testWaitExampleStartsAndWaits() {
         var handler = new WaitExample();
-        var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler::handleRequest);
+        var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 
         var input = new GreetingRequest("Bob");
 

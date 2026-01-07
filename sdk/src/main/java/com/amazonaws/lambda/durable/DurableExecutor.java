@@ -2,18 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
-import com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
-import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
 import java.util.function.BiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,20 +28,8 @@ public class DurableExecutor {
             DurableExecutionInput input,
             Context lambdaContext,
             Class<I> inputType,
-            BiFunction<I, DurableContext, O> handler) {
-        // TODO: Allow passing client by user
-        logger.debug("Initialize SDK client");
-        var client = new LambdaDurableFunctionsClient();
-        logger.debug("Done initializing SDK client");
-        return execute(input, lambdaContext, inputType, handler, client);
-    }
-
-    public static <I, O> DurableExecutionOutput execute(
-            DurableExecutionInput input,
-            Context lambdaContext,
-            Class<I> inputType,
             BiFunction<I, DurableContext, O> handler,
-            DurableExecutionClient client) {
+            DurableConfig config) {
         logger.debug("DurableExecution.execute() called");
         logger.debug("DurableExecutionArn: {}", input.durableExecutionArn());
         logger.debug("CheckpointToken: {}", input.checkpointToken());
@@ -69,22 +53,22 @@ public class DurableExecutor {
             throw new IllegalStateException("First operation must be EXECUTION");
         }
 
-        // Create single executor for both handler and steps
-        // TODO: Allow passing executor by user through DurableHandler
-        var executor = Executors.newCachedThreadPool(r -> {
-            Thread t = new Thread(r);
-            t.setName("durable-exec-" + t.getId());
-            t.setDaemon(true);
-            return t;
-        });
+        // Get executor from config (always non-null)
+        var executor = config.getExecutorService();
 
         // TODO: Should we pass the whole input instead?
         var executionManager = new ExecutionManager(
-                input.durableExecutionArn(), input.checkpointToken(), input.initialExecutionState(), client, executor);
+                input.durableExecutionArn(),
+                input.checkpointToken(),
+                input.initialExecutionState(),
+                config.getDurableExecutionClient(),
+                executor);
 
         var executionOp = executionManager.getExecutionOperation();
         logger.debug("EXECUTION operation found: {}", executionOp.id());
-        var serDes = new JacksonSerDes();
+
+        // Use SerDes from config (defaults to JacksonSerDes)
+        var serDes = config.getSerDes();
         var userInput = extractUserInput(executionOp, serDes, inputType);
 
         // Create context
@@ -150,8 +134,12 @@ public class DurableExecutor {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             return DurableExecutionOutput.failure(cause);
         } finally {
+            // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
             executionManager.shutdown();
-            executor.shutdown();
+
+            // We DO NOT shutdown the executor since it should stay warm for re-invokes against a warm Lambda runtime.
+            // For example, a re-invoke after a wait should re-use the same executor instance from DurableConfig.
+            // executor.shutdown();
         }
     }
 
@@ -166,12 +154,7 @@ public class DurableExecutor {
     }
 
     public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
-            Class<I> inputType, BiFunction<I, DurableContext, O> handler) {
-        return (input, context) -> execute(input, context, inputType, handler);
-    }
-
-    public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
-            Class<I> inputType, BiFunction<I, DurableContext, O> handler, DurableExecutionClient client) {
-        return (input, context) -> execute(input, context, inputType, handler, client);
+            Class<I> inputType, BiFunction<I, DurableContext, O> handler, DurableConfig config) {
+        return (input, context) -> execute(input, context, inputType, handler, config);
     }
 }
