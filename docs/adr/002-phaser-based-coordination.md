@@ -83,6 +83,36 @@ public void execute() {
    }
    ```
 
+### Two-Phase Completion Sequence
+
+```mermaid
+sequenceDiagram
+    participant Main as Main Thread
+    participant Step as Step Thread
+    participant Ph as Phaser
+    participant EM as ExecutionManager
+
+    Note over Ph: Phase 0 (RUNNING)
+    
+    Main->>Ph: register()
+    Main->>EM: deregisterActiveThread("Root")
+    Main->>Ph: arriveAndAwaitAdvance()
+    Note over Main: BLOCKED
+    
+    Step->>Step: execute user function
+    Step->>EM: checkpoint SUCCEED
+    EM->>Ph: arriveAndAwaitAdvance()
+    Note over Ph: Phase 1 (COMPLETING)
+    
+    Note over Main: UNBLOCKED
+    Main->>EM: registerActiveThread("Root")
+    Main->>Ph: arriveAndDeregister()
+    
+    Step->>Ph: arriveAndAwaitAdvance()
+    Note over Ph: Phase 2 (DONE)
+    Step->>EM: deregisterActiveThread("1-step")
+```
+
 ## Consequences
 
 **Positive:**

@@ -1,8 +1,10 @@
 # AWS Lambda Durable Execution Java SDK - Internal Design
 
+> **Note:** This document is for SDK developers and contributors. For user-facing documentation, see the [README](../README.md).
+
 ## Overview
 
-Checkpoint-and-replay SDK for fault-tolerant Lambda workflows. Operations are checkpointed to a backend and replayed on re-invocation.
+This document explains the internal architecture, threading model, and extension points to help contributors understand how the SDK works under the hood. Core design decisions and advanced concepts are further outlined in the [Architecture Decision Records](adr/).
 
 ## Module Structure
 
@@ -11,22 +13,15 @@ aws-durable-execution-sdk-java/
 ├── sdk/                      # Core SDK - DurableHandler, DurableContext, operations
 ├── sdk-testing/              # Test utilities for local and cloud testing
 ├── sdk-integration-tests/    # Integration tests using LocalDurableTestRunner
-└── examples/                 # Example handlers with local and cloud tests
+└── examples/                 # Real-world usage patterns as customers would implement them
 ```
 
 | Module | Purpose | Key Classes |
 |--------|---------|-------------|
 | `sdk` | Core runtime - extend `DurableHandler`, use `DurableContext` for durable operations | `DurableHandler`, `DurableContext`, `DurableExecutor`, `ExecutionManager` |
-| `sdk-testing` | Test utilities for both local (in-memory) and cloud (deployed Lambda) testing | `LocalDurableTestRunner`, `CloudDurableTestRunner`, `LocalMemoryExecutionClient`, `TestResult` |
+| `sdk-testing` | Test utilities: `LocalDurableTestRunner` (in-memory, simulates re-invocations and time-skipping) and `CloudDurableTestRunner` (executes against deployed Lambda) | `LocalDurableTestRunner`, `CloudDurableTestRunner`, `LocalMemoryExecutionClient`, `TestResult` |
 | `sdk-integration-tests` | Dogfooding tests - validates the SDK using its own test utilities. Separate module keeps dependencies acyclic: `sdk` → `sdk-testing` → `sdk-integration-tests`. | Test classes only |
-| `examples` | Reference implementations demonstrating SDK usage patterns, with both local and cloud tests | Example handlers, `CloudBasedIntegrationTest` |
-
-### sdk-testing Details
-
-| Approach | Runner | Description |
-|----------|--------|-------------|
-| Local | `LocalDurableTestRunner` | In-memory execution without AWS. Simulates re-invocations, time-skipping for waits. |
-| Cloud | `CloudDurableTestRunner` | Executes against deployed Lambda. Polls for completion, validates real AWS integration. |
+| `examples` | Real-world usage patterns as customers would implement them, with local and cloud tests | Example handlers, `CloudBasedIntegrationTest` |
 
 ---
 
@@ -65,12 +60,19 @@ public class MyHandler extends DurableHandler<Input, Output> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
+            .withLambdaClient(customLambdaClient)
             .withSerDes(new CustomSerDes())
             .withExecutorService(Executors.newFixedThreadPool(4))
             .build();
     }
 }
 ```
+
+| Option | Default |
+|--------|---------|
+| `lambdaClient` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/com/amazonaws/lambda/durable/DurableConfig.java)) |
+| `serDes` | `JacksonSerDes` |
+| `executor` | `Executors.newCachedThreadPool()` |
 
 ### Per-Step Configuration
 
@@ -82,32 +84,6 @@ context.step("name", Type.class, supplier,
         .semantics(AT_MOST_ONCE_PER_RETRY)
         .build());
 ```
-
----
-
-## Core Concepts
-
-### Checkpoint-and-Replay
-
-- Operations get sequential IDs (1, 2, 3...)
-- On first execution: run code, checkpoint result
-- On replay: return cached result, skip execution
-- Determinism required: same operations in same order
-
-### Suspension Model
-
-- Execution suspends when `wait()` is called or a step schedules a retry
-- The handler thread ("Root") stays active during normal step execution - suspension only occurs when Root explicitly deregisters (in `wait()` or while blocked on a retrying step)
-- When no active threads remain, `ExecutionManager` completes `suspendExecutionFuture` and throws `SuspendExecutionException`
-- The executor races `handlerFuture` vs `suspendFuture` - if suspend wins, returns `PENDING`
-- Backend re-invokes after wait/retry completes
-
-See [ADR-001: Threaded Handler Execution](adr/001-threaded-handler-execution.md) for the design rationale behind this dual-signaling mechanism.
-
-### Step Semantics
-
-- `AT_LEAST_ONCE_PER_RETRY` (default): Fire-and-forget START, re-execute on interrupt
-- `AT_MOST_ONCE_PER_RETRY`: Await START checkpoint, treat interrupt as failure
 
 ---
 
@@ -250,6 +226,7 @@ sequenceDiagram
 sequenceDiagram
     participant LR as Lambda Runtime
     participant DE as DurableExecutor
+    participant UC as User Code
     participant DC as DurableContext
     participant SO as StepOperation
     participant EM as ExecutionManager
@@ -375,33 +352,7 @@ SuspendExecutionException        # Internal: triggers suspension (not user-facin
 
 ---
 
-## Internal Details
-
-### Data Models
-
-```java
-// Input from Lambda Durable Functions backend
-record DurableExecutionInput(
-    String durableExecutionArn,
-    String checkpointToken,
-    InitialExecutionState initialExecutionState
-)
-
-// Output to Lambda Durable Functions backend
-record DurableExecutionOutput(
-    ExecutionStatus status,    // SUCCEEDED, PENDING, FAILED
-    String result,
-    ErrorObject error
-)
-```
-
-### Configuration Defaults
-
-| Component | Default |
-|-----------|---------|
-| `lambdaClient` | Auto-created `LambdaClient` for current region |
-| `serDes` | `JacksonSerDes` |
-| `executor` | `Executors.newCachedThreadPool()` |
+## Backend Integration
 
 ### Large Response Handling
 
@@ -413,6 +364,8 @@ If result > 6MB Lambda limit:
 ### Checkpoint Batching
 
 Multiple concurrent operations may checkpoint simultaneously. `CheckpointBatcher` batches these into single API calls to reduce latency and stay within the 750KB request limit.
+
+Currently uses micro-batching: batches only what accumulates during the polling thread scheduling overhead. Early tests suggest this window may be too short for effective batching—an artificial delay might need to be introduced.
 
 ```
 StepOperation 1 ──┐
@@ -446,58 +399,6 @@ STARTED ──► Exception ──► RetryStrategy.makeRetryDecision()
                 ▼                               ▼
         Backend re-invokes              StepFailedException
         at nextAttemptTimestamp
-```
-
----
-
-## Thread Coordination (Advanced)
-
-### Two-Phase Phaser Completion
-
-**Problem:** Race between step completion and suspension check.
-
-**Solution:** 
-- Phase 0→1: Step done, waiters unblock
-- Phase 1→2: Waiters reactivate, step deregisters
-
-This ensures the main thread re-registers as active BEFORE the step thread deregisters, preventing premature suspension.
-
-```mermaid
-sequenceDiagram
-    participant Main as Main Thread
-    participant Step as Step Thread
-    participant Ph as Phaser
-    participant EM as ExecutionManager
-
-    Note over Ph: Phase 0 (RUNNING)
-    
-    Main->>Ph: register()
-    Main->>EM: deregisterActiveThread("Root")
-    Main->>Ph: arriveAndAwaitAdvance()
-    Note over Main: BLOCKED
-    
-    Step->>Step: execute user function
-    Step->>EM: checkpoint SUCCEED
-    EM->>Ph: arriveAndAwaitAdvance()
-    Note over Ph: Phase 1 (COMPLETING)
-    
-    Note over Main: UNBLOCKED
-    Main->>EM: registerActiveThread("Root")
-    Main->>Ph: arriveAndDeregister()
-    
-    Step->>Ph: arriveAndAwaitAdvance()
-    Note over Ph: Phase 2 (DONE)
-    Step->>EM: deregisterActiveThread("1-step")
-```
-
-### Suspension Detection
-
-```java
-// In ExecutionManager.deregisterActiveThread()
-if (activeThreads.isEmpty()) {
-    suspendExecutionFuture.complete(null);
-    throw new SuspendExecutionException();
-}
 ```
 
 ---
@@ -539,4 +440,32 @@ var runner = CloudDurableTestRunner.create(arn, Input.class, Output.class)
     .withTimeout(Duration.ofMinutes(5));
 
 TestResult<Output> result = runner.run(input);
+```
+
+---
+
+## Thread Coordination (Advanced)
+
+The SDK uses a threaded execution model where the handler runs in a background thread, racing against a suspension future. This allows immediate suspension at `wait()` or retry points without waiting for handler completion. See [ADR-001: Threaded Handler Execution](adr/001-threaded-handler-execution.md) for the design rationale.
+
+### Two-Phase Phaser Completion
+
+**Problem:** Race between step completion and suspension check.
+
+**Solution:** 
+- Phase 0→1: Step done, waiters unblock
+- Phase 1→2: Waiters reactivate, step deregisters
+
+This ensures the main thread re-registers as active BEFORE the step thread deregisters, preventing premature suspension.
+
+See [ADR-002: Phaser-Based Operation Coordination](adr/002-phaser-based-coordination.md) for the detailed rationale, alternatives considered, and sequence diagram.
+
+### Suspension Detection
+
+```java
+// In ExecutionManager.deregisterActiveThread()
+if (activeThreads.isEmpty()) {
+    suspendExecutionFuture.complete(null);
+    throw new SuspendExecutionException();
+}
 ```
