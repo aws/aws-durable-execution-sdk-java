@@ -277,7 +277,7 @@ List<TestOperation> failed = result.getFailedOperations();
 By default, `runUntilComplete()` skips wait durations. For testing time-dependent logic, disable this:
 
 ```java
-var runner = LocalDurableTestRunner.create(Order.class, handler::handleRequest)
+var runner = LocalDurableTestRunner.create(Order.class, handler)
     .withSkipTime(false);  // Don't auto-advance time
 
 var result = runner.run(input);
