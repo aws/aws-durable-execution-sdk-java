@@ -68,6 +68,13 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 public final class DurableConfig {
     private static final Logger logger = LoggerFactory.getLogger(DurableConfig.class);
 
+    /**
+     * Default AWS region used when AWS_REGION environment variable is not set. This prevents initialization failures in
+     * testing environments where AWS credentials may not be configured. In production Lambda environments, AWS_REGION
+     * is always set by the Lambda runtime.
+     */
+    private static final String DEFAULT_REGION = "us-east-1";
+
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
     private final ExecutorService executorService;
@@ -127,7 +134,8 @@ public final class DurableConfig {
 
     /**
      * Creates a default DurableExecutionClient with production LambdaClient. Uses
-     * EnvironmentVariableCredentialsProvider and region from AWS_REGION.
+     * EnvironmentVariableCredentialsProvider and region from AWS_REGION. If AWS_REGION is not set, defaults to
+     * us-east-1 to avoid initialization failures in testing environments.
      *
      * @return Default DurableExecutionClient instance
      */
@@ -135,9 +143,8 @@ public final class DurableConfig {
         logger.debug("Creating default DurableExecutionClient");
         var region = System.getenv(SdkSystemSetting.AWS_REGION.environmentVariable());
         if (region == null || region.isEmpty()) {
-            throw new IllegalStateException(
-                    "Failed to create default DurableExecutionClient: Missing AWS region configuration. "
-                            + "Set AWS_REGION environment variable or provide custom DurableExecutionClient.");
+            region = DEFAULT_REGION;
+            logger.debug("AWS_REGION not set, defaulting to: {}", region);
         }
 
         var lambdaClient = LambdaClient.builder()

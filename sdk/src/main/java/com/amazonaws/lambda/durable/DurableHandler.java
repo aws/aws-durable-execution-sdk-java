@@ -40,16 +40,6 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);
 
     protected DurableHandler() {
-        this(null);
-    }
-
-    /**
-     * Constructor for testing that accepts a pre-configured DurableConfig. This constructor is primarily intended for
-     * use by testing frameworks like LocalDurableTestRunner.
-     *
-     * @param config Pre-configured DurableConfig, or null to use createConfiguration()
-     */
-    protected DurableHandler(DurableConfig config) {
         // Extract input type from generic superclass
         var superClass = getClass().getGenericSuperclass();
         if (superClass instanceof ParameterizedType paramType) {
@@ -57,7 +47,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
         } else {
             throw new IllegalArgumentException("Cannot determine input type parameter");
         }
-        this.config = config != null ? config : createConfiguration();
+        this.config = createConfiguration();
         validateConfiguration();
     }
 
@@ -65,17 +55,61 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
      * Template method for creating configuration. Override this method to provide custom DurableExecutionClient,
      * SerDes, or other configuration.
      *
-     * <p>The SerDes from config is used for customer data serialization (user inputs/outputs). The internal
-     * ObjectMapper is used for DAR backend communication.
+     * <p>The {@link com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient} is a wrapper that customers
+     * should use to inject their own configured {@link software.amazon.awssdk.services.lambda.LambdaClient}. This
+     * allows full control over AWS SDK configuration including credentials, region, HTTP client, and retry policies.
      *
-     * <p>Example:
+     * <p>Basic example with custom region and credentials:
      *
      * <pre>{@code
      * @Override
      * protected DurableConfig createConfiguration() {
+     *     // Create custom Lambda client with specific configuration
+     *     var lambdaClient = LambdaClient.builder()
+     *         .region(Region.US_WEST_2)
+     *         .credentialsProvider(ProfileCredentialsProvider.create("my-profile"))
+     *         .build();
+     *
+     *     // Wrap the Lambda client with LambdaDurableFunctionsClient
+     *     var durableClient = new LambdaDurableFunctionsClient(lambdaClient);
+     *
      *     return DurableConfig.builder()
-     *         .withDurableExecutionClient(customClient)
-     *         .withSerDes(customSerDes)  // For user data
+     *         .withDurableExecutionClient(durableClient)
+     *         .build();
+     * }
+     * }</pre>
+     *
+     * <p>Advanced example with AWS CRT HTTP Client for high-performance scenarios:
+     *
+     * <pre>{@code
+     * @Override
+     * protected DurableConfig createConfiguration() {
+     *     // Configure AWS CRT HTTP Client for optimal performance
+     *     var crtHttpClient = AwsCrtAsyncHttpClient.builder()
+     *         .maxConcurrency(50)
+     *         .connectionTimeout(Duration.ofSeconds(30))
+     *         .connectionMaxIdleTime(Duration.ofSeconds(60))
+     *         .build();
+     *
+     *     // Create Lambda client with CRT HTTP client
+     *     var lambdaClient = LambdaClient.builder()
+     *         .region(Region.US_EAST_1)
+     *         .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
+     *         .httpClient(crtHttpClient)
+     *         .overrideConfiguration(ClientOverrideConfiguration.builder()
+     *             .retryPolicy(RetryPolicy.builder()
+     *                 .numRetries(5)
+     *                 .build())
+     *             .build())
+     *         .build();
+     *
+     *     // Wrap with LambdaDurableFunctionsClient
+     *     var durableClient = new LambdaDurableFunctionsClient(lambdaClient);
+     *
+     *     return DurableConfig.builder()
+     *         .withDurableExecutionClient(durableClient)
+     *         .withSerDes(customSerDes)  // Optional: custom SerDes for user data
+     *         .withExecutorService(customExecutor)  // Optional: custom thread pool
      *         .build();
      * }
      * }</pre>

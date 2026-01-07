@@ -175,13 +175,6 @@ class DurableHandlerTest {
     // Test handler implementation
     private class TestDurableHandler extends DurableHandler<String, String> {
         @Override
-        protected DurableConfig createConfiguration() {
-            return DurableConfig.builder()
-                    .withDurableExecutionClient(mockClient)
-                    .build();
-        }
-
-        @Override
         protected String handleRequest(String input, DurableContext context) {
             return "processed: " + input;
         }

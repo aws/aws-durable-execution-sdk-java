@@ -30,8 +30,6 @@ public class DurableExecutor {
             Class<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
-        // Get DurableExecutionClient directly from config
-        var client = config.getDurableExecutionClient();
         logger.debug("DurableExecution.execute() called");
         logger.debug("DurableExecutionArn: {}", input.durableExecutionArn());
         logger.debug("CheckpointToken: {}", input.checkpointToken());
@@ -60,7 +58,11 @@ public class DurableExecutor {
 
         // TODO: Should we pass the whole input instead?
         var executionManager = new ExecutionManager(
-                input.durableExecutionArn(), input.checkpointToken(), input.initialExecutionState(), client, executor);
+                input.durableExecutionArn(),
+                input.checkpointToken(),
+                input.initialExecutionState(),
+                config.getDurableExecutionClient(),
+                executor);
 
         var executionOp = executionManager.getExecutionOperation();
         logger.debug("EXECUTION operation found: {}", executionOp.id());

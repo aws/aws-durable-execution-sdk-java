@@ -180,12 +180,12 @@ class DurableExecutionTest {
                 "token1",
                 new DurableExecutionInput.InitialExecutionState(List.of(stepOp), null));
 
-        var exception2 = assertThrows(
+        var exception = assertThrows(
                 IllegalStateException.class,
                 () -> DurableExecutor.execute(
                         input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
 
-        assertEquals("First operation must be EXECUTION", exception2.getMessage());
+        assertEquals("First operation must be EXECUTION", exception.getMessage());
     }
 
     @Test
@@ -201,11 +201,11 @@ class DurableExecutionTest {
                 "token1",
                 new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
 
-        var exception3 = assertThrows(
+        var exception = assertThrows(
                 IllegalStateException.class,
                 () -> DurableExecutor.execute(
                         input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
 
-        assertEquals("EXECUTION operation missing executionDetails", exception3.getMessage());
+        assertEquals("EXECUTION operation missing executionDetails", exception.getMessage());
     }
 }
