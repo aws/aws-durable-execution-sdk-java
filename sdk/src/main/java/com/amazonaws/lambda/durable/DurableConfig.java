@@ -19,7 +19,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 
 /**
  * Configuration for DurableHandler initialization. This class provides a builder pattern for configuring SDK components
- * including DurableExecutionClient, SerDes, and ExecutorService.
+ * including LambdaClient, SerDes, and ExecutorService.
  *
  * <p>Configuration is initialized once during Lambda cold start and remains immutable throughout the execution
  * lifecycle.
@@ -36,32 +36,18 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
  * }
  * }</pre>
  *
- * <p>Example usage with custom Lambda client configuration using {@link LambdaDurableFunctionsClient}:
+ * <p>Example usage with custom Lambda client:
  *
  * <pre>{@code
  * @Override
  * protected DurableConfig createConfiguration() {
- *     // Create a custom Lambda client with specific configuration
  *     LambdaClient lambdaClient = LambdaClient.builder()
  *         .region(Region.US_WEST_2)
  *         .credentialsProvider(ProfileCredentialsProvider.create("my-profile"))
- *         .httpClient(ApacheHttpClient.builder()
- *             .connectionTimeout(Duration.ofSeconds(30))
- *             .socketTimeout(Duration.ofSeconds(60))
- *             .build())
- *         .overrideConfiguration(ClientOverrideConfiguration.builder()
- *             .retryPolicy(RetryPolicy.builder()
- *                 .numRetries(5)
- *                 .build())
- *             .build())
  *         .build();
  *
- *     // Wrap the Lambda client with LambdaDurableFunctionsClient
- *     DurableExecutionClient durableClient = new LambdaDurableFunctionsClient(lambdaClient);
- *
- *     // Configure DurableConfig with the custom client
  *     return DurableConfig.builder()
- *         .withDurableExecutionClient(durableClient)
+ *         .withLambdaClient(lambdaClient)
  *         .build();
  * }
  * }</pre>
@@ -197,8 +183,37 @@ public final class DurableConfig {
         private Builder() {}
 
         /**
-         * Sets a custom DurableExecutionClient. This is useful for testing with mock clients or using custom backend
-         * implementations.
+         * Sets a custom LambdaClient for production use. Use this method to customize the AWS SDK client
+         * with specific regions, credentials, timeouts, or retry policies.
+         *
+         * <p>Example:
+         * <pre>{@code
+         * LambdaClient lambdaClient = LambdaClient.builder()
+         *     .region(Region.US_WEST_2)
+         *     .credentialsProvider(ProfileCredentialsProvider.create("my-profile"))
+         *     .build();
+         *
+         * DurableConfig.builder()
+         *     .withLambdaClient(lambdaClient)
+         *     .build();
+         * }</pre>
+         *
+         * @param lambdaClient Custom LambdaClient instance
+         * @return This builder
+         * @throws NullPointerException if lambdaClient is null
+         */
+        public Builder withLambdaClient(LambdaClient lambdaClient) {
+            Objects.requireNonNull(lambdaClient, "LambdaClient cannot be null");
+            this.durableExecutionClient = new LambdaDurableFunctionsClient(lambdaClient);
+            return this;
+        }
+
+        /**
+         * Sets a custom DurableExecutionClient.
+         *
+         * <p><b>Note:</b> This method is primarily intended for testing with mock clients
+         * (e.g., {@code LocalMemoryExecutionClient}). For production use with a custom AWS SDK client,
+         * prefer {@link #withLambdaClient(LambdaClient)}.
          *
          * @param durableExecutionClient Custom DurableExecutionClient instance
          * @return This builder

@@ -13,6 +13,14 @@ Build resilient, long-running AWS Lambda functions that automatically checkpoint
 - **Replay Safety** – Functions deterministically resume from checkpoints after interruptions
 - **Type Safety** – Full generic type support for step results
 
+## How It Works
+
+Your durable function extends `DurableHandler<I, O>` and implements `handleRequest(I input, DurableContext ctx)`. The `DurableContext` is your interface to durable operations:
+
+- `ctx.step()` – Execute code and checkpoint the result
+- `ctx.stepAsync()` – Start concurrent operations  
+- `ctx.wait()` – Suspend execution without compute charges
+
 ## Quick Start
 
 ### Installation
@@ -183,7 +191,7 @@ protected DurableConfig createConfiguration() {
         .build();
 
     return DurableConfig.builder()
-        .withDurableExecutionClient(new LambdaDurableFunctionsClient(lambdaClient))
+        .withLambdaClient(lambdaClient)
         .withSerDes(new MyCustomSerDes())           // Custom serialization
         .withExecutorService(Executors.newFixedThreadPool(10))  // Custom thread pool
         .build();
@@ -192,7 +200,7 @@ protected DurableConfig createConfiguration() {
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `withDurableExecutionClient()` | Client for checkpoint operations | Auto-configured Lambda client |
+| `withLambdaClient()` | Custom AWS Lambda client | Auto-configured Lambda client |
 | `withSerDes()` | Serializer for step results | Jackson with default settings |
 | `withExecutorService()` | Thread pool for async step execution | Cached daemon thread pool |
 
@@ -253,6 +261,15 @@ void testOrderProcessing() {
 }
 ```
 
+You can also pass a lambda directly instead of a handler instance:
+
+```java
+var runner = LocalDurableTestRunner.create(Order.class, (order, ctx) -> {
+    var result = ctx.step("process", String.class, () -> "done");
+    return new OrderResult(order.getId(), result);
+});
+```
+
 ### Inspecting Operations
 
 ```java
@@ -304,38 +321,7 @@ assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
 ## Deployment
 
-The [examples](./examples) module includes a complete SAM template and deployment instructions.
-
-```bash
-cd examples
-mvn clean package
-sam build
-sam deploy --guided
-```
-
-Key deployment requirements:
-- `DurableConfig` in SAM template with `ExecutionTimeout` and `RetentionPeriodInDays`
-- IAM permissions for `lambda:CheckpointDurableExecutions` and `lambda:GetDurableExecutionState`
-
-See [examples/template.yaml](./examples/template.yaml) and [examples/README.md](./examples/README.md) for details.
-
-## Examples
-
-| Example | Description |
-|---------|-------------|
-| [SimpleStepExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/SimpleStepExample.java) | Basic sequential steps |
-| [WaitExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/WaitExample.java) | Using wait operations |
-| [RetryExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/RetryExample.java) | Configuring retry strategies |
-| [GenericTypesExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/GenericTypesExample.java) | Working with generic types |
-| [CustomConfigExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/CustomConfigExample.java) | Custom Lambda client and SerDes |
-| [WaitAtLeastExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastExample.java) | Concurrent stepAsync() with wait() |
-| [RetryInProcessExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/RetryInProcessExample.java) | In-process retry with concurrent operations |
-| [WaitAtLeastInProcessExample](./examples/src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
-
-## Requirements
-
-- Java 17+
-- AWS SDK for Java v2
+See [examples/README.md](./examples/README.md) for complete instructions on local testing, deployment, invoking functions, and running cloud integration tests.
 
 ## Documentation
 

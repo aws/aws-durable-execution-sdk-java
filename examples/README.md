@@ -1,87 +1,94 @@
 # AWS Lambda Durable Execution SDK Examples
 
-This module contains example applications demonstrating how to use the AWS Lambda Durable Execution SDK for Java.
+Example applications demonstrating the AWS Lambda Durable Execution SDK for Java.
 
-# Running Examples with JUnit Tests
+## Prerequisites
 
-The examples demonstrate both local and cloud testing approaches using the SDK's testing utilities:
+- Java 17+
+- Maven 3.8+
+- AWS SAM CLI (for deployment)
+- Docker (for SAM build)
+- AWS credentials configured
 
-## Local Testing (Fast, No AWS Required)
+## Local Testing
 
-Use `LocalDurableTestRunner` for fast, in-memory testing without deploying to AWS Lambda:
+Run examples locally without AWS using `LocalDurableTestRunner`:
 
 ```bash
-# Run all example tests
+# First, build and install the SDK to local Maven repo (from project root)
+mvn clean install -DskipTests
+
+cd examples
+
+# Run all tests
 mvn test
 
 # Run specific test
 mvn test -Dtest=SimpleStepExampleTest
 ```
 
-The local runner skips actual wait times and runs entirely in-memory, making tests fast and suitable for CI/CD pipelines.
+The local runner executes in-memory and skips wait durations—ideal for fast iteration and CI/CD.
 
-## Cloud Testing (End-to-End)
-
-Use `CloudDurableTestRunner` for end-to-end testing against deployed Lambda functions:
-
-```java
-var runner = CloudDurableTestRunner.create(
-    "arn:aws:lambda:us-east-1:123456789012:function:MyFunction",
-    MyInput.class,
-    MyOutput.class);
-
-var result = runner.run(new MyInput("test-data"));
-```
-
-This approach tests the actual deployed function, including all AWS integrations and durable execution behavior.
-
-# Running Examples with AWS SAM locally
-
-**Build the project:**
-   ```bash
-   mvn clean package
-   ```
-
-### Option 1: Local Lambda Endpoint
-
-Start a local Lambda endpoint:
+## Deploy to AWS
 
 ```bash
-sam local start-lambda
+cd examples
+mvn clean package
+sam build
+sam deploy --guided
 ```
 
-In another terminal, invoke the function:
+On first deploy, SAM will prompt for stack name and region. Subsequent deploys use saved config:
 
 ```bash
-# Invoke SimpleStepExample
-aws lambda invoke \
-  --function-name SimpleStepExampleFunction \
-  --endpoint-url http://127.0.0.1:3001 \
-  --payload '{"name":"Alice"}' \
-  --cli-binary-format raw-in-base64-out \
-  response.json
-
-# Invoke WaitExample
-aws lambda invoke \
-  --function-name WaitExampleFunction \
-  --endpoint-url http://127.0.0.1:3001 \
-  --payload '{"name":"Bob"}' \
-  --cli-binary-format raw-in-base64-out \
-  response.json
+sam deploy
 ```
 
-### Option 2: Direct Invocation
+The SAM template configures:
+- `DurableConfig` with `ExecutionTimeout` and `RetentionPeriodInDays`
+- IAM permissions for `lambda:CheckpointDurableExecutions` and `lambda:GetDurableExecutionState`
 
-Invoke the function directly:
+## Invoke Deployed Functions
 
 ```bash
-sam local invoke SimpleStepExampleFunction \
-  --event event.json
+sam remote invoke SimpleStepExampleFunction \
+  --event '{"name":"World"}' \
+  --stack-name durable-sdk-examples
 ```
 
-Create `event.json`:
-```json
-{
-  "name": "Alice"
-}
+## Cloud Integration Tests
+
+Run tests against deployed functions using `CloudDurableTestRunner`:
+
+```bash
+cd examples
+mvn test -Dtest=CloudBasedIntegrationTest -Dtest.cloud.enabled=true
+```
+
+The tests auto-detect your AWS account and region from credentials. Override if needed:
+
+```bash
+mvn test -Dtest=CloudBasedIntegrationTest \
+  -Dtest.cloud.enabled=true \
+  -Dtest.aws.account=123456789012 \
+  -Dtest.aws.region=us-east-1
+```
+
+## Examples
+
+| Example | Description |
+|---------|-------------|
+| [SimpleStepExample](src/main/java/com/amazonaws/lambda/durable/examples/SimpleStepExample.java) | Basic sequential steps |
+| [WaitExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitExample.java) | Suspend execution with `wait()` |
+| [RetryExample](src/main/java/com/amazonaws/lambda/durable/examples/RetryExample.java) | Configuring retry strategies |
+| [GenericTypesExample](src/main/java/com/amazonaws/lambda/durable/examples/GenericTypesExample.java) | Working with `List<T>` and `Map<K,V>` |
+| [CustomConfigExample](src/main/java/com/amazonaws/lambda/durable/examples/CustomConfigExample.java) | Custom Lambda client and SerDes |
+| [WaitAtLeastExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastExample.java) | Concurrent `stepAsync()` with `wait()` |
+| [RetryInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/RetryInProcessExample.java) | In-process retry with concurrent operations |
+| [WaitAtLeastInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
+
+## Cleanup
+
+```bash
+sam delete
 ```
