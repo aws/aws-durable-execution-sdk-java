@@ -39,6 +39,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     private final ObjectMapper objectMapper = createObjectMapper(); // Internal ObjectMapper
     private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);
 
+    @SuppressWarnings("unchecked")
     protected DurableHandler() {
         // Extract input type from generic superclass
         var superClass = getClass().getGenericSuperclass();
@@ -49,6 +50,18 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
         }
         this.config = createConfiguration();
         validateConfiguration();
+    }
+
+    /**
+     * Gets the configuration used by this handler. This allows test frameworks and other tools to access the handler's
+     * configuration for testing purposes.
+     *
+     * <p>DurableConfig is immutable.
+     *
+     * @return The DurableConfig instance used by this handler
+     */
+    public DurableConfig getConfiguration() {
+        return config;
     }
 
     /**
