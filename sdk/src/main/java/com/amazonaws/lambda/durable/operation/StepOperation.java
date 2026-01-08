@@ -334,10 +334,19 @@ public class StepOperation<T> implements DurableOperation<T> {
             // SneakyThrow.sneakyThrow((Throwable)
             // serDes.deserializeWithTypeInfo(errorData));
             // }
+
+            var errorType = op.stepDetails().error().errorType();
+
+            // Throw StepInterruptedException directly for AT_MOST_ONCE interrupted steps
+            // Todo: Change once errorData object is implemented
+            if ("StepInterruptedException".equals(errorType)) {
+                throw new StepInterruptedException(operationId, name);
+            }
+
             throw new StepFailedException(
                     String.format(
                             "Step failed with error of type %s. Message: %s",
-                            op.stepDetails().error().errorType(),
+                            errorType,
                             op.stepDetails().error().errorMessage()),
                     null,
                     // Preserve original stack trace

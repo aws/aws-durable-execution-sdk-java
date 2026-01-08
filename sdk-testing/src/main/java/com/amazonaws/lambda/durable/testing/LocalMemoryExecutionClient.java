@@ -168,7 +168,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
         var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();
 
-        if (update.action() == OperationAction.RETRY) {
+        if (update.action() == OperationAction.RETRY || update.action() == OperationAction.FAIL) {
             var attempt = existing != null && existing.attempt() != null ? existing.attempt() + 1 : 1;
             detailsBuilder.attempt(attempt).error(update.error());
         }
