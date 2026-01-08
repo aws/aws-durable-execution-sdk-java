@@ -3,184 +3,132 @@
 **Status:** Accepted  
 **Date:** 2025-12-29
 
+
 ## Context
 
-Durable operations need to coordinate:
-1. Background thread executing the operation
-2. Main thread calling `get()` waiting for result
-3. Checkpoint system persisting results before signaling completion
+The SDK uses a unified suspension mechanism: when `activeThreads.isEmpty()`, execution suspends. This requires careful coordination between:
+1. Background threads executing operations
+2. Main thread calling `get()` and potentially blocking
+3. Checkpoint system ensuring results are durable before completion
 
-The result must be checkpointed BEFORE `get()` returns, otherwise a Lambda crash loses the result.
+## Problem: Complex Blocking Scenarios
+
+### Critical Case: Blocking on Retrying Operations
+```java
+var future1 = context.stepAsync("step1", () -> failsAndRetries());
+var result = context.step("step2", () -> future1.get() + "-processed");
+```
+
+**What happens:**
+1. step1-thread fails, deregisters (entering retry)
+2. step2-thread calls `future1.get()`, must deregister (blocked waiting)
+3. `activeThreads = {}` → suspension triggered correctly
+4. Lambda re-invokes after retry delay
+5. step1 succeeds → step2 must unblock safely
+
+**Challenge:** How does step2-thread know when step1 completes? Simple signaling fails because completion must be **checkpoint-driven** (results durable before unblocking).
+
+**Key insight:** Steps always reach phaser coordination because they have background threads keeping execution alive. Waits usually suspend immediately via `deregisterActiveThread()` before reaching phaser logic, only using phasers when other threads are active.
+
+### Future Complex Operations
+Operations like `runInChildContext` will create multiple child threads that may block on each other, requiring sophisticated multi-party coordination.
 
 ## Decision
 
-Use Java `Phaser` for operation coordination with checkpoint-driven advancement.
+Use Java `Phaser` for checkpoint-driven operation coordination.
+
+### Implementation
 
 ```java
-// Operation executes but doesn't signal completion
+// Operation execution doesn't signal completion directly
 T result = function.get();
 executionManager.sendOperationUpdate(successUpdate); // Async checkpoint
-// Phaser stays in Phase 0
+// Phaser stays in Phase 0 (RUNNING)
 
 // ExecutionManager advances phaser AFTER checkpoint succeeds
 private void onCheckpointComplete(String newToken, List<Operation> ops) {
     if (isTerminalStatus(op.status())) {
-        phaser.arriveAndAwaitAdvance(); // Phase 0 → 1
-        phaser.arriveAndAwaitAdvance(); // Phase 1 → 2
+        phaser.arriveAndAwaitAdvance(); // Phase 0→1: Unblock waiters
+        phaser.arriveAndAwaitAdvance(); // Phase 1→2: Allow step deregistration
     }
 }
 ```
 
+**Usage patterns:**
+- **Steps:** Always use phasers - `get()` blocks until ExecutionManager advances phaser after checkpoint
+- **Waits:** Usually suspend before reaching phasers - only use them when other threads keep execution alive
+
 ### Two-Phase Completion Protocol
 
-| Phase | State | Purpose |
-|-------|-------|---------|
-| 0 | RUNNING | Operation executing |
-| 1 | COMPLETING | Waiters unblock, reactivate |
-| 2 | DONE | Step thread deregisters |
+**Phase 0 (RUNNING):** Operation executing, waiters blocked
+**Phase 1 (COMPLETING):** Waiters unblock and re-register as active  
+**Phase 2 (DONE):** Step threads deregister safely
 
 **Why two phases?** Prevents race condition:
-- Phase 0→1: Main thread unblocks and re-registers as active
-- Phase 1→2: Step thread deregisters
-
-Without this, step thread could deregister before main thread re-registers, causing premature suspension.
-
-## Alternatives Considered
-
-### CompletableFuture
-
 ```java
-private final CompletableFuture<T> resultFuture = new CompletableFuture<>();
+// Without two phases - RACE:
+1. step2-thread deregisters, blocks on phaser
+2. step1 completes, checkpoints
+3. step1-thread deregisters → suspension triggered  
+4. step2-thread tries to re-register → TOO LATE
 
-public void execute() {
-    executor.execute(() -> {
-        T result = function.get();
-        resultFuture.complete(result); // When to complete?
-    });
-}
+// With two phases - SAFE:
+1. step2-thread deregisters, blocks on Phase 0
+2. step1 completes, checkpoints
+3. ExecutionManager advances Phase 0→1 → step2-thread unblocks and re-registers
+4. ExecutionManager advances Phase 1→2 → step1-thread deregisters safely
 ```
 
-**Rejected because:**
-
-1. **Checkpoint timing:** Complete before checkpoint = race condition. Complete after = CheckpointBatcher needs to know about operation futures (tight coupling).
-
-2. **Retry handling:** CompletableFuture is single-completion. Retries need multiple attempts:
-   ```
-   Attempt 1 → FAIL → PENDING (retry in 30s)
-   Attempt 2 → FAIL → PENDING (retry in 60s)  
-   Attempt 3 → SUCCESS
-   ```
-   Phaser stays in Phase 0 across all attempts naturally.
-
-3. **Thread management:** Phaser integrates cleanly with thread deregistration during `get()`:
-   ```java
-   public T get() {
-       phaser.register();
-       executionManager.deregisterActiveThread("Root"); // Allow suspension
-       phaser.arriveAndAwaitAdvance();
-       executionManager.registerActiveThread("Root");   // Reactivate
-       phaser.arriveAndDeregister();
-   }
-   ```
-
-### Two-Phase Completion Sequence
-
+#### Sequence Diagram
 ```mermaid
 sequenceDiagram
-    participant Main as Main Thread
-    participant Step as Step Thread
+    participant Step2 as Step2 Thread
+    participant Step1 as Step1 Thread
     participant Ph as Phaser
     participant EM as ExecutionManager
 
     Note over Ph: Phase 0 (RUNNING)
     
-    Main->>Ph: register()
-    Main->>EM: deregisterActiveThread("Root")
-    Main->>Ph: arriveAndAwaitAdvance()
-    Note over Main: BLOCKED
+    Step2->>Ph: register()
+    Step2->>EM: deregisterActiveThread("step2")
+    Step2->>Ph: arriveAndAwaitAdvance()
+    Note over Step2: BLOCKED
     
-    Step->>Step: execute user function
-    Step->>EM: checkpoint SUCCEED
+    Step1->>Step1: execute user function
+    Step1->>EM: checkpoint SUCCESS
     EM->>Ph: arriveAndAwaitAdvance()
     Note over Ph: Phase 1 (COMPLETING)
     
-    Note over Main: UNBLOCKED
-    Main->>EM: registerActiveThread("Root")
-    Main->>Ph: arriveAndDeregister()
+    Note over Step2: UNBLOCKED
+    Step2->>EM: registerActiveThread("step2")
+    Step2->>Ph: arriveAndDeregister()
     
-    Step->>Ph: arriveAndAwaitAdvance()
+    EM->>Ph: arriveAndAwaitAdvance()
     Note over Ph: Phase 2 (DONE)
-    Step->>EM: deregisterActiveThread("1-step")
+    Step1->>EM: deregisterActiveThread("step1")
 ```
+
+## Alternatives Considered
+
+### Simple Thread Signaling
+**Rejected:** Fails on blocking scenarios. If thread A blocks on thread B's result while B is retrying, A remains registered but inactive, preventing suspension.
+
+### CompletableFuture
+**Rejected:** 
+- Checkpoint timing issues (complete before/after checkpoint)
+- Single-completion model doesn't handle retry attempts
+- No integration with thread lifecycle management
 
 ## Consequences
 
-**Positive:**
-- Checkpoint-driven completion ensures durability
-- Clean separation: ExecutionManager controls completion, not operations
-- Handles retries without special cases
-- Unified replay handling (same `get()` logic for new and replayed operations)
+**Enables:**
+- Correct suspension on blocking scenarios
+- Checkpoint-driven completion ensuring durability
+- Support for future complex operations requiring multi-party coordination
+- Unified `get()` logic for both new and replayed operations
 
-**Negative:**
-- Phaser is a complex primitive with steeper learning curve
-- Two-phase protocol adds cognitive overhead
+**Cost:**
+- Phaser complexity vs simpler alternatives
+- Two-phase protocol cognitive overhead
 
-## Relationship to Suspension Model
-
-The two-phase protocol directly prevents a race condition with the suspension mechanism.
-
-### Why Thread-Counting for Suspension?
-
-Suspension is triggered when `activeThreads.isEmpty()`. An alternative would be explicit suspension flags (e.g., `executionManager.requestSuspension()`), but thread-counting is necessary for correctness:
-
-**Scenario: Blocking on a retrying step**
-```java
-var future1 = context.stepAsync("step1", () -> failsAndRetries());
-var result = future1.get(); // Root blocks here
-```
-
-With explicit flags:
-- step1 sets `suspensionRequested = true`, deregisters
-- Root is blocked but still registered → `activeThreads = {Root}`
-- Not empty → no suspension → **deadlock**
-
-Root must deregister when blocking to allow suspension. This brings us back to thread-counting.
-
-**Nested blocking also works:**
-```java
-var future1 = context.stepAsync("step1", () -> failsAndRetries());
-context.step("step2", () -> {
-    return future1.get() + "-processed"; // step2-thread blocks on step1
-});
-```
-
-The phaser approach supports this - step2-thread deregisters while waiting, re-registers after. (Note: current implementation hardcodes "Root" - see TODO in `StepOperation.get()`).
-
-### The Race Condition
-
-**Without two phases:**
-```
-1. Root calls get(), deregisters itself, blocks on phaser
-2. Step completes, checkpoint succeeds
-3. Step thread deregisters  ← activeThreads is now EMPTY → SUSPENSION TRIGGERED
-4. Root unblocks, tries to re-register ← TOO LATE
-```
-
-**With two phases:**
-```
-1. Root calls get(), deregisters itself, blocks on phaser (Phase 0)
-2. Step completes, checkpoint succeeds
-3. Phaser advances to Phase 1 ← Root unblocks HERE
-4. Root re-registers as active ← Back to 1 active thread
-5. Phaser advances to Phase 2
-6. Step thread deregisters ← Safe, Root is still active
-```
-
-The `get()` code shows this dance:
-```java
-executionManager.deregisterActiveThread("Root"); // Allow suspension if step retrying
-phaser.arriveAndAwaitAdvance();                  // Wait for step
-executionManager.registerActiveThread("Root");   // Reactivate BEFORE step deregisters
-```
-
-This allows suspension when appropriate (step is retrying, no active threads) while preventing false suspensions when the step completes normally.
+The phaser approach is architected to support the full spectrum of durable operations, ensuring the SDK can handle complex coordination patterns without architectural changes.

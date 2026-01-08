@@ -85,6 +85,22 @@ context.step("name", Type.class, supplier,
         .build());
 ```
 
+**Custom SerDes Interface:**
+```java
+public interface SerDes {
+    String serialize(Object value);
+    <T> T deserialize(String data, Class<T> type);
+    <T> T deserialize(String data, TypeToken<T> typeToken);
+}
+```
+
+**Custom RetryStrategy Interface:**
+```java
+@FunctionalInterface
+public interface RetryStrategy {
+    RetryDecision makeRetryDecision(Throwable error, int attemptNumber);
+}
+```
 ---
 
 ## Architecture
@@ -273,64 +289,6 @@ sequenceDiagram
 
 ---
 
-## Extension Points
-
-### SerDes Interface
-
-Custom serialization for step results:
-
-```java
-public interface SerDes {
-    String serialize(Object value);
-    <T> T deserialize(String data, Class<T> type);
-    <T> T deserialize(String data, TypeToken<T> typeToken);
-}
-```
-
-Default: `JacksonSerDes` with Java Time support.
-
-### RetryStrategy Interface
-
-Custom retry logic:
-
-```java
-@FunctionalInterface
-public interface RetryStrategy {
-    RetryDecision makeRetryDecision(Throwable error, int attemptNumber);
-}
-
-record RetryDecision(boolean shouldRetry, Duration delay) {
-    static RetryDecision retry(Duration delay);
-    static RetryDecision doNotRetry();
-}
-```
-
-Built-in strategies in `RetryStrategies`:
-- `NO_RETRY` - Never retry
-- `exponentialBackoff(maxAttempts, baseDelay)` - Exponential with jitter
-
-### DurableExecutionClient Interface
-
-Backend abstraction for testing or alternative implementations:
-
-```java
-public interface DurableExecutionClient {
-    CheckpointDurableExecutionResponse checkpoint(
-        String arn, String token, List<OperationUpdate> updates);
-    
-    GetDurableExecutionStateResponse getExecutionState(String arn, String marker);
-}
-```
-
-Implementations:
-- `LambdaDurableFunctionsClient` - Production (wraps AWS SDK)
-- `LocalMemoryExecutionClient` - Testing (in-memory)
-
-For production customization, use `DurableConfig.builder().withLambdaClient(lambdaClient)`.
-For testing, use `DurableConfig.builder().withDurableExecutionClient(localMemoryClient)`.
-
----
-
 ## Exception Hierarchy
 
 ```
@@ -383,24 +341,6 @@ interface CheckpointCallback {
 }
 ```
 
-### Retry Flow
-
-```
-STARTED ──► Exception ──► RetryStrategy.makeRetryDecision()
-                                │
-                ┌───────────────┴───────────────┐
-                ▼                               ▼
-        shouldRetry=true                shouldRetry=false
-                │                               │
-                ▼                               ▼
-        Checkpoint RETRY                Checkpoint FAIL
-        (status=PENDING)                (status=FAILED)
-                │                               │
-                ▼                               ▼
-        Backend re-invokes              StepFailedException
-        at nextAttemptTimestamp
-```
-
 ---
 
 ## Testing Infrastructure
@@ -442,30 +382,141 @@ var runner = CloudDurableTestRunner.create(arn, Input.class, Output.class)
 TestResult<Output> result = runner.run(input);
 ```
 
----
+### Extension Points for Testing
 
-## Thread Coordination (Advanced)
-
-The SDK uses a threaded execution model where the handler runs in a background thread, racing against a suspension future. This allows immediate suspension at `wait()` or retry points without waiting for handler completion. See [ADR-001: Threaded Handler Execution](adr/001-threaded-handler-execution.md) for the design rationale.
-
-### Two-Phase Phaser Completion
-
-**Problem:** Race between step completion and suspension check.
-
-**Solution:** 
-- Phase 0→1: Step done, waiters unblock
-- Phase 1→2: Waiters reactivate, step deregisters
-
-This ensures the main thread re-registers as active BEFORE the step thread deregisters, preventing premature suspension.
-
-See [ADR-002: Phaser-Based Operation Coordination](adr/002-phaser-based-coordination.md) for the detailed rationale, alternatives considered, and sequence diagram.
-
-### Suspension Detection
+**DurableExecutionClient Interface** - Backend abstraction for testing or alternative implementations:
 
 ```java
-// In ExecutionManager.deregisterActiveThread()
-if (activeThreads.isEmpty()) {
-    suspendExecutionFuture.complete(null);
-    throw new SuspendExecutionException();
+public interface DurableExecutionClient {
+    CheckpointDurableExecutionResponse checkpoint(
+        String arn, String token, List<OperationUpdate> updates);
+    
+    GetDurableExecutionStateResponse getExecutionState(String arn, String marker);
 }
 ```
+
+Implementations:
+- `LambdaDurableFunctionsClient` - Production (wraps AWS SDK)
+- `LocalMemoryExecutionClient` - Testing (in-memory)
+
+For production customization, use `DurableConfig.builder().withLambdaClient(lambdaClient)`.
+For testing, use `DurableConfig.builder().withDurableExecutionClient(localMemoryClient)`.
+
+---
+
+## Thread Coordination and Suspension Mechanism (Advanced)
+
+The SDK uses a threaded execution model where the handler runs in a background thread, racing against a suspension future. This enables immediate suspension when operations need to pause execution (waits, retries), without waiting for the handler to complete naturally.
+
+### Complete Suspension Flow
+
+#### 1. Handler Level - The Suspension Race
+Handler runs in background thread, racing against suspension detection:
+```java
+// DurableExecutor - which completes first?
+CompletableFuture.anyOf(suspendFuture, handlerFuture).get();
+```
+Returns `PENDING` if suspension wins, `SUCCESS` if handler completes. See [ADR-001: Threaded Handler Execution](adr/001-threaded-handler-execution.md).
+
+#### 2. Suspension Detection - Unified Thread Counting
+We use thread counting as the suspension trigger because threads naturally deregister when they cannot make progress on durable operations. This provides a simple, unified mechanism that works across all operation types.
+
+```java
+// ExecutionManager.deregisterActiveThread() - ONLY suspension trigger
+synchronized (this) {
+    activeThreads.remove(threadId);
+    if (activeThreads.isEmpty()) {
+        suspendExecutionFuture.complete(null); // Suspension wins the race
+        throw new SuspendExecutionException();
+    }
+}
+```
+
+**Suspension triggers when:** There are no active threads (all have deregistered). The SDK tracks two types of threads:
+
+| Thread Type | Purpose | Deregisters When |
+|-------------|---------|------------------|
+| **Root thread** | Main execution thread running the handler function | • Calling `future.get()` to allow suspension while blocked<br>• Calling `context.wait()` to trigger immediate suspension |
+| **Step threads** | Background threads executing individual step operations | • Completing work: After checkpointing result (success or failure) |
+
+**Why root thread deregistration matters:** Critical for allowing suspension when steps are retrying or when multiple operations depend on each other.
+This approach ensures suspension happens precisely when no thread can make progress on durable operations.
+
+### From Thread Tracking to Phaser Coordination
+
+Thread counting handles simple cases, but complex scenarios require sophisticated coordination:
+
+**Simple case - Wait operations:**
+```java
+context.wait(Duration.ofMinutes(5)); // Root deregisters → immediate suspension
+```
+
+**Complex case - Blocking on retrying operations:**
+```java
+var future1 = context.stepAsync("step1", () -> failsAndRetries());
+var result = context.step("step2", () -> future1.get() + "-processed");
+```
+
+**Without phasers:** Simple thread counting fails because step2's thread would stay registered while blocked on `future1.get()`, preventing `activeThreads.isEmpty()` from triggering suspension → Lambda stays active during step1's retry delay instead of suspending.
+
+**What should happen instead:** step2's root thread must deregister when blocked, allow suspension during step1's retry, then coordinate re-registration when step1 completes with checkpointed results.
+
+**The problem:** When step1 retries, step2's root thread must:
+1. Deregister (to allow suspension during retry delay)
+2. Block until step1 either completes successfully or wants to suspend for another retry
+3. Re-register when step1 finishes or when resuming from suspension
+4. Ensure step1's result is checkpointed before proceeding
+
+**Additional complex scenarios:**
+- **Nested blocking:** Multiple threads blocking on each other's results
+- **Future operations:** `runInChildContext` with multiple child threads coordinating
+- **Race conditions:** Ensuring checkpoint completion before thread lifecycle changes
+
+These scenarios are why we chose **phasers** - a multi-party synchronization primitive that coordinates checkpoint-driven completion.
+
+### How Phasers Are Used
+
+#### Phaser Creation and Lifecycle
+```java
+// ExecutionManager.startPhaser() - creates phaser for each operation
+var phaser = new Phaser(1);
+openPhasers.put(operationId, phaser);
+```
+
+Each durable operation (step, wait) gets its own phaser to coordinate completion.
+
+#### Two-Phase Completion Protocol
+**Phase 0→1:** Blocked threads unblock and re-register as active  
+**Phase 1→2:** Step threads deregister safely
+
+This prevents race conditions where step threads might deregister before waiting threads re-register, causing premature suspension.
+
+#### When Phasers Are Actually Used
+
+**Steps:** Always use phasers for coordination
+```java
+// StepOperation.get() - blocks waiting for advancement
+phaser.arriveAndAwaitAdvance(); // Blocks until ExecutionManager advances it
+
+// ExecutionManager.onCheckpointComplete() - advances after checkpoint succeeds
+phaser.arriveAndAwaitAdvance(); // Phase 0→1: Unblock waiters
+phaser.arriveAndAwaitAdvance(); // Phase 1→2: Allow step deregistration
+```
+
+**Waits:** Usually suspend before reaching phaser logic
+```java
+// WaitOperation.get() - normal case
+executionManager.deregisterActiveThread("Root"); // ← Suspension happens here
+// SuspendExecutionException thrown - phaser code never reached
+
+// Only when other threads active:
+phaser.arriveAndAwaitAdvance(); // Phase 0→1 (immediate advancement)
+```
+
+**Key difference:** Steps have background threads keeping execution alive, so they reach phaser coordination. Waits have no background threads, so they usually suspend immediately when root thread deregisters.
+
+This ensures checkpoint completion happens before thread lifecycle changes, supporting both current operations and future complex coordination like `runInChildContext`.
+
+**Advanced cases:** When other threads keep execution alive, both waits and step retries use in-process polling to detect backend completion and advance phasers accordingly.
+
+See [ADR-002: Phaser-Based Operation Coordination](adr/002-phaser-based-coordination.md) for detailed implementation rationale.
