@@ -442,6 +442,9 @@ synchronized (this) {
 **Why root thread deregistration matters:** Critical for allowing suspension when steps are retrying or when multiple operations depend on each other.
 This approach ensures suspension happens precisely when no thread can make progress on durable operations.
 
+#### Advanced Feature: In-Process Completion
+In scenarios where waits or step retries would normally suspend execution, but other active threads prevent suspension, the SDK automatically switches to in-process completion by polling the backend until timing conditions are met. This allows complex concurrent workflows to complete efficiently without unnecessary Lambda re-invocations or extended waiting periods.
+
 ### From Thread Tracking to Phaser Coordination
 
 Thread counting handles simple cases, but complex scenarios require sophisticated coordination:
@@ -474,49 +477,4 @@ var result = context.step("step2", () -> future1.get() + "-processed");
 
 These scenarios are why we chose **phasers** - a multi-party synchronization primitive that coordinates checkpoint-driven completion.
 
-### How Phasers Are Used
-
-#### Phaser Creation and Lifecycle
-```java
-// ExecutionManager.startPhaser() - creates phaser for each operation
-var phaser = new Phaser(1);
-openPhasers.put(operationId, phaser);
-```
-
-Each durable operation (step, wait) gets its own phaser to coordinate completion.
-
-#### Two-Phase Completion Protocol
-**Phase 0→1:** Blocked threads unblock and re-register as active  
-**Phase 1→2:** Step threads deregister safely
-
-This prevents race conditions where step threads might deregister before waiting threads re-register, causing premature suspension.
-
-#### When Phasers Are Actually Used
-
-**Steps:** Always use phasers for coordination
-```java
-// StepOperation.get() - blocks waiting for advancement
-phaser.arriveAndAwaitAdvance(); // Blocks until ExecutionManager advances it
-
-// ExecutionManager.onCheckpointComplete() - advances after checkpoint succeeds
-phaser.arriveAndAwaitAdvance(); // Phase 0→1: Unblock waiters
-phaser.arriveAndAwaitAdvance(); // Phase 1→2: Allow step deregistration
-```
-
-**Waits:** Usually suspend before reaching phaser logic
-```java
-// WaitOperation.get() - normal case
-executionManager.deregisterActiveThread("Root"); // ← Suspension happens here
-// SuspendExecutionException thrown - phaser code never reached
-
-// Only when other threads active:
-phaser.arriveAndAwaitAdvance(); // Phase 0→1 (immediate advancement)
-```
-
-**Key difference:** Steps have background threads keeping execution alive, so they reach phaser coordination. Waits have no background threads, so they usually suspend immediately when root thread deregisters.
-
-This ensures checkpoint completion happens before thread lifecycle changes, supporting both current operations and future complex coordination like `runInChildContext`.
-
-**Advanced cases:** When other threads keep execution alive, both waits and step retries use in-process polling to detect backend completion and advance phasers accordingly.
-
-See [ADR-002: Phaser-Based Operation Coordination](adr/002-phaser-based-coordination.md) for detailed implementation rationale.
+See [ADR-002: Phaser-Based Operation Coordination](adr/002-phaser-based-coordination.md) for detailed implementation and usage patterns.
