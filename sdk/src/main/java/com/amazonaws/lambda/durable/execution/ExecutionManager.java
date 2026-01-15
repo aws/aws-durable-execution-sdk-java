@@ -145,8 +145,8 @@ public class ExecutionManager {
     }
 
     /**
-     * Gets an operation by ID and updates replay state. If the operation is not found,
-     * transitions from REPLAY to EXECUTION mode.
+     * Gets an operation by ID and updates replay state. If the operation is not found, transitions from REPLAY to
+     * EXECUTION mode.
      *
      * @param operationId the operation ID to get
      * @return the existing operation, or null if not found (first execution)
@@ -160,24 +160,17 @@ public class ExecutionManager {
         return existing;
     }
 
-    /**
-     * Sets the current operation context for logging. Uses ThreadLocal so each executor thread
-     * has its own context.
-     */
+    /** Sets the current operation context for logging. Uses ThreadLocal so each executor thread has its own context. */
     public void setCurrentOperation(String operationId, String operationName, Integer attempt) {
         currentOperation.set(new OperationContext(operationId, operationName, attempt));
     }
 
-    /**
-     * Clears the current operation context. Should be called when an operation completes.
-     */
+    /** Clears the current operation context. Should be called when an operation completes. */
     public void clearCurrentOperation() {
         currentOperation.remove();
     }
 
-    /**
-     * Gets the current operation context for logging.
-     */
+    /** Gets the current operation context for logging. */
     public OperationContext getCurrentOperation() {
         return currentOperation.get();
     }
