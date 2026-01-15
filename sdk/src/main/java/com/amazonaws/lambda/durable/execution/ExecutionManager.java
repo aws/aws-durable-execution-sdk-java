@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import com.amazonaws.lambda.durable.logging.OperationContext;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.time.Duration;
 import java.time.Instant;
@@ -45,6 +46,10 @@ public class ExecutionManager {
     private final String executionOperationId;
     private volatile String checkpointToken;
     private final String durableExecutionArn;
+    private volatile ExecutionMode executionMode;
+
+    // ===== Current Operation Context (for logging) =====
+    private static final ThreadLocal<OperationContext> currentOperation = new ThreadLocal<>();
 
     // ===== Thread Coordination =====
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
@@ -70,6 +75,9 @@ public class ExecutionManager {
         this.client = client;
         this.executionOperationId = initialExecutionState.operations().get(0).id();
         loadAllOperations(initialExecutionState);
+
+        // Start in REPLAY mode if we have more than just the initial EXECUTION operation
+        this.executionMode = operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION;
 
         this.managedExecutor = executor;
 
@@ -106,6 +114,10 @@ public class ExecutionManager {
         return durableExecutionArn;
     }
 
+    public boolean isReplaying() {
+        return executionMode == ExecutionMode.REPLAY;
+    }
+
     public String getCheckpointToken() {
         return checkpointToken;
     }
@@ -120,9 +132,9 @@ public class ExecutionManager {
                 var phaser = openPhasers.get(operation.id());
 
                 // Two-phase completion
-                logger.debug("Advancing phaser 0 -> 1: {}", phaser);
+                logger.trace("Advancing phaser 0 -> 1: {}", phaser);
                 phaser.arriveAndAwaitAdvance();
-                logger.debug("Advancing phaser 1 -> 2: {}", phaser);
+                logger.trace("Advancing phaser 1 -> 2: {}", phaser);
                 phaser.arriveAndAwaitAdvance();
             }
         }
@@ -132,6 +144,44 @@ public class ExecutionManager {
         return operations.get(operationId);
     }
 
+    /**
+     * Gets an operation by ID and updates replay state. If the operation is not found,
+     * transitions from REPLAY to EXECUTION mode.
+     *
+     * @param operationId the operation ID to get
+     * @return the existing operation, or null if not found (first execution)
+     */
+    public Operation getOperationAndUpdateReplayState(String operationId) {
+        var existing = operations.get(operationId);
+        if (executionMode == ExecutionMode.REPLAY && existing == null) {
+            executionMode = ExecutionMode.EXECUTION;
+            logger.debug("Transitioned to EXECUTION mode at operation '{}'", operationId);
+        }
+        return existing;
+    }
+
+    /**
+     * Sets the current operation context for logging. Uses ThreadLocal so each executor thread
+     * has its own context.
+     */
+    public void setCurrentOperation(String operationId, String operationName, Integer attempt) {
+        currentOperation.set(new OperationContext(operationId, operationName, attempt));
+    }
+
+    /**
+     * Clears the current operation context. Should be called when an operation completes.
+     */
+    public void clearCurrentOperation() {
+        currentOperation.remove();
+    }
+
+    /**
+     * Gets the current operation context for logging.
+     */
+    public OperationContext getCurrentOperation() {
+        return currentOperation.get();
+    }
+
     public Operation getExecutionOperation() {
         return operations.get(executionOperationId);
     }
@@ -139,14 +189,18 @@ public class ExecutionManager {
     // ===== Thread Coordination =====
 
     public void registerActiveThread(String threadId, ThreadType threadType) {
-        synchronized (this) {
+        if (activeThreads.containsKey(threadId)) {
+            logger.trace("Thread '{}' ({}) already registered as active", threadId, threadType);
+            return;
+        }
+
             if (activeThreads.containsKey(threadId)) {
                 logger.debug("Thread '{}' ({}) already registered as active", threadId, threadType);
                 return;
             }
             activeThreads.put(threadId, threadType);
             currentContext.set(new OperationContext(threadId, threadType));
-            logger.debug(
+            logger.trace(
                     "Registered thread '{}' ({}) as active. Active threads: {}",
                     threadId,
                     threadType,
@@ -227,7 +281,7 @@ public class ExecutionManager {
     public Phaser startPhaser(String operationId) {
         var phaser = new Phaser(1);
         openPhasers.put(operationId, phaser);
-        logger.debug("Started phaser for operation '{}'", operationId);
+        logger.trace("Started phaser for operation '{}'", operationId);
         return phaser;
     }
 

@@ -46,8 +46,7 @@ public class WaitOperation implements DurableOperation<Void> {
 
     @Override
     public void execute() {
-        // Check replay
-        var existing = executionManager.getOperation(operationId);
+        var existing = executionManager.getOperationAndUpdateReplayState(operationId);
 
         if (existing != null && existing.status() == OperationStatus.SUCCEEDED) {
             // Wait already completed

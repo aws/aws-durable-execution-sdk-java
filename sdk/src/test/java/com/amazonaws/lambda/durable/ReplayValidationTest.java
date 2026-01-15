@@ -8,6 +8,7 @@ import static org.mockito.Mockito.*;
 
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.logging.LoggerConfig;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.time.Duration;
@@ -37,7 +38,7 @@ class ReplayValidationTest {
                 client,
                 executor);
         var serDes = new JacksonSerDes();
-        return new DurableContext(executionManager, serDes, null);
+        return new DurableContext(executionManager, serDes, null, LoggerConfig.defaults());
     }
 
     @Test

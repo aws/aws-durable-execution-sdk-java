@@ -4,6 +4,7 @@ package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient;
+import com.amazonaws.lambda.durable.logging.LoggerConfig;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.util.Objects;
@@ -65,6 +66,7 @@ public final class DurableConfig {
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
     private final ExecutorService executorService;
+    private final LoggerConfig loggerConfig;
 
     private DurableConfig(Builder builder) {
         this.durableExecutionClient = builder.durableExecutionClient != null
@@ -72,6 +74,7 @@ public final class DurableConfig {
                 : createDefaultDurableExecutionClient();
         this.serDes = builder.serDes != null ? builder.serDes : new JacksonSerDes();
         this.executorService = builder.executorService != null ? builder.executorService : createDefaultExecutor();
+        this.loggerConfig = builder.loggerConfig != null ? builder.loggerConfig : LoggerConfig.defaults();
     }
 
     /**
@@ -117,6 +120,15 @@ public final class DurableConfig {
      */
     public ExecutorService getExecutorService() {
         return executorService;
+    }
+
+    /**
+     * Gets the configured LoggerConfig.
+     *
+     * @return LoggerConfig instance (never null)
+     */
+    public LoggerConfig getLoggerConfig() {
+        return loggerConfig;
     }
 
     /**
@@ -179,6 +191,7 @@ public final class DurableConfig {
         private DurableExecutionClient durableExecutionClient;
         private SerDes serDes;
         private ExecutorService executorService;
+        private LoggerConfig loggerConfig;
 
         private Builder() {}
 
@@ -246,6 +259,17 @@ public final class DurableConfig {
          */
         public Builder withExecutorService(ExecutorService executorService) {
             this.executorService = executorService;
+            return this;
+        }
+
+        /**
+         * Sets a custom LoggerConfig. If not set, defaults to suppressing replay logs.
+         *
+         * @param loggerConfig Custom LoggerConfig instance
+         * @return This builder
+         */
+        public Builder withLoggerConfig(LoggerConfig loggerConfig) {
+            this.loggerConfig = Objects.requireNonNull(loggerConfig, "LoggerConfig cannot be null");
             return this;
         }
 

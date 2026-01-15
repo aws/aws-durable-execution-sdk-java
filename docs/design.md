@@ -73,6 +73,7 @@ public class MyHandler extends DurableHandler<Input, Output> {
 | `lambdaClient` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/com/amazonaws/lambda/durable/DurableConfig.java)) |
 | `serDes` | `JacksonSerDes` |
 | `executor` | `Executors.newCachedThreadPool()` |
+| `loggerConfig` | `LoggerConfig.defaults()` (suppress replay logs) |
 
 ### Step Configuration
 
@@ -151,6 +152,7 @@ com.amazonaws.lambda.durable
 │
 ├── execution/
 │   ├── ExecutionManager     # Central coordinator
+│   ├── ExecutionMode        # REPLAY or EXECUTION state
 │   ├── CheckpointBatcher    # Batching (package-private)
 │   ├── CheckpointCallback   # Callback interface
 │   ├── SuspendExecutionException
@@ -161,6 +163,11 @@ com.amazonaws.lambda.durable
 │   ├── DurableOperation<T>  # Interface
 │   ├── StepOperation<T>     # Step logic
 │   └── WaitOperation        # Wait logic
+│
+├── logging/
+│   ├── DurableLogger        # Context-aware logger wrapper
+│   ├── LoggerConfig         # Replay suppression config
+│   └── OperationContext     # ThreadLocal operation metadata
 │
 ├── retry/
 │   ├── RetryStrategy        # Interface
@@ -291,6 +298,30 @@ SuspendExecutionException        # Internal: triggers suspension (not user-facin
 | `StepInterruptedException` | AT_MOST_ONCE step interrupted mid-execution | Treat as failure |
 | `NonDeterministicExecutionException` | Replay finds different operation than expected | Bug in handler (non-deterministic code) |
 | `SerDesException` | Jackson fails to serialize/deserialize | Fix data model or custom SerDes |
+
+---
+
+## Logging Internals
+
+### Replay Mode Tracking
+
+`ExecutionManager` tracks whether we're replaying completed operations or executing new ones via `ExecutionMode`:
+
+- **REPLAY**: Started with if `operations.size() > 1` (has checkpointed operations beyond the initial EXECUTION op)
+- **EXECUTION**: Transitions when `getOperationAndUpdateReplayState()` encounters an operation ID not in the checkpoint log
+
+This is a one-way transition (REPLAY → EXECUTION, never back). `DurableLogger` checks `isReplaying()` to suppress duplicate logs during replay.
+
+### Operation Context via ThreadLocal
+
+Step operations execute in executor threads, not the main handler thread. To provide correct operation metadata (operationId, name, attempt) for logging:
+
+- `ExecutionManager` holds a `ThreadLocal<OperationContext>`
+- `StepOperation.executeStepLogic()` calls `setCurrentOperation()` before user code runs
+- `DurableLogger` reads from `getCurrentOperation()` when logging
+- Context is cleared in finally block after step completes
+
+This ensures logs from within a step include the correct operation metadata, regardless of which thread executes the step.
 
 ---
 

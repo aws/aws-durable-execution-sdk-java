@@ -32,7 +32,6 @@ public class DurableExecutor {
             DurableConfig config) {
         logger.debug("DurableExecution.execute() called");
         logger.debug("DurableExecutionArn: {}", input.durableExecutionArn());
-        logger.debug("CheckpointToken: {}", input.checkpointToken());
         logger.debug(
                 "Initial operations count: {}",
                 input.initialExecutionState() != null
@@ -75,7 +74,7 @@ public class DurableExecutor {
             var handlerFuture = CompletableFuture.supplyAsync(
                     () -> {
                         // Create context in the executor thread so it detects the correct thread name
-                        var context = new DurableContext(executionManager, serDes, lambdaContext);
+                        var context = new DurableContext(executionManager, serDes, lambdaContext, config.getLoggerConfig());
                         return handler.apply(userInput, context);
                     },
                     executor);
@@ -92,7 +91,7 @@ public class DurableExecutor {
             CompletableFuture.anyOf(handlerFuture, suspendFuture).join();
 
             if (suspendFuture.isDone()) {
-                logger.debug("Execution suspended.");
+                logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
             }
 
@@ -101,6 +100,7 @@ public class DurableExecutor {
                     handlerFuture.join(); // Will throw the exception
                 } catch (Exception e) {
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    logger.debug("Execution failed: {}", cause.getMessage());
                     return DurableExecutionOutput.failure(cause);
                 }
             }
@@ -128,10 +128,12 @@ public class DurableExecutor {
                         .join();
 
                 // Return empty result, we checkpointed the data manually
+                logger.debug("Execution completed (large response checkpointed)");
                 return DurableExecutionOutput.success("");
             }
 
             // If response size is acceptable, return the result directly
+            logger.debug("Execution completed");
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;

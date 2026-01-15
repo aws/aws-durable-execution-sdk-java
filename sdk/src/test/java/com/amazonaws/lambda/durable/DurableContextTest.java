@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
+import com.amazonaws.lambda.durable.logging.LoggerConfig;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
@@ -37,7 +38,7 @@ class DurableContextTest {
                 client,
                 executor);
         var serDes = new JacksonSerDes();
-        return new DurableContext(executionManager, serDes, null);
+        return new DurableContext(executionManager, serDes, null, LoggerConfig.defaults());
     }
 
     @Test
