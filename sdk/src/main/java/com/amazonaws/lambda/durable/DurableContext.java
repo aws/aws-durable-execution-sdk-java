@@ -4,7 +4,6 @@ package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
@@ -22,17 +21,17 @@ public class DurableContext {
     private final SerDes serDes;
     private final Context lambdaContext;
     private final AtomicInteger operationCounter;
+    private final String uniqueThreadName;
 
     DurableContext(ExecutionManager executionManager, SerDes serDes, Context lambdaContext) {
         this.executionManager = executionManager;
         this.serDes = serDes;
         this.lambdaContext = lambdaContext;
         this.operationCounter = new AtomicInteger(0);
+        this.uniqueThreadName = Thread.currentThread().getName(); // Auto-detect handler thread
 
-        // Register root context thread as active
-        // TODO: Once we implement child contexts, the threadId needs to be the ID of
-        // the child context
-        executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
+        // Register context thread as active
+        executionManager.registerActiveThread(uniqueThreadName);
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {

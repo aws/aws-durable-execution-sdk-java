@@ -9,7 +9,6 @@ import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
-import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
 import java.time.Instant;
@@ -159,10 +158,12 @@ public class StepOperation<T> implements DurableOperation<T> {
     private void executeStepLogic(int attempt) {
         // Register step thread as active
         var stepThreadId = operationId + "-step";
-        executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
+        executionManager.registerActiveThread(stepThreadId);
 
         // Execute in managed executor
         executionManager.getManagedExecutor().execute(() -> {
+            // Set thread name to match the step thread ID for consistent logging and identification
+            Thread.currentThread().setName(stepThreadId);
             try {
                 // Check if we need to send START
                 var existing = executionManager.getOperation(operationId);
@@ -290,16 +291,16 @@ public class StepOperation<T> implements DurableOperation<T> {
             phaser.register();
 
             // Deregister current thread - allows suspension
-            // TODO: The threadId here should be the (potential childContext) thread id that
-            // is calling .get()
-            executionManager.deregisterActiveThread("Root");
+            String currentThreadName = Thread.currentThread().getName();
+            logger.debug("StepOperation.get() attempting to deregister thread: {}", currentThreadName);
+            executionManager.deregisterActiveThread(currentThreadName);
 
             // Block until operation completes
             logger.debug("Waiting for operation to finish {} (Phaser: {})", operationId, phaser);
             phaser.arriveAndAwaitAdvance(); // Wait for phase 0
 
             // Reactivate current thread
-            executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
+            executionManager.registerActiveThread(currentThreadName);
 
             // Complete phase 1
             phaser.arriveAndDeregister();
@@ -346,8 +347,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             throw new StepFailedException(
                     String.format(
                             "Step failed with error of type %s. Message: %s",
-                            errorType,
-                            op.stepDetails().error().errorMessage()),
+                            errorType, op.stepDetails().error().errorMessage()),
                     null,
                     // Preserve original stack trace
                     StepFailedException.deserializeStackTrace(

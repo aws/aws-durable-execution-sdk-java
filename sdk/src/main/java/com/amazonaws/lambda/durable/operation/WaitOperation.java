@@ -4,7 +4,6 @@ package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
-import com.amazonaws.lambda.durable.execution.ThreadType;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Phaser;
@@ -100,14 +99,15 @@ public class WaitOperation implements DurableOperation<Void> {
 
             // Deregister current thread - THIS is where suspension can happen!
             // If no other threads are active, this will throw SuspendExecutionException
-            executionManager.deregisterActiveThread("Root");
+            String callingThreadName = Thread.currentThread().getName();
+            executionManager.deregisterActiveThread(callingThreadName);
 
             // Complete the wait phaser immediately (we don't actually wait in Lambda)
             // The backend handles the wait duration
             phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1
 
             // Reactivate current thread
-            executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
+            executionManager.registerActiveThread(callingThreadName);
 
             // Complete phase 1
             phaser.arriveAndDeregister();

@@ -183,10 +183,11 @@ public final class DurableConfig {
         private Builder() {}
 
         /**
-         * Sets a custom LambdaClient for production use. Use this method to customize the AWS SDK client
-         * with specific regions, credentials, timeouts, or retry policies.
+         * Sets a custom LambdaClient for production use. Use this method to customize the AWS SDK client with specific
+         * regions, credentials, timeouts, or retry policies.
          *
          * <p>Example:
+         *
          * <pre>{@code
          * LambdaClient lambdaClient = LambdaClient.builder()
          *     .region(Region.US_WEST_2)
@@ -211,9 +212,9 @@ public final class DurableConfig {
         /**
          * Sets a custom DurableExecutionClient.
          *
-         * <p><b>Note:</b> This method is primarily intended for testing with mock clients
-         * (e.g., {@code LocalMemoryExecutionClient}). For production use with a custom AWS SDK client,
-         * prefer {@link #withLambdaClient(LambdaClient)}.
+         * <p><b>Note:</b> This method is primarily intended for testing with mock clients (e.g.,
+         * {@code LocalMemoryExecutionClient}). For production use with a custom AWS SDK client, prefer
+         * {@link #withLambdaClient(LambdaClient)}.
          *
          * @param durableExecutionClient Custom DurableExecutionClient instance
          * @return This builder

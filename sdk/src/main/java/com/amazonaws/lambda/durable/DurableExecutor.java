@@ -71,11 +71,14 @@ public class DurableExecutor {
         var serDes = config.getSerDes();
         var userInput = extractUserInput(executionOp, serDes, inputType);
 
-        // Create context
-        var context = new DurableContext(executionManager, serDes, lambdaContext);
-
         try {
-            var handlerFuture = CompletableFuture.supplyAsync(() -> handler.apply(userInput, context), executor);
+            var handlerFuture = CompletableFuture.supplyAsync(
+                    () -> {
+                        // Create context in the executor thread so it detects the correct thread name
+                        var context = new DurableContext(executionManager, serDes, lambdaContext);
+                        return handler.apply(userInput, context);
+                    },
+                    executor);
 
             // Get suspend future from ExecutionManager. If this future completes, it
             // indicates
