@@ -186,6 +186,27 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  LoggingExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: logging-example
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.LoggingExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
 
 Outputs:
   SimpleStepExampleFunction:
@@ -252,3 +273,10 @@ Outputs:
     Description: Custom Config Example Function Name
     Value: !Ref CustomConfigExampleFunction
 
+  LoggingExampleFunction:
+    Description: Logging Example Function ARN
+    Value: !GetAtt LoggingExampleFunction.Arn
+
+  LoggingExampleFunctionName:
+    Description: Logging Example Function Name
+    Value: !Ref LoggingExampleFunction

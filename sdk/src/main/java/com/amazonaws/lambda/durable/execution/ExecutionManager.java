@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Phaser;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -46,10 +47,10 @@ public class ExecutionManager {
     private final String executionOperationId;
     private volatile String checkpointToken;
     private final String durableExecutionArn;
-    private volatile ExecutionMode executionMode;
+    private final AtomicReference<ExecutionMode> executionMode;
 
     // ===== Current Operation Context (for logging) =====
-    private static final ThreadLocal<OperationContext> currentOperation = new ThreadLocal<>();
+    private static final ThreadLocal<OperationContext> currentOperation = new InheritableThreadLocal<>();
 
     // ===== Thread Coordination =====
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
@@ -77,7 +78,7 @@ public class ExecutionManager {
         loadAllOperations(initialExecutionState);
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
-        this.executionMode = operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION;
+        this.executionMode = new AtomicReference<>(operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
 
         this.managedExecutor = executor;
 
@@ -115,7 +116,7 @@ public class ExecutionManager {
     }
 
     public boolean isReplaying() {
-        return executionMode == ExecutionMode.REPLAY;
+        return executionMode.get() == ExecutionMode.REPLAY;
     }
 
     public String getCheckpointToken() {
@@ -153,9 +154,10 @@ public class ExecutionManager {
      */
     public Operation getOperationAndUpdateReplayState(String operationId) {
         var existing = operations.get(operationId);
-        if (executionMode == ExecutionMode.REPLAY && existing == null) {
-            executionMode = ExecutionMode.EXECUTION;
-            logger.debug("Transitioned to EXECUTION mode at operation '{}'", operationId);
+        if (existing == null) {
+            if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {
+                logger.debug("Transitioned to EXECUTION mode at operation '{}'", operationId);
+            }
         }
         return existing;
     }
@@ -387,6 +389,7 @@ public class ExecutionManager {
 
     public void shutdown() {
         checkpointBatcher.shutdown();
+        currentOperation.remove();
     }
 
     private boolean isTerminalStatus(OperationStatus status) {
