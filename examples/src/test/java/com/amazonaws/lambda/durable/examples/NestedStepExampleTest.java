@@ -19,7 +19,10 @@ class NestedStepExampleTest {
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("async-result-processed", result.getResult(String.class));
+        var output = result.getResult(String.class);
+        assertTrue(
+                output.matches("slept-(5|6|7|8|9|10)-seconds"),
+                "Expected format: slept-X-seconds where X is 5-10, got: " + output);
     }
 
     @Test
@@ -32,11 +35,14 @@ class NestedStepExampleTest {
 
         // First execution
         var result1 = runner.run(input);
+        assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        var output1 = result1.getResult(String.class);
 
         // Second execution (replay)
         var result2 = runner.run(input);
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        var output2 = result2.getResult(String.class);
 
-        assertEquals(result1.getStatus(), result2.getStatus());
-        assertEquals(result1.getResult(String.class), result2.getResult(String.class));
+        assertEquals(output1, output2, "Replay must return identical result to prove idempotency");
     }
 }
