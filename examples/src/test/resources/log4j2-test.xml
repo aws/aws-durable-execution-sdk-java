@@ -1,27 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Configuration status="WARN">
     <Appenders>
-        <!-- Default appender without MDC -->
         <Console name="Console" target="SYSTEM_OUT">
-            <PatternLayout pattern="%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n"/>
-        </Console>
-        
-        <!-- Appender with MDC for DurableContext logs -->
-        <Console name="Durable" target="SYSTEM_OUT">
-            <PatternLayout pattern="%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%notEmpty{ | arn=%X{durableExecutionArn}}%notEmpty{ id=%X{operationId}}%notEmpty{ op=%X{operationName}}%notEmpty{ attempt=%X{attempt}}%n"/>
+            <JsonTemplateLayout eventTemplateUri="classpath:EcsLayout.json"/>
         </Console>
     </Appenders>
     
     <Loggers>
-        <!-- DurableContext uses the MDC appender -->
-        <Logger name="com.amazonaws.lambda.durable.DurableContext" level="DEBUG" additivity="false">
-            <AppenderRef ref="Durable"/>
-        </Logger>
-        
-        <!-- SDK logs at DEBUG -->
+        <!-- SDK internal logs at DEBUG for testing -->
         <Logger name="com.amazonaws.lambda.durable" level="DEBUG"/>
         
-        <!-- AWS SDK logs at WARN (suppress verbose debug) -->
+        <!-- AWS SDK logs at WARN -->
         <Logger name="software.amazon.awssdk" level="WARN"/>
         
         <!-- Everything else at INFO -->

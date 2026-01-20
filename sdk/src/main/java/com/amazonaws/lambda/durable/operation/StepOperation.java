@@ -211,8 +211,8 @@ public class StepOperation<T> implements DurableOperation<T> {
             } catch (Throwable e) {
                 handleStepError(e, attempt);
             } finally {
-                durableLogger.clearOperationContext();
                 executionManager.deregisterActiveThread(stepThreadId);
+                durableLogger.clearOperationContext();
             }
         });
     }
