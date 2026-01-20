@@ -20,11 +20,7 @@ class ExecutionManagerTest {
         var executor = Executors.newCachedThreadPool();
         var initialState = new InitialExecutionState(operations, null);
         return new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
-                "test-token",
-                initialState,
-                client,
-                executor);
+                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client, executor);
     }
 
     private Operation executionOp() {

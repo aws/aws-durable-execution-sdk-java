@@ -74,7 +74,8 @@ public class ExecutionManager {
         loadAllOperations(initialExecutionState);
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
-        this.executionMode = new AtomicReference<>(operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
+        this.executionMode =
+                new AtomicReference<>(operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
 
         this.managedExecutor = executor;
 
@@ -142,8 +143,8 @@ public class ExecutionManager {
     }
 
     /**
-     * Gets an operation by ID and updates replay state. Transitions from REPLAY to EXECUTION mode
-     * if the operation is not found or is not in a terminal state (still in progress).
+     * Gets an operation by ID and updates replay state. Transitions from REPLAY to EXECUTION mode if the operation is
+     * not found or is not in a terminal state (still in progress).
      *
      * @param operationId the operation ID to get
      * @return the existing operation, or null if not found (first execution)

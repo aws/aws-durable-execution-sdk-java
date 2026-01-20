@@ -16,8 +16,15 @@ class DurableLoggerTest {
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test:exec-123";
     private static final String REQUEST_ID = "req-456";
 
-    private enum Mode { REPLAYING, EXECUTING }
-    private enum Suppression { ENABLED, DISABLED }
+    private enum Mode {
+        REPLAYING,
+        EXECUTING
+    }
+
+    private enum Suppression {
+        ENABLED,
+        DISABLED
+    }
 
     private Logger mockLogger;
     private ExecutionManager mockExecutionManager;
