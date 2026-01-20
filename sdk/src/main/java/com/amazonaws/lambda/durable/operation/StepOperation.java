@@ -10,6 +10,7 @@ import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
+import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
 import java.time.Instant;
@@ -36,6 +37,7 @@ public class StepOperation<T> implements DurableOperation<T> {
     private final TypeToken<T> resultTypeToken;
     private final StepConfig config;
     private final ExecutionManager executionManager;
+    private final DurableLogger durableLogger;
     private final SerDes serDes;
     private final Phaser phaser;
 
@@ -46,8 +48,9 @@ public class StepOperation<T> implements DurableOperation<T> {
             Class<T> resultType,
             StepConfig config,
             ExecutionManager executionManager,
+            DurableLogger durableLogger,
             SerDes serDes) {
-        this(operationId, name, function, resultType, null, config, executionManager, serDes);
+        this(operationId, name, function, resultType, null, config, executionManager, durableLogger, serDes);
     }
 
     public StepOperation(
@@ -57,8 +60,9 @@ public class StepOperation<T> implements DurableOperation<T> {
             TypeToken<T> resultTypeToken,
             StepConfig config,
             ExecutionManager executionManager,
+            DurableLogger durableLogger,
             SerDes serDes) {
-        this(operationId, name, function, null, resultTypeToken, config, executionManager, serDes);
+        this(operationId, name, function, null, resultTypeToken, config, executionManager, durableLogger, serDes);
     }
 
     private StepOperation(
@@ -69,6 +73,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             TypeToken<T> resultTypeToken,
             StepConfig config,
             ExecutionManager executionManager,
+            DurableLogger durableLogger,
             SerDes serDes) {
         if (resultType == null && resultTypeToken == null) {
             throw new IllegalArgumentException("Either resultType or resultTypeToken must be provided");
@@ -84,6 +89,7 @@ public class StepOperation<T> implements DurableOperation<T> {
         this.resultTypeToken = resultTypeToken;
         this.config = config;
         this.executionManager = executionManager;
+        this.durableLogger = durableLogger;
         // Use custom SerDes from config if provided, otherwise use default
         this.serDes = (config != null && config.serDes() != null) ? config.serDes() : serDes;
 
@@ -205,7 +211,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             } catch (Throwable e) {
                 handleStepError(e, attempt);
             } finally {
-                executionManager.clearCurrentOperation();
+                durableLogger.clearOperationContext();
                 executionManager.deregisterActiveThread(stepThreadId);
             }
         });

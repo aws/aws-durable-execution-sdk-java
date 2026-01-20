@@ -16,6 +16,9 @@ class DurableLoggerTest {
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test:exec-123";
     private static final String REQUEST_ID = "req-456";
 
+    private enum Mode { REPLAYING, EXECUTING }
+    private enum Suppression { ENABLED, DISABLED }
+
     private Logger mockLogger;
     private ExecutionManager mockExecutionManager;
 
@@ -26,19 +29,14 @@ class DurableLoggerTest {
         when(mockExecutionManager.getDurableExecutionArn()).thenReturn(EXECUTION_ARN);
     }
 
-    private DurableLogger createLogger(boolean isReplaying, boolean suppressReplayLogs) {
-        return createLogger(isReplaying, suppressReplayLogs, null);
-    }
-
-    private DurableLogger createLogger(boolean isReplaying, boolean suppressReplayLogs, OperationContext opCtx) {
-        when(mockExecutionManager.isReplaying()).thenReturn(isReplaying);
-        when(mockExecutionManager.getCurrentOperation()).thenReturn(opCtx);
-        return new DurableLogger(mockLogger, mockExecutionManager, REQUEST_ID, suppressReplayLogs);
+    private DurableLogger createLogger(Mode mode, Suppression suppression) {
+        when(mockExecutionManager.isReplaying()).thenReturn(mode == Mode.REPLAYING);
+        return new DurableLogger(mockLogger, mockExecutionManager, REQUEST_ID, suppression == Suppression.ENABLED);
     }
 
     @Test
     void logsWhenNotReplaying() {
-        var logger = createLogger(false, true);
+        var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
 
         logger.info("test message");
 
@@ -47,7 +45,7 @@ class DurableLoggerTest {
 
     @Test
     void suppressesLogsWhenReplayingAndSuppressionEnabled() {
-        var logger = createLogger(true, true);
+        var logger = createLogger(Mode.REPLAYING, Suppression.ENABLED);
 
         logger.trace("suppressed");
         logger.info("should be suppressed");
@@ -64,7 +62,7 @@ class DurableLoggerTest {
 
     @Test
     void logsWhenReplayingButSuppressionDisabled() {
-        var logger = createLogger(true, false);
+        var logger = createLogger(Mode.REPLAYING, Suppression.DISABLED);
 
         logger.info("should log during replay");
 
@@ -72,23 +70,37 @@ class DurableLoggerTest {
     }
 
     @Test
-    void setsMdcDuringLogAndClearsAfter() {
+    void setsExecutionMdcInConstructor() {
         try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            var opCtx = new OperationContext("1", "validateOrder", 2);
-            var logger = createLogger(false, true, opCtx);
+            createLogger(Mode.EXECUTING, Suppression.ENABLED);
 
-            logger.info("operation log");
-
-            // Verify all MDC was set
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_EXECUTION_ARN, EXECUTION_ARN));
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_REQUEST_ID, REQUEST_ID));
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_OPERATION_ID, "1"));
+        }
+    }
+
+    @Test
+    void setOperationContextSetsMdc() {
+        try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
+            var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
+            mdcMock.clearInvocations();
+
+            logger.setOperationContext("op-1", "validateOrder", 2);
+
+            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_OPERATION_ID, "op-1"));
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_OPERATION_NAME, "validateOrder"));
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_ATTEMPT, "2"));
+        }
+    }
 
-            // Verify all MDC was cleared after logging
-            mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_EXECUTION_ARN));
-            mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_REQUEST_ID));
+    @Test
+    void clearOperationContextRemovesMdc() {
+        try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
+            var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
+            mdcMock.clearInvocations();
+
+            logger.clearOperationContext();
+
             mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_OPERATION_ID));
             mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_OPERATION_NAME));
             mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_ATTEMPT));
@@ -97,26 +109,21 @@ class DurableLoggerTest {
 
     @Test
     void replayModeTransitionAllowsSubsequentLogs() {
-        var replaying = new boolean[] {true};
-        when(mockExecutionManager.isReplaying()).thenAnswer(inv -> replaying[0]);
-        when(mockExecutionManager.getCurrentOperation()).thenReturn(null);
+        when(mockExecutionManager.isReplaying()).thenReturn(true, false);
         var logger = new DurableLogger(mockLogger, mockExecutionManager, REQUEST_ID, true);
 
         // During replay - suppressed
         logger.info("suppressed");
         verify(mockLogger, never()).info(anyString(), any(Object[].class));
 
-        // Transition to execution mode
-        replaying[0] = false;
-
-        // After transition - logged
+        // After transition to execution mode - logged
         logger.info("logged after transition");
         verify(mockLogger).info(eq("logged after transition"), any(Object[].class));
     }
 
     @Test
     void allLogLevelsDelegateCorrectly() {
-        var logger = createLogger(false, true);
+        var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
 
         logger.trace("trace msg");
         logger.debug("debug msg");
@@ -139,29 +146,10 @@ class DurableLoggerTest {
     void handlesNullRequestId() {
         try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
             when(mockExecutionManager.isReplaying()).thenReturn(false);
-            when(mockExecutionManager.getCurrentOperation()).thenReturn(null);
-            var logger = new DurableLogger(mockLogger, mockExecutionManager, null, true);
-
-            logger.info("test");
+            new DurableLogger(mockLogger, mockExecutionManager, null, true);
 
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_EXECUTION_ARN, EXECUTION_ARN));
             mdcMock.verify(() -> MDC.put(eq(DurableLogger.MDC_REQUEST_ID), anyString()), never());
-        }
-    }
-
-    @Test
-    void handlesNullOperationContext() {
-        try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            var logger = createLogger(false, true, null);
-
-            logger.info("test");
-
-            // Execution MDC should be set
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_EXECUTION_ARN, EXECUTION_ARN));
-            // Operation MDC should not be set
-            mdcMock.verify(() -> MDC.put(eq(DurableLogger.MDC_OPERATION_ID), anyString()), never());
-            mdcMock.verify(() -> MDC.put(eq(DurableLogger.MDC_OPERATION_NAME), anyString()), never());
-            mdcMock.verify(() -> MDC.put(eq(DurableLogger.MDC_ATTEMPT), anyString()), never());
         }
     }
 }

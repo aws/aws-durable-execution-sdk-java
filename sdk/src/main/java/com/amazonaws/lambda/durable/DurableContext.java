@@ -97,7 +97,7 @@ public class DurableContext {
 
         // Create and start step operation
         StepOperation<T> operation =
-                new StepOperation<>(operationId, name, func, resultType, config, executionManager, serDes);
+                new StepOperation<>(operationId, name, func, resultType, config, executionManager, logger, serDes);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -125,7 +125,7 @@ public class DurableContext {
 
         // Create and start step operation with TypeToken
         StepOperation<T> operation =
-                new StepOperation<>(operationId, name, func, typeToken, config, executionManager, serDes);
+                new StepOperation<>(operationId, name, func, typeToken, config, executionManager, logger, serDes);
 
         operation.execute(); // Start the step (returns immediately)
 

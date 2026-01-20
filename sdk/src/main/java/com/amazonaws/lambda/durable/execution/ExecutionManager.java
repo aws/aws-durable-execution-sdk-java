@@ -3,7 +3,6 @@
 package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
-import com.amazonaws.lambda.durable.logging.OperationContext;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.time.Duration;
 import java.time.Instant;
@@ -48,9 +47,6 @@ public class ExecutionManager {
     private volatile String checkpointToken;
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
-
-    // ===== Current Operation Context (for logging) =====
-    private static final ThreadLocal<OperationContext> currentOperation = new InheritableThreadLocal<>();
 
     // ===== Thread Coordination =====
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
@@ -146,35 +142,20 @@ public class ExecutionManager {
     }
 
     /**
-     * Gets an operation by ID and updates replay state. If the operation is not found, transitions from REPLAY to
-     * EXECUTION mode.
+     * Gets an operation by ID and updates replay state. Transitions from REPLAY to EXECUTION mode
+     * if the operation is not found or is not in a terminal state (still in progress).
      *
      * @param operationId the operation ID to get
      * @return the existing operation, or null if not found (first execution)
      */
     public Operation getOperationAndUpdateReplayState(String operationId) {
         var existing = operations.get(operationId);
-        if (existing == null) {
+        if (existing == null || !isTerminalStatus(existing.status())) {
             if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {
                 logger.debug("Transitioned to EXECUTION mode at operation '{}'", operationId);
             }
         }
         return existing;
-    }
-
-    /** Sets the current operation context for logging. Uses ThreadLocal so each executor thread has its own context. */
-    public void setCurrentOperation(String operationId, String operationName, Integer attempt) {
-        currentOperation.set(new OperationContext(operationId, operationName, attempt));
-    }
-
-    /** Clears the current operation context. Should be called when an operation completes. */
-    public void clearCurrentOperation() {
-        currentOperation.remove();
-    }
-
-    /** Gets the current operation context for logging. */
-    public OperationContext getCurrentOperation() {
-        return currentOperation.get();
     }
 
     public Operation getExecutionOperation() {
@@ -389,7 +370,6 @@ public class ExecutionManager {
 
     public void shutdown() {
         checkpointBatcher.shutdown();
-        currentOperation.remove();
     }
 
     private boolean isTerminalStatus(OperationStatus status) {

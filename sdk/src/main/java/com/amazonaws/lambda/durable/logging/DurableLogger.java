@@ -28,6 +28,37 @@ public class DurableLogger {
         this.executionManager = executionManager;
         this.requestId = requestId;
         this.suppressReplayLogs = suppressReplayLogs;
+
+        // Set execution-level MDC for main thread
+        setExecutionContext();
+    }
+
+    private void setExecutionContext() {
+        MDC.put(MDC_EXECUTION_ARN, executionManager.getDurableExecutionArn());
+        if (requestId != null) {
+            MDC.put(MDC_REQUEST_ID, requestId);
+        }
+    }
+
+    public void setOperationContext(String operationId, String operationName, Integer attempt) {
+        // Set execution-level MDC (needed for executor threads)
+        setExecutionContext();
+        // Set operation-level MDC
+        if (operationId != null) {
+            MDC.put(MDC_OPERATION_ID, operationId);
+        }
+        if (operationName != null) {
+            MDC.put(MDC_OPERATION_NAME, operationName);
+        }
+        if (attempt != null) {
+            MDC.put(MDC_ATTEMPT, String.valueOf(attempt));
+        }
+    }
+
+    public void clearOperationContext() {
+        MDC.remove(MDC_OPERATION_ID);
+        MDC.remove(MDC_OPERATION_NAME);
+        MDC.remove(MDC_ATTEMPT);
     }
 
     public void trace(String format, Object... args) {
@@ -59,38 +90,8 @@ public class DurableLogger {
     }
 
     private void log(Runnable logAction) {
-        if (shouldSuppress()) {
-            return;
-        }
-
-        try {
-            // Set execution-level MDC
-            MDC.put(MDC_EXECUTION_ARN, executionManager.getDurableExecutionArn());
-            if (requestId != null) {
-                MDC.put(MDC_REQUEST_ID, requestId);
-            }
-
-            // Set operation-level MDC from current context
-            var opCtx = executionManager.getCurrentOperation();
-            if (opCtx != null) {
-                if (opCtx.operationId() != null) {
-                    MDC.put(MDC_OPERATION_ID, opCtx.operationId());
-                }
-                if (opCtx.operationName() != null) {
-                    MDC.put(MDC_OPERATION_NAME, opCtx.operationName());
-                }
-                if (opCtx.attempt() != null) {
-                    MDC.put(MDC_ATTEMPT, String.valueOf(opCtx.attempt()));
-                }
-            }
-
+        if (!shouldSuppress()) {
             logAction.run();
-        } finally {
-            MDC.remove(MDC_EXECUTION_ARN);
-            MDC.remove(MDC_REQUEST_ID);
-            MDC.remove(MDC_OPERATION_ID);
-            MDC.remove(MDC_OPERATION_NAME);
-            MDC.remove(MDC_ATTEMPT);
         }
     }
 }
