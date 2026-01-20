@@ -99,7 +99,7 @@ public class WaitOperation implements DurableOperation<Void> {
 
             // Deregister current thread - THIS is where suspension can happen!
             // If no other threads are active, this will throw SuspendExecutionException
-            String callingThreadName = Thread.currentThread().getName();
+            var callingThreadName = Thread.currentThread().getName();
             executionManager.deregisterActiveThread(callingThreadName);
 
             // Complete the wait phaser immediately (we don't actually wait in Lambda)

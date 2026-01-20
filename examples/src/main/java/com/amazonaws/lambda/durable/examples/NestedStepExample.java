@@ -40,11 +40,9 @@ public class NestedStepExample extends DurableHandler<Object, String> {
                         .build());
 
         // Step 2: Process the result of the async step
-        var result = context.step("process-result", String.class, () -> {
+        return context.step("process-result", String.class, () -> {
             var asyncResult = durableFuture1.get(); // Wait for async step to complete
             return asyncResult + "-processed";
         });
-
-        return result;
     }
 }

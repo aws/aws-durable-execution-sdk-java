@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
-import com.amazonaws.lambda.durable.serde.SerDes;
 import org.junit.jupiter.api.Test;
 
 class StepConfigTest {
@@ -32,7 +31,7 @@ class StepConfigTest {
     @Test
     void testBuilderChaining() {
         var strategy = RetryStrategies.Presets.NO_RETRY;
-        SerDes customSerDes = new JacksonSerDes();
+        var customSerDes = new JacksonSerDes();
 
         var config = StepConfig.builder()
                 .retryStrategy(strategy)
@@ -61,7 +60,7 @@ class StepConfigTest {
 
     @Test
     void testBuilderWithCustomSerDes() {
-        SerDes customSerDes = new JacksonSerDes();
+        var customSerDes = new JacksonSerDes();
 
         var config = StepConfig.builder().serDes(customSerDes).build();
 
@@ -86,7 +85,7 @@ class StepConfigTest {
     @Test
     void testBuilderWithAllOptions() {
         var strategy = RetryStrategies.Presets.DEFAULT;
-        SerDes customSerDes = new JacksonSerDes();
+        var customSerDes = new JacksonSerDes();
 
         var config = StepConfig.builder()
                 .retryStrategy(strategy)

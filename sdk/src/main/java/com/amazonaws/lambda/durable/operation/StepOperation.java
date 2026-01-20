@@ -291,7 +291,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             phaser.register();
 
             // Deregister current thread - allows suspension
-            String currentThreadName = Thread.currentThread().getName();
+            var currentThreadName = Thread.currentThread().getName();
             logger.debug("StepOperation.get() attempting to deregister thread: {}", currentThreadName);
             executionManager.deregisterActiveThread(currentThreadName);
 

@@ -16,13 +16,14 @@ import org.slf4j.LoggerFactory;
  * Example demonstrating error handling patterns with the Durable Execution SDK.
  *
  * <p>This example shows how to handle:
+ *
  * <ul>
  *   <li>{@link StepFailedException} - when a step exhausts all retry attempts
  *   <li>{@link StepInterruptedException} - when an AT_MOST_ONCE step is interrupted
  * </ul>
  *
- * <p>Note: {@code NonDeterministicExecutionException} is thrown by the SDK when code changes
- * between executions (e.g., step order/names changed). It should be fixed in code, not caught.
+ * <p>Note: {@code NonDeterministicExecutionException} is thrown by the SDK when code changes between executions (e.g.,
+ * step order/names changed). It should be fixed in code, not caught.
  */
 public class ErrorHandlingExample extends DurableHandler<String, String> {
 
@@ -44,10 +45,7 @@ public class ErrorHandlingExample extends DurableHandler<String, String> {
                             .build());
         } catch (StepFailedException e) {
             logger.warn("Primary service failed, using fallback: {}", e.getMessage());
-            primaryResult = context.step(
-                    "call-fallback-service",
-                    String.class,
-                    () -> "fallback-result");
+            primaryResult = context.step("call-fallback-service", String.class, () -> "fallback-result");
         }
 
         // Example 2: Handling StepInterruptedException for AT_MOST_ONCE operations
@@ -68,10 +66,7 @@ public class ErrorHandlingExample extends DurableHandler<String, String> {
             logger.warn("Payment step interrupted, checking external status: {}", e.getOperationId());
             // In real code: check payment provider for transaction status
             // If payment went through, return success; otherwise, handle appropriately
-            paymentResult = context.step(
-                    "verify-payment-status",
-                    String.class,
-                    () -> "verified-payment");
+            paymentResult = context.step("verify-payment-status", String.class, () -> "verified-payment");
         }
 
         return "Completed: " + primaryResult + ", " + paymentResult;

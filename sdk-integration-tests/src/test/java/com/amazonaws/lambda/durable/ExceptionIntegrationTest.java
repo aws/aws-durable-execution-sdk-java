@@ -12,9 +12,7 @@ import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
-/**
- * Integration tests for exception handling scenarios documented in the README.
- */
+/** Integration tests for exception handling scenarios documented in the README. */
 class ExceptionIntegrationTest {
 
     @Test
