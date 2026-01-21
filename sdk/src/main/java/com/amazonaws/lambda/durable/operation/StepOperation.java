@@ -294,11 +294,10 @@ public class StepOperation<T> implements DurableOperation<T> {
     @Override
     public T get() {
         // Get current context from ThreadLocal (not thread name)
-        var currentContextId = executionManager.getCurrentContextId();
-        var currentThreadType = executionManager.getCurrentThreadType();
+        var currentContext = executionManager.getCurrentContext();
 
         // Nested steps are not supported - calling a step from within another step breaks replay consistency
-        if (currentThreadType == ThreadType.STEP) {
+        if (currentContext.threadType() == ThreadType.STEP) {
             throw new IllegalStateException("Nested step calling is not supported. Cannot call get() on step '" + name
                     + "' from within another step's execution.");
         }
@@ -312,15 +311,15 @@ public class StepOperation<T> implements DurableOperation<T> {
             phaser.register();
 
             // Deregister current context - allows suspension
-            logger.debug("StepOperation.get() attempting to deregister context: {}", currentContextId);
-            executionManager.deregisterActiveThread(currentContextId);
+            logger.debug("StepOperation.get() attempting to deregister context: {}", currentContext.contextId());
+            executionManager.deregisterActiveThread(currentContext.contextId());
 
             // Block until operation completes
             logger.trace("Waiting for operation to finish {} (Phaser: {})", operationId, phaser);
             phaser.arriveAndAwaitAdvance(); // Wait for phase 0
 
             // Reactivate current context
-            executionManager.registerActiveThread(currentContextId, currentThreadType);
+            executionManager.registerActiveThread(currentContext.contextId(), currentContext.threadType());
 
             // Complete phase 1
             phaser.arriveAndDeregister();

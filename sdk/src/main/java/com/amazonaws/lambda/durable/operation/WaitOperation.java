@@ -97,19 +97,18 @@ public class WaitOperation implements DurableOperation<Void> {
             phaser.register();
 
             // Get current context from ThreadLocal
-            var currentContextId = executionManager.getCurrentContextId();
-            var currentThreadType = executionManager.getCurrentThreadType();
+            var currentContext = executionManager.getCurrentContext();
 
             // Deregister current thread - THIS is where suspension can happen!
             // If no other threads are active, this will throw SuspendExecutionException
-            executionManager.deregisterActiveThread(currentContextId);
+            executionManager.deregisterActiveThread(currentContext.contextId());
 
             // Complete the wait phaser immediately (we don't actually wait in Lambda)
             // The backend handles the wait duration
             phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1
 
             // Reactivate current thread
-            executionManager.registerActiveThread(currentContextId, currentThreadType);
+            executionManager.registerActiveThread(currentContext.contextId(), currentContext.threadType());
 
             // Complete phase 1
             phaser.arriveAndDeregister();

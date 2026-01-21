@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
@@ -19,7 +20,7 @@ class StepOperationTest {
         var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(1);
         when(executionManager.startPhaser(any())).thenReturn(phaser);
-        when(executionManager.getCurrentThreadType()).thenReturn(ThreadType.STEP);
+        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("1-step", ThreadType.STEP));
 
         var operation = new StepOperation<>(
                 "1",
@@ -42,8 +43,7 @@ class StepOperationTest {
         var phaser = new Phaser(1);
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any())).thenReturn(phaser);
-        when(executionManager.getCurrentThreadType()).thenReturn(ThreadType.CONTEXT);
-        when(executionManager.getCurrentContextId()).thenReturn("handler");
+        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
         when(executionManager.getOperation("1"))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")

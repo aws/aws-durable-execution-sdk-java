@@ -217,18 +217,6 @@ public class ExecutionManager {
         return currentContext.get();
     }
 
-    /** Returns the ThreadType for the current thread, or null if not registered. */
-    public ThreadType getCurrentThreadType() {
-        var ctx = currentContext.get();
-        return ctx != null ? ctx.threadType() : null;
-    }
-
-    /** Returns the context ID for the current thread, or null if not registered. */
-    public String getCurrentContextId() {
-        var ctx = currentContext.get();
-        return ctx != null ? ctx.contextId() : null;
-    }
-
     public void deregisterActiveThread(String threadId) {
         // Skip if already suspended
         if (suspendExecutionFuture.isDone()) {
