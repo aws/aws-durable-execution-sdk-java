@@ -33,7 +33,6 @@ public class DurableContext {
 
         // Register handler context as active
         executionManager.registerActiveThread(HANDLER_CONTEXT_ID, ThreadType.CONTEXT);
-        executionManager.enterContext(HANDLER_CONTEXT_ID, ThreadType.CONTEXT);
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {

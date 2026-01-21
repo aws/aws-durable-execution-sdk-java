@@ -157,14 +157,17 @@ public class StepOperation<T> implements DurableOperation<T> {
     }
 
     private void executeStepLogic(int attempt) {
-        // Register step thread as active
+        // TODO: Modify this logic when child contexts are introduced such that the child context id is in this key
         var stepThreadId = operationId + "-step";
-        executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
+
+        // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
+        // ThreadLocal is set inside the executor since that's where the step actually runs
+        executionManager.registerActiveThreadWithoutContext(stepThreadId, ThreadType.STEP);
 
         // Execute in managed executor
         executionManager.getManagedExecutor().execute(() -> {
-            // Enter step context for this thread
-            executionManager.enterContext(stepThreadId, ThreadType.STEP);
+            // Set ThreadLocal context on the executor thread
+            executionManager.setCurrentContext(stepThreadId, ThreadType.STEP);
             try {
                 // Check if we need to send START
                 var existing = executionManager.getOperation(operationId);
@@ -202,7 +205,6 @@ public class StepOperation<T> implements DurableOperation<T> {
             } catch (Throwable e) {
                 handleStepError(e, attempt);
             } finally {
-                executionManager.exitContext();
                 executionManager.deregisterActiveThread(stepThreadId);
             }
         });
@@ -290,9 +292,8 @@ public class StepOperation<T> implements DurableOperation<T> {
 
         // Nested steps are not supported - calling a step from within another step breaks replay consistency
         if (currentThreadType == ThreadType.STEP) {
-            throw new IllegalStateException(
-                    "Nested step calling is not supported. Cannot call get() on step '" + name
-                            + "' from within another step's execution.");
+            throw new IllegalStateException("Nested step calling is not supported. Cannot call get() on step '" + name
+                    + "' from within another step's execution.");
         }
 
         // If we are in a replay where the operation is already complete (SUCCEEDED /
@@ -313,7 +314,6 @@ public class StepOperation<T> implements DurableOperation<T> {
 
             // Reactivate current context
             executionManager.registerActiveThread(currentContextId, currentThreadType);
-            executionManager.enterContext(currentContextId, currentThreadType);
 
             // Complete phase 1
             phaser.arriveAndDeregister();

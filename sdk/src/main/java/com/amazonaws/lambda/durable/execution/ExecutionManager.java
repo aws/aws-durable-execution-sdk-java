@@ -48,8 +48,7 @@ public class ExecutionManager {
 
     // ===== Thread Coordination =====
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
-    private static final ThreadLocal<String> currentContextId = new ThreadLocal<>();
-    private static final ThreadLocal<ThreadType> currentThreadType = new ThreadLocal<>();
+    private static final ThreadLocal<OperationContext> currentContext = new ThreadLocal<>();
     private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
     private final CompletableFuture<Void> suspendExecutionFuture = new CompletableFuture<>();
 
@@ -140,13 +139,13 @@ public class ExecutionManager {
     // ===== Thread Coordination =====
 
     public void registerActiveThread(String threadId, ThreadType threadType) {
-        if (activeThreads.containsKey(threadId)) {
-            logger.debug("Thread '{}' ({}) already registered as active", threadId, threadType);
-            return;
-        }
-
         synchronized (this) {
+            if (activeThreads.containsKey(threadId)) {
+                logger.debug("Thread '{}' ({}) already registered as active", threadId, threadType);
+                return;
+            }
             activeThreads.put(threadId, threadType);
+            currentContext.set(new OperationContext(threadId, threadType));
             logger.debug(
                     "Registered thread '{}' ({}) as active. Active threads: {}",
                     threadId,
@@ -156,37 +155,47 @@ public class ExecutionManager {
     }
 
     /**
-     * Sets the current thread's context. Call this when entering a context (handler or step).
-     * This is separate from registerActiveThread to support cases where registration happens
-     * on a different thread than execution.
+     * Registers a thread as active without setting ThreadLocal. Use this when registration must happen on a different
+     * thread than execution. Call setCurrentContext() on the execution thread to set the ThreadLocal.
      */
-    public void enterContext(String contextId, ThreadType threadType) {
-        currentContextId.set(contextId);
-        currentThreadType.set(threadType);
+    public void registerActiveThreadWithoutContext(String threadId, ThreadType threadType) {
+        synchronized (this) {
+            if (activeThreads.containsKey(threadId)) {
+                logger.debug("Thread '{}' ({}) already registered as active", threadId, threadType);
+                return;
+            }
+            activeThreads.put(threadId, threadType);
+            logger.debug(
+                    "Registered thread '{}' ({}) as active (no context). Active threads: {}",
+                    threadId,
+                    threadType,
+                    activeThreads.size());
+        }
     }
 
     /**
-     * Clears the current thread's context. Call this when exiting a context.
+     * Sets the current thread's context. Use after registerActiveThreadWithoutContext() when the execution thread is
+     * different from the registration thread.
      */
-    public void exitContext() {
-        currentContextId.remove();
-        currentThreadType.remove();
+    public void setCurrentContext(String contextId, ThreadType threadType) {
+        currentContext.set(new OperationContext(contextId, threadType));
     }
 
-    /**
-     * Returns the ThreadType for the current thread, or null if not registered.
-     * This uses ThreadLocal to track context independent of thread naming.
-     */
+    /** Returns the current thread's context, or null if not set. */
+    public OperationContext getCurrentContext() {
+        return currentContext.get();
+    }
+
+    /** Returns the ThreadType for the current thread, or null if not registered. */
     public ThreadType getCurrentThreadType() {
-        return currentThreadType.get();
+        var ctx = currentContext.get();
+        return ctx != null ? ctx.threadType() : null;
     }
 
-    /**
-     * Returns the context ID for the current thread, or null if not registered.
-     * This uses ThreadLocal to track context independent of thread naming.
-     */
+    /** Returns the context ID for the current thread, or null if not registered. */
     public String getCurrentContextId() {
-        return currentContextId.get();
+        var ctx = currentContext.get();
+        return ctx != null ? ctx.contextId() : null;
     }
 
     public void deregisterActiveThread(String threadId) {
@@ -202,6 +211,7 @@ public class ExecutionManager {
 
         synchronized (this) {
             ThreadType type = activeThreads.remove(threadId);
+            currentContext.remove();
             logger.debug("Deregistered thread '{}' ({}). Active threads: {}", threadId, type, activeThreads.size());
 
             if (activeThreads.isEmpty()) {

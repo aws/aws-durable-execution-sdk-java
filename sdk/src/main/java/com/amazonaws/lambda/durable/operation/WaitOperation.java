@@ -4,7 +4,6 @@ package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
-import com.amazonaws.lambda.durable.execution.ThreadType;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Phaser;
@@ -112,7 +111,6 @@ public class WaitOperation implements DurableOperation<Void> {
 
             // Reactivate current thread
             executionManager.registerActiveThread(currentContextId, currentThreadType);
-            executionManager.enterContext(currentContextId, currentThreadType);
 
             // Complete phase 1
             phaser.arriveAndDeregister();
