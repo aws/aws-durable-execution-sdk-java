@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
+import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.util.concurrent.Phaser;
 import org.junit.jupiter.api.Test;
@@ -14,14 +15,21 @@ import org.junit.jupiter.api.Test;
 class StepOperationTest {
 
     @Test
-    void getThrowsIllegalStateExceptionWhenCalledFromStepContext() throws Exception {
+    void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
         var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(1);
         when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentThreadType()).thenReturn(ThreadType.STEP);
 
         var operation = new StepOperation<>(
-                "1", "test-step", () -> "result", String.class, null, executionManager, new JacksonSerDes());
+                "1",
+                "test-step",
+                () -> "result",
+                String.class,
+                null,
+                executionManager,
+                mock(DurableLogger.class),
+                new JacksonSerDes());
 
         var ex = assertThrows(IllegalStateException.class, operation::get);
         assertTrue(ex.getMessage().contains("Nested step calling is not supported"));
@@ -29,7 +37,7 @@ class StepOperationTest {
     }
 
     @Test
-    void getDoesNotThrowWhenCalledFromHandlerContext() throws Exception {
+    void getDoesNotThrowWhenCalledFromHandlerContext() {
         var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(1);
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
@@ -47,7 +55,14 @@ class StepOperationTest {
                         .build());
 
         var operation = new StepOperation<>(
-                "1", "test-step", () -> "result", String.class, null, executionManager, new JacksonSerDes());
+                "1",
+                "test-step",
+                () -> "result",
+                String.class,
+                null,
+                executionManager,
+                mock(DurableLogger.class),
+                new JacksonSerDes());
 
         var result = operation.get();
         assertEquals("cached-result", result);
