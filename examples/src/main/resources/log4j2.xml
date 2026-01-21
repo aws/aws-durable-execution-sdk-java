@@ -2,20 +2,25 @@
 <Configuration status="WARN">
     <Appenders>
         <Console name="Console" target="SYSTEM_OUT">
-            <JsonTemplateLayout eventTemplateUri="classpath:EcsLayout.json"/>
+            <JsonTemplateLayout eventTemplateUri="classpath:EcsLayout.json" />
         </Console>
     </Appenders>
-    
+
     <Loggers>
         <!-- SDK internal logs at WARN -->
-        <Logger name="com.amazonaws.lambda.durable" level="WARN"/>
-        
+        <Logger name="com.amazonaws.lambda.durable" level="WARN" />
+
         <!-- AWS SDK logs at WARN -->
-        <Logger name="software.amazon.awssdk" level="WARN"/>
-        
+        <Logger name="software.amazon.awssdk" level="WARN" />
+
+        <!-- Examples logs at INFO -->
+        <Logger name="com.amazonaws.lambda.durable.examples" level="INFO" additivity="false">
+            <AppenderRef ref="Console" />
+        </Logger>
+
         <!-- Everything else at INFO -->
         <Root level="INFO">
-            <AppenderRef ref="Console"/>
+            <AppenderRef ref="Console" />
         </Root>
     </Loggers>
 </Configuration>
