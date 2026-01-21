@@ -108,7 +108,7 @@ public class WaitOperation implements DurableOperation<Void> {
             phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1
 
             // Reactivate current thread
-            executionManager.registerActiveThread(currentContext.contextId(), currentContext.threadType());
+            executionManager.registerActiveThreadWithContext(currentContext.contextId(), currentContext.threadType());
 
             // Complete phase 1
             phaser.arriveAndDeregister();

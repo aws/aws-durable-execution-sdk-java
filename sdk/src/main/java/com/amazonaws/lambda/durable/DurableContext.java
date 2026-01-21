@@ -42,8 +42,12 @@ public class DurableContext {
                 requestId,
                 loggerConfig.suppressReplayLogs());
 
-        // Register handler context as active
-        executionManager.registerActiveThread(HANDLER_CONTEXT_ID, ThreadType.CONTEXT);
+        // Register root context thread as active
+        executionManager.registerActiveThreadWithContext(contextId, ThreadType.CONTEXT);
+    }
+
+    DurableContext(ExecutionManager executionManager, SerDes serDes, Context lambdaContext, LoggerConfig loggerConfig) {
+        this(executionManager, serDes, lambdaContext, loggerConfig, "Root");
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {

@@ -165,29 +165,26 @@ public class ExecutionManager {
 
     // ===== Thread Coordination =====
 
-    public void registerActiveThread(String threadId, ThreadType threadType) {
+    public void registerActiveThreadWithContext(String threadId, ThreadType threadType) {
         if (activeThreads.containsKey(threadId)) {
             logger.trace("Thread '{}' ({}) already registered as active", threadId, threadType);
             return;
         }
-
-            if (activeThreads.containsKey(threadId)) {
-                logger.debug("Thread '{}' ({}) already registered as active", threadId, threadType);
-                return;
-            }
-            activeThreads.put(threadId, threadType);
-            currentContext.set(new OperationContext(threadId, threadType));
-            logger.trace(
-                    "Registered thread '{}' ({}) as active. Active threads: {}",
-                    threadId,
-                    threadType,
-                    activeThreads.size());
-        }
+        activeThreads.put(threadId, threadType);
+        currentContext.set(new OperationContext(threadId, threadType));
+        logger.trace(
+                "Registered thread '{}' ({}) as active. Active threads: {}",
+                threadId,
+                threadType,
+                activeThreads.size());
     }
 
     /**
-     * Registers a thread as active without setting ThreadLocal. Use this when registration must happen on a different
-     * thread than execution. Call setCurrentContext() on the execution thread to set the ThreadLocal.
+     * Registers a thread as active without setting the thread local OperationContext. Use this when registration must
+     * happen on a different thread than execution. Call setCurrentContext() on the execution thread to set the local
+     * OperationContext.
+     *
+     * @see OperationContext
      */
     public void registerActiveThreadWithoutContext(String threadId, ThreadType threadType) {
         synchronized (this) {

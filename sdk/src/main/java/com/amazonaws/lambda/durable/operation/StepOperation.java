@@ -167,12 +167,12 @@ public class StepOperation<T> implements DurableOperation<T> {
         var stepThreadId = operationId + "-step";
 
         // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
-        // ThreadLocal is set inside the executor since that's where the step actually runs
-        executionManager.registerActiveThreadWithoutContext(stepThreadId, ThreadType.STEP);
+        // thread local OperationContext is set inside the executor since that's where the step actually runs
+        executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
 
         // Execute in managed executor
         executionManager.getManagedExecutor().execute(() -> {
-            // Set ThreadLocal context on the executor thread
+            // Set thread local OperationContext on the executor thread
             executionManager.setCurrentContext(stepThreadId, ThreadType.STEP);
             try {
                 // Check if we need to send START
@@ -319,7 +319,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             phaser.arriveAndAwaitAdvance(); // Wait for phase 0
 
             // Reactivate current context
-            executionManager.registerActiveThread(currentContext.contextId(), currentContext.threadType());
+            executionManager.registerActiveThreadWithContext(currentContext.contextId(), currentContext.threadType());
 
             // Complete phase 1
             phaser.arriveAndDeregister();
