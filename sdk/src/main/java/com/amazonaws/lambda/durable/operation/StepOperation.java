@@ -293,10 +293,10 @@ public class StepOperation<T> implements DurableOperation<T> {
 
     @Override
     public T get() {
-        // Get current context from ThreadLocal (not thread name)
+        // Get current context from ThreadLocal
         var currentContext = executionManager.getCurrentContext();
 
-        // Nested steps are not supported - calling a step from within another step breaks replay consistency
+        // Nested steps are not supported
         if (currentContext.threadType() == ThreadType.STEP) {
             throw new IllegalStateException("Nested step calling is not supported. Cannot call get() on step '" + name
                     + "' from within another step's execution.");
