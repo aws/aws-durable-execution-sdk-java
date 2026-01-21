@@ -4,6 +4,7 @@ package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
+import com.amazonaws.lambda.durable.execution.ThreadType;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Phaser;
@@ -97,17 +98,21 @@ public class WaitOperation implements DurableOperation<Void> {
         if (phaser.getPhase() == ExecutionPhase.RUNNING.getValue()) {
             phaser.register();
 
+            // Get current context from ThreadLocal
+            var currentContextId = executionManager.getCurrentContextId();
+            var currentThreadType = executionManager.getCurrentThreadType();
+
             // Deregister current thread - THIS is where suspension can happen!
             // If no other threads are active, this will throw SuspendExecutionException
-            var callingThreadName = Thread.currentThread().getName();
-            executionManager.deregisterActiveThread(callingThreadName);
+            executionManager.deregisterActiveThread(currentContextId);
 
             // Complete the wait phaser immediately (we don't actually wait in Lambda)
             // The backend handles the wait duration
             phaser.arriveAndAwaitAdvance(); // Phase 0 -> 1
 
             // Reactivate current thread
-            executionManager.registerActiveThread(callingThreadName);
+            executionManager.registerActiveThread(currentContextId, currentThreadType);
+            executionManager.enterContext(currentContextId, currentThreadType);
 
             // Complete phase 1
             phaser.arriveAndDeregister();

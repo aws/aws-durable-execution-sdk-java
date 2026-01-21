@@ -186,27 +186,6 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
-  NestedStepExampleFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      PackageType: Image
-      FunctionName: nested-step-example
-      ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.NestedStepExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:nested-step-example"
-    Metadata:
-      Dockerfile: examples/Dockerfile
-      DockerContext: ../
-      DockerTag: durable-examples
 
 Outputs:
   SimpleStepExampleFunction:
@@ -273,10 +252,3 @@ Outputs:
     Description: Custom Config Example Function Name
     Value: !Ref CustomConfigExampleFunction
 
-  NestedStepExampleFunction:
-    Description: Nested Step Example Function ARN
-    Value: !GetAtt NestedStepExampleFunction.Arn
-
-  NestedStepExampleFunctionName:
-    Description: Nested Step Example Function Name
-    Value: !Ref NestedStepExampleFunction

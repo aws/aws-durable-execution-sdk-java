@@ -8,10 +8,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -49,7 +47,9 @@ public class ExecutionManager {
     private final String durableExecutionArn;
 
     // ===== Thread Coordination =====
-    private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
+    private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
+    private static final ThreadLocal<String> currentContextId = new ThreadLocal<>();
+    private static final ThreadLocal<ThreadType> currentThreadType = new ThreadLocal<>();
     private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
     private final CompletableFuture<Void> suspendExecutionFuture = new CompletableFuture<>();
 
@@ -139,16 +139,54 @@ public class ExecutionManager {
 
     // ===== Thread Coordination =====
 
-    public void registerActiveThread(String threadId) {
-        if (activeThreads.contains(threadId)) {
-            logger.debug("Thread '{}' already registered as active", threadId);
+    public void registerActiveThread(String threadId, ThreadType threadType) {
+        if (activeThreads.containsKey(threadId)) {
+            logger.debug("Thread '{}' ({}) already registered as active", threadId, threadType);
             return;
         }
 
         synchronized (this) {
-            activeThreads.add(threadId);
-            logger.debug("Registered thread '{}' as active. Active threads: {}", threadId, activeThreads.size());
+            activeThreads.put(threadId, threadType);
+            logger.debug(
+                    "Registered thread '{}' ({}) as active. Active threads: {}",
+                    threadId,
+                    threadType,
+                    activeThreads.size());
         }
+    }
+
+    /**
+     * Sets the current thread's context. Call this when entering a context (handler or step).
+     * This is separate from registerActiveThread to support cases where registration happens
+     * on a different thread than execution.
+     */
+    public void enterContext(String contextId, ThreadType threadType) {
+        currentContextId.set(contextId);
+        currentThreadType.set(threadType);
+    }
+
+    /**
+     * Clears the current thread's context. Call this when exiting a context.
+     */
+    public void exitContext() {
+        currentContextId.remove();
+        currentThreadType.remove();
+    }
+
+    /**
+     * Returns the ThreadType for the current thread, or null if not registered.
+     * This uses ThreadLocal to track context independent of thread naming.
+     */
+    public ThreadType getCurrentThreadType() {
+        return currentThreadType.get();
+    }
+
+    /**
+     * Returns the context ID for the current thread, or null if not registered.
+     * This uses ThreadLocal to track context independent of thread naming.
+     */
+    public String getCurrentContextId() {
+        return currentContextId.get();
     }
 
     public void deregisterActiveThread(String threadId) {
@@ -157,17 +195,14 @@ public class ExecutionManager {
             return;
         }
 
-        if (!activeThreads.contains(threadId)) {
-            logger.warn(
-                    "Thread '{}' not active, cannot deregister. Current thread: {}",
-                    threadId,
-                    Thread.currentThread().getName());
+        if (!activeThreads.containsKey(threadId)) {
+            logger.warn("Thread '{}' not active, cannot deregister", threadId);
             return;
         }
 
         synchronized (this) {
-            activeThreads.remove(threadId);
-            logger.debug("Deregistered thread '{}'. Active threads: {}", threadId, activeThreads.size());
+            ThreadType type = activeThreads.remove(threadId);
+            logger.debug("Deregistered thread '{}' ({}). Active threads: {}", threadId, type, activeThreads.size());
 
             if (activeThreads.isEmpty()) {
                 logger.info("No active threads remaining - suspending execution");

@@ -9,6 +9,7 @@ import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
+import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
 import java.time.Instant;
@@ -158,12 +159,12 @@ public class StepOperation<T> implements DurableOperation<T> {
     private void executeStepLogic(int attempt) {
         // Register step thread as active
         var stepThreadId = operationId + "-step";
-        executionManager.registerActiveThread(stepThreadId);
+        executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
 
         // Execute in managed executor
         executionManager.getManagedExecutor().execute(() -> {
-            // Set thread name to match the step thread ID for consistent logging and identification
-            Thread.currentThread().setName(stepThreadId);
+            // Enter step context for this thread
+            executionManager.enterContext(stepThreadId, ThreadType.STEP);
             try {
                 // Check if we need to send START
                 var existing = executionManager.getOperation(operationId);
@@ -201,6 +202,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             } catch (Throwable e) {
                 handleStepError(e, attempt);
             } finally {
+                executionManager.exitContext();
                 executionManager.deregisterActiveThread(stepThreadId);
             }
         });
@@ -282,6 +284,17 @@ public class StepOperation<T> implements DurableOperation<T> {
 
     @Override
     public T get() {
+        // Get current context from ThreadLocal (not thread name)
+        var currentContextId = executionManager.getCurrentContextId();
+        var currentThreadType = executionManager.getCurrentThreadType();
+
+        // Nested steps are not supported - calling a step from within another step breaks replay consistency
+        if (currentThreadType == ThreadType.STEP) {
+            throw new IllegalStateException(
+                    "Nested step calling is not supported. Cannot call get() on step '" + name
+                            + "' from within another step's execution.");
+        }
+
         // If we are in a replay where the operation is already complete (SUCCEEDED /
         // FAILED), the Phaser will be
         // advanced in .execute() already and we don't block but return the result
@@ -290,17 +303,17 @@ public class StepOperation<T> implements DurableOperation<T> {
             // Operation not done yet
             phaser.register();
 
-            // Deregister current thread - allows suspension
-            var currentThreadName = Thread.currentThread().getName();
-            logger.debug("StepOperation.get() attempting to deregister thread: {}", currentThreadName);
-            executionManager.deregisterActiveThread(currentThreadName);
+            // Deregister current context - allows suspension
+            logger.debug("StepOperation.get() attempting to deregister context: {}", currentContextId);
+            executionManager.deregisterActiveThread(currentContextId);
 
             // Block until operation completes
             logger.debug("Waiting for operation to finish {} (Phaser: {})", operationId, phaser);
             phaser.arriveAndAwaitAdvance(); // Wait for phase 0
 
-            // Reactivate current thread
-            executionManager.registerActiveThread(currentThreadName);
+            // Reactivate current context
+            executionManager.registerActiveThread(currentContextId, currentThreadType);
+            executionManager.enterContext(currentContextId, currentThreadType);
 
             // Complete phase 1
             phaser.arriveAndDeregister();
