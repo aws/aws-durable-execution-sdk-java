@@ -22,13 +22,13 @@ public class LoggingExample extends DurableHandler<GreetingRequest, String> {
 
         // Step 1: Create greeting - logs inside step include operation context
         var greeting = context.step("create-greeting", String.class, () -> {
-            logger.debug("Creating greeting message");
+            logger.info("Creating greeting message");
             return "Hello, " + input.getName();
         });
 
         // Step 2: Transform
         var result = context.step("transform", String.class, () -> {
-            logger.debug("Transforming greeting to uppercase");
+            logger.info("Transforming greeting to uppercase");
             return greeting.toUpperCase() + "!";
         });
 
