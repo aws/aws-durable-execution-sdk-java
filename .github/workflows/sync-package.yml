@@ -50,9 +50,6 @@ jobs:
         uses: PERES-Richard/maven-get-version-action@v3.0.0
         with:
           path: ./${{ inputs.package_name }}
-      - run: mvn -B package --file pom.xml
-        with:
-          path: ./${{ inputs.package_name }}
       # Upload a file to AWS s3
       - name: Copy tgz build file to s3
         run: |
