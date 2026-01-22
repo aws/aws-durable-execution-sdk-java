@@ -47,7 +47,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: get-pom-version
         id: pom-version
-        uses: PERES-Richard/maven-get-version-action@v3.0.0
+        uses: jenspapenhagen/maven-get-version-action@v1.0.9
         with:
           path: ./${{ inputs.package_name }}
       # Upload a file to AWS s3
