@@ -55,12 +55,12 @@ jobs:
       - name: Copy tgz build file to s3
         run: |
           aws s3 cp ./${{ inputs.package_name }}/target/${{ inputs.package_name }}-${{ steps.pom-version.outputs.version }}.jar \
-            s3://${{ secrets.S3_BUCKET_NAME }}/${{ inputs.GITFARM_PACKAGE_NAME }}.jar
+            s3://${{ secrets.S3_BUCKET_NAME }}/${{ inputs.package_name }}.jar
       - name: commit to Gitfarm
         run: |
           aws lambda invoke \
             --function-name ${{ secrets.SYNC_LAMBDA_ARN }} \
-            --payload '{"gitFarmRepo":"${{ secrets.GITFARM_LAN_SDK_REPO }}","gitFarmBranch":"${{ secrets.GITFARM_LAN_SDK_BRANCH }}","gitFarmFilepath":"${{ inputs.package_name }}.tgz","s3Bucket":"${{ secrets.S3_BUCKET_NAME }}","s3FilePath":"${{ inputs.package_name }}.tgz", "gitHubRepo": "aws-durable-execution-sdk-js", "gitHubCommit":"${{ github.sha }}"}' \
+            --payload '{"gitFarmRepo":"${{ secrets.GITFARM_LAN_SDK_REPO }}","gitFarmBranch":"${{ secrets.GITFARM_LAN_SDK_BRANCH }}","gitFarmFilepath":"${{ secrets.GITFARM_LAN_SDK_REPO }}-1.0.jar","s3Bucket":"${{ secrets.S3_BUCKET_NAME }}","s3FilePath":"${{ inputs.package_name }}.jar", "gitHubRepo": "aws-durable-execution-sdk-java", "gitHubCommit":"${{ github.sha }}"}' \
             --cli-binary-format raw-in-base64-out \
             output.txt
       - name: Check for specific text in a file
