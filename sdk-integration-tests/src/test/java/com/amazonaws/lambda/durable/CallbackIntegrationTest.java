@@ -5,17 +5,45 @@ package com.amazonaws.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.amazonaws.lambda.durable.exception.CallbackFailedException;
-import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
+import com.amazonaws.lambda.durable.serde.JacksonSerDes;
+import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 class CallbackIntegrationTest {
+
+    /** Custom SerDes that tracks deserialization calls for testing. */
+    static class TrackingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final AtomicInteger deserializeCount = new AtomicInteger(0);
+
+        @Override
+        public String serialize(Object value) {
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, Class<T> type) {
+            deserializeCount.incrementAndGet();
+            return delegate.deserialize(data, type);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializeCount.incrementAndGet();
+            return delegate.deserialize(data, typeToken);
+        }
+
+        public int getDeserializeCount() {
+            return deserializeCount.get();
+        }
+    }
 
     @Test
     void callbackSuccessFlow() {
@@ -145,5 +173,57 @@ class CallbackIntegrationTest {
         result = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("prepared -> approved -> done", result.getResult(String.class));
+    }
+
+    @Test
+    void callbackWithCustomSerDes() {
+        var customSerDes = new TrackingSerDes();
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            var cb = ctx.createCallback(
+                    "approval",
+                    String.class,
+                    CallbackConfig.builder().serDes(customSerDes).build());
+
+            return cb.future().get();
+        });
+
+        // First run - creates callback, suspends
+        var result = runner.run("test");
+
+        // Complete the callback
+        var callbackId = runner.getCallbackId("approval");
+        runner.completeCallback(callbackId, "\"approved\"");
+
+        // Second run - callback complete, returns result
+        result = runner.run("test");
+
+        assertEquals("approved", result.getResult(String.class));
+        assertTrue(customSerDes.getDeserializeCount() > 0, "Custom SerDes should have been used");
+    }
+
+    @Test
+    void callbackWithNullSerDesUsesDefault() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            // Explicitly pass null SerDes - should use default
+            var cb = ctx.createCallback(
+                    "approval",
+                    String.class,
+                    CallbackConfig.builder().serDes(null).build());
+
+            return cb.future().get();
+        });
+
+        // First run - creates callback, suspends
+        var result = runner.run("test");
+
+        // Complete the callback
+        var callbackId = runner.getCallbackId("approval");
+        runner.completeCallback(callbackId, "\"result\"");
+
+        // Second run - callback complete, returns result
+        result = runner.run("test");
+
+        assertEquals("result", result.getResult(String.class));
     }
 }
