@@ -15,8 +15,6 @@ on:
         required: true
         type: string
     secrets:
-      GITFARM_PACKAGE_NAME:
-        required: true
       S3_BUCKET_NAME:
         required: true
       SYNC_LAMBDA_ARN:
