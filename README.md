@@ -21,6 +21,7 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 - `ctx.stepAsync()` – Start concurrent operations  
 - `ctx.wait()` – Suspend execution without compute charges
 - `ctx.createCallback()` – Wait for external events (approvals, webhooks)
+- `ctx.createCallback()` – Wait for external events (approvals, webhooks)
 
 ## Quick Start
 
