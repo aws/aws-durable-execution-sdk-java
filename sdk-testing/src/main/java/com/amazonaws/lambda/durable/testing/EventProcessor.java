@@ -21,6 +21,7 @@ class EventProcessor {
             case STEP -> buildStepEvent(builder, update, operation);
             case WAIT -> buildWaitEvent(builder, update, operation);
             case EXECUTION -> buildExecutionEvent(builder, update);
+            case CALLBACK -> buildCallbackEvent(builder, update);
             default -> throw new IllegalArgumentException("Unsupported operation type: " + update.type());
         };
     }
@@ -106,6 +107,15 @@ class EventProcessor {
                                 .build())
                         .build();
             default -> throw new IllegalArgumentException("Unsupported execution action: " + update.action());
+        };
+    }
+
+    private Event buildCallbackEvent(Event.Builder builder, OperationUpdate update) {
+        return switch (update.action()) {
+            case START -> builder.eventType("CallbackStarted").build();
+            case SUCCEED -> builder.eventType("CallbackSucceeded").build();
+            case FAIL -> builder.eventType("CallbackFailed").build();
+            default -> throw new IllegalArgumentException("Unsupported callback action: " + update.action());
         };
     }
 

@@ -14,6 +14,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -200,6 +201,26 @@ public class LocalDurableTestRunner<I, O> {
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
         return op != null ? new TestOperation(op, serDes) : null;
+    }
+
+    /** Get callback ID for a named callback operation. */
+    public String getCallbackId(String operationName) {
+        return storage.getCallbackId(operationName);
+    }
+
+    /** Complete a callback with success result. */
+    public void completeCallback(String callbackId, String result) {
+        storage.completeCallback(callbackId, result);
+    }
+
+    /** Fail a callback with error. */
+    public void failCallback(String callbackId, ErrorObject error) {
+        storage.failCallback(callbackId, error);
+    }
+
+    /** Timeout a callback. */
+    public void timeoutCallback(String callbackId) {
+        storage.timeoutCallback(callbackId);
     }
 
     // Manual time advancement for skipTime=false scenarios

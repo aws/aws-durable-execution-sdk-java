@@ -7,6 +7,7 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.logging.LoggerConfig;
+import com.amazonaws.lambda.durable.operation.CallbackOperation;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
@@ -162,6 +163,60 @@ public class DurableContext {
 
     public DurableLogger getLogger() {
         return logger;
+    }
+
+    // ========== createCallback methods ==========
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config) {
+        var operationId = nextOperationId();
+
+        var existing = executionManager.getOperation(operationId);
+        if (existing != null) {
+            validateReplay(operationId, OperationType.CALLBACK, name, existing);
+        }
+
+        var operation = new CallbackOperation<>(operationId, name, resultType, config, executionManager, serDes);
+        operation.execute();
+
+        return new DurableCallbackFuture<>(operation.getCallbackId(), new DurableFuture<>(operation));
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType) {
+        return createCallback(name, resultType, null);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(Class<T> resultType, CallbackConfig config) {
+        return createCallback(null, resultType, config);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(Class<T> resultType) {
+        return createCallback(null, resultType, null);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken, CallbackConfig config) {
+        var operationId = nextOperationId();
+
+        var existing = executionManager.getOperation(operationId);
+        if (existing != null) {
+            validateReplay(operationId, OperationType.CALLBACK, name, existing);
+        }
+
+        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, serDes);
+        operation.execute();
+
+        return new DurableCallbackFuture<>(operation.getCallbackId(), new DurableFuture<>(operation));
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken) {
+        return createCallback(name, typeToken, null);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(TypeToken<T> typeToken, CallbackConfig config) {
+        return createCallback(null, typeToken, config);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(TypeToken<T> typeToken) {
+        return createCallback(null, typeToken, null);
     }
 
     private String nextOperationId() {
