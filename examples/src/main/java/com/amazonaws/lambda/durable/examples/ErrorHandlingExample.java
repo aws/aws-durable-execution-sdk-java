@@ -25,12 +25,12 @@ import org.slf4j.LoggerFactory;
  * <p>Note: {@code NonDeterministicExecutionException} is thrown by the SDK when code changes between executions (e.g.,
  * step order/names changed). It should be fixed in code, not caught.
  */
-public class ErrorHandlingExample extends DurableHandler<String, String> {
+public class ErrorHandlingExample extends DurableHandler<Object, String> {
 
     private static final Logger logger = LoggerFactory.getLogger(ErrorHandlingExample.class);
 
     @Override
-    public String handleRequest(String input, DurableContext context) {
+    public String handleRequest(Object input, DurableContext context) {
         // Example 1: Catching StepFailedException with fallback logic
         String primaryResult;
         try {
@@ -44,7 +44,13 @@ public class ErrorHandlingExample extends DurableHandler<String, String> {
                             .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
         } catch (StepFailedException e) {
-            logger.warn("Primary service failed, using fallback: {}", e.getMessage());
+            // This block should not run because we attempt to re-construct the original exception type from the
+            // checkpoint
+            logger.warn("StepFailedException: Primary service failed, using fallback: {}", e.getMessage());
+            primaryResult =
+                    context.step("call-fallback-service", String.class, () -> "fallback-result-step-failed-exception");
+        } catch (RuntimeException e) {
+            logger.warn("RuntimeException: Primary service failed, using fallback: {}", e.getMessage());
             primaryResult = context.step("call-fallback-service", String.class, () -> "fallback-result");
         }
 

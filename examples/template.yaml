@@ -208,6 +208,28 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  ErrorHandlingExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: error-handling-example
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.ErrorHandlingExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
@@ -280,3 +302,11 @@ Outputs:
   LoggingExampleFunctionName:
     Description: Logging Example Function Name
     Value: !Ref LoggingExampleFunction
+
+  ErrorHandlingExampleFunction:
+    Description: Error Handling Example Function ARN
+    Value: !GetAtt ErrorHandlingExampleFunction.Arn
+
+  ErrorHandlingExampleFunctionName:
+    Description: Error Handling Example Function Name
+    Value: !Ref ErrorHandlingExampleFunction

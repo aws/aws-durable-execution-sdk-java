@@ -114,7 +114,7 @@ class DurableExecutionTest {
 
         assertEquals(ExecutionStatus.FAILED, output.status());
         assertNotNull(output.error());
-        assertEquals("RuntimeException", output.error().errorType());
+        assertEquals("java.lang.RuntimeException", output.error().errorType());
         assertEquals("Test error", output.error().errorMessage());
     }
 
