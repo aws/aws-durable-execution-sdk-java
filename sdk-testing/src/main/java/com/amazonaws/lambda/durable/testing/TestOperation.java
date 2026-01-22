@@ -5,6 +5,7 @@ package com.amazonaws.lambda.durable.testing;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.util.List;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -51,6 +52,10 @@ public class TestOperation {
 
     public WaitDetails getWaitDetails() {
         return operation.waitDetails();
+    }
+
+    public CallbackDetails getCallbackDetails() {
+        return operation.callbackDetails();
     }
 
     /** Type-safe result extraction from step details. */
