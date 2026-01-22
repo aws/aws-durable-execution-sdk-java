@@ -34,7 +34,7 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
           cache: maven
       - name: Build with Maven
@@ -51,6 +51,8 @@ jobs:
         with:
           path: ./${{ inputs.package_name }}
       - run: mvn -B package --file pom.xml
+        with:
+          path: ./${{ inputs.package_name }}
       # Upload a file to AWS s3
       - name: Copy tgz build file to s3
         run: |
