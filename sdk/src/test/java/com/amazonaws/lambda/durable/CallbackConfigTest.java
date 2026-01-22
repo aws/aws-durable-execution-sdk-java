@@ -53,21 +53,4 @@ class CallbackConfigTest {
         assertEquals(heartbeatTimeout, config.heartbeatTimeout());
         assertEquals(customSerDes, config.serDes());
     }
-
-    @Test
-    void testBuilderChaining() {
-        var timeout = Duration.ofMinutes(10);
-        var heartbeatTimeout = Duration.ofMinutes(1);
-        SerDes customSerDes = new JacksonSerDes();
-
-        var config = CallbackConfig.builder()
-                .timeout(timeout)
-                .heartbeatTimeout(heartbeatTimeout)
-                .serDes(customSerDes)
-                .build();
-
-        assertEquals(timeout, config.timeout());
-        assertEquals(heartbeatTimeout, config.heartbeatTimeout());
-        assertEquals(customSerDes, config.serDes());
-    }
 }
