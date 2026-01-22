@@ -19,7 +19,6 @@ jobs:
     with:
       package_name: aws-durable-execution-sdk-java
     secrets:
-      GITFARM_PACKAGE_NAME: ${{ secrets.GITFARM_PACKAGE_NAME }}
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
       SYNC_LAMBDA_ARN: ${{ secrets.SYNC_LAMBDA_ARN }}
       GITFARM_LAN_SDK_REPO: ${{ secrets.GITFARM_LAN_SDK_REPO }}
