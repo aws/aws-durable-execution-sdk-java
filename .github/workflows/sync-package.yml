@@ -1,0 +1,74 @@
+name: Sync package
+
+env:
+  AWS_REGION: "us-west-2"
+
+# permission can be added at job level or workflow level
+permissions:
+  id-token: write # This is required for requesting the JWT
+  contents: read # This is required for actions/checkout
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        required: true
+        type: string
+    secrets:
+      GITFARM_PACKAGE_NAME:
+        required: true
+      S3_BUCKET_NAME:
+        required: true
+      SYNC_LAMBDA_ARN:
+        required: true
+      GITFARM_LAN_SDK_REPO:
+        required: true
+      GITFARM_LAN_SDK_BRANCH:
+        required: true
+      ACTIONS_SYNC_ROLE_NAME:
+        required: true
+jobs:
+  upload-to-S3-and-sync-to-Gitfarm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git clone the repository
+        uses: actions/checkout@v5
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build with Maven
+        run: mvn -B package --file pom.xml
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        with:
+          role-to-assume: "${{ secrets.ACTIONS_SYNC_ROLE_NAME }}"
+          role-session-name: samplerolesession
+          aws-region: ${{ env.AWS_REGION }}
+      - name: get-pom-version
+        id: pom-version
+        uses: PERES-Richard/maven-get-version-action@v3.0.0
+        with:
+          path: ./${{ inputs.package_name }}
+      - run: mvn -B package --file pom.xml
+      # Upload a file to AWS s3
+      - name: Copy tgz build file to s3
+        run: |
+          aws s3 cp ./${{ inputs.package_name }}/target/${{ inputs.package_name }}-${{ steps.pom-version.outputs.version }}.jar \
+            s3://${{ secrets.S3_BUCKET_NAME }}/${{ inputs.GITFARM_PACKAGE_NAME }}.jar
+      - name: commit to Gitfarm
+        run: |
+          aws lambda invoke \
+            --function-name ${{ secrets.SYNC_LAMBDA_ARN }} \
+            --payload '{"gitFarmRepo":"${{ secrets.GITFARM_LAN_SDK_REPO }}","gitFarmBranch":"${{ secrets.GITFARM_LAN_SDK_BRANCH }}","gitFarmFilepath":"${{ inputs.package_name }}.tgz","s3Bucket":"${{ secrets.S3_BUCKET_NAME }}","s3FilePath":"${{ inputs.package_name }}.tgz", "gitHubRepo": "aws-durable-execution-sdk-js", "gitHubCommit":"${{ github.sha }}"}' \
+            --cli-binary-format raw-in-base64-out \
+            output.txt
+      - name: Check for specific text in a file
+        id: check_text
+        run: |
+          if grep -q "Error" output.txt; then
+            cat output.txt
+            exit 1
+          fi
