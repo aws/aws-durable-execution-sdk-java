@@ -133,12 +133,13 @@ The external system completes the callback by calling the Lambda Durable Functio
 
 #### Callback Configuration
 
-Configure timeouts to handle cases where callbacks are never completed:
+Configure timeouts and serialization to handle cases where callbacks are never completed or need custom deserialization:
 
 ```java
 var config = CallbackConfig.builder()
     .timeout(Duration.ofHours(24))        // Max time to wait for callback
     .heartbeatTimeout(Duration.ofHours(1)) // Max time between heartbeats
+    .serDes(new CustomSerDes())           // Custom serialization/deserialization
     .build();
 
 var callback = ctx.createCallback("approval", String.class, config);
@@ -148,6 +149,7 @@ var callback = ctx.createCallback("approval", String.class, config);
 |--------|-------------|
 | `timeout()` | Maximum duration to wait for the callback to complete |
 | `heartbeatTimeout()` | Maximum duration between heartbeat signals from the external system |
+| `serDes()` | Custom SerDes for deserializing callback results (e.g., encryption, custom formats) |
 
 #### Callback Exceptions
 
