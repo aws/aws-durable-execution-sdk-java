@@ -37,6 +37,14 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: maven
+      - name: get-pom-version
+        id: pom-version
+        uses: PERES-Richard/maven-get-version-action@v3.0.0
+        with:
+          path: "${{ inputs.package_name }}"
+          args: ""
+      - name: Print Maven POM project version
+        run: echo "version = ${{ steps.pom-version.outputs.version }}"
       - name: Build with Maven
         run: mvn -B package --file pom.xml
       - name: configure aws credentials
@@ -45,12 +53,6 @@ jobs:
           role-to-assume: "${{ secrets.ACTIONS_SYNC_ROLE_NAME }}"
           role-session-name: samplerolesession
           aws-region: ${{ env.AWS_REGION }}
-      - name: get-pom-version
-        id: pom-version
-        uses: PERES-Richard/maven-get-version-action@v3.0.0
-        with:
-          path: "${{ inputs.package_name }}"
-          args: ""
       # Upload a file to AWS s3
       - name: Copy tgz build file to s3
         run: |
