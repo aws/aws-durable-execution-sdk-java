@@ -18,6 +18,7 @@ jobs:
   sync-aws-durable-execution-sdk-java-testing:
     uses: ./.github/workflows/sync-package.yml
     with:
+      module_name: sdk-testing
       package_name: aws-durable-execution-sdk-java-testing
     secrets:
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}

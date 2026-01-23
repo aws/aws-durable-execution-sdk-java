@@ -13,8 +13,8 @@
     <description>Parent POM for AWS Lambda Durable Execution SDK and Examples</description>
 
     <modules>
-        <module>aws-durable-execution-sdk-java</module>
-        <module>aws-durable-execution-sdk-java-testing</module>
+        <module>sdk</module>
+        <module>sdk-testing</module>
         <module>sdk-integration-tests</module>
         <module>examples</module>
     </modules>

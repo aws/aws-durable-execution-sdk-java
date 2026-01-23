@@ -11,6 +11,9 @@ permissions:
 on:
   workflow_call:
     inputs:
+      module_name:
+        required: true
+        type: string
       package_name:
         required: true
         type: string
@@ -40,7 +43,7 @@ jobs:
       - name: Get version
         id: get_version
         run: |
-          VERSION=$( mvn -f ${{ inputs.package_name }}/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout )
+          VERSION=$( mvn -f ${{ inputs.module_name }}/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Show extracted Maven project version
         run: echo ${{ steps.get_version.outputs.version }}
@@ -55,7 +58,7 @@ jobs:
       # Upload a file to AWS s3
       - name: Copy tgz build file to s3
         run: |
-          aws s3 cp ./${{ inputs.package_name }}/target/${{ inputs.package_name }}-${{ steps.get_version.outputs.version }}.jar \
+          aws s3 cp ./${{ inputs.module_name }}/target/${{ inputs.package_name }}-${{ steps.get_version.outputs.version }}.jar \
             s3://${{ secrets.S3_BUCKET_NAME }}/${{ inputs.package_name }}.jar
       - name: commit to Gitfarm
         run: |
