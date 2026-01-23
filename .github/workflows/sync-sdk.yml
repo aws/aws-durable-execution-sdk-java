@@ -1,7 +1,7 @@
 name: Sync SDK
 on:
   push:
-    branches: ["main", "gitfarm-sync"]
+    branches: ["main"]
     paths:
       - "aws-durable-execution-sdk-java/**"
 
