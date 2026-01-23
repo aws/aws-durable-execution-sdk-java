@@ -120,9 +120,9 @@ Callbacks suspend execution until an external system sends a result. Use this fo
 DurableCallbackFuture<String> callback = ctx.createCallback("approval", String.class);
 
 // Send the callback ID to an external system within a step
-ctx.step("send-notification", Void.class, () -> {
+ctx.step("send-notification", String.class, () -> {
     notificationService.sendApprovalRequest(callback.callbackId(), requestDetails);
-    return null;
+    return "notification-sent";
 });
 
 // Suspend until the external system calls back with a result
