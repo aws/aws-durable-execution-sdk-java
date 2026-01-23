@@ -3,8 +3,8 @@ name: Sync Testing SDK
 on:
   push:
     branches: ["main", "gitfarm-sync"]
-    paths:
-      - "aws-durable-execution-sdk-java-testing/**"
+#    paths:
+#      - "aws-durable-execution-sdk-java-testing/**"
 
 env:
   AWS_REGION: "us-west-2"
