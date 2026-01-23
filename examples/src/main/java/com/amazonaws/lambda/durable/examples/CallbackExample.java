@@ -36,10 +36,9 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
         });
 
         // Step 2: Create callback for external approval
-        // Configure with 24-hour timeout and 1-hour heartbeat timeout
+        // Configure with 5min timeout
         var config = CallbackConfig.builder()
-                .timeout(Duration.ofHours(24))
-                .heartbeatTimeout(Duration.ofHours(1))
+                .timeout(Duration.ofMinutes(5))
                 .build();
 
         var callback = context.createCallback("approval", String.class, config);

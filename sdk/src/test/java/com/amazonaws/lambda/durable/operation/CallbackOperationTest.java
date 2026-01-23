@@ -10,6 +10,7 @@ import com.amazonaws.lambda.durable.TestUtils;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
 import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
+import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
@@ -47,6 +48,24 @@ class CallbackOperationTest {
 
         public int getDeserializeCount() {
             return deserializeCount.get();
+        }
+    }
+
+    /** Custom SerDes that always throws SerDesException. */
+    static class FailingSerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            throw new SerDesException("Serialization failed");
+        }
+
+        @Override
+        public <T> T deserialize(String data, Class<T> type) {
+            throw new SerDesException("Invalid base64 encoding");
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            throw new SerDesException("Invalid base64 encoding");
         }
     }
 
@@ -258,5 +277,28 @@ class CallbackOperationTest {
         assertEquals("approved", result);
         // Custom SerDes (passed as default) should have been used
         assertEquals(1, customSerDes.getDeserializeCount(), "Default SerDes should have been used");
+    }
+
+    @Test
+    void getThrowsSerDesExceptionWithHelpfulMessageWhenDeserializationFails() {
+        var failingSerDes = new FailingSerDes();
+
+        var existingCallback = Operation.builder()
+                .id("1")
+                .name("approval")
+                .type(OperationType.CALLBACK)
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("test-callback-123")
+                        .result("invalid-data")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+
+        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, failingSerDes);
+        operation.execute();
+
+        var exception = assertThrows(SerDesException.class, operation::get);
+        assertEquals("Invalid base64 encoding", exception.getMessage());
     }
 }
