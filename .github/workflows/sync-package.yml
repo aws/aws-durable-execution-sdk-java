@@ -37,14 +37,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: maven
-      - name: get-pom-version
-        id: pom-version
-        uses: PERES-Richard/maven-get-version-action@v3.0.0
-        with:
-          path: "${{ inputs.package_name }}"
-          args: ""
-      - name: Print Maven POM project version
-        run: echo "version = ${{ steps.pom-version.outputs.version }}"
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=$( mvn f ${{ inputs.package_name }}/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Show extracted Maven project version
+        run: echo ${{ steps.get_version.outputs.version }}
       - name: Build with Maven
         run: mvn -B package --file pom.xml
       - name: configure aws credentials
