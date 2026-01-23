@@ -55,7 +55,7 @@ jobs:
       # Upload a file to AWS s3
       - name: Copy tgz build file to s3
         run: |
-          aws s3 cp ./${{ inputs.package_name }}/target/${{ inputs.package_name }}-${{ steps.pom-version.outputs.version }}.jar \
+          aws s3 cp ./${{ inputs.package_name }}/target/${{ inputs.package_name }}-${{ steps.get_version.outputs.version }}.jar \
             s3://${{ secrets.S3_BUCKET_NAME }}/${{ inputs.package_name }}.jar
       - name: commit to Gitfarm
         run: |
