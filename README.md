@@ -117,13 +117,16 @@ Callbacks suspend execution until an external system sends a result. Use this fo
 
 ```java
 // Create a callback and get the ID to share with external systems
-var callback = ctx.createCallback("approval", String.class);
+DurableCallbackFuture<String> callback = ctx.createCallback("approval", String.class);
 
-// Send the callback ID to an external system (e.g., approval service, webhook)
-notificationService.sendApprovalRequest(callback.callbackId(), requestDetails);
+// Send the callback ID to an external system within a step
+ctx.step("send-notification", Void.class, () -> {
+    notificationService.sendApprovalRequest(callback.callbackId(), requestDetails);
+    return null;
+});
 
 // Suspend until the external system calls back with a result
-var approvalResult = callback.future().get();
+String approvalResult = callback.future().get();
 ```
 
 The external system completes the callback by calling the Lambda Durable Functions API with the callback ID and result payload.
