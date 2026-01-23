@@ -1,9 +1,9 @@
 name: Sync SDK
 on:
   push:
-    branches: ["main", "gitfarm-sync"]
-#    paths:
-#      - "aws-durable-execution-sdk-java/**"
+    branches: ["main"]
+    paths:
+      - "aws-durable-execution-sdk-java/**"
 
 env:
   AWS_REGION: "us-west-2"
