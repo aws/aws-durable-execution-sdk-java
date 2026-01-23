@@ -36,9 +36,13 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
         });
 
         // Step 2: Create callback for external approval
-        // Configure with 5min timeout
+        // Use timeout from input if provided, otherwise default to 5 minutes
+        var timeout = input.timeoutSeconds() != null 
+            ? Duration.ofSeconds(input.timeoutSeconds())
+            : Duration.ofMinutes(5);
+        
         var config = CallbackConfig.builder()
-                .timeout(Duration.ofMinutes(5))
+                .timeout(timeout)
                 .build();
 
         var callback = context.createCallback("approval", String.class, config);
@@ -46,8 +50,9 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
         // Step 2.5: Log AWS CLI command to complete the callback
         context.step("log-callback-command", Void.class, () -> {
             var callbackId = callback.callbackId();
+            // The result must be base64-encoded JSON
             var command = String.format(
-                "aws lambda send-durable-execution-callback-success --callback-id %s --payload '{\"result\":\"approved\"}'",
+                "aws lambda send-durable-execution-callback-success --callback-id %s --result $(echo -n '\"approved\"' | base64)",
                 callbackId
             );
             context.getLogger().info("To complete this callback, run: {}", command);
@@ -67,4 +72,9 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
 }
 
 /** Input for the approval workflow. */
-record ApprovalRequest(String description, double amount) {}
+record ApprovalRequest(String description, double amount, Integer timeoutSeconds) {
+    // Convenience constructor for default timeout
+    public ApprovalRequest(String description, double amount) {
+        this(description, amount, null);
+    }
+}
