@@ -47,9 +47,10 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: get-pom-version
         id: pom-version
-        uses: jenspapenhagen/maven-get-version-action@v1.0.9
+        uses: PERES-Richard/maven-get-version-action@v3.0.0
         with:
-          path: ./${{ inputs.package_name }}
+          path: ${{ inputs.package_name }}
+          args: ""
       # Upload a file to AWS s3
       - name: Copy tgz build file to s3
         run: |
