@@ -83,6 +83,21 @@ public class HistoryEventProcessor {
                 operations.put(
                         operationId, createWaitOperation(operationId, event.name(), OperationStatus.CANCELLED, event));
             }
+
+            // Process callback events
+            if ("CallbackStarted".equals(eventType) && operationId != null) {
+                operations.putIfAbsent(
+                        operationId, createCallbackOperation(operationId, event.name(), OperationStatus.STARTED, event));
+            } else if ("CallbackSucceeded".equals(eventType) && operationId != null) {
+                operations.put(
+                        operationId, createCallbackOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));
+            } else if ("CallbackFailed".equals(eventType) && operationId != null) {
+                operations.put(
+                        operationId, createCallbackOperation(operationId, event.name(), OperationStatus.FAILED, event));
+            } else if ("CallbackTimedOut".equals(eventType) && operationId != null) {
+                operations.put(
+                        operationId, createCallbackOperation(operationId, event.name(), OperationStatus.TIMED_OUT, event));
+            }
         }
 
         // Build TestOperations with events
@@ -123,6 +138,41 @@ public class HistoryEventProcessor {
                 .status(status)
                 .type(OperationType.WAIT)
                 .waitDetails(builder.build())
+                .build();
+    }
+
+    private Operation createCallbackOperation(String id, String name, OperationStatus status, Event event) {
+        var builder = software.amazon.awssdk.services.lambda.model.CallbackDetails.builder();
+        
+        // Extract callback ID and details from event
+        if (event.callbackStartedDetails() != null) {
+            var details = event.callbackStartedDetails();
+            if (details.callbackId() != null) {
+                builder.callbackId(details.callbackId());
+            }
+        } else if (event.callbackSucceededDetails() != null) {
+            var details = event.callbackSucceededDetails();
+            // CallbackSucceededDetails doesn't have callbackId, need to get it from started event
+            if (details.result() != null && details.result().payload() != null) {
+                builder.result(details.result().payload());
+            }
+        } else if (event.callbackFailedDetails() != null) {
+            var details = event.callbackFailedDetails();
+            // CallbackFailedDetails doesn't have callbackId, need to get it from started event
+            if (details.error() != null && details.error().payload() != null) {
+                builder.error(software.amazon.awssdk.services.lambda.model.ErrorObject.builder()
+                        .errorType(details.error().payload().errorType())
+                        .errorMessage(details.error().payload().errorMessage())
+                        .build());
+            }
+        }
+
+        return Operation.builder()
+                .id(id)
+                .name(name)
+                .status(status)
+                .type(OperationType.CALLBACK)
+                .callbackDetails(builder.build())
                 .build();
     }
 }

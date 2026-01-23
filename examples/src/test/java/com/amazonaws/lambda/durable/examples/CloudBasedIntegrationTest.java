@@ -237,4 +237,41 @@ public class CloudBasedIntegrationTest {
         assertTrue(finalResult.contains("fallback-result"));
         assertTrue(finalResult.contains("payment-"));
     }
+
+    @Test
+    void testCallbackExample() throws Exception {
+        var runner = CloudDurableTestRunner.create(
+                arn("callback-example"), ApprovalRequest.class, String.class);
+
+        // Start async execution
+        var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
+
+        // Wait for callback to appear
+        execution.pollUntil(exec -> exec.hasCallback("approval"));
+
+        // Get callback ID
+        var callbackId = execution.getCallbackId("approval");
+        assertNotNull(callbackId);
+
+        // Complete the callback using AWS SDK
+        var lambda = software.amazon.awssdk.services.lambda.LambdaClient.create();
+        lambda.sendDurableExecutionCallbackSuccess(req -> req
+                .callbackId(callbackId)
+                .result(software.amazon.awssdk.core.SdkBytes.fromUtf8String("\"approved\"")));
+
+        // Wait for execution to complete
+        var result = execution.pollUntilComplete();
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult(String.class);
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("Approval request for: Purchase order"));
+        assertTrue(finalResult.contains("5000"));
+        assertTrue(finalResult.contains("approved"));
+
+        // Verify all operations completed
+        assertNotNull(execution.getOperation("prepare"));
+        assertNotNull(execution.getOperation("log-callback-command"));
+        assertNotNull(execution.getOperation("process-approval"));
+    }
 }

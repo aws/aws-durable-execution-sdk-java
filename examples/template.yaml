@@ -230,6 +230,28 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  CallbackExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: callback-example
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.CallbackExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300  
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
@@ -310,3 +332,11 @@ Outputs:
   ErrorHandlingExampleFunctionName:
     Description: Error Handling Example Function Name
     Value: !Ref ErrorHandlingExampleFunction
+
+  CallbackExampleFunction:
+    Description: Callback Example Function ARN
+    Value: !GetAtt CallbackExampleFunction.Arn
+
+  CallbackExampleFunctionName:
+    Description: Callback Example Function Name
+    Value: !Ref CallbackExampleFunction

@@ -7,6 +7,7 @@ import com.amazonaws.lambda.durable.CallbackConfig;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
 import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
+import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
@@ -14,6 +15,10 @@ import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Phaser;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -30,6 +35,7 @@ public class CallbackOperation<T> implements DurableOperation<T> {
     private final ExecutionManager executionManager;
     private final SerDes serDes;
     private final Phaser phaser;
+    private static final Logger logger = LoggerFactory.getLogger(CallbackOperation.class);
 
     private String callbackId;
 
@@ -153,10 +159,16 @@ public class CallbackOperation<T> implements DurableOperation<T> {
         return switch (op.status()) {
             case SUCCEEDED -> {
                 var result = op.callbackDetails().result();
-                if (resultTypeToken != null) {
-                    yield serDes.deserialize(result, resultTypeToken);
-                } else {
-                    yield serDes.deserialize(result, resultType);
+                try {
+                    if (resultTypeToken != null) {
+                        yield serDes.deserialize(result, resultTypeToken);
+                    } else {
+                        yield serDes.deserialize(result, resultType);
+                    }
+                } catch (SerDesException e) {
+                    logger.warn("Failed to deserialize callback result for callback ID '{}'. " +
+                            "Ensure the callback completion payload is base64-encoded.", callbackId);
+                    throw e;
                 }
             }
             case FAILED -> throw new CallbackFailedException(op.callbackDetails().error());
