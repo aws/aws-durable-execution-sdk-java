@@ -3,7 +3,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "aws-durable-execution-sdk-java/**"
+      - "sdk/**"
 
 env:
   AWS_REGION: "us-west-2"
