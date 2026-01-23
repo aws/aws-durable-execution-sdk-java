@@ -40,7 +40,7 @@ jobs:
       - name: Get version
         id: get_version
         run: |
-          VERSION=$( mvn f ${{ inputs.package_name }}/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout )
+          VERSION=$( mvn -f ${{ inputs.package_name }}/pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Show extracted Maven project version
         run: echo ${{ steps.get_version.outputs.version }}
