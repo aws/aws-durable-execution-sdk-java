@@ -4,8 +4,6 @@ package com.amazonaws.lambda.durable;
 
 import static java.util.List.of;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
@@ -78,7 +76,7 @@ class DurableExecutionWrapperTest {
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertNotNull(output.result());
 
-        var result = serDes.deserialize(output.result(), TestOutput.class);
+        var result = serDes.deserialize(output.result(), TypeToken.get(TestOutput.class));
         assertEquals("Wrapped: test", result.result);
     }
 
@@ -108,7 +106,7 @@ class DurableExecutionWrapperTest {
         var output = handler.handleRequest(input, null);
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
-        var result = serDes.deserialize(output.result(), TestOutput.class);
+        var result = serDes.deserialize(output.result(), TypeToken.get(TestOutput.class));
         assertEquals("Method: method-ref", result.result);
     }
 

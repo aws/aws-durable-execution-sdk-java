@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import org.junit.jupiter.api.Test;
 
@@ -21,7 +22,7 @@ class JacksonSerDesTest {
         var original = new TestData("test", 42);
 
         var json = serDes.serialize(original);
-        var deserialized = serDes.deserialize(json, TestData.class);
+        var deserialized = serDes.deserialize(json, TypeToken.get(TestData.class));
 
         assertEquals(original, deserialized);
     }
@@ -31,7 +32,7 @@ class JacksonSerDesTest {
         var serDes = new JacksonSerDes();
 
         assertNull(serDes.serialize(null));
-        assertNull(serDes.deserialize(null, String.class));
+        assertNull(serDes.deserialize(null, TypeToken.get(String.class)));
     }
 
     @Test
@@ -40,7 +41,7 @@ class JacksonSerDesTest {
         var invalidJson = "{invalid json}";
 
         var exception = assertThrows(SerDesException.class, () -> {
-            serDes.deserialize(invalidJson, TestData.class);
+            serDes.deserialize(invalidJson, TypeToken.get(TestData.class));
         });
 
         assertTrue(exception.getMessage().contains("Deserialization failed"));
@@ -79,7 +80,7 @@ class JacksonSerDesTest {
 
         // Verify SerDesException is a RuntimeException (unchecked)
         assertThrows(RuntimeException.class, () -> {
-            serDes.deserialize(invalidJson, TestData.class);
+            serDes.deserialize(invalidJson, TypeToken.get(TestData.class));
         });
     }
 }

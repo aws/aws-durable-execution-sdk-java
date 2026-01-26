@@ -341,7 +341,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             if (resultTypeToken != null) {
                 return serDes.deserialize(result, resultTypeToken);
             } else {
-                return serDes.deserialize(result, resultType);
+                return serDes.deserialize(result, TypeToken.get(resultType));
             }
         } else {
             // It failed so there's some kind of throwable. If we're using a serDes with

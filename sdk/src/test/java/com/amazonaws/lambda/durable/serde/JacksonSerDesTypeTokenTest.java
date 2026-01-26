@@ -21,7 +21,7 @@ class JacksonSerDesTypeTokenTest {
     }
 
     @Test
-    void testDeserializeListOfStrings() {
+    void testDeserializeListGetStrings() {
         var json = "[\"apple\",\"banana\",\"cherry\"]";
         var token = new TypeToken<List<String>>() {};
 
@@ -35,7 +35,7 @@ class JacksonSerDesTypeTokenTest {
     }
 
     @Test
-    void testDeserializeMapOfStringToInteger() {
+    void testDeserializeMapGetStringToInteger() {
         var json = "{\"one\":1,\"two\":2,\"three\":3}";
         var token = new TypeToken<Map<String, Integer>>() {};
 
@@ -62,7 +62,7 @@ class JacksonSerDesTypeTokenTest {
     }
 
     @Test
-    void testDeserializeListOfMaps() {
+    void testDeserializeListGetMaps() {
         var json = "[{\"name\":\"Alice\",\"age\":30},{\"name\":\"Bob\",\"age\":25}]";
         var token = new TypeToken<List<Map<String, Object>>>() {};
 
@@ -175,7 +175,7 @@ class JacksonSerDesTypeTokenTest {
     }
 
     @Test
-    void testDeserializeListOfCustomObjects() {
+    void testDeserializeListGetCustomObjects() {
         var json = "[{\"name\":\"test1\",\"value\":10},{\"name\":\"test2\",\"value\":20}]";
         var token = new TypeToken<List<TestObject>>() {};
 

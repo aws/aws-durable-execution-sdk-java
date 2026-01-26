@@ -44,6 +44,14 @@ public abstract class TypeToken<T> {
         }
     }
 
+    private TypeToken(Type type) {
+        this.type = type;
+    }
+
+    public static <U> TypeToken<U> get(Class<U> clazz) {
+        return new TypeToken<>(clazz) {};
+    }
+
     /**
      * Returns the captured type.
      *
