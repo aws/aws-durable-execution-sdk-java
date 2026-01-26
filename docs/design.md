@@ -34,14 +34,28 @@ aws-durable-execution-sdk-java/
 T step(String name, Class<T> type, Supplier<T> func)
 T step(String name, Class<T> type, Supplier<T> func, StepConfig config)
 T step(String name, TypeToken<T> type, Supplier<T> func)
+T step(String name, TypeToken<T> type, Supplier<T> func, StepConfig config)
 
 // Asynchronous step
 DurableFuture<T> stepAsync(String name, Class<T> type, Supplier<T> func)
 DurableFuture<T> stepAsync(String name, Class<T> type, Supplier<T> func, StepConfig config)
+DurableFuture<T> stepAsync(String name, TypeToken<T> type, Supplier<T> func)
+DurableFuture<T> stepAsync(String name, TypeToken<T> type, Supplier<T> func, StepConfig config)
 
 // Wait
 void wait(Duration duration)
 void wait(String name, Duration duration)
+    
+// Invoke
+T invoke(String name, String functionName, U payload, Class<T> resultType)
+T invoke(String name, String functionName, U payload, TypeToken<T> resultType)
+T invoke(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config)
+T invoke(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config)
+
+DurableFuture<T> invokeAsync(String name, String functionName, U payload, Class<T> resultType)
+DurableFuture<T> invokeAsync(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config)
+DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType)
+DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config)
 
 // Lambda context access
 Context getLambdaContext()
