@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.testing;
 
+import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -58,7 +59,7 @@ public class TestOperation {
         if (details == null || details.result() == null) {
             return null;
         }
-        return serDes.deserialize(details.result(), type);
+        return serDes.deserialize(details.result(), TypeToken.get(type));
     }
 
     public ErrorObject getError() {
