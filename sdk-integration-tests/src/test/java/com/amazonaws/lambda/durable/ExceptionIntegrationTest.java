@@ -85,6 +85,14 @@ class ExceptionIntegrationTest {
         assertNotNull(error);
         assertEquals("java.lang.IllegalArgumentException", error.errorType());
         assertEquals("Invalid parameter", error.errorMessage());
+
+        // Verify stackTrace is preserved
+        assertNotNull(error.stackTrace());
+        assertTrue(error.stackTrace().size() > 0, "Stack trace should not be empty");
+
+        // Verify errorData contains serialized exception
+        assertNotNull(error.errorData());
+        assertTrue(error.errorData().contains("Invalid parameter"), "errorData should contain the exception message");
     }
 
     @Test
