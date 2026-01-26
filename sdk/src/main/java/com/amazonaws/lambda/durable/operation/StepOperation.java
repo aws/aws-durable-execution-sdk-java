@@ -33,7 +33,6 @@ public class StepOperation<T> implements DurableOperation<T> {
     private final String operationId;
     private final String name;
     private final Supplier<T> function;
-    private final Class<T> resultType;
     private final TypeToken<T> resultTypeToken;
     private final StepConfig config;
     private final ExecutionManager executionManager;
@@ -45,47 +44,18 @@ public class StepOperation<T> implements DurableOperation<T> {
             String operationId,
             String name,
             Supplier<T> function,
-            Class<T> resultType,
-            StepConfig config,
-            ExecutionManager executionManager,
-            DurableLogger durableLogger,
-            SerDes serDes) {
-        this(operationId, name, function, resultType, null, config, executionManager, durableLogger, serDes);
-    }
-
-    public StepOperation(
-            String operationId,
-            String name,
-            Supplier<T> function,
             TypeToken<T> resultTypeToken,
             StepConfig config,
             ExecutionManager executionManager,
             DurableLogger durableLogger,
             SerDes serDes) {
-        this(operationId, name, function, null, resultTypeToken, config, executionManager, durableLogger, serDes);
-    }
-
-    private StepOperation(
-            String operationId,
-            String name,
-            Supplier<T> function,
-            Class<T> resultType,
-            TypeToken<T> resultTypeToken,
-            StepConfig config,
-            ExecutionManager executionManager,
-            DurableLogger durableLogger,
-            SerDes serDes) {
-        if (resultType == null && resultTypeToken == null) {
+        if (resultTypeToken == null) {
             throw new IllegalArgumentException("Either resultType or resultTypeToken must be provided");
-        }
-        if (resultType != null && resultTypeToken != null) {
-            throw new IllegalArgumentException("Cannot provide both resultType and resultTypeToken");
         }
 
         this.operationId = operationId;
         this.name = name;
         this.function = function;
-        this.resultType = resultType;
         this.resultTypeToken = resultTypeToken;
         this.config = config;
         this.executionManager = executionManager;
@@ -337,12 +307,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             var stepDetails = op.stepDetails();
             var result = (stepDetails != null) ? stepDetails.result() : null;
 
-            // Use TypeToken if provided, otherwise use Class
-            if (resultTypeToken != null) {
-                return serDes.deserialize(result, resultTypeToken);
-            } else {
-                return serDes.deserialize(result, TypeToken.get(resultType));
-            }
+            return serDes.deserialize(result, resultTypeToken);
         } else {
             // It failed so there's some kind of throwable. If we're using a serDes with
             // type info, deserialize and rethrow the original

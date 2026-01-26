@@ -5,6 +5,7 @@ package com.amazonaws.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
@@ -26,7 +27,7 @@ class StepOperationTest {
                 "1",
                 "test-step",
                 () -> "result",
-                String.class,
+                TypeToken.get(String.class),
                 null,
                 executionManager,
                 mock(DurableLogger.class),
@@ -58,7 +59,7 @@ class StepOperationTest {
                 "1",
                 "test-step",
                 () -> "result",
-                String.class,
+                TypeToken.get(String.class),
                 null,
                 executionManager,
                 mock(DurableLogger.class),
