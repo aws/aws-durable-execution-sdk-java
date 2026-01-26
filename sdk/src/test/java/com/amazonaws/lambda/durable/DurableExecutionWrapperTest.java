@@ -3,8 +3,7 @@
 package com.amazonaws.lambda.durable;
 
 import static java.util.List.of;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
