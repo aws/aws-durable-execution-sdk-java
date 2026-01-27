@@ -86,9 +86,9 @@ public class InvokeConfig {
         }
 
         /**
-         * Builds the StepConfig instance.
+         * Builds the InvokeConfig instance.
          *
-         * @return a new StepConfig with the configured options
+         * @return a new InvokeConfig with the configured options
          */
         public InvokeConfig build() {
             return new InvokeConfig(this);
