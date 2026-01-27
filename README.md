@@ -126,7 +126,7 @@ ctx.step("send-notification", String.class, () -> {
 });
 
 // Suspend until the external system calls back with a result
-String approvalResult = callback.future().get();
+String approvalResult = callback.get();
 ```
 
 The external system completes the callback by calling the Lambda Durable Functions API with the callback ID and result payload.
@@ -160,10 +160,10 @@ var callback = ctx.createCallback("approval", String.class, config);
 
 ```java
 try {
-    var result = callback.future().get();
+    var result = callback.get();
 } catch (CallbackTimeoutException e) {
     // Callback timed out - implement fallback logic
-} catch (CallbackException e) {
+} catch (CallbackFailedException e) {
     // External system reported an error
 }
 ```
@@ -366,7 +366,7 @@ The SDK throws specific exceptions to help you handle different failure scenario
 | `StepFailedException` | Step exhausted all retry attempts | Catch to implement fallback logic or let execution fail |
 | `StepInterruptedException` | `AT_MOST_ONCE` step was interrupted before completion | Implement manual recovery (check if operation completed externally) |
 | `CallbackTimeoutException` | Callback exceeded its timeout duration | Implement fallback logic or escalation |
-| `CallbackException` | External system sent an error response to the callback | Handle the error or propagate failure |
+| `CallbackFailedException` | External system sent an error response to the callback | Handle the error or propagate failure |
 | `NonDeterministicExecutionException` | Code changed between original execution and replay | Fix code to maintain determinism; don't change step order/names |
 
 ```java

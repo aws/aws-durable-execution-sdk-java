@@ -151,6 +151,11 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             case WAIT -> builder.waitDetails(buildWaitDetails(update));
             case STEP -> builder.stepDetails(buildStepDetails(update));
             case CALLBACK -> builder.callbackDetails(buildCallbackDetails(update));
+            case CHAINED_INVOKE -> throw new UnsupportedOperationException("CHAINED_INVOKE not supported");
+            case EXECUTION -> throw new UnsupportedOperationException("EXECUTION not supported");
+            case CONTEXT -> throw new UnsupportedOperationException("CONTEXT not supported");
+            case UNKNOWN_TO_SDK_VERSION ->
+                throw new UnsupportedOperationException("UNKNOWN_TO_SDK_VERSION not supported");
         }
 
         return builder.build();
@@ -186,7 +191,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         var existing = existingOp != null ? existingOp.callbackDetails() : null;
 
         // Preserve existing callbackId, or generate new one on START
-        var callbackId = existing != null ? existing.callbackId() : UUID.randomUUID().toString();
+        var callbackId =
+                existing != null ? existing.callbackId() : UUID.randomUUID().toString();
 
         return CallbackDetails.builder()
                 .callbackId(callbackId)
@@ -241,7 +247,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     private Operation findOperationByCallbackId(String callbackId) {
         return operations.values().stream()
-                .filter(op -> op.callbackDetails() != null && callbackId.equals(op.callbackDetails().callbackId()))
+                .filter(op -> op.callbackDetails() != null
+                        && callbackId.equals(op.callbackDetails().callbackId()))
                 .findFirst()
                 .orElse(null);
     }

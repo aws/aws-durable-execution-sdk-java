@@ -51,7 +51,6 @@ class CallbackExampleTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(
-                "Approval request for: New laptop ($1500.0) - Approved by manager",
-                result.getResult(String.class));
+                "Approval request for: New laptop ($1500.0) - Approved by manager", result.getResult(String.class));
     }
 }

@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.CallbackConfig;
@@ -10,15 +9,12 @@ import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
-import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Phaser;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -135,17 +131,20 @@ public class CallbackOperation<T> implements DurableOperation<T> {
 
     @Override
     public T get() {
+        // Get current context from ThreadLocal
+        var currentContext = executionManager.getCurrentContext();
+
         if (phaser.getPhase() == ExecutionPhase.RUNNING.getValue()) {
             phaser.register();
 
-            // Deregister current thread - allows suspension
-            executionManager.deregisterActiveThread("Root");
+            // Deregister current context - allows suspension
+            executionManager.deregisterActiveThread(currentContext.contextId());
 
             // Block until callback completes
             phaser.arriveAndAwaitAdvance();
 
-            // Reactivate current thread
-            executionManager.registerActiveThread("Root", ThreadType.CONTEXT);
+            // Reactivate current context
+            executionManager.registerActiveThreadWithContext(currentContext.contextId(), currentContext.threadType());
 
             phaser.arriveAndDeregister();
         }
@@ -166,12 +165,15 @@ public class CallbackOperation<T> implements DurableOperation<T> {
                         yield serDes.deserialize(result, resultType);
                     }
                 } catch (SerDesException e) {
-                    logger.warn("Failed to deserialize callback result for callback ID '{}'. " +
-                            "Ensure the callback completion payload is base64-encoded.", callbackId);
+                    logger.warn(
+                            "Failed to deserialize callback result for callback ID '{}'. "
+                                    + "Ensure the callback completion payload is base64-encoded.",
+                            callbackId);
                     throw e;
                 }
             }
-            case FAILED -> throw new CallbackFailedException(op.callbackDetails().error());
+            case FAILED ->
+                throw new CallbackFailedException(op.callbackDetails().error());
             case TIMED_OUT -> throw new CallbackTimeoutException(callbackId);
             default -> throw new IllegalStateException("Unexpected callback status: " + op.status());
         };

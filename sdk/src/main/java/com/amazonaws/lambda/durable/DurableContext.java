@@ -167,7 +167,7 @@ public class DurableContext {
         var operation = new CallbackOperation<>(operationId, name, resultType, config, executionManager, serDes);
         operation.execute();
 
-        return new DurableCallbackFuture<>(operation.getCallbackId(), new DurableFuture<>(operation));
+        return new DurableCallbackFuture<>(operation.getCallbackId(), operation);
     }
 
     public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType) {
@@ -193,7 +193,7 @@ public class DurableContext {
         var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, serDes);
         operation.execute();
 
-        return new DurableCallbackFuture<>(operation.getCallbackId(), new DurableFuture<>(operation));
+        return new DurableCallbackFuture<>(operation.getCallbackId(), operation);
     }
 
     public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken) {

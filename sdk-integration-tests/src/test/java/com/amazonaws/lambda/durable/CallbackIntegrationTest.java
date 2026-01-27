@@ -1,13 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 package com.amazonaws.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -49,7 +48,7 @@ class CallbackIntegrationTest {
     void callbackSuccessFlow() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var cb = ctx.createCallback("approval", String.class);
-            return cb.future().get();
+            return cb.get();
         });
 
         // First run - creates callback, suspends
@@ -76,7 +75,7 @@ class CallbackIntegrationTest {
     void callbackFailureFlow() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var cb = ctx.createCallback("approval", String.class);
-            return cb.future().get();
+            return cb.get();
         });
 
         // First run - creates callback, suspends
@@ -85,20 +84,28 @@ class CallbackIntegrationTest {
 
         // Simulate external system failing callback
         var callbackId = runner.getCallbackId("approval");
-        var error = ErrorObject.builder().errorType("Rejected").errorMessage("Request denied").build();
+        var error = ErrorObject.builder()
+                .errorType("Rejected")
+                .errorMessage("Request denied")
+                .build();
         runner.failCallback(callbackId, error);
 
-        // Re-run - callback failed, throws exception
+        // Re-run - callback failed, throws CallbackFailedException
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertTrue(result.getError().isPresent());
+        assertEquals("CallbackFailedException", result.getError().get().errorType());
+        assertTrue(result.getError().get().errorMessage().contains("Rejected"));
     }
 
     @Test
     void callbackTimeoutFlow() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var cb = ctx.createCallback(
-                    "approval", String.class, CallbackConfig.builder().timeout(Duration.ofMinutes(5)).build());
-            return cb.future().get();
+                    "approval",
+                    String.class,
+                    CallbackConfig.builder().timeout(Duration.ofMinutes(5)).build());
+            return cb.get();
         });
 
         // First run - creates callback, suspends
@@ -109,9 +116,11 @@ class CallbackIntegrationTest {
         var callbackId = runner.getCallbackId("approval");
         runner.timeoutCallback(callbackId);
 
-        // Re-run - callback timed out, throws exception
+        // Re-run - callback timed out, throws CallbackTimeoutException
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertTrue(result.getError().isPresent());
+        assertEquals("CallbackTimeoutException", result.getError().get().errorType());
     }
 
     @Test
@@ -120,8 +129,8 @@ class CallbackIntegrationTest {
             var cb1 = ctx.createCallback("approval1", String.class);
             var cb2 = ctx.createCallback("approval2", String.class);
 
-            var result1 = cb1.future().get();
-            var result2 = cb2.future().get();
+            var result1 = cb1.get();
+            var result2 = cb2.get();
 
             return result1 + " and " + result2;
         });
@@ -154,11 +163,9 @@ class CallbackIntegrationTest {
             var step1 = ctx.step("prepare", String.class, () -> "prepared");
 
             var cb = ctx.createCallback("approval", String.class);
-            var approval = cb.future().get();
+            var approval = cb.get();
 
-            var step2 = ctx.step("finalize", String.class, () -> step1 + " -> " + approval + " -> done");
-
-            return step2;
+            return ctx.step("finalize", String.class, () -> step1 + " -> " + approval + " -> done");
         });
 
         // First run - step1 completes, callback created, suspends
@@ -185,11 +192,12 @@ class CallbackIntegrationTest {
                     String.class,
                     CallbackConfig.builder().serDes(customSerDes).build());
 
-            return cb.future().get();
+            return cb.get();
         });
 
         // First run - creates callback, suspends
         var result = runner.run("test");
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
         // Complete the callback
         var callbackId = runner.getCallbackId("approval");
@@ -211,11 +219,12 @@ class CallbackIntegrationTest {
                     String.class,
                     CallbackConfig.builder().serDes(null).build());
 
-            return cb.future().get();
+            return cb.get();
         });
 
         // First run - creates callback, suspends
         var result = runner.run("test");
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
         // Complete the callback
         var callbackId = runner.getCallbackId("approval");
@@ -225,5 +234,34 @@ class CallbackIntegrationTest {
         result = runner.run("test");
 
         assertEquals("result", result.getResult(String.class));
+    }
+
+    @Test
+    void callbackFailedExceptionHandlesVariousErrorFormats() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            var cb = ctx.createCallback("approval", String.class);
+            return cb.get();
+        });
+
+        // First run - creates callback
+        runner.run("test");
+
+        // Fail callback with errorType, errorMessage, and stack trace
+        var callbackId = runner.getCallbackId("approval");
+        var error = ErrorObject.builder()
+                .errorType("ValidationError")
+                .errorMessage("Invalid input data")
+                .stackTrace(java.util.List.of("com.example.Service|validate|Service.java|42"))
+                .build();
+        runner.failCallback(callbackId, error);
+
+        // Second run - should fail with formatted message and preserved stack trace
+        var result = runner.run("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertTrue(result.getError().isPresent());
+        assertTrue(result.getError().get().errorMessage().contains("ValidationError"));
+        assertTrue(result.getError().get().errorMessage().contains("Invalid input data"));
+        assertNotNull(result.getError().get().stackTrace());
+        assertEquals(1, result.getError().get().stackTrace().size());
     }
 }

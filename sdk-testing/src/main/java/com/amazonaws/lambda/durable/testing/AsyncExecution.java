@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 package com.amazonaws.lambda.durable.testing;
 
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
@@ -15,8 +14,8 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRe
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 
 /**
- * Handle for an asynchronously executing durable function.
- * Allows incremental polling and inspection of execution state.
+ * Handle for an asynchronously executing durable function. Allows incremental polling and inspection of execution
+ * state.
  */
 public class AsyncExecution<O> {
     private final String executionArn;
@@ -81,34 +80,26 @@ public class AsyncExecution<O> {
         return currentResult;
     }
 
-    /**
-     * Check if execution has completed (succeeded or failed).
-     */
+    /** Check if execution has completed (succeeded or failed). */
     public boolean isComplete() {
         if (currentHistory == null) {
             return false;
         }
-        return currentHistory.stream()
-                .anyMatch(e -> {
-                    var eventType = e.eventTypeAsString();
-                    return "ExecutionSucceeded".equals(eventType) || "ExecutionFailed".equals(eventType);
-                });
+        return currentHistory.stream().anyMatch(e -> {
+            var eventType = e.eventTypeAsString();
+            return "ExecutionSucceeded".equals(eventType) || "ExecutionFailed".equals(eventType);
+        });
     }
 
-    /**
-     * Check if an operation with the given name exists.
-     */
+    /** Check if an operation with the given name exists. */
     public boolean hasOperation(String name) {
         if (currentResult == null) {
             return false;
         }
-        return currentResult.getOperations().stream()
-                .anyMatch(op -> name.equals(op.getName()));
+        return currentResult.getOperations().stream().anyMatch(op -> name.equals(op.getName()));
     }
 
-    /**
-     * Check if a callback operation with the given name exists and is started.
-     */
+    /** Check if a callback operation with the given name exists and is started. */
     public boolean hasCallback(String name) {
         if (currentHistory == null) {
             return false;
@@ -129,25 +120,22 @@ public class AsyncExecution<O> {
         if (currentResult == null) {
             throw new IllegalStateException("No history available - call pollUntil first");
         }
-        
+
         var operation = currentResult.getOperations().stream()
                 .filter(op -> operationName.equals(op.getName()))
                 .findFirst()
-                .orElseThrow(() -> new IllegalStateException(
-                        "No operation found with name: " + operationName));
-        
+                .orElseThrow(() -> new IllegalStateException("No operation found with name: " + operationName));
+
         var callbackDetails = operation.getCallbackDetails();
         if (callbackDetails == null || callbackDetails.callbackId() == null) {
             throw new IllegalStateException(
                     "Operation '" + operationName + "' is not a callback or has no callback ID");
         }
-        
+
         return callbackDetails.callbackId();
     }
 
-    /**
-     * Get details for a specific operation.
-     */
+    /** Get details for a specific operation. */
     public TestOperation getOperation(String name) {
         if (currentResult == null) {
             throw new IllegalStateException("No history available - call pollUntil first");
@@ -155,9 +143,7 @@ public class AsyncExecution<O> {
         return currentResult.getOperation(name);
     }
 
-    /**
-     * Get all operations in the execution.
-     */
+    /** Get all operations in the execution. */
     public List<TestOperation> getOperations() {
         if (currentResult == null) {
             throw new IllegalStateException("No history available - call pollUntil first");
@@ -165,9 +151,7 @@ public class AsyncExecution<O> {
         return currentResult.getOperations();
     }
 
-    /**
-     * Get current execution status.
-     */
+    /** Get current execution status. */
     public ExecutionStatus getStatus() {
         if (currentResult == null) {
             return ExecutionStatus.PENDING;
@@ -175,9 +159,7 @@ public class AsyncExecution<O> {
         return currentResult.getStatus();
     }
 
-    /**
-     * Get the execution ARN.
-     */
+    /** Get the execution ARN. */
     public String getExecutionArn() {
         return executionArn;
     }

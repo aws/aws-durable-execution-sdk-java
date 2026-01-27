@@ -11,6 +11,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 
@@ -241,8 +243,7 @@ public class CloudBasedIntegrationTest {
 
     @Test
     void testCallbackExample() throws Exception {
-        var runner = CloudDurableTestRunner.create(
-                arn("callback-example"), ApprovalRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
@@ -255,10 +256,9 @@ public class CloudBasedIntegrationTest {
         assertNotNull(callbackId);
 
         // Complete the callback using AWS SDK
-        var lambda = software.amazon.awssdk.services.lambda.LambdaClient.create();
-        lambda.sendDurableExecutionCallbackSuccess(req -> req
-                .callbackId(callbackId)
-                .result(software.amazon.awssdk.core.SdkBytes.fromUtf8String("\"approved\"")));
+        var lambda = LambdaClient.create();
+        lambda.sendDurableExecutionCallbackSuccess(
+                req -> req.callbackId(callbackId).result(SdkBytes.fromUtf8String("\"approved\"")));
 
         // Wait for execution to complete
         var result = execution.pollUntilComplete();
@@ -278,8 +278,7 @@ public class CloudBasedIntegrationTest {
 
     @Test
     void testCallbackExampleWithFailure() throws Exception {
-        var runner = CloudDurableTestRunner.create(
-                arn("callback-example"), ApprovalRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
@@ -293,11 +292,8 @@ public class CloudBasedIntegrationTest {
 
         // Fail the callback using AWS SDK
         var lambda = software.amazon.awssdk.services.lambda.LambdaClient.create();
-        lambda.sendDurableExecutionCallbackFailure(req -> req
-                .callbackId(callbackId)
-                .error(err -> err
-                        .errorType("ApprovalRejected")
-                        .errorMessage("Approval rejected by manager")));
+        lambda.sendDurableExecutionCallbackFailure(req -> req.callbackId(callbackId)
+                .error(err -> err.errorType("ApprovalRejected").errorMessage("Approval rejected by manager")));
 
         // Wait for execution to complete
         var result = execution.pollUntilComplete();
@@ -315,8 +311,7 @@ public class CloudBasedIntegrationTest {
 
     @Test
     void testCallbackExampleWithTimeout() throws Exception {
-        var runner = CloudDurableTestRunner.create(
-                arn("callback-example"), ApprovalRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
 
         // Start async execution with 10 second timeout
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0, 10));

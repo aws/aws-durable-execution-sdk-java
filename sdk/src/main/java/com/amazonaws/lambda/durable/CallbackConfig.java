@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -54,8 +53,8 @@ public class CallbackConfig {
          * Sets a custom serializer for the callback.
          *
          * <p>If not specified, the callback will use the default SerDes configured for the handler. This allows
-         * per-callback customization of serialization behavior, useful for callbacks that need special handling
-         * (e.g., custom date formats, encryption, compression).
+         * per-callback customization of serialization behavior, useful for callbacks that need special handling (e.g.,
+         * custom date formats, encryption, compression).
          *
          * @param serDes the custom serializer to use, or null to use the default
          * @return this builder for method chaining

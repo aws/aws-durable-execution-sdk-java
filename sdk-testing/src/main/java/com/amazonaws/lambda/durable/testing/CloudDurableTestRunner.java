@@ -116,9 +116,8 @@ public class CloudDurableTestRunner<I, O> {
     }
 
     /**
-     * Start an asynchronous execution and return a handle for incremental polling.
-     * Use this for callback-based tests where you need to interact with the execution
-     * while it's running.
+     * Start an asynchronous execution and return a handle for incremental polling. Use this for callback-based tests
+     * where you need to interact with the execution while it's running.
      *
      * @param input the input to the function
      * @return execution handle for polling and inspection
