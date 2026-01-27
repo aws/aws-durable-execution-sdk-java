@@ -107,8 +107,6 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
     }
 
     private void startInvocation() {
-        var payload = payloadSerDes.serialize(this.payload);
-
         var update = OperationUpdate.builder()
                 .id(operationId)
                 .name(name)
@@ -119,7 +117,7 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
                         .functionName(functionName)
                         .tenantId(invokeConfig.tenantId())
                         .build())
-                .payload(payload)
+                .payload(payloadSerDes.serialize(this.payload))
                 .build();
 
         executionManager.sendOperationUpdate(update).join();
