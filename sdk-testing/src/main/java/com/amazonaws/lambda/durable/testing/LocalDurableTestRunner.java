@@ -14,12 +14,15 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 public class LocalDurableTestRunner<I, O> {
+    public record ChainedInvokeResult(OperationStatus operationStatus, String result, ErrorObject error) {}
+
     private static final int MAX_INVOCATIONS = 100;
 
     private final Class<I> inputType;
@@ -205,6 +208,11 @@ public class LocalDurableTestRunner<I, O> {
     // Manual time advancement for skipTime=false scenarios
     public void advanceTime() {
         storage.advanceReadyOperations();
+    }
+
+    // Manual complete a chained invoke call
+    public void completeChainedInvoke(String name, ChainedInvokeResult result) {
+        storage.completeChainedInvoke(name, result);
     }
 
     private DurableExecutionInput createDurableInput(I input) {

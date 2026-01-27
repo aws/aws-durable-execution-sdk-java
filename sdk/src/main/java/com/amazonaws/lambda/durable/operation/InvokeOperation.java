@@ -16,7 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
@@ -54,6 +53,7 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
         this.payloadSerDes =
                 (config != null && config.payloadSerDes() != null) ? config.payloadSerDes() : defaultSerDes;
 
+        // todo: phaser could be used only in ExecutionManager and invisible from operations.
         this.phaser = executionManager.startPhaser(operationId);
     }
 
@@ -80,6 +80,10 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
         } else {
             // replay
             switch (existing.status()) {
+                case STARTED -> {
+                    // The result isn't ready. Need to wait more
+                    waitTimeout();
+                }
                 case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> {
                     // Operation is already completed (we are in a replay). We advance and
                     // deregister from the Phaser
@@ -87,6 +91,9 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
                     // StepOperation.get().
                     logger.trace("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
                     phaser.arriveAndDeregister(); // Phase 0 -> 1
+                }
+                default -> {
+                    throw new IllegalStateException("Unexpected invoke status: " + existing.statusAsString());
                 }
             }
         }
@@ -170,19 +177,19 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
             throw new IllegalStateException("Invoke '" + name + "' operation not found");
         }
 
-        if (op.status() == OperationStatus.SUCCEEDED) {
-            var invokeDetails = op.chainedInvokeDetails();
-            var result = invokeDetails != null ? invokeDetails.result() : null;
-            return serDes.deserialize(result, resultTypeToken);
-        } else {
-            // todo: exception hierarchy needs to be refactored
-            var invokeDetails = op.chainedInvokeDetails();
-            var error = invokeDetails != null ? invokeDetails.error() : null;
-            if (error == null) {
-                throw new InvokeFailedException();
-            } else {
-                throw new InvokeFailedException(
-                        error.errorData(), error.errorMessage(), error.errorType(), error.stackTrace());
+        var invokeDetails = op.chainedInvokeDetails();
+        switch (op.status()) {
+            case SUCCEEDED -> {
+                var result = invokeDetails != null ? invokeDetails.result() : null;
+                return serDes.deserialize(result, resultTypeToken);
+            }
+            case FAILED, TIMED_OUT, STOPPED -> {
+                // todo: exception hierarchy needs to be refactored
+                var error = invokeDetails != null ? invokeDetails.error() : null;
+                throw InvokeFailedException.create(op.status(), error);
+            }
+            default -> {
+                throw new IllegalStateException("Unexpected invoke status: " + op.statusAsString());
             }
         }
     }

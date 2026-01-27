@@ -146,8 +146,28 @@ public class DurableContext {
         operation.get(); // Block (will throw SuspendExecutionException if needed)
     }
 
+    public <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType) {
+        return invokeAsync(
+                        name,
+                        functionName,
+                        payload,
+                        resultType,
+                        InvokeConfig.builder().build())
+                .get();
+    }
+
     public <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config) {
         return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config)
+                .get();
+    }
+
+    public <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> typeToken) {
+        return invokeAsync(
+                        name,
+                        functionName,
+                        payload,
+                        typeToken,
+                        InvokeConfig.builder().build())
                 .get();
     }
 
@@ -158,6 +178,20 @@ public class DurableContext {
     public <T, U> DurableFuture<T> invokeAsync(
             String name, String functionName, U payload, Class<T> resultType, InvokeConfig config) {
         return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config);
+    }
+
+    public <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, Class<T> resultType) {
+        return invokeAsync(
+                name,
+                functionName,
+                payload,
+                TypeToken.get(resultType),
+                InvokeConfig.builder().build());
+    }
+
+    public <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType) {
+        return invokeAsync(
+                name, functionName, payload, resultType, InvokeConfig.builder().build());
     }
 
     public <T, U> DurableFuture<T> invokeAsync(

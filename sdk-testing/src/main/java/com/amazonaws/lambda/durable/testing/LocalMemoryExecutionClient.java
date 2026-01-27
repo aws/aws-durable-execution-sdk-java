@@ -87,6 +87,35 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         });
     }
 
+    public void completeChainedInvoke(String name, LocalDurableTestRunner.ChainedInvokeResult result) {
+        operations.replaceAll((id, op) -> {
+            if (op.type() == OperationType.CHAINED_INVOKE
+                    && op.status() == OperationStatus.STARTED
+                    && op.name().equals(name)) {
+                var newOp = op.toBuilder()
+                        .status(result.operationStatus())
+                        .chainedInvokeDetails(ChainedInvokeDetails.builder()
+                                .result(result.result())
+                                .error(result.error())
+                                .build())
+                        .build();
+                var update = OperationUpdate.builder()
+                        .id(id)
+                        .name(op.name())
+                        .type(OperationType.CHAINED_INVOKE)
+                        .action(
+                                result.operationStatus() == OperationStatus.SUCCEEDED
+                                        ? OperationAction.SUCCEED
+                                        : OperationAction.FAIL)
+                        .build();
+                var event = eventProcessor.processUpdate(update, newOp);
+                allEvents.add(event);
+                return newOp;
+            }
+            return op;
+        });
+    }
+
     public Operation getOperationByName(String name) {
         return operations.values().stream()
                 .filter(op -> name.equals(op.name()))
