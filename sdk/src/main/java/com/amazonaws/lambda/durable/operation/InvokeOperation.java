@@ -88,7 +88,7 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
                     // Operation is already completed (we are in a replay). We advance and
                     // deregister from the Phaser
                     // so that .get() doesn't block and returns the result immediately. See
-                    // StepOperation.get().
+                    // InvokeOperation.get().
                     logger.trace("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
                     phaser.arriveAndDeregister(); // Phase 0 -> 1
                 }
