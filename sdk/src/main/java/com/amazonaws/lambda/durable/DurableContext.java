@@ -56,7 +56,7 @@ public class DurableContext {
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
         return step(
                 name,
-                resultType,
+                TypeToken.get(resultType),
                 func,
                 StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.NO_RETRY)
@@ -86,7 +86,7 @@ public class DurableContext {
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func) {
         return stepAsync(
                 name,
-                resultType,
+                TypeToken.get(resultType),
                 func,
                 StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.NO_RETRY)
@@ -94,21 +94,7 @@ public class DurableContext {
     }
 
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
-        var operationId = nextOperationId();
-
-        // Validate replay consistency
-        var existing = executionManager.getOperation(operationId);
-        if (existing != null) {
-            validateReplay(operationId, OperationType.STEP, name, existing);
-        }
-
-        // Create and start step operation
-        StepOperation<T> operation =
-                new StepOperation<>(operationId, name, func, resultType, config, executionManager, logger, serDes);
-
-        operation.execute(); // Start the step (returns immediately)
-
-        return new DurableFuture<>(operation);
+        return stepAsync(name, TypeToken.get(resultType), func, config);
     }
 
     public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func) {

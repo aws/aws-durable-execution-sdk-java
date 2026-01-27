@@ -124,15 +124,6 @@ public class CustomConfigExample extends DurableHandler<String, String> {
         }
 
         @Override
-        public <T> T deserialize(String json, Class<T> clazz) {
-            try {
-                return objectMapper.readValue(json, clazz);
-            } catch (IOException e) {
-                throw new RuntimeException("Deserialization failed", e);
-            }
-        }
-
-        @Override
         public <T> T deserialize(String json, TypeToken<T> typeToken) {
             try {
                 return objectMapper.readValue(json, objectMapper.constructType(typeToken.getType()));

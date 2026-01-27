@@ -156,7 +156,7 @@ public class DurableExecutor {
         }
 
         var inputPayload = executionOp.executionDetails().inputPayload();
-        return serDes.deserialize(inputPayload, inputType);
+        return serDes.deserialize(inputPayload, TypeToken.get(inputType));
     }
 
     public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(

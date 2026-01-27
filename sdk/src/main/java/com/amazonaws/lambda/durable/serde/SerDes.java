@@ -19,16 +19,6 @@ public interface SerDes {
     String serialize(Object value);
 
     /**
-     * Deserializes a JSON string to an object of the specified type.
-     *
-     * @param data the JSON string to deserialize
-     * @param type the class of the target type
-     * @param <T> the target type
-     * @return the deserialized object, or null if data is null
-     */
-    <T> T deserialize(String data, Class<T> type);
-
-    /**
      * Deserializes a JSON string to an object of the specified generic type.
      *
      * <p>This method supports complex generic types like {@code List<MyObject>} or {@code Map<String, MyObject>} that

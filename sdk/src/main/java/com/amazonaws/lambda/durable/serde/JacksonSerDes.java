@@ -55,16 +55,6 @@ public class JacksonSerDes implements SerDes {
     }
 
     @Override
-    public <T> T deserialize(String data, Class<T> type) {
-        if (data == null) return null;
-        try {
-            return mapper.readValue(data, type);
-        } catch (Exception e) {
-            throw new SerDesException("Deserialization failed for type: " + type.getName(), e);
-        }
-    }
-
-    @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
         if (data == null) return null;
 
