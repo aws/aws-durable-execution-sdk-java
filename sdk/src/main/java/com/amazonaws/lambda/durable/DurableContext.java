@@ -8,7 +8,6 @@ import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.logging.LoggerConfig;
 import com.amazonaws.lambda.durable.operation.CallbackOperation;
-import com.amazonaws.lambda.durable.operation.CallbackOperation;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;

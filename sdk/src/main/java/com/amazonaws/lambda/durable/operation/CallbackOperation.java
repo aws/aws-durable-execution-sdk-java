@@ -7,7 +7,6 @@ import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
 import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
-import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.serde.SerDes;

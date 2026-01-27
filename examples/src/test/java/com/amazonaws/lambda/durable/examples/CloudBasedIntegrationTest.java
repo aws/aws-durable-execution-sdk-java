@@ -349,8 +349,7 @@ public class CloudBasedIntegrationTest {
 
     @Test
     void testCallbackExample() throws Exception {
-        var runner = CloudDurableTestRunner.create(
-                arn("callback-example"), ApprovalRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
@@ -364,9 +363,8 @@ public class CloudBasedIntegrationTest {
 
         // Complete the callback using AWS SDK
         var lambda = software.amazon.awssdk.services.lambda.LambdaClient.create();
-        lambda.sendDurableExecutionCallbackSuccess(req -> req
-                .callbackId(callbackId)
-                .result(software.amazon.awssdk.core.SdkBytes.fromUtf8String("\"approved\"")));
+        lambda.sendDurableExecutionCallbackSuccess(req ->
+                req.callbackId(callbackId).result(software.amazon.awssdk.core.SdkBytes.fromUtf8String("\"approved\"")));
 
         // Wait for execution to complete
         var result = execution.pollUntilComplete();
