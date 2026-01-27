@@ -147,18 +147,21 @@ public class DurableContext {
     }
 
     public <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config) {
-        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config).get();
+        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config)
+                .get();
     }
 
     public <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config) {
         return invokeAsync(name, functionName, payload, typeToken, config).get();
     }
 
-    public <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config) {
+    public <T, U> DurableFuture<T> invokeAsync(
+            String name, String functionName, U payload, Class<T> resultType, InvokeConfig config) {
         return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config);
     }
 
-    public <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config) {
+    public <T, U> DurableFuture<T> invokeAsync(
+            String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config) {
         var operationId = nextOperationId();
 
         // Validate replay consistency
@@ -168,7 +171,8 @@ public class DurableContext {
         }
 
         // Create and start invoke operation
-        var operation = new InvokeOperation<>(operationId, name, functionName, payload, typeToken, config, executionManager, serDes);
+        var operation = new InvokeOperation<>(
+                operationId, name, functionName, payload, typeToken, config, executionManager, serDes);
 
         operation.execute(); // checkpoint the invoke operation
         return new DurableFuture<>(operation); // Block (will throw SuspendExecutionException if needed)

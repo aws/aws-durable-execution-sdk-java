@@ -9,7 +9,7 @@ import com.amazonaws.lambda.durable.InvokeConfig;
 /**
  * Simple example demonstrating basic invoke execution with the Durable Execution SDK.
  *
- * <p>This handler invokes another durable lambda function simple-step-example</p>
+ * <p>This handler invokes another durable lambda function simple-step-example
  */
 public class SimpleInvokeExample extends DurableHandler<GreetingRequest, String> {
 

@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.InvokeConfig;
@@ -7,6 +9,9 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.Phaser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
@@ -14,10 +19,6 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.concurrent.Phaser;
 
 public class InvokeOperation<T, U> implements DurableOperation<T> {
     private static final Logger logger = LoggerFactory.getLogger(InvokeOperation.class);
@@ -33,14 +34,15 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
     private final SerDes serDes;
     private final SerDes payloadSerDes;
 
-    public InvokeOperation(String operationId,
-                           String name,
-                           String functionName,
-                           U payload,
-                           TypeToken<T> resultTypeToken,
-                           InvokeConfig config,
-                           ExecutionManager executionManager,
-                           SerDes defaultSerDes) {
+    public InvokeOperation(
+            String operationId,
+            String name,
+            String functionName,
+            U payload,
+            TypeToken<T> resultTypeToken,
+            InvokeConfig config,
+            ExecutionManager executionManager,
+            SerDes defaultSerDes) {
         this.operationId = operationId;
         this.name = name;
         this.functionName = functionName;
@@ -49,30 +51,25 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
         this.invokeConfig = config;
         this.executionManager = executionManager;
         this.serDes = (config != null && config.serDes() != null) ? config.serDes() : defaultSerDes;
-        this.payloadSerDes = (config != null && config.payloadSerDes() != null) ? config.payloadSerDes() : defaultSerDes;
+        this.payloadSerDes =
+                (config != null && config.payloadSerDes() != null) ? config.payloadSerDes() : defaultSerDes;
 
         this.phaser = executionManager.startPhaser(operationId);
     }
 
-    /**
-     * Gets the unique identifier for this operation.
-     */
+    /** Gets the unique identifier for this operation. */
     @Override
     public String getOperationId() {
         return operationId;
     }
 
-    /**
-     * Gets the operation name (maybe null).
-     */
+    /** Gets the operation name (maybe null). */
     @Override
     public String getName() {
         return name;
     }
 
-    /**
-     * Starts the operation. Returns immediately after starting background work or checkpointing. Does not block.
-     */
+    /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
     @Override
     public void execute() {
         var existing = executionManager.getOperationAndUpdateReplayState(operationId);
@@ -114,14 +111,12 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
                 .chainedInvokeOptions(ChainedInvokeOptions.builder()
                         .functionName(functionName)
                         .tenantId(invokeConfig.tenantId())
-                        .build()
-                )
+                        .build())
                 .payload(payload)
                 .build();
 
         executionManager.sendOperationUpdate(update).join();
     }
-
 
     /**
      * Blocks until the operation completes and returns the result.
@@ -186,9 +181,9 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
             if (error == null) {
                 throw new InvokeFailedException();
             } else {
-                throw new InvokeFailedException(error.errorData(), error.errorMessage(), error.errorType(), error.stackTrace());
+                throw new InvokeFailedException(
+                        error.errorData(), error.errorMessage(), error.errorType(), error.stackTrace());
             }
         }
     }
-
 }

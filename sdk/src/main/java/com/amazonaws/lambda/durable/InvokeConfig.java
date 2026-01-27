@@ -1,7 +1,8 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.serde.SerDes;
-
 import java.time.Duration;
 
 public class InvokeConfig {
@@ -16,7 +17,6 @@ public class InvokeConfig {
         this.resultSerDes = builder.resultSerDes;
         this.tenantId = builder.tenantId;
     }
-
 
     public Duration timeout() {
         return this.timeout;
@@ -57,10 +57,10 @@ public class InvokeConfig {
 
         /**
          * Sets a custom serializer for the invoke operation payload.
-         * 
-         * <p>If not specified, the invoke operation will use the default SerDes configured for the handler. This allows per-invoke
-         * customization of serialization behavior, useful for invoke operations that need special handling (e.g., custom date
-         * formats, encryption, compression).
+         *
+         * <p>If not specified, the invoke operation will use the default SerDes configured for the handler. This allows
+         * per-invoke customization of serialization behavior, useful for invoke operations that need special handling
+         * (e.g., custom date formats, encryption, compression).
          *
          * @param payloadSerDes the custom serializer to use, or null to use the default
          * @return this builder for method chaining
