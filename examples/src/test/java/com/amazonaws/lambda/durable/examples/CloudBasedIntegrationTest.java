@@ -223,4 +223,18 @@ public class CloudBasedIntegrationTest {
         assertTrue(stepResult.contains("user_age"));
         assertTrue(stepResult.contains("email_address"));
     }
+
+    @Test
+    void testErrorHandlingExample() {
+        var runner = CloudDurableTestRunner.create(arn("error-handling-example"), String.class, String.class);
+        var result = runner.run("test-input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult(String.class);
+        assertNotNull(finalResult);
+        assertTrue(finalResult.startsWith("Completed: "));
+        assertTrue(finalResult.contains("fallback-result"));
+        assertTrue(finalResult.contains("payment-"));
+    }
 }

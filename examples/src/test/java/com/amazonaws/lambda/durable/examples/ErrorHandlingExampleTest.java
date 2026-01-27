@@ -13,7 +13,7 @@ class ErrorHandlingExampleTest {
     @Test
     void testErrorHandlingWithFallback() {
         var handler = new ErrorHandlingExample();
-        var runner = LocalDurableTestRunner.create(String.class, handler);
+        var runner = LocalDurableTestRunner.create(Object.class, handler);
 
         var result = runner.run("test-input");
 
@@ -24,7 +24,7 @@ class ErrorHandlingExampleTest {
     @Test
     void testPaymentStepCompletes() {
         var handler = new ErrorHandlingExample();
-        var runner = LocalDurableTestRunner.create(String.class, handler);
+        var runner = LocalDurableTestRunner.create(Object.class, handler);
 
         var result = runner.run("order-123");
 
@@ -36,7 +36,7 @@ class ErrorHandlingExampleTest {
     @Test
     void testPaymentStepInterruptedRecovery() {
         var handler = new ErrorHandlingExample();
-        var runner = LocalDurableTestRunner.create(String.class, handler);
+        var runner = LocalDurableTestRunner.create(Object.class, handler);
 
         // First run: both steps complete normally
         var result1 = runner.run("order-456");

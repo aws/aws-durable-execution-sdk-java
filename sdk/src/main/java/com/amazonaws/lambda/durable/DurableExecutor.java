@@ -102,7 +102,7 @@ public class DurableExecutor {
                 } catch (Exception e) {
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
                     logger.debug("Execution failed: {}", cause.getMessage());
-                    return DurableExecutionOutput.failure(cause);
+                    return DurableExecutionOutput.failure(cause, serDes);
                 }
             }
 
@@ -138,7 +138,7 @@ public class DurableExecutor {
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            return DurableExecutionOutput.failure(cause);
+            return DurableExecutionOutput.failure(cause, serDes);
         } finally {
             // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
             executionManager.shutdown();

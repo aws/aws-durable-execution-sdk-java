@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
@@ -47,7 +48,7 @@ class ExceptionIntegrationTest {
                         StepConfig.builder()
                                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                                 .build());
-            } catch (StepFailedException e) {
+            } catch (RuntimeException e) {
                 return ctx.step("fallback", String.class, () -> "fallback-result");
             }
         });
@@ -56,6 +57,98 @@ class ExceptionIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("fallback-result", result.getResult(String.class));
+    }
+
+    @Test
+    void testOriginalExceptionTypeIsPreserved() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            ctx.step(
+                    "throws-illegal-arg",
+                    String.class,
+                    () -> {
+                        throw new IllegalArgumentException("Invalid parameter");
+                    },
+                    StepConfig.builder()
+                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                            .build());
+            return "should-not-reach";
+        });
+
+        // First run - exception is thrown and checkpointed
+        var result = runner.run("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // Verify the operation failed with the correct exception type
+        var failedOp = result.getOperation("throws-illegal-arg");
+        assertNotNull(failedOp);
+        var error = failedOp.getError();
+        assertNotNull(error);
+        assertEquals("java.lang.IllegalArgumentException", error.errorType());
+        assertEquals("Invalid parameter", error.errorMessage());
+
+        // Verify stackTrace is preserved
+        assertNotNull(error.stackTrace());
+        assertTrue(error.stackTrace().size() > 0, "Stack trace should not be empty");
+
+        // Verify errorData contains serialized exception
+        assertNotNull(error.errorData());
+        assertTrue(error.errorData().contains("Invalid parameter"), "errorData should contain the exception message");
+    }
+
+    @Test
+    void testOriginalExceptionTypeCanBeCaughtSpecifically() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            try {
+                return ctx.step(
+                        "throws-illegal-state",
+                        String.class,
+                        () -> {
+                            throw new IllegalStateException("Invalid state");
+                        },
+                        StepConfig.builder()
+                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                                .build());
+            } catch (IllegalStateException e) {
+                // Catch specific exception type
+                return ctx.step("handle-illegal-state", String.class, () -> "recovered-from-illegal-state");
+            } catch (Exception e) {
+                // This should NOT be caught
+                return ctx.step("handle-illegal-arg", String.class, () -> "recovered-from-exception");
+            }
+        });
+
+        var result = runner.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("recovered-from-illegal-state", result.getResult(String.class));
+    }
+
+    @Test
+    void testCustomExceptionTypeIsPreserved() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            ctx.step(
+                    "throws-custom",
+                    String.class,
+                    () -> {
+                        throw new CustomBusinessException("Business rule violated", 42);
+                    },
+                    StepConfig.builder()
+                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                            .build());
+            return "should-not-reach";
+        });
+
+        var result = runner.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // Verify the operation failed with the correct exception type
+        var failedOp = result.getOperation("throws-custom");
+        assertNotNull(failedOp);
+        var error = failedOp.getError();
+        assertNotNull(error);
+        assertTrue(error.errorType().contains("CustomBusinessException"));
+        assertEquals("Business rule violated", error.errorMessage());
     }
 
     @Test
@@ -87,6 +180,7 @@ class ExceptionIntegrationTest {
 
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertEquals(1, executionCount.get()); // Should NOT have re-executed
+        assertEquals(result.getError().get().errorType(), StepInterruptedException.class.getName());
     }
 
     @Test
@@ -143,5 +237,19 @@ class ExceptionIntegrationTest {
         var result = runner.run("test");
 
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
+    }
+
+    // Custom exception for testing exception preservation
+    public static class CustomBusinessException extends RuntimeException {
+        private final int errorCode;
+
+        public CustomBusinessException(String message, int errorCode) {
+            super(message);
+            this.errorCode = errorCode;
+        }
+
+        public int getErrorCode() {
+            return errorCode;
+        }
     }
 }

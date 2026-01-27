@@ -5,6 +5,7 @@ package com.amazonaws.lambda.durable.operation;
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.StepSemantics;
 import com.amazonaws.lambda.durable.TypeToken;
+import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
@@ -12,6 +13,7 @@ import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.SerDes;
+import com.amazonaws.lambda.durable.util.SneakyThrow;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
@@ -204,9 +206,9 @@ public class StepOperation<T> implements DurableOperation<T> {
 
     private void handleStepFailure(Throwable error, int attempt) {
         var errorObject = ErrorObject.builder()
-                .errorType(error.getClass().getSimpleName())
+                .errorType(error.getClass().getName())
                 .errorMessage(error.getMessage())
-                // TODO: Add errorData object once we support polymorphic object mappers
+                .errorData(serDes.serialize(error))
                 .stackTrace(StepFailedException.serializeStackTrace(error.getStackTrace()))
                 .build();
 
@@ -309,33 +311,41 @@ public class StepOperation<T> implements DurableOperation<T> {
 
             return serDes.deserialize(result, resultTypeToken);
         } else {
-            // It failed so there's some kind of throwable. If we're using a serDes with
-            // type info, deserialize and rethrow the original
-            // throwable. Otherwise, throw a new StepFailedException that includes info
-            // about the original throwable.
-
-            // TODO: Enable this feature after introducing polymorphic object mapper
-            // support.
-            // String errorData = op.stepDetails().error().errorData();
-            // if (errorData != null && serDes.supportsIncludingTypeInfo()) {
-            // SneakyThrow.sneakyThrow((Throwable)
-            // serDes.deserializeWithTypeInfo(errorData));
-            // }
-
             var errorType = op.stepDetails().error().errorType();
 
             // Throw StepInterruptedException directly for AT_MOST_ONCE interrupted steps
-            // Todo: Change once errorData object is implemented
-            if ("StepInterruptedException".equals(errorType)) {
+            if (StepInterruptedException.class.getName().equals(errorType)) {
                 throw new StepInterruptedException(operationId, name);
             }
 
+            // Attempt to reconstruct and throw the original exception
+            try {
+                Class<?> exceptionClass = Class.forName(errorType);
+                if (Throwable.class.isAssignableFrom(exceptionClass)) {
+                    Throwable original = serDes.deserialize(
+                            op.stepDetails().error().errorData(),
+                            TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
+
+                    if (original != null) {
+                        original.setStackTrace(StepFailedException.deserializeStackTrace(
+                                op.stepDetails().error().stackTrace()));
+                        SneakyThrow.sneakyThrow(original);
+                    }
+                }
+            } catch (ClassNotFoundException e) {
+                logger.warn(
+                        "Cannot re-construct original exception type. Falling back to generic StepFailedException.");
+            } catch (SerDesException e) {
+                logger.warn(
+                        "Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
+            }
+
+            // Fallback: wrap in StepFailedException
             throw new StepFailedException(
                     String.format(
                             "Step failed with error of type %s. Message: %s",
                             errorType, op.stepDetails().error().errorMessage()),
                     null,
-                    // Preserve original stack trace
                     StepFailedException.deserializeStackTrace(
                             op.stepDetails().error().stackTrace()));
         }

@@ -6,7 +6,6 @@ import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.DurableHandler;
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.StepSemantics;
-import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import org.slf4j.Logger;
@@ -20,31 +19,54 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>{@link StepFailedException} - when a step exhausts all retry attempts
  *   <li>{@link StepInterruptedException} - when an AT_MOST_ONCE step is interrupted
+ *   <li>Custom exceptions - original exception types are preserved and can be caught directly
  * </ul>
  *
  * <p>Note: {@code NonDeterministicExecutionException} is thrown by the SDK when code changes between executions (e.g.,
  * step order/names changed). It should be fixed in code, not caught.
  */
-public class ErrorHandlingExample extends DurableHandler<String, String> {
+public class ErrorHandlingExample extends DurableHandler<Object, String> {
 
     private static final Logger logger = LoggerFactory.getLogger(ErrorHandlingExample.class);
 
+    /** Custom exception to demonstrate that original exception types are preserved across checkpoints. */
+    public static class ServiceUnavailableException extends RuntimeException {
+        private String serviceName;
+
+        /** Default constructor required for Jackson deserialization. */
+        public ServiceUnavailableException() {
+            super();
+        }
+
+        public ServiceUnavailableException(String serviceName, String message) {
+            super(message);
+            this.serviceName = serviceName;
+        }
+
+        public String getServiceName() {
+            return serviceName;
+        }
+    }
+
     @Override
-    public String handleRequest(String input, DurableContext context) {
-        // Example 1: Catching StepFailedException with fallback logic
+    public String handleRequest(Object input, DurableContext context) {
+        // Example 1: Catching a custom exception type with fallback logic
+        // The SDK preserves the original exception type, so you can catch specific exceptions directly.
+        // NOTE: Exception type needs to be serializable by your SerDes implementation.
         String primaryResult;
         try {
             primaryResult = context.step(
                     "call-primary-service",
                     String.class,
                     () -> {
-                        throw new RuntimeException("Primary service unavailable");
+                        throw new ServiceUnavailableException("primary-api", "Primary service unavailable");
                     },
                     StepConfig.builder()
                             .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
-        } catch (StepFailedException e) {
-            logger.warn("Primary service failed, using fallback: {}", e.getMessage());
+        } catch (ServiceUnavailableException e) {
+            // Catch the specific custom exception type - the SDK reconstructs the original exception
+            logger.warn("Service '{}' unavailable, using fallback: {}", e.getServiceName(), e.getMessage());
             primaryResult = context.step("call-fallback-service", String.class, () -> "fallback-result");
         }
 

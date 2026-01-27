@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.model;
 
 import com.amazonaws.lambda.durable.exception.StepFailedException;
+import com.amazonaws.lambda.durable.serde.SerDes;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 
 public record DurableExecutionOutput(ExecutionStatus status, String result, ErrorObject error) {
@@ -14,12 +15,12 @@ public record DurableExecutionOutput(ExecutionStatus status, String result, Erro
         return new DurableExecutionOutput(ExecutionStatus.PENDING, null, null);
     }
 
-    public static DurableExecutionOutput failure(Throwable e) {
+    public static DurableExecutionOutput failure(Throwable e, SerDes serDes) {
         var errorObject = ErrorObject.builder()
-                .errorType(e.getClass().getSimpleName())
+                .errorType(e.getClass().getName())
                 .errorMessage(e.getMessage())
                 .stackTrace(StepFailedException.serializeStackTrace(e.getStackTrace()))
-                // TODO: Add errorData object once we support polymorphic object mappers
+                .errorData(serDes.serialize(e))
                 .build();
         return new DurableExecutionOutput(ExecutionStatus.FAILED, null, errorObject);
     }
