@@ -174,14 +174,6 @@ public class DurableContext {
         return createCallback(name, resultType, null);
     }
 
-    public <T> DurableCallbackFuture<T> createCallback(Class<T> resultType, CallbackConfig config) {
-        return createCallback(null, resultType, config);
-    }
-
-    public <T> DurableCallbackFuture<T> createCallback(Class<T> resultType) {
-        return createCallback(null, resultType, null);
-    }
-
     public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken, CallbackConfig config) {
         var operationId = nextOperationId();
 
@@ -198,14 +190,6 @@ public class DurableContext {
 
     public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken) {
         return createCallback(name, typeToken, null);
-    }
-
-    public <T> DurableCallbackFuture<T> createCallback(TypeToken<T> typeToken, CallbackConfig config) {
-        return createCallback(null, typeToken, config);
-    }
-
-    public <T> DurableCallbackFuture<T> createCallback(TypeToken<T> typeToken) {
-        return createCallback(null, typeToken, null);
     }
 
     private String nextOperationId() {

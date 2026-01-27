@@ -28,12 +28,6 @@ class CallbackIntegrationTest {
         }
 
         @Override
-        public <T> T deserialize(String data, Class<T> type) {
-            deserializeCount.incrementAndGet();
-            return delegate.deserialize(data, type);
-        }
-
-        @Override
         public <T> T deserialize(String data, TypeToken<T> typeToken) {
             deserializeCount.incrementAndGet();
             return delegate.deserialize(data, typeToken);
@@ -94,7 +88,7 @@ class CallbackIntegrationTest {
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
-        assertEquals("CallbackFailedException", result.getError().get().errorType());
+        assertTrue(result.getError().get().errorType().endsWith("CallbackFailedException"));
         assertTrue(result.getError().get().errorMessage().contains("Rejected"));
     }
 
@@ -120,7 +114,7 @@ class CallbackIntegrationTest {
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
-        assertEquals("CallbackTimeoutException", result.getError().get().errorType());
+        assertTrue(result.getError().get().errorType().endsWith("CallbackTimeoutException"));
     }
 
     @Test

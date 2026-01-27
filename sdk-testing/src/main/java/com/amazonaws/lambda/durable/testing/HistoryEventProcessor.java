@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.testing;
 
-import static software.amazon.awssdk.services.lambda.model.EventType.*;
-
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.util.ArrayList;
@@ -12,6 +10,7 @@ import java.util.List;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;

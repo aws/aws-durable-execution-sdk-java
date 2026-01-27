@@ -159,11 +159,8 @@ public class CallbackOperation<T> implements DurableOperation<T> {
             case SUCCEEDED -> {
                 var result = op.callbackDetails().result();
                 try {
-                    if (resultTypeToken != null) {
-                        yield serDes.deserialize(result, resultTypeToken);
-                    } else {
-                        yield serDes.deserialize(result, resultType);
-                    }
+                    var typeToken = resultTypeToken != null ? resultTypeToken : TypeToken.get(resultType);
+                    yield serDes.deserialize(result, typeToken);
                 } catch (SerDesException e) {
                     logger.warn(
                             "Failed to deserialize callback result for callback ID '{}'. "

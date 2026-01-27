@@ -34,12 +34,6 @@ class CallbackOperationTest {
         }
 
         @Override
-        public <T> T deserialize(String data, Class<T> type) {
-            deserializeCount.incrementAndGet();
-            return delegate.deserialize(data, type);
-        }
-
-        @Override
         public <T> T deserialize(String data, TypeToken<T> typeToken) {
             deserializeCount.incrementAndGet();
             return delegate.deserialize(data, typeToken);
@@ -55,11 +49,6 @@ class CallbackOperationTest {
         @Override
         public String serialize(Object value) {
             throw new SerDesException("Serialization failed");
-        }
-
-        @Override
-        public <T> T deserialize(String data, Class<T> type) {
-            throw new SerDesException("Invalid base64 encoding");
         }
 
         @Override
