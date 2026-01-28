@@ -231,8 +231,23 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     // Manual complete a chained invoke call
-    public void completeChainedInvoke(String name, ChainedInvokeResult result) {
-        storage.completeChainedInvoke(name, result);
+    public void completeChainedInvoke(String name, String result) {
+        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.SUCCEEDED, result, null));
+    }
+
+    // Manual mark a chained invoke call TIMEOUT
+    public void timeoutChainedInvoke(String name) {
+        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.TIMED_OUT, null, null));
+    }
+
+    // Manual fail a chained invoke call
+    public void failChainedInvoke(String name, ErrorObject error) {
+        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.FAILED, null, error));
+    }
+
+    // Manual stop a chained invoke call
+    public void stopChainedInvoke(String name, ErrorObject error) {
+        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.STOPPED, null, error));
     }
 
     private DurableExecutionInput createDurableInput(I input) {

@@ -16,11 +16,18 @@ public class SimpleInvokeExample extends DurableHandler<GreetingRequest, String>
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
         // invoke `simple-step-example` function
-        return context.invoke(
-                "create-greeting",
+        var future = context.invokeAsync(
+                "call-greeting1",
                 "simple-step-example:$LATEST",
                 input,
                 String.class,
                 InvokeConfig.builder().build());
+        var result2 = context.invoke(
+                "call-greeting2",
+                "simple-step-example:$LATEST",
+                input,
+                String.class,
+                InvokeConfig.builder().build());
+        return future.get() + result2;
     }
 }
