@@ -28,6 +28,9 @@ mvn test -Dtest=DurableContextTest
 
 # Skip tests
 mvn install -DskipTests
+
+# Format code (ALWAYS run after making changes)
+mvn spotless:apply
 ```
 
 ## Key Directories
@@ -64,7 +67,11 @@ import static org.junit.jupiter.api.Assertions.*;           // Tests
 import static java.util.Collections.emptyList;              // Factory methods
 import static com.amazonaws.lambda.durable.model.Status.*;  // Enums
 
-// AVOID fully qualified names in code
+// ALWAYS use proper imports, NEVER use fully qualified class names in code
+// Bad:  var lambda = software.amazon.awssdk.services.lambda.LambdaClient.create();
+// Good: import software.amazon.awssdk.services.lambda.LambdaClient;
+//       var lambda = LambdaClient.create();
+
 // Bad:  com.amazonaws.lambda.durable.model.Status.SUCCESS
 // Good: import static and use SUCCESS directly
 
@@ -231,6 +238,10 @@ Check `ExecutionManager` for thread registration and coordination logic if debug
 - Ask clarifying questions before making assumptions
 - Check existing code for patterns (especially in `operation/` package)
 - Prefer minimal changes over large refactors
+
+## After Making Changes
+
+**ALWAYS run `mvn spotless:apply` after making code changes** to ensure consistent formatting across the codebase. This applies code formatting rules automatically.
 
 ## Further Reading
 

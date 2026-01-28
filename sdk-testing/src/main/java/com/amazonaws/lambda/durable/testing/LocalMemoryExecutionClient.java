@@ -179,6 +179,12 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         switch (update.type()) {
             case WAIT -> builder.waitDetails(buildWaitDetails(update));
             case STEP -> builder.stepDetails(buildStepDetails(update));
+            case CALLBACK -> builder.callbackDetails(buildCallbackDetails(update));
+            case EXECUTION -> {} // No details needed for EXECUTION operations
+            case CHAINED_INVOKE -> throw new UnsupportedOperationException("CHAINED_INVOKE not supported");
+            case CONTEXT -> throw new UnsupportedOperationException("CONTEXT not supported");
+            case UNKNOWN_TO_SDK_VERSION ->
+                throw new UnsupportedOperationException("UNKNOWN_TO_SDK_VERSION not supported");
         }
 
         return builder.build();
@@ -207,6 +213,73 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         }
 
         return detailsBuilder.build();
+    }
+
+    private CallbackDetails buildCallbackDetails(OperationUpdate update) {
+        var existingOp = operations.get(update.id());
+        var existing = existingOp != null ? existingOp.callbackDetails() : null;
+
+        // Preserve existing callbackId, or generate new one on START
+        var callbackId =
+                existing != null ? existing.callbackId() : UUID.randomUUID().toString();
+
+        return CallbackDetails.builder()
+                .callbackId(callbackId)
+                .result(existing != null ? existing.result() : null)
+                .build();
+    }
+
+    /** Get callback ID for a named callback operation. */
+    public String getCallbackId(String operationName) {
+        var op = getOperationByName(operationName);
+        if (op == null || op.callbackDetails() == null) {
+            return null;
+        }
+        return op.callbackDetails().callbackId();
+    }
+
+    /** Simulate external system completing callback successfully. */
+    public void completeCallback(String callbackId, String result) {
+        var op = findOperationByCallbackId(callbackId);
+        if (op == null) {
+            throw new IllegalStateException("Callback not found: " + callbackId);
+        }
+        var updated = op.toBuilder()
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(op.callbackDetails().toBuilder().result(result).build())
+                .build();
+        operations.put(op.id(), updated);
+    }
+
+    /** Simulate external system failing callback. */
+    public void failCallback(String callbackId, ErrorObject error) {
+        var op = findOperationByCallbackId(callbackId);
+        if (op == null) {
+            throw new IllegalStateException("Callback not found: " + callbackId);
+        }
+        var updated = op.toBuilder()
+                .status(OperationStatus.FAILED)
+                .callbackDetails(op.callbackDetails().toBuilder().error(error).build())
+                .build();
+        operations.put(op.id(), updated);
+    }
+
+    /** Simulate callback timeout. */
+    public void timeoutCallback(String callbackId) {
+        var op = findOperationByCallbackId(callbackId);
+        if (op == null) {
+            throw new IllegalStateException("Callback not found: " + callbackId);
+        }
+        var updated = op.toBuilder().status(OperationStatus.TIMED_OUT).build();
+        operations.put(op.id(), updated);
+    }
+
+    private Operation findOperationByCallbackId(String callbackId) {
+        return operations.values().stream()
+                .filter(op -> op.callbackDetails() != null
+                        && callbackId.equals(op.callbackDetails().callbackId()))
+                .findFirst()
+                .orElse(null);
     }
 
     private OperationStatus deriveStatus(OperationAction action) {

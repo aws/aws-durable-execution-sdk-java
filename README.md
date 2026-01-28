@@ -20,6 +20,7 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 - `ctx.step()` – Execute code and checkpoint the result
 - `ctx.stepAsync()` – Start concurrent operations  
 - `ctx.wait()` – Suspend execution without compute charges
+- `ctx.createCallback()` – Wait for external events (approvals, webhooks)
 
 ## Quick Start
 
@@ -108,6 +109,63 @@ ctx.wait(Duration.ofMinutes(30));
 
 // Named wait (useful for debugging)
 ctx.wait("cooling-off-period", Duration.ofDays(7));
+```
+
+### createCallback() – Wait for External Events
+
+Callbacks suspend execution until an external system sends a result. Use this for human approvals, webhooks, or any event-driven workflow.
+
+```java
+// Create a callback and get the ID to share with external systems
+DurableCallbackFuture<String> callback = ctx.createCallback("approval", String.class);
+
+// Send the callback ID to an external system within a step
+ctx.step("send-notification", String.class, () -> {
+    notificationService.sendApprovalRequest(callback.callbackId(), requestDetails);
+    return "notification-sent";
+});
+
+// Suspend until the external system calls back with a result
+String approvalResult = callback.get();
+```
+
+The external system completes the callback by calling the Lambda Durable Functions API with the callback ID and result payload.
+
+#### Callback Configuration
+
+Configure timeouts and serialization to handle cases where callbacks are never completed or need custom deserialization:
+
+```java
+var config = CallbackConfig.builder()
+    .timeout(Duration.ofHours(24))        // Max time to wait for callback
+    .heartbeatTimeout(Duration.ofHours(1)) // Max time between heartbeats
+    .serDes(new CustomSerDes())           // Custom serialization/deserialization
+    .build();
+
+var callback = ctx.createCallback("approval", String.class, config);
+```
+
+| Option | Description |
+|--------|-------------|
+| `timeout()` | Maximum duration to wait for the callback to complete |
+| `heartbeatTimeout()` | Maximum duration between heartbeat signals from the external system |
+| `serDes()` | Custom SerDes for deserializing callback results (e.g., encryption, custom formats) |
+
+#### Callback Exceptions
+
+| Exception | When Thrown |
+|-----------|-------------|
+| `CallbackTimeoutException` | Callback exceeded its timeout duration |
+| `CallbackFailedException` | External system sent an error response |
+
+```java
+try {
+    var result = callback.get();
+} catch (CallbackTimeoutException e) {
+    // Callback timed out - implement fallback logic
+} catch (CallbackFailedException e) {
+    // External system reported an error
+}
 ```
 
 ## Step Configuration
@@ -307,6 +365,8 @@ The SDK throws specific exceptions to help you handle different failure scenario
 |-----------|-------------|---------------|
 | `StepFailedException` | Step exhausted all retry attempts | Catch to implement fallback logic or let execution fail |
 | `StepInterruptedException` | `AT_MOST_ONCE` step was interrupted before completion | Implement manual recovery (check if operation completed externally) |
+| `CallbackTimeoutException` | Callback exceeded its timeout duration | Implement fallback logic or escalation |
+| `CallbackFailedException` | External system sent an error response to the callback | Handle the error or propagate failure |
 | `NonDeterministicExecutionException` | Code changed between original execution and replay | Fix code to maintain determinism; don't change step order/names |
 
 ```java

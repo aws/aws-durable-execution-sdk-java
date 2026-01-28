@@ -7,6 +7,7 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.logging.LoggerConfig;
+import com.amazonaws.lambda.durable.operation.CallbackOperation;
 import com.amazonaws.lambda.durable.operation.InvokeOperation;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
@@ -218,6 +219,44 @@ public class DurableContext {
 
     public DurableLogger getLogger() {
         return logger;
+    }
+
+    // ========== createCallback methods ==========
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config) {
+        var operationId = nextOperationId();
+
+        var existing = executionManager.getOperation(operationId);
+        if (existing != null) {
+            validateReplay(operationId, OperationType.CALLBACK, name, existing);
+        }
+
+        var operation = new CallbackOperation<>(operationId, name, resultType, config, executionManager, serDes);
+        operation.execute();
+
+        return new DurableCallbackFuture<>(operation.getCallbackId(), operation);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType) {
+        return createCallback(name, resultType, null);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken, CallbackConfig config) {
+        var operationId = nextOperationId();
+
+        var existing = executionManager.getOperation(operationId);
+        if (existing != null) {
+            validateReplay(operationId, OperationType.CALLBACK, name, existing);
+        }
+
+        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, serDes);
+        operation.execute();
+
+        return new DurableCallbackFuture<>(operation.getCallbackId(), operation);
+    }
+
+    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken) {
+        return createCallback(name, typeToken, null);
     }
 
     private String nextOperationId() {

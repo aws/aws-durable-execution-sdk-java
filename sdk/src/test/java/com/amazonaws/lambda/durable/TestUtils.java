@@ -8,6 +8,7 @@ import static org.mockito.Mockito.*;
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import software.amazon.awssdk.services.lambda.model.*;
 
 public class TestUtils {
@@ -21,12 +22,20 @@ public class TestUtils {
             if (updates != null) {
                 for (var update : updates) {
                     if (update.action() == OperationAction.START) {
-                        responseOperations.add(Operation.builder()
+                        var opBuilder = Operation.builder()
                                 .id(update.id())
                                 .name(update.name())
                                 .type(update.type())
-                                .status(OperationStatus.STARTED)
-                                .build());
+                                .status(OperationStatus.STARTED);
+
+                        // Add callback details for CALLBACK operations
+                        if (update.type() == OperationType.CALLBACK) {
+                            opBuilder.callbackDetails(CallbackDetails.builder()
+                                    .callbackId(UUID.randomUUID().toString())
+                                    .build());
+                        }
+
+                        responseOperations.add(opBuilder.build());
                     } else if (update.action() == OperationAction.SUCCEED) {
                         var stepDetails = StepDetails.builder();
                         if (update.payload() != null) {

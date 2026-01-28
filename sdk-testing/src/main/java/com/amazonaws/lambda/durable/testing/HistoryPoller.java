@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
 
 public class HistoryPoller {
@@ -56,8 +57,8 @@ public class HistoryPoller {
 
     private boolean isExecutionComplete(List<Event> events) {
         return events.stream().anyMatch(event -> {
-            var eventType = event.eventTypeAsString();
-            return "ExecutionSucceeded".equals(eventType) || "ExecutionFailed".equals(eventType);
+            var eventType = event.eventType();
+            return EventType.EXECUTION_SUCCEEDED.equals(eventType) || EventType.EXECUTION_FAILED.equals(eventType);
         });
     }
 }

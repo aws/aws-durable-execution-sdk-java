@@ -115,6 +115,47 @@ public class CloudDurableTestRunner<I, O> {
         }
     }
 
+    /**
+     * Start an asynchronous execution and return a handle for incremental polling. Use this for callback-based tests
+     * where you need to interact with the execution while it's running.
+     *
+     * @param input the input to the function
+     * @return execution handle for polling and inspection
+     */
+    public AsyncExecution<O> startAsync(I input) {
+        try {
+            // Serialize input
+            var serDes = new JacksonSerDes();
+            var inputJson = serDes.serialize(input);
+
+            // Invoke function with EVENT type (async)
+            var invokeRequest = InvokeRequest.builder()
+                    .functionName(functionArn)
+                    .invocationType(InvocationType.EVENT)
+                    .payload(SdkBytes.fromUtf8String(inputJson))
+                    .build();
+
+            var response = lambdaClient.invoke(invokeRequest);
+
+            // Extract execution ARN from response
+            var executionArn = response.durableExecutionArn();
+            if (executionArn == null) {
+                throw new RuntimeException("No durable execution ARN returned - function may not be durable");
+            }
+
+            // Give the execution a moment to initialize before returning
+            // This prevents immediate polling from failing with "execution does not exist"
+            Thread.sleep(100);
+
+            return new AsyncExecution<>(executionArn, lambdaClient, outputType, pollInterval, timeout);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while starting async execution", e);
+        } catch (Exception e) {
+            throw new RuntimeException("Function invocation failed", e);
+        }
+    }
+
     public TestOperation getOperation(String name) {
         if (lastResult == null) {
             throw new IllegalStateException("No execution has been run yet");

@@ -11,10 +11,13 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 
 @EnabledIf("isEnabled")
-public class CloudBasedIntegrationTest {
+class CloudBasedIntegrationTest {
 
     private static String account;
     private static String region;
@@ -236,5 +239,97 @@ public class CloudBasedIntegrationTest {
         assertTrue(finalResult.startsWith("Completed: "));
         assertTrue(finalResult.contains("fallback-result"));
         assertTrue(finalResult.contains("payment-"));
+    }
+
+    @Test
+    void testCallbackExample() throws Exception {
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
+
+        // Start async execution
+        var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
+
+        // Wait for callback to appear
+        execution.pollUntil(exec -> exec.hasCallback("approval"));
+
+        // Get callback ID
+        var callbackId = execution.getCallbackId("approval");
+        assertNotNull(callbackId);
+
+        // Complete the callback using AWS SDK
+        var lambda = LambdaClient.create();
+        lambda.sendDurableExecutionCallbackSuccess(
+                req -> req.callbackId(callbackId).result(SdkBytes.fromUtf8String("\"approved\"")));
+
+        // Wait for execution to complete
+        var result = execution.pollUntilComplete();
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult(String.class);
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("Approval request for: Purchase order"));
+        assertTrue(finalResult.contains("5000"));
+        assertTrue(finalResult.contains("approved"));
+
+        // Verify all operations completed
+        assertNotNull(execution.getOperation("prepare"));
+        assertNotNull(execution.getOperation("log-callback-command"));
+        assertNotNull(execution.getOperation("process-approval"));
+    }
+
+    @Test
+    void testCallbackExampleWithFailure() {
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
+
+        // Start async execution
+        var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
+
+        // Wait for callback to appear
+        execution.pollUntil(exec -> exec.hasCallback("approval"));
+
+        // Get callback ID
+        var callbackId = execution.getCallbackId("approval");
+        assertNotNull(callbackId);
+
+        // Fail the callback using AWS SDK
+        var lambda = LambdaClient.create();
+        lambda.sendDurableExecutionCallbackFailure(req -> req.callbackId(callbackId)
+                .error(err -> err.errorType("ApprovalRejected").errorMessage("Approval rejected by manager")));
+
+        // Wait for execution to complete
+        var result = execution.pollUntilComplete();
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // Verify the callback operation shows failure
+        var approvalOp = execution.getOperation("approval");
+        assertNotNull(approvalOp);
+        var callbackDetails = approvalOp.getCallbackDetails();
+        assertNotNull(callbackDetails);
+        assertNotNull(callbackDetails.error());
+        // Error message is redacted in the response, just verify error exists
+        assertTrue(callbackDetails.error().toString().contains("ErrorObject"));
+    }
+
+    @Test
+    void testCallbackExampleWithTimeout() {
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
+
+        // Start async execution with 10 second timeout
+        var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0, 10));
+
+        // Wait for callback to appear
+        execution.pollUntil(exec -> exec.hasCallback("approval"));
+
+        // Get callback ID but don't complete it - let it timeout
+        var callbackId = execution.getCallbackId("approval");
+        assertNotNull(callbackId);
+
+        // Wait for execution to complete (should timeout after 10 seconds)
+        var result = execution.pollUntilComplete();
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // Verify the callback operation shows timeout status
+        var approvalOp = execution.getOperation("approval");
+        assertNotNull(approvalOp);
+        assertEquals(OperationStatus.TIMED_OUT, approvalOp.getStatus());
     }
 }
