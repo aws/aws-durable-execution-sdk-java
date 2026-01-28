@@ -156,7 +156,7 @@ var callback = ctx.createCallback("approval", String.class, config);
 | Exception | When Thrown |
 |-----------|-------------|
 | `CallbackTimeoutException` | Callback exceeded its timeout duration |
-| `CallbackException` | External system sent an error response |
+| `CallbackFailedException` | External system sent an error response |
 
 ```java
 try {

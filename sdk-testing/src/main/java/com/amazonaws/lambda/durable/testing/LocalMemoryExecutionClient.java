@@ -151,8 +151,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             case WAIT -> builder.waitDetails(buildWaitDetails(update));
             case STEP -> builder.stepDetails(buildStepDetails(update));
             case CALLBACK -> builder.callbackDetails(buildCallbackDetails(update));
+            case EXECUTION -> {} // No details needed for EXECUTION operations
             case CHAINED_INVOKE -> throw new UnsupportedOperationException("CHAINED_INVOKE not supported");
-            case EXECUTION -> throw new UnsupportedOperationException("EXECUTION not supported");
             case CONTEXT -> throw new UnsupportedOperationException("CONTEXT not supported");
             case UNKNOWN_TO_SDK_VERSION ->
                 throw new UnsupportedOperationException("UNKNOWN_TO_SDK_VERSION not supported");

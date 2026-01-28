@@ -4,6 +4,8 @@ package com.amazonaws.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.amazonaws.lambda.durable.exception.CallbackFailedException;
+import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -88,7 +90,8 @@ class CallbackIntegrationTest {
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
-        assertTrue(result.getError().get().errorType().endsWith("CallbackFailedException"));
+        assertEquals(
+                CallbackFailedException.class.getName(), result.getError().get().errorType());
         assertTrue(result.getError().get().errorMessage().contains("Rejected"));
     }
 
@@ -114,7 +117,9 @@ class CallbackIntegrationTest {
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
-        assertTrue(result.getError().get().errorType().endsWith("CallbackTimeoutException"));
+        assertEquals(
+                CallbackTimeoutException.class.getName(),
+                result.getError().get().errorType());
     }
 
     @Test

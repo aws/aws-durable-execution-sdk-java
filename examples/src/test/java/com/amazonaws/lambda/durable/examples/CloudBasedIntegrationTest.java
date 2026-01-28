@@ -17,7 +17,7 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 
 @EnabledIf("isEnabled")
-public class CloudBasedIntegrationTest {
+class CloudBasedIntegrationTest {
 
     private static String account;
     private static String region;
@@ -277,7 +277,7 @@ public class CloudBasedIntegrationTest {
     }
 
     @Test
-    void testCallbackExampleWithFailure() throws Exception {
+    void testCallbackExampleWithFailure() {
         var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
 
         // Start async execution
@@ -310,7 +310,7 @@ public class CloudBasedIntegrationTest {
     }
 
     @Test
-    void testCallbackExampleWithTimeout() throws Exception {
+    void testCallbackExampleWithTimeout() {
         var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
 
         // Start async execution with 10 second timeout

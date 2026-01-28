@@ -28,6 +28,9 @@ mvn test -Dtest=DurableContextTest
 
 # Skip tests
 mvn install -DskipTests
+
+# Format code (ALWAYS run after making changes)
+mvn spotless:apply
 ```
 
 ## Key Directories
@@ -235,6 +238,10 @@ Check `ExecutionManager` for thread registration and coordination logic if debug
 - Ask clarifying questions before making assumptions
 - Check existing code for patterns (especially in `operation/` package)
 - Prefer minimal changes over large refactors
+
+## After Making Changes
+
+**ALWAYS run `mvn spotless:apply` after making code changes** to ensure consistent formatting across the codebase. This applies code formatting rules automatically.
 
 ## Further Reading
 

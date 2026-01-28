@@ -6,10 +6,10 @@ import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 
@@ -46,9 +46,8 @@ public class AsyncExecution<O> {
      *
      * @param condition predicate to test on each poll
      * @return this execution for chaining
-     * @throws TimeoutException if condition not met within timeout
      */
-    public AsyncExecution<O> pollUntil(Predicate<AsyncExecution<O>> condition) throws TimeoutException {
+    public AsyncExecution<O> pollUntil(Predicate<AsyncExecution<O>> condition) {
         var startTime = Instant.now();
 
         while (Duration.between(startTime, Instant.now()).compareTo(timeout) < 0) {
@@ -66,16 +65,15 @@ public class AsyncExecution<O> {
             }
         }
 
-        throw new TimeoutException("Condition not met within timeout of " + timeout);
+        throw new RuntimeException("Condition not met within timeout of " + timeout);
     }
 
     /**
      * Poll until execution completes and return the final result.
      *
      * @return test result with execution status and output
-     * @throws TimeoutException if execution doesn't complete within timeout
      */
-    public TestResult<O> pollUntilComplete() throws TimeoutException {
+    public TestResult<O> pollUntilComplete() {
         pollUntil(AsyncExecution::isComplete);
         return currentResult;
     }
@@ -86,8 +84,8 @@ public class AsyncExecution<O> {
             return false;
         }
         return currentHistory.stream().anyMatch(e -> {
-            var eventType = e.eventTypeAsString();
-            return "ExecutionSucceeded".equals(eventType) || "ExecutionFailed".equals(eventType);
+            var eventType = e.eventType();
+            return EventType.EXECUTION_SUCCEEDED.equals(eventType) || EventType.EXECUTION_FAILED.equals(eventType);
         });
     }
 
@@ -106,7 +104,7 @@ public class AsyncExecution<O> {
         }
         // Look for CallbackStarted event with this name
         return currentHistory.stream()
-                .anyMatch(e -> name.equals(e.name()) && "CallbackStarted".equals(e.eventTypeAsString()));
+                .anyMatch(e -> name.equals(e.name()) && EventType.CALLBACK_STARTED.equals(e.eventType()));
     }
 
     /**

@@ -133,9 +133,7 @@ public class HistoryEventProcessor {
                     }
                 }
 
-                default -> {
-                    // Ignore other event types
-                }
+                default -> throw new UnsupportedOperationException("Unsupported event type: " + eventType);
             }
         }
 

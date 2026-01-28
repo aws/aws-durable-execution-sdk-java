@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.testing;
 
+import static software.amazon.awssdk.services.lambda.model.EventType.*;
+
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -29,11 +31,11 @@ class EventProcessor {
     private Event buildStepEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
         return switch (update.action()) {
             case START ->
-                builder.eventType("StepStarted")
+                builder.eventType(STEP_STARTED)
                         .stepStartedDetails(StepStartedDetails.builder().build())
                         .build();
             case SUCCEED ->
-                builder.eventType("StepSucceeded")
+                builder.eventType(STEP_SUCCEEDED)
                         .stepSucceededDetails(StepSucceededDetails.builder()
                                 .result(EventResult.builder()
                                         .payload(update.payload())
@@ -42,7 +44,7 @@ class EventProcessor {
                                 .build())
                         .build();
             case FAIL ->
-                builder.eventType("StepFailed")
+                builder.eventType(STEP_FAILED)
                         .stepFailedDetails(StepFailedDetails.builder()
                                 .error(EventError.builder()
                                         .payload(update.error())
@@ -51,7 +53,7 @@ class EventProcessor {
                                 .build())
                         .build();
             case RETRY ->
-                builder.eventType("StepStarted")
+                builder.eventType(STEP_STARTED)
                         .stepStartedDetails(StepStartedDetails.builder().build())
                         .build();
             default -> throw new IllegalArgumentException("Unsupported step action: " + update.action());
@@ -64,7 +66,7 @@ class EventProcessor {
             case START -> {
                 var waitSeconds =
                         update.waitOptions() != null ? update.waitOptions().waitSeconds() : 0;
-                yield builder.eventType("WaitStarted")
+                yield builder.eventType(WAIT_STARTED)
                         .waitStartedDetails(WaitStartedDetails.builder()
                                 .duration(waitSeconds)
                                 .scheduledEndTimestamp(Instant.now().plusSeconds(waitSeconds))
@@ -72,11 +74,11 @@ class EventProcessor {
                         .build();
             }
             case SUCCEED ->
-                builder.eventType("WaitSucceeded")
+                builder.eventType(WAIT_SUCCEEDED)
                         .waitSucceededDetails(WaitSucceededDetails.builder().build())
                         .build();
             case CANCEL ->
-                builder.eventType("WaitCancelled")
+                builder.eventType(WAIT_CANCELLED)
                         .waitCancelledDetails(WaitCancelledDetails.builder().build())
                         .build();
             default -> throw new IllegalArgumentException("Unsupported wait action: " + update.action());
@@ -86,12 +88,12 @@ class EventProcessor {
     private Event buildExecutionEvent(Event.Builder builder, OperationUpdate update) {
         return switch (update.action()) {
             case START ->
-                builder.eventType("ExecutionStarted")
+                builder.eventType(EXECUTION_STARTED)
                         .executionStartedDetails(
                                 ExecutionStartedDetails.builder().build())
                         .build();
             case SUCCEED ->
-                builder.eventType("ExecutionSucceeded")
+                builder.eventType(EXECUTION_SUCCEEDED)
                         .executionSucceededDetails(ExecutionSucceededDetails.builder()
                                 .result(EventResult.builder()
                                         .payload(update.payload())
@@ -99,7 +101,7 @@ class EventProcessor {
                                 .build())
                         .build();
             case FAIL ->
-                builder.eventType("ExecutionFailed")
+                builder.eventType(EXECUTION_FAILED)
                         .executionFailedDetails(ExecutionFailedDetails.builder()
                                 .error(EventError.builder()
                                         .payload(update.error())
@@ -112,9 +114,9 @@ class EventProcessor {
 
     private Event buildCallbackEvent(Event.Builder builder, OperationUpdate update) {
         return switch (update.action()) {
-            case START -> builder.eventType("CallbackStarted").build();
-            case SUCCEED -> builder.eventType("CallbackSucceeded").build();
-            case FAIL -> builder.eventType("CallbackFailed").build();
+            case START -> builder.eventType(CALLBACK_STARTED).build();
+            case SUCCEED -> builder.eventType(CALLBACK_SUCCEEDED).build();
+            case FAIL -> builder.eventType(CALLBACK_FAILED).build();
             default -> throw new IllegalArgumentException("Unsupported callback action: " + update.action());
         };
     }
