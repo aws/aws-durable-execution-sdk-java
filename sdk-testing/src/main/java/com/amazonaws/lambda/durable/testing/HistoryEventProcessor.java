@@ -37,11 +37,8 @@ public class HistoryEventProcessor {
             }
 
             switch (eventType) {
-                case EXECUTION_STARTED -> {
+                case EXECUTION_STARTED, INVOCATION_COMPLETED -> {
                     // Execution started - no action needed, just track the event
-                }
-                case INVOCATION_COMPLETED -> {
-                    // Invocation completed - no action needed, just track the event
                 }
                 case EXECUTION_SUCCEEDED -> {
                     status = ExecutionStatus.SUCCEEDED;
@@ -53,7 +50,8 @@ public class HistoryEventProcessor {
                     }
                 }
                 case EXECUTION_FAILED -> status = ExecutionStatus.FAILED;
-
+                case EXECUTION_TIMED_OUT -> status = ExecutionStatus.FAILED;
+                case EXECUTION_STOPPED -> status = ExecutionStatus.FAILED;
                 case STEP_STARTED -> {
                     if (operationId != null) {
                         operations.putIfAbsent(
@@ -139,7 +137,21 @@ public class HistoryEventProcessor {
                     }
                 }
 
-                default -> throw new UnsupportedOperationException("Unsupported event type: " + eventType);
+                case UNKNOWN_TO_SDK_VERSION -> {
+                    // Unknown event type - log and ignore gracefully
+                }
+
+                                case CONTEXT_STARTED, CONTEXT_SUCCEEDED, CONTEXT_FAILED -> {
+                    throw new UnsupportedOperationException("Context operations currently not supported");
+                }
+                
+                case CHAINED_INVOKE_STARTED,
+                        CHAINED_INVOKE_SUCCEEDED,
+                        CHAINED_INVOKE_FAILED,
+                        CHAINED_INVOKE_TIMED_OUT,
+                        CHAINED_INVOKE_STOPPED -> {
+                    throw new UnsupportedOperationException("Context operations currently not supported");
+                }
             }
         }
 
