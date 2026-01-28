@@ -141,10 +141,10 @@ public class HistoryEventProcessor {
                     // Unknown event type - log and ignore gracefully
                 }
 
-                                case CONTEXT_STARTED, CONTEXT_SUCCEEDED, CONTEXT_FAILED -> {
+                case CONTEXT_STARTED, CONTEXT_SUCCEEDED, CONTEXT_FAILED -> {
                     throw new UnsupportedOperationException("Context operations currently not supported");
                 }
-                
+
                 case CHAINED_INVOKE_STARTED,
                         CHAINED_INVOKE_SUCCEEDED,
                         CHAINED_INVOKE_FAILED,
