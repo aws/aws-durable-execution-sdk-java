@@ -41,9 +41,10 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
     }
 
     @Override
-    public GetDurableExecutionStateResponse getExecutionState(String arn, String marker) {
+    public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
         var request = GetDurableExecutionStateRequest.builder()
                 .durableExecutionArn(arn)
+                .checkpointToken(checkpointToken)
                 .marker(marker)
                 .build();
 

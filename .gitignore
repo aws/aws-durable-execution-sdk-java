@@ -21,6 +21,7 @@ buildNumber.properties
 # Kiro and SOP
 .kiro
 .sop
+.factorypath
 
 # Local testing
 
