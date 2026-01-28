@@ -92,7 +92,7 @@ public class ExecutionManager {
 
         var nextMarker = initialExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
-            var response = client.getExecutionState(durableExecutionArn, nextMarker);
+            var response = client.getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
             response.operations().forEach(op -> operations.put(op.id(), op));
             nextMarker = response.nextMarker();
         }

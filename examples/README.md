@@ -87,6 +87,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [WaitAtLeastExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastExample.java) | Concurrent `stepAsync()` with `wait()` |
 | [RetryInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/RetryInProcessExample.java) | In-process retry with concurrent operations |
 | [WaitAtLeastInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
+| [ManyAsyncStepsExample](src/main/java/com/amazonaws/lambda/durable/examples/ManyAsyncStepsExample.java) | Performance test with 500 concurrent async steps |
 
 ## Cleanup
 

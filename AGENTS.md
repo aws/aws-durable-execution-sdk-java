@@ -94,6 +94,10 @@ public DurableExecutor(DurableExecutionClient client, SerDes serDes) {
 
 Prefer descriptive domain names: `model`, `execution`, `operation`, `serde`, `exception`
 
+### Logging in Examples
+
+Use `context.getLogger()` instead of SLF4J's `LoggerFactory` in example handlers. It includes execution metadata and suppresses duplicate logs during replay.
+
 ## Do Not
 
 - Add new dependencies without explicit approval

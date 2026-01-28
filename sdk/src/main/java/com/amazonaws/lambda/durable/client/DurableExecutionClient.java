@@ -10,5 +10,5 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 public interface DurableExecutionClient {
     CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates);
 
-    GetDurableExecutionStateResponse getExecutionState(String arn, String marker);
+    GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker);
 }

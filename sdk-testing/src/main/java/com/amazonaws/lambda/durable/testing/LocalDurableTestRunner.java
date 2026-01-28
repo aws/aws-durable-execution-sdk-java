@@ -239,7 +239,8 @@ public class LocalDurableTestRunner<I, O> {
                 .build();
 
         // Load previous operations and include them in InitialExecutionState
-        var existingOps = storage.getExecutionState("arn:aws:lambda:us-east-1:123456789012:function:test", null)
+        var existingOps = storage.getExecutionState(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", null)
                 .operations();
         var allOps = new ArrayList<>(List.of(executionOp));
         allOps.addAll(existingOps);

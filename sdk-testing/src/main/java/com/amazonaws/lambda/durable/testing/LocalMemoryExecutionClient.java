@@ -42,7 +42,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     @Override
-    public GetDurableExecutionStateResponse getExecutionState(String arn, String marker) {
+    public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
         return GetDurableExecutionStateResponse.builder()
                 .operations(operations.values())
                 .build();

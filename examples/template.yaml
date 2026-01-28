@@ -252,6 +252,28 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  ManyAsyncStepsExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: many-async-steps-example
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.ManyAsyncStepsExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example"
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
@@ -340,3 +362,11 @@ Outputs:
   CallbackExampleFunctionName:
     Description: Callback Example Function Name
     Value: !Ref CallbackExampleFunction
+
+  ManyAsyncStepsExampleFunction:
+    Description: Many Async Steps Example Function ARN
+    Value: !GetAtt ManyAsyncStepsExampleFunction.Arn
+
+  ManyAsyncStepsExampleFunctionName:
+    Description: Many Async Steps Example Function Name
+    Value: !Ref ManyAsyncStepsExampleFunction

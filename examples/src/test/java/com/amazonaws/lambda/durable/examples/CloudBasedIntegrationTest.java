@@ -332,4 +332,22 @@ class CloudBasedIntegrationTest {
         assertNotNull(approvalOp);
         assertEquals(OperationStatus.TIMED_OUT, approvalOp.getStatus());
     }
+
+    @Test
+    void testManyAsyncStepsExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("many-async-steps-example"), ManyAsyncStepsExample.Input.class, String.class);
+        var result = runner.run(new ManyAsyncStepsExample.Input(2));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult(String.class);
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("500 async steps"));
+        assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2
+
+        // Verify some operations are tracked
+        assertNotNull(runner.getOperation("compute-0"));
+        assertNotNull(runner.getOperation("compute-499"));
+    }
 }
