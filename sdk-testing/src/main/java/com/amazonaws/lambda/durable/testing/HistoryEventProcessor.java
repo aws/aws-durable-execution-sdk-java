@@ -37,6 +37,12 @@ public class HistoryEventProcessor {
             }
 
             switch (eventType) {
+                case EXECUTION_STARTED -> {
+                    // Execution started - no action needed, just track the event
+                }
+                case INVOCATION_COMPLETED -> {
+                    // Invocation completed - no action needed, just track the event
+                }
                 case EXECUTION_SUCCEEDED -> {
                     status = ExecutionStatus.SUCCEEDED;
                     var details = event.executionSucceededDetails();
