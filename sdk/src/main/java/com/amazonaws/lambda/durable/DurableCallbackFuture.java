@@ -16,6 +16,13 @@ public class DurableCallbackFuture<T> extends DurableFuture<T> {
         this.callbackId = callbackId;
     }
 
+    /**
+     * Returns the unique identifier for this callback.
+     *
+     * <p>External systems use this ID to send callback results back to the durable execution.
+     *
+     * @return the callback ID
+     */
     public String callbackId() {
         return callbackId;
     }
