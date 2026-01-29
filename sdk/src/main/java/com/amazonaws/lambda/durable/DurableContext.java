@@ -27,6 +27,7 @@ public class DurableContext {
     private final Context lambdaContext;
     private final AtomicInteger operationCounter;
     private final DurableLogger logger;
+    private final ExecutionContext executionContext;
 
     DurableContext(
             ExecutionManager executionManager,
@@ -38,6 +39,7 @@ public class DurableContext {
         this.serDes = serDes;
         this.lambdaContext = lambdaContext;
         this.operationCounter = new AtomicInteger(0);
+        this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
 
         var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
         this.logger = new DurableLogger(
@@ -152,6 +154,19 @@ public class DurableContext {
 
     public DurableLogger getLogger() {
         return logger;
+    }
+
+    /**
+     * Returns metadata about the current durable execution.
+     *
+     * <p>The execution context provides information that remains constant throughout the execution lifecycle, such as
+     * the durable execution ARN. This is useful for tracking execution progress, correlating logs, and referencing
+     * this execution in external systems.
+     *
+     * @return the execution context
+     */
+    public ExecutionContext getExecutionContext() {
+        return executionContext;
     }
 
     // ========== createCallback methods ==========

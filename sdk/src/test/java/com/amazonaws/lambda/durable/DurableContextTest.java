@@ -32,7 +32,8 @@ class DurableContextTest {
         var executor = Executors.newCachedThreadPool();
         var initialExecutionState = new InitialExecutionState(initialOperations, null);
         var executionManager = new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
+                        + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",
                 "test-token",
                 initialExecutionState,
                 client,
@@ -47,6 +48,20 @@ class DurableContextTest {
 
         assertNotNull(context);
         assertNull(context.getLambdaContext());
+    }
+
+    @Test
+    void testGetExecutionContext() {
+        var context = createTestContext();
+
+        var executionContext = context.getExecutionContext();
+
+        assertNotNull(executionContext);
+        assertNotNull(executionContext.getDurableExecutionArn());
+        assertEquals(
+                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
+                        + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",
+                executionContext.getDurableExecutionArn());
     }
 
     @Test
