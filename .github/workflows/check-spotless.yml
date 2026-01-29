@@ -37,4 +37,4 @@ jobs:
           cache: maven
 
       - name: Run Spotless check
-        run: mvn spotless:check --file pom.xml
+        run: mvn -B -q spotless:check --file pom.xml
