@@ -1,0 +1,61 @@
+# Build and Test
+#
+# Description:
+#   Builds the project and runs unit tests for every supported Java version.
+#
+# Triggers:
+#   - pull_request: when a PR targets main
+#   - push: when code is pushed to main
+#
+# Notes:
+#   Builds against Java 17, 21, and 25.
+
+name: Build
+run-name: Build - ${{ github.event_name }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'sdk/**'
+      - 'sdk-testing/**'
+      - 'sdk-integration-tests/**'
+      - 'examples/**'
+      - 'pom.xml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'sdk/**'
+      - 'sdk-testing/**'
+      - 'sdk-integration-tests/**'
+      - 'examples/**'
+      - 'pom.xml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java:
+          - 17
+          - 21
+          - 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Java ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Build and test
+        run: mvn -B -q install --file pom.xml
