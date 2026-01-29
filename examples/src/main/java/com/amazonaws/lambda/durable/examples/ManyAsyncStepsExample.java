@@ -16,7 +16,7 @@ import java.util.ArrayList;
  * <ul>
  *   <li>Creates async steps in a loop
  *   <li>Each step performs a simple computation
- *   <li>All results are collected and summed
+ *   <li>All results are collected using {@link DurableFuture#allOf}
  * </ul>
  */
 public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.Input, String> {
@@ -32,7 +32,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
 
         context.getLogger().info("Starting {} async steps with multiplier {}", STEP_COUNT, multiplier);
 
-        // Create 100 async steps
+        // Create async steps
         var futures = new ArrayList<DurableFuture<Integer>>(STEP_COUNT);
         for (var i = 0; i < STEP_COUNT; i++) {
             var index = i;
@@ -42,11 +42,9 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
 
         context.getLogger().info("All {} async steps created, collecting results", STEP_COUNT);
 
-        // Collect all results
-        var totalSum = 0L;
-        for (var future : futures) {
-            totalSum += future.get();
-        }
+        // Collect all results using allOf
+        var results = DurableFuture.allOf(futures);
+        var totalSum = results.stream().mapToInt(Integer::intValue).sum();
 
         var executionTimeMs = System.currentTimeMillis() - startTime;
         context.getLogger()
