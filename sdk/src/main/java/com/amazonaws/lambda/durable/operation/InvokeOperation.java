@@ -4,7 +4,10 @@ package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.InvokeConfig;
 import com.amazonaws.lambda.durable.TypeToken;
+import com.amazonaws.lambda.durable.exception.InvokeException;
 import com.amazonaws.lambda.durable.exception.InvokeFailedException;
+import com.amazonaws.lambda.durable.exception.InvokeStoppedException;
+import com.amazonaws.lambda.durable.exception.InvokeTimedOutException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
@@ -176,19 +179,15 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
         }
 
         var invokeDetails = op.chainedInvokeDetails();
-        switch (op.status()) {
-            case SUCCEEDED -> {
-                var result = invokeDetails != null ? invokeDetails.result() : null;
-                return serDes.deserialize(result, resultTypeToken);
-            }
-            case FAILED, TIMED_OUT, STOPPED -> {
-                // todo: exception hierarchy needs to be refactored
-                var error = invokeDetails != null ? invokeDetails.error() : null;
-                throw InvokeFailedException.create(op.status(), error);
-            }
-            default -> {
-                throw new IllegalStateException("Unexpected invoke status: " + op.statusAsString());
-            }
-        }
+        var result = invokeDetails != null ? invokeDetails.result() : null;
+        var error = invokeDetails != null ? invokeDetails.error() : null;
+        return switch (op.status()) {
+            case SUCCEEDED -> serDes.deserialize(result, resultTypeToken);
+            case FAILED -> throw new InvokeFailedException(error);
+            case TIMED_OUT -> throw new InvokeTimedOutException(error);
+            case STOPPED -> throw new InvokeStoppedException(error);
+            // Unexpected status which should not happen. This is added for forward-compatibility.
+            default -> throw new InvokeException(op.status(), error);
+        };
     }
 }

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.examples;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class InvokeExampleTest {
 

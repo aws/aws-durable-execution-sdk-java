@@ -8,15 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
-class InvokeFailedExceptionTest {
+class InvokeExceptionTest {
 
     @Test
     void testNullError() {
-        var exception = InvokeFailedException.create(OperationStatus.FAILED, null);
+        var exception = new InvokeFailedException(null);
 
-        assertEquals(OperationStatus.FAILED, exception.getOperationStatus());
         assertNull(exception.getErrorData());
         assertNull(exception.getErrorType());
         assertNull(exception.getMessage());
@@ -25,9 +23,18 @@ class InvokeFailedExceptionTest {
     @Test
     void testConstructorWithDefaultErrorObject() {
         ErrorObject errorObject = ErrorObject.builder().build();
-        var exception = InvokeFailedException.create(OperationStatus.TIMED_OUT, errorObject);
+        var exception = new InvokeTimedOutException(errorObject);
 
-        assertEquals(OperationStatus.TIMED_OUT, exception.getOperationStatus());
+        assertNull(exception.getErrorType());
+        assertNull(exception.getErrorData());
+        assertNull(exception.getMessage());
+    }
+
+    @Test
+    void testInvokeStoppedExceptionWithDefaultErrorObject() {
+        ErrorObject errorObject = ErrorObject.builder().build();
+        var exception = new InvokeStoppedException(errorObject);
+
         assertNull(exception.getErrorType());
         assertNull(exception.getErrorData());
         assertNull(exception.getMessage());
@@ -41,9 +48,8 @@ class InvokeFailedExceptionTest {
                 .errorData("error data")
                 .stackTrace(List.of("class1|method1|file1|10", "class2|method2|file2|20"))
                 .build();
-        var exception = InvokeFailedException.create(OperationStatus.STOPPED, errorObject);
+        var exception = new InvokeFailedException(errorObject);
 
-        assertEquals(OperationStatus.STOPPED, exception.getOperationStatus());
         assertEquals("error type", exception.getErrorType());
         assertEquals("error data", exception.getErrorData());
         assertEquals("error message", exception.getMessage());

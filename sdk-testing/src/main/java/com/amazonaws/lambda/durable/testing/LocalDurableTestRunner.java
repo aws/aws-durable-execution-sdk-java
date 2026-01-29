@@ -21,8 +21,6 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 public class LocalDurableTestRunner<I, O> {
-    public record ChainedInvokeResult(OperationStatus operationStatus, String result, ErrorObject error) {}
-
     private static final int MAX_INVOCATIONS = 100;
 
     private final Class<I> inputType;
@@ -232,22 +230,22 @@ public class LocalDurableTestRunner<I, O> {
 
     // Manual complete a chained invoke call
     public void completeChainedInvoke(String name, String result) {
-        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.SUCCEEDED, result, null));
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.SUCCEEDED, result, null));
     }
 
     // Manual mark a chained invoke call TIMEOUT
     public void timeoutChainedInvoke(String name) {
-        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.TIMED_OUT, null, null));
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.TIMED_OUT, null, null));
     }
 
     // Manual fail a chained invoke call
     public void failChainedInvoke(String name, ErrorObject error) {
-        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.FAILED, null, error));
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.FAILED, null, error));
     }
 
     // Manual stop a chained invoke call
     public void stopChainedInvoke(String name, ErrorObject error) {
-        storage.completeChainedInvoke(name, new ChainedInvokeResult(OperationStatus.STOPPED, null, error));
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.STOPPED, null, error));
     }
 
     private DurableExecutionInput createDurableInput(I input) {

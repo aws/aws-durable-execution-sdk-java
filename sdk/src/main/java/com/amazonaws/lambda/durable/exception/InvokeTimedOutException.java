@@ -5,9 +5,9 @@ package com.amazonaws.lambda.durable.exception;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
-public class InvokeFailedException extends InvokeException {
+public class InvokeTimedOutException extends InvokeException {
 
-    public InvokeFailedException(ErrorObject errorObject) {
-        super(OperationStatus.FAILED, errorObject);
+    public InvokeTimedOutException(ErrorObject errorObject) {
+        super(OperationStatus.TIMED_OUT, errorObject);
     }
 }

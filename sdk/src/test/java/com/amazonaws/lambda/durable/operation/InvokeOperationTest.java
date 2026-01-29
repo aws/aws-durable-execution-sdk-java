@@ -10,7 +10,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.lambda.durable.TypeToken;
+import com.amazonaws.lambda.durable.exception.InvokeException;
 import com.amazonaws.lambda.durable.exception.InvokeFailedException;
+import com.amazonaws.lambda.durable.exception.InvokeStoppedException;
+import com.amazonaws.lambda.durable.exception.InvokeTimedOutException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
@@ -109,7 +112,82 @@ class InvokeOperationTest {
                 new JacksonSerDes());
 
         InvokeFailedException ex = assertThrows(InvokeFailedException.class, () -> operation.get());
-        assertEquals(OperationStatus.FAILED, ex.getOperationStatus());
+        assertEquals("errorData", ex.getErrorData());
+        assertEquals("errorType", ex.getErrorType());
+        assertEquals("errorMessage", ex.getMessage());
+    }
+
+    @Test
+    void getInvokeTimedOutExceptionWhenInvocationTimedOut() {
+        var executionManager = mock(ExecutionManager.class);
+        var phaser = new Phaser(1);
+        phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
+        when(executionManager.startPhaser(any())).thenReturn(phaser);
+        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
+        when(executionManager.getOperation("1"))
+                .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
+                        .id("1")
+                        .name("test-invoke")
+                        .status(OperationStatus.TIMED_OUT)
+                        .chainedInvokeDetails(
+                                software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                                        .error(ErrorObject.builder()
+                                                .errorType("errorType")
+                                                .errorMessage("errorMessage")
+                                                .errorData("errorData")
+                                                .build())
+                                        .build())
+                        .build());
+
+        var operation = new InvokeOperation<>(
+                "1",
+                "test-invoke",
+                "test-function",
+                "{}",
+                TypeToken.get(String.class),
+                null,
+                executionManager,
+                new JacksonSerDes());
+
+        InvokeTimedOutException ex = assertThrows(InvokeTimedOutException.class, () -> operation.get());
+        assertEquals("errorData", ex.getErrorData());
+        assertEquals("errorType", ex.getErrorType());
+        assertEquals("errorMessage", ex.getMessage());
+    }
+
+    @Test
+    void getInvokeStoppedExceptionWhenInvocationTimedOut() {
+        var executionManager = mock(ExecutionManager.class);
+        var phaser = new Phaser(1);
+        phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
+        when(executionManager.startPhaser(any())).thenReturn(phaser);
+        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
+        when(executionManager.getOperation("1"))
+                .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
+                        .id("1")
+                        .name("test-invoke")
+                        .status(OperationStatus.STOPPED)
+                        .chainedInvokeDetails(
+                                software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                                        .error(ErrorObject.builder()
+                                                .errorType("errorType")
+                                                .errorMessage("errorMessage")
+                                                .errorData("errorData")
+                                                .build())
+                                        .build())
+                        .build());
+
+        var operation = new InvokeOperation<>(
+                "1",
+                "test-invoke",
+                "test-function",
+                "{}",
+                TypeToken.get(String.class),
+                null,
+                executionManager,
+                new JacksonSerDes());
+
+        InvokeStoppedException ex = assertThrows(InvokeStoppedException.class, () -> operation.get());
         assertEquals("errorData", ex.getErrorData());
         assertEquals("errorType", ex.getErrorType());
         assertEquals("errorMessage", ex.getMessage());
@@ -147,6 +225,6 @@ class InvokeOperationTest {
                 executionManager,
                 new JacksonSerDes());
 
-        assertThrows(IllegalStateException.class, () -> operation.get());
+        assertThrows(InvokeException.class, () -> operation.get());
     }
 }

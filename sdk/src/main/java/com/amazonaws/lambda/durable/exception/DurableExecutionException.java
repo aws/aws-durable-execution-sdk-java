@@ -8,15 +8,17 @@ import java.util.List;
 public class DurableExecutionException extends RuntimeException {
     public DurableExecutionException(String message, Throwable cause, StackTraceElement[] stackTrace) {
         super(message, cause);
-        this.setStackTrace(stackTrace);
+        if (stackTrace != null) {
+            this.setStackTrace(stackTrace);
+        }
     }
 
     public DurableExecutionException(String message, Throwable cause) {
-        super(message, cause);
+        this(message, cause, null);
     }
 
     public DurableExecutionException(String message) {
-        super(message);
+        this(message, null, null);
     }
 
     // StackTraceElement.toString() is implementation-dependent, so we'll define our
