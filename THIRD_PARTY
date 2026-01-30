@@ -1,2 +1,586 @@
 Legal Notices Attribution File
 
+Package: aws-durable-execution-sdk-java-parent
+Version: 0.5.0-SNAPSHOT
+License: No License Found
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: aws-durable-execution-sdk-java
+Version: 0.5.0-SNAPSHOT
+License: No License Found
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: aws-lambda-java-core
+Version: 1.4.0
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: lambda
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: aws-json-protocol
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: third-party-jackson-core
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: protocol-core
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: http-auth-aws
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: checksums-spi
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: checksums
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: sdk-core
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: profiles
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: retries
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: reactive-streams
+Version: 1.0.4
+License: MIT-0
+License URL: https://github.com/aws/mit-0
+Copyright: No Copyright
+
+-
+
+Package: auth
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: http-auth-aws-eventstream
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: eventstream
+Version: 1.0.1
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: http-auth-spi
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: http-auth
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: identity-spi
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: http-client-spi
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: regions
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: annotations
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: utils
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: aws-core
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: utils-lite
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: metrics-spi
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: json-utils
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: endpoints-spi
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: retries-spi
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: apache-client
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: httpclient
+Version: 4.5.13
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Apache Software Foundation
+
+-
+
+Package: commons-logging
+Version: 1.2
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Apache Software Foundation
+
+-
+
+Package: httpcore
+Version: 4.4.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Apache Software Foundation
+
+-
+
+Package: commons-codec
+Version: 1.17.1
+License: Apache-2.0
+License URL: https://www.apache.org/licenses/LICENSE-2.0
+Copyright: The Apache Software Foundation
+
+-
+
+Package: netty-nio-client
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: netty-codec-http
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-codec-http2
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-codec
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-transport
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-common
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-buffer
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-handler
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-transport-native-unix-common
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-transport-classes-epoll
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: netty-resolver
+Version: 4.1.130.Final
+License: Apache-2.0
+License URL: No License URL
+Copyright: The Netty Project
+
+-
+
+Package: jackson-databind
+Version: 2.20.0
+License: Apache-2.0
+License URL: No License URL
+Copyright: FasterXML
+
+-
+
+Package: jackson-annotations
+Version: 2.20
+License: Apache-2.0
+License URL: No License URL
+Copyright: FasterXML
+
+-
+
+Package: jackson-core
+Version: 2.20.0
+License: Apache-2.0
+License URL: No License URL
+Copyright: FasterXML
+
+-
+
+Package: jackson-datatype-jsr310
+Version: 2.20.0
+License: Apache-2.0
+License URL: No License URL
+Copyright: FasterXML
+
+-
+
+Package: slf4j-api
+Version: 2.0.17
+License: MIT
+License URL: https://opensource.org/licenses/MIT
+Copyright: QOS.ch
+
+-
+
+Package: junit-jupiter
+Version: 5.14.1
+License: EPL-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: junit-jupiter-api
+Version: 5.14.1
+License: EPL-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: opentest4j
+Version: 1.3.0
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: junit-platform-commons
+Version: 1.14.1
+License: EPL-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: apiguardian-api
+Version: 1.1.2
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: junit-jupiter-params
+Version: 5.14.1
+License: EPL-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: junit-jupiter-engine
+Version: 5.14.1
+License: EPL-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: junit-platform-engine
+Version: 1.14.1
+License: EPL-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: mockito-core
+Version: 5.20.0
+License: MIT
+License URL: https://opensource.org/licenses/MIT
+Copyright: No Copyright
+
+-
+
+Package: byte-buddy
+Version: 1.17.7
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: byte-buddy-agent
+Version: 1.17.7
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: objenesis
+Version: 3.3
+License: Apache-2.0
+License URL: No License URL
+Copyright: Joe Walnes, Henri Tremblay, Leonardo Mesquita
+
+-
+
+Package: aws-durable-execution-sdk-java-testing
+Version: 0.5.0-SNAPSHOT
+License: No License Found
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: slf4j-simple
+Version: 2.0.17
+License: MIT
+License URL: https://opensource.org/licenses/MIT
+Copyright: QOS.ch
+
+-
+
+Package: aws-durable-execution-sdk-java-integration-tests
+Version: 0.5.0-SNAPSHOT
+License: No License Found
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: aws-durable-execution-sdk-java-examples
+Version: 0.5.0-SNAPSHOT
+License: No License Found
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: log4j-slf4j2-impl
+Version: 2.25.3
+License: Apache-2.0
+License URL: https://www.apache.org/licenses/LICENSE-2.0
+Copyright: The Apache Software Foundation
+
+-
+
+Package: log4j-api
+Version: 2.25.3
+License: Apache-2.0
+License URL: https://www.apache.org/licenses/LICENSE-2.0
+Copyright: The Apache Software Foundation
+
+-
+
+Package: log4j-core
+Version: 2.25.3
+License: Apache-2.0
+License URL: https://www.apache.org/licenses/LICENSE-2.0
+Copyright: The Apache Software Foundation
+
+-
+
+Package: log4j-layout-template-json
+Version: 2.25.3
+License: Apache-2.0
+License URL: https://www.apache.org/licenses/LICENSE-2.0
+Copyright: The Apache Software Foundation
+
+-
+
+Package: sts
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
+Package: aws-query-protocol
+Version: 2.40.16
+License: Apache-2.0
+License URL: No License URL
+Copyright: No Copyright
+
+-
+
