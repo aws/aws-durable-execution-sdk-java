@@ -62,6 +62,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Cloud Based Integration Tests
         run: |
+          export DOCKER_DEFAULT_PLATFORM=linux/amd64
           sam build
           sam deploy --resolve-image-repos
           mvn clean test -B -q -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
