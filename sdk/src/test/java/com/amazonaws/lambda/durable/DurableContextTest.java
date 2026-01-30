@@ -13,18 +13,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
 
-/**
- * Unit tests for DurableContext.
- *
- * <p>Note: Async step execution tests (stepAsync with first execution) are tested in integration tests using
- * LocalDurableTestRunner, which properly handles the thread coordination required for async operations. This test class
- * focuses on synchronous operations and replay scenarios which can be reliably tested at the unit level.
- */
 class DurableContextTest {
-
-    private static final String TEST_EXECUTION_ARN =
-            "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
-                    + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d";
 
     private DurableContext createTestContext() {
         var executionOp = Operation.builder()
@@ -38,7 +27,12 @@ class DurableContextTest {
     private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
         var initialExecutionState = new InitialExecutionState(initialOperations, null);
-        var executionManager = new ExecutionManager(TEST_EXECUTION_ARN, "test-token", initialExecutionState, client);
+        var executionManager = new ExecutionManager(
+                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
+                        + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",
+                "test-token",
+                initialExecutionState,
+                client);
         return new DurableContext(executionManager, DurableConfig.builder().build(), null);
     }
 
@@ -90,8 +84,18 @@ class DurableContextTest {
     }
 
     @Test
-    void testStepAsyncReplay() {
-        // Create context with existing completed operation - tests replay behavior
+    void testStepAsync() throws Exception {
+        var context = createTestContext();
+
+        var future = context.stepAsync("async-test", String.class, () -> "Async Result");
+
+        assertNotNull(future);
+        assertEquals("Async Result", future.get());
+    }
+
+    @Test
+    void testStepAsyncReplay() throws Exception {
+        // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
                 .status(OperationStatus.SUCCEEDED)
@@ -100,7 +104,7 @@ class DurableContextTest {
                 .build();
         var context = createTestContext(List.of(existingOp));
 
-        // This should return cached result immediately without blocking
+        // This should return cached result immediately
         var future = context.stepAsync("async-test", String.class, () -> "New Async Result");
         assertEquals("Cached Async Result", future.get());
     }
@@ -129,8 +133,26 @@ class DurableContextTest {
     }
 
     @Test
-    void testCombinedReplay() {
-        // Create context with all operations completed - tests replay behavior
+    void testCombinedSyncAsyncWait() throws Exception {
+        var context = createTestContext();
+
+        // Execute sync step
+        var syncResult = context.step("sync-step", String.class, () -> "Sync Done");
+        assertEquals("Sync Done", syncResult);
+
+        // Execute async step
+        var asyncFuture = context.stepAsync("async-step", Integer.class, () -> 42);
+        assertEquals(42, asyncFuture.get());
+
+        // Wait should suspend (throw exception)
+        assertThrows(SuspendExecutionException.class, () -> {
+            context.wait(Duration.ofSeconds(30));
+        });
+    }
+
+    @Test
+    void testCombinedReplay() throws Exception {
+        // Create context with all operations completed
         var syncOp = Operation.builder()
                 .id("1")
                 .status(OperationStatus.SUCCEEDED)
@@ -228,8 +250,21 @@ class DurableContextTest {
     }
 
     @Test
-    void testStepAsyncWithTypeTokenReplay() {
-        // Create context with existing completed operation - tests replay behavior
+    void testStepAsyncWithTypeToken() throws Exception {
+        var context = createTestContext();
+
+        DurableFuture<List<String>> future =
+                context.stepAsync("async-list", new TypeToken<List<String>>() {}, () -> List.of("x", "y", "z"));
+
+        assertNotNull(future);
+        List<String> result = future.get();
+        assertEquals(3, result.size());
+        assertEquals("x", result.get(0));
+    }
+
+    @Test
+    void testStepAsyncWithTypeTokenReplay() throws Exception {
+        // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
                 .status(OperationStatus.SUCCEEDED)
@@ -239,7 +274,7 @@ class DurableContextTest {
                 .build();
         var context = createTestContext(List.of(existingOp));
 
-        // This should return cached result immediately without blocking
+        // This should return cached result immediately
         DurableFuture<List<String>> future = context.stepAsync(
                 "async-list", new TypeToken<List<String>>() {}, () -> List.of("async-new1", "async-new2"));
 
@@ -247,5 +282,23 @@ class DurableContextTest {
         assertEquals(2, result.size());
         assertEquals("async-cached1", result.get(0));
         assertEquals("async-cached2", result.get(1));
+    }
+
+    @Test
+    void testStepAsyncWithTypeTokenAndConfig() throws Exception {
+        var context = createTestContext();
+
+        DurableFuture<List<Integer>> future = context.stepAsync(
+                "async-numbers",
+                new TypeToken<List<Integer>>() {},
+                () -> List.of(10, 20, 30),
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.DEFAULT)
+                        .build());
+
+        assertNotNull(future);
+        List<Integer> result = future.get();
+        assertEquals(3, result.size());
+        assertEquals(10, result.get(0));
     }
 }
