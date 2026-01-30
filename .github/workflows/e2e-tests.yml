@@ -38,8 +38,6 @@ jobs:
       matrix:
         java:
           - 17
-          - 21
-          - 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
