@@ -14,7 +14,9 @@ on:
   push:
     branches:
       - main
+      - chore/cloud-testing # test
     paths:
+      - '.github/**'
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
