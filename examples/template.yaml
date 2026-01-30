@@ -32,6 +32,33 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  SimpleInvokeExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: simple-invoke-example
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.SimpleInvokeExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+                - lambda:InvokeFunction
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-invoke-example"
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: '*'
+    Metadata:
+      Dockerfile: examples/Dockerfile
+      DockerContext: ../
+      DockerTag: durable-examples
+
   WaitExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -282,6 +309,14 @@ Outputs:
   SimpleStepExampleFunctionName:
     Description: Simple Step Example Function Name
     Value: !Ref SimpleStepExampleFunction
+
+  SimpleInvokeExampleFunction:
+    Description: Simple Invoke Example Function ARN
+    Value: !GetAtt SimpleInvokeExampleFunction.Arn
+
+  SimpleInvokeExampleFunctionName:
+    Description: Simple Invoke Example Function Name
+    Value: !Ref SimpleInvokeExampleFunction
 
   WaitExampleFunction:
     Description: Wait Example Function ARN

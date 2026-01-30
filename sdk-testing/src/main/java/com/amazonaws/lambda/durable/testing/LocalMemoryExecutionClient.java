@@ -87,6 +87,36 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         });
     }
 
+    public void completeChainedInvoke(String name, OperationResult result) {
+        var op = getOperationByName(name);
+        if (op == null) {
+            throw new IllegalStateException("Operation not found: " + name);
+        }
+        if (op.type() == OperationType.CHAINED_INVOKE
+                && op.status() == OperationStatus.STARTED
+                && op.name().equals(name)) {
+            var newOp = op.toBuilder()
+                    .status(result.operationStatus())
+                    .chainedInvokeDetails(ChainedInvokeDetails.builder()
+                            .result(result.result())
+                            .error(result.error())
+                            .build())
+                    .build();
+            var update = OperationUpdate.builder()
+                    .id(op.id())
+                    .name(op.name())
+                    .type(OperationType.CHAINED_INVOKE)
+                    .action(
+                            result.operationStatus() == OperationStatus.SUCCEEDED
+                                    ? OperationAction.SUCCEED
+                                    : OperationAction.FAIL)
+                    .build();
+            var event = eventProcessor.processUpdate(update, newOp);
+            allEvents.add(event);
+            operations.put(op.id(), newOp);
+        }
+    }
+
     public Operation getOperationByName(String name) {
         return operations.values().stream()
                 .filter(op -> name.equals(op.name()))
@@ -152,13 +182,23 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             case STEP -> builder.stepDetails(buildStepDetails(update));
             case CALLBACK -> builder.callbackDetails(buildCallbackDetails(update));
             case EXECUTION -> {} // No details needed for EXECUTION operations
-            case CHAINED_INVOKE -> throw new UnsupportedOperationException("CHAINED_INVOKE not supported");
+            case CHAINED_INVOKE -> builder.chainedInvokeDetails(buildChainedInvokeDetails(update));
             case CONTEXT -> throw new UnsupportedOperationException("CONTEXT not supported");
             case UNKNOWN_TO_SDK_VERSION ->
                 throw new UnsupportedOperationException("UNKNOWN_TO_SDK_VERSION not supported");
         }
 
         return builder.build();
+    }
+
+    private ChainedInvokeDetails buildChainedInvokeDetails(OperationUpdate update) {
+        if (update.chainedInvokeOptions() == null) {
+            return null;
+        }
+        return ChainedInvokeDetails.builder()
+                .result(update.payload())
+                .error(update.error())
+                .build();
     }
 
     private WaitDetails buildWaitDetails(OperationUpdate update) {

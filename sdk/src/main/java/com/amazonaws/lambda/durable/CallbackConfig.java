@@ -17,10 +17,20 @@ public class CallbackConfig {
         this.serDes = builder.serDes;
     }
 
+    /**
+     * Returns the maximum duration to wait for the callback to complete.
+     *
+     * @return the timeout duration, or null if not specified
+     */
     public Duration timeout() {
         return timeout;
     }
 
+    /**
+     * Returns the maximum duration between heartbeats before the callback is considered failed.
+     *
+     * @return the heartbeat timeout duration, or null if not specified
+     */
     public Duration heartbeatTimeout() {
         return heartbeatTimeout;
     }

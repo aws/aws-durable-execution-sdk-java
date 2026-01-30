@@ -18,9 +18,11 @@ Build resilient, long-running AWS Lambda functions that automatically checkpoint
 Your durable function extends `DurableHandler<I, O>` and implements `handleRequest(I input, DurableContext ctx)`. The `DurableContext` is your interface to durable operations:
 
 - `ctx.step()` – Execute code and checkpoint the result
-- `ctx.stepAsync()` – Start concurrent operations  
+- `ctx.stepAsync()` – Start a concurrent step  
 - `ctx.wait()` – Suspend execution without compute charges
 - `ctx.createCallback()` – Wait for external events (approvals, webhooks)
+- `ctx.invoke()` – Invoke another Lambda function and wait for the result
+- `ctx.invokeAsync()` – Start a concurrent Lambda function invocation
 
 ## Quick Start
 
@@ -166,6 +168,25 @@ try {
 } catch (CallbackFailedException e) {
     // External system reported an error
 }
+```
+
+### invoke() - Invoke another Lambda function
+
+
+```java
+// Basic invoke
+var result = ctx.invoke("invoke-function", 
+                "function-name",
+                "\"payload\"",
+                Result.class, 
+                InvokeConfig.builder()
+                        .payloadSerDes(...)  // payload serializer
+                        .resultSerDes(...)   // result deserializer
+                        .timeout(Duration.of(...))  // wait timeout
+                        .tenantId(...)       // Lambda tenantId
+                        .build()
+        );
+                
 ```
 
 ## Step Configuration

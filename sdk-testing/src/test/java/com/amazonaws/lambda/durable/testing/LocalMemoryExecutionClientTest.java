@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
@@ -61,5 +62,16 @@ class LocalMemoryExecutionClientTest {
         var exception = assertThrows(
                 IllegalStateException.class, () -> client.simulateFireAndForgetCheckpointLoss("nonexistent-step"));
         assertEquals("Operation not found: nonexistent-step", exception.getMessage());
+    }
+
+    @Test
+    void testCompleteInvocationThrowsWhenOperationNotFound() {
+        var client = new LocalMemoryExecutionClient();
+
+        var exception = assertThrows(
+                IllegalStateException.class,
+                () -> client.completeChainedInvoke(
+                        "nonexistent-invoke", new OperationResult(OperationStatus.TIMED_OUT, null, null)));
+        assertEquals("Operation not found: nonexistent-invoke", exception.getMessage());
     }
 }

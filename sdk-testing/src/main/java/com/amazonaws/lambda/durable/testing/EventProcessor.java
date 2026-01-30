@@ -22,6 +22,7 @@ class EventProcessor {
         return switch (update.type()) {
             case STEP -> buildStepEvent(builder, update, operation);
             case WAIT -> buildWaitEvent(builder, update, operation);
+            case CHAINED_INVOKE -> buildInvokeEvent(builder, update, operation);
             case EXECUTION -> buildExecutionEvent(builder, update);
             case CALLBACK -> buildCallbackEvent(builder, update);
             default -> throw new IllegalArgumentException("Unsupported operation type: " + update.type());
@@ -82,6 +83,41 @@ class EventProcessor {
                         .waitCancelledDetails(WaitCancelledDetails.builder().build())
                         .build();
             default -> throw new IllegalArgumentException("Unsupported wait action: " + update.action());
+        };
+    }
+
+    @SuppressWarnings("unused") // operation param kept for API consistency
+    private Event buildInvokeEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
+        return switch (update.action()) {
+            case START ->
+                builder.eventType(EventType.CHAINED_INVOKE_STARTED)
+                        .chainedInvokeStartedDetails(ChainedInvokeStartedDetails.builder()
+                                .functionName(update.chainedInvokeOptions().functionName())
+                                .input(EventInput.builder()
+                                        .payload(update.payload())
+                                        .build())
+                                .build())
+                        .build();
+            case SUCCEED ->
+                builder.eventType(EventType.CHAINED_INVOKE_SUCCEEDED)
+                        .chainedInvokeSucceededDetails(ChainedInvokeSucceededDetails.builder()
+                                .result(EventResult.builder()
+                                        .payload(
+                                                operation.chainedInvokeDetails().result())
+                                        .build())
+                                .build())
+                        .build();
+            case FAIL ->
+                builder.eventType(EventType.CHAINED_INVOKE_FAILED)
+                        .chainedInvokeFailedDetails(ChainedInvokeFailedDetails.builder()
+                                .error(EventError.builder()
+                                        .payload(
+                                                operation.chainedInvokeDetails().error())
+                                        .build())
+                                .build())
+                        .build();
+
+            default -> throw new IllegalArgumentException("Unsupported invoke action: " + update.action());
         };
     }
 

@@ -52,7 +52,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             DurableLogger durableLogger,
             SerDes serDes) {
         if (resultTypeToken == null) {
-            throw new IllegalArgumentException("Either resultType or resultTypeToken must be provided");
+            throw new IllegalArgumentException("resultTypeToken must be provided");
         }
 
         this.operationId = operationId;

@@ -228,6 +228,26 @@ public class LocalDurableTestRunner<I, O> {
         storage.advanceReadyOperations();
     }
 
+    // Manual complete a chained invoke call
+    public void completeChainedInvoke(String name, String result) {
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.SUCCEEDED, result, null));
+    }
+
+    // Manual mark a chained invoke call TIMEOUT
+    public void timeoutChainedInvoke(String name) {
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.TIMED_OUT, null, null));
+    }
+
+    // Manual fail a chained invoke call
+    public void failChainedInvoke(String name, ErrorObject error) {
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.FAILED, null, error));
+    }
+
+    // Manual stop a chained invoke call
+    public void stopChainedInvoke(String name, ErrorObject error) {
+        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.STOPPED, null, error));
+    }
+
     private DurableExecutionInput createDurableInput(I input) {
         var inputJson = serDes.serialize(input);
         var executionOp = Operation.builder()

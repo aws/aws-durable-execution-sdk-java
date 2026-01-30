@@ -1,0 +1,40 @@
+# Check for code formatting and license header errors using Spotless
+#
+# Description:
+#   Runs Spotless check for pull requests to ensure code formatting consistency,
+#   proper import ordering, and license headers.
+#   Fails the build if any violations are found.
+#
+# Triggers:
+#   - pull_request
+name: Spotless
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'sdk/**'
+      - 'sdk-testing/**'
+      - 'sdk-integration-tests/**'
+      - 'examples/**'
+
+permissions:
+  contents: read
+
+jobs:
+  spotless-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Run Spotless check
+        run: mvn -B -q spotless:check --file pom.xml
