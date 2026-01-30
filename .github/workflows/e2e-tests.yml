@@ -66,4 +66,4 @@ jobs:
           sam deploy --resolve-image-repos
           mvn clean test -B -q -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
         with:
-          path: examples/
+          working-directory: ./examples
