@@ -172,7 +172,10 @@ public final class DurableConfig {
     }
 
     /**
-     * Creates a default ExecutorService for durable execution. Uses a cached thread pool with daemon threads.
+     * Creates a default ExecutorService for running user-defined operations. Uses a cached thread pool with daemon
+     * threads by default.
+     *
+     * <p>This executor is used exclusively for user operations. Internal SDK coordination uses the common ForkJoinPool.
      *
      * @return Default ExecutorService instance
      */
@@ -252,7 +255,11 @@ public final class DurableConfig {
         }
 
         /**
-         * Sets a custom ExecutorService. If not set, a default cached thread pool will be created.
+         * Sets a custom ExecutorService for running user-defined operations. If not set, a default cached thread pool
+         * will be created.
+         *
+         * <p>This executor is used exclusively for running user-defined operations. Internal SDK coordination (polling,
+         * checkpointing) uses the common ForkJoinPool and is not affected by this setting.
          *
          * @param executorService Custom ExecutorService instance
          * @return This builder

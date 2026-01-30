@@ -14,6 +14,7 @@ import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.util.List;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Phaser;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -71,7 +72,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes());
+                new JacksonSerDes(),
+                Executors.newCachedThreadPool());
 
         var ex = assertThrows(IllegalStateException.class, operation::get);
         assertTrue(ex.getMessage().contains("Nested step calling is not supported"));
@@ -103,7 +105,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes());
+                new JacksonSerDes(),
+                Executors.newCachedThreadPool());
 
         var result = operation.get();
         assertEquals("cached-result", result);
@@ -131,7 +134,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                serDes);
+                serDes,
+                Executors.newCachedThreadPool());
 
         operation.execute();
 
@@ -164,7 +168,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                serDes);
+                serDes,
+                Executors.newCachedThreadPool());
 
         operation.execute();
 
@@ -188,7 +193,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes());
+                new JacksonSerDes(),
+                Executors.newCachedThreadPool());
 
         operation.execute();
 
@@ -218,7 +224,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes());
+                new JacksonSerDes(),
+                Executors.newCachedThreadPool());
 
         operation.execute();
 
@@ -243,7 +250,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes());
+                new JacksonSerDes(),
+                Executors.newCachedThreadPool());
 
         operation.execute();
 
@@ -268,7 +276,8 @@ class StepOperationTest {
                 null,
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes());
+                new JacksonSerDes(),
+                Executors.newCachedThreadPool());
 
         operation.execute();
 

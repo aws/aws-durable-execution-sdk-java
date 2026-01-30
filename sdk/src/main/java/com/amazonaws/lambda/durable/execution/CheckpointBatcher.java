@@ -7,7 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -20,29 +21,32 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  *
  * <p>Single responsibility: Queue and batch checkpoint requests efficiently. Uses CheckpointCallback to notify when
  * checkpoints complete, avoiding cyclic dependency.
+ *
+ * <p>Uses the common ForkJoinPool for internal coordination, keeping checkpoint processing separate from
+ * customer-configured executors.
  */
 class CheckpointBatcher {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
     private static final Logger logger = LoggerFactory.getLogger(CheckpointBatcher.class);
+
+    /** Internal executor for SDK coordination tasks (checkpoint queue processing). */
+    private static final Executor INTERNAL_EXECUTOR = ForkJoinPool.commonPool();
 
     private final CheckpointCallback callback;
     private final Supplier<String> tokenSupplier;
     private final String durableExecutionArn;
     private final DurableExecutionClient client;
     private final BlockingQueue<CheckpointRequest> queue = new LinkedBlockingQueue<>();
-    private final ExecutorService executor;
     private final AtomicBoolean isProcessing = new AtomicBoolean(false);
 
     record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {}
 
     CheckpointBatcher(
             DurableExecutionClient client,
-            ExecutorService executor,
             String durableExecutionArn,
             Supplier<String> tokenSupplier,
             CheckpointCallback callback) {
         this.client = client;
-        this.executor = executor;
         this.durableExecutionArn = durableExecutionArn;
         this.tokenSupplier = tokenSupplier;
         this.callback = callback;
@@ -56,7 +60,7 @@ class CheckpointBatcher {
         queue.offer(new CheckpointRequest(update, future));
 
         if (isProcessing.compareAndSet(false, true)) {
-            executor.submit(this::processQueue);
+            INTERNAL_EXECUTOR.execute(this::processQueue);
         }
 
         return future;
@@ -107,7 +111,7 @@ class CheckpointBatcher {
             isProcessing.set(false);
 
             if (!queue.isEmpty() && isProcessing.compareAndSet(false, true)) {
-                executor.submit(this::processQueue);
+                INTERNAL_EXECUTOR.execute(this::processQueue);
             }
         }
     }

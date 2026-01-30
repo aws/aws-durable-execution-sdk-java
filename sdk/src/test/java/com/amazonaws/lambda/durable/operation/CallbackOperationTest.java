@@ -16,7 +16,6 @@ import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -59,10 +58,9 @@ class CallbackOperationTest {
 
     private ExecutionManager createExecutionManager(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
-        var executor = Executors.newCachedThreadPool();
         var initialState = new InitialExecutionState(initialOperations, null);
         return new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client, executor);
+                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client);
     }
 
     @Test
