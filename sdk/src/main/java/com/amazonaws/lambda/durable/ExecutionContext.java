@@ -27,8 +27,8 @@ public class ExecutionContext {
      *   <li>Reference this execution when calling Lambda APIs
      * </ul>
      *
-     * <p>Example ARN format: {@code
-     * arn:aws:lambda:us-east-1:123456789012:function:my-function:$LATEST/durable-execution/349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d}
+     * <p>Example ARN format:
+     * {@code arn:aws:lambda:us-east-1:123456789012:function:my-function:$LATEST/durable-execution/349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d}
      *
      * @return the durable execution ARN
      */

@@ -227,8 +227,8 @@ public class DurableContext {
      * Returns metadata about the current durable execution.
      *
      * <p>The execution context provides information that remains constant throughout the execution lifecycle, such as
-     * the durable execution ARN. This is useful for tracking execution progress, correlating logs, and referencing
-     * this execution in external systems.
+     * the durable execution ARN. This is useful for tracking execution progress, correlating logs, and referencing this
+     * execution in external systems.
      *
      * @return the execution context
      */
