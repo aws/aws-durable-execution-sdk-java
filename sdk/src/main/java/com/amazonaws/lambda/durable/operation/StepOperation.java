@@ -17,7 +17,7 @@ import com.amazonaws.lambda.durable.util.SneakyThrow;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Phaser;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -42,7 +42,7 @@ public class StepOperation<T> implements DurableOperation<T> {
     private final DurableLogger durableLogger;
     private final SerDes serDes;
     private final Phaser phaser;
-    private final Executor userExecutor;
+    private final ExecutorService userExecutor;
 
     public StepOperation(
             String operationId,
@@ -53,7 +53,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             ExecutionManager executionManager,
             DurableLogger durableLogger,
             SerDes serDes,
-            Executor userExecutor) {
+            ExecutorService userExecutor) {
         if (resultTypeToken == null) {
             throw new IllegalArgumentException("resultTypeToken must be provided");
         }
