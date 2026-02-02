@@ -52,16 +52,14 @@ public class DurableExecutor {
             throw new IllegalStateException("First operation must be EXECUTION");
         }
 
-        // Get executor from config (always non-null)
-        var executor = config.getExecutorService();
+        // Get executor from config for running user step functions
+        var userExecutor = config.getExecutorService();
 
-        // TODO: Should we pass the whole input instead?
         var executionManager = new ExecutionManager(
                 input.durableExecutionArn(),
                 input.checkpointToken(),
                 input.initialExecutionState(),
-                config.getDurableExecutionClient(),
-                executor);
+                config.getDurableExecutionClient());
 
         var executionOp = executionManager.getExecutionOperation();
         logger.debug("EXECUTION operation found: {}", executionOp.id());
@@ -74,11 +72,10 @@ public class DurableExecutor {
             var handlerFuture = CompletableFuture.supplyAsync(
                     () -> {
                         // Create context in the executor thread so it detects the correct thread name
-                        var context =
-                                new DurableContext(executionManager, serDes, lambdaContext, config.getLoggerConfig());
+                        var context = new DurableContext(executionManager, config, lambdaContext);
                         return handler.apply(userInput, context);
                     },
-                    executor);
+                    userExecutor);
 
             // Get suspend future from ExecutionManager. If this future completes, it
             // indicates
@@ -145,7 +142,7 @@ public class DurableExecutor {
 
             // We DO NOT shutdown the executor since it should stay warm for re-invokes against a warm Lambda runtime.
             // For example, a re-invoke after a wait should re-use the same executor instance from DurableConfig.
-            // executor.shutdown();
+            // userExecutor.shutdown();
         }
     }
 

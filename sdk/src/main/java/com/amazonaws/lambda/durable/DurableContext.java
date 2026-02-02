@@ -6,13 +6,11 @@ import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
-import com.amazonaws.lambda.durable.logging.LoggerConfig;
 import com.amazonaws.lambda.durable.operation.CallbackOperation;
 import com.amazonaws.lambda.durable.operation.InvokeOperation;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
-import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.Objects;
@@ -24,20 +22,16 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 
 public class DurableContext {
     private final ExecutionManager executionManager;
-    private final SerDes serDes;
+    private final DurableConfig durableConfig;
     private final Context lambdaContext;
     private final AtomicInteger operationCounter;
     private final DurableLogger logger;
     private final ExecutionContext executionContext;
 
     DurableContext(
-            ExecutionManager executionManager,
-            SerDes serDes,
-            Context lambdaContext,
-            LoggerConfig loggerConfig,
-            String contextId) {
+            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
         this.executionManager = executionManager;
-        this.serDes = serDes;
+        this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
         this.operationCounter = new AtomicInteger(0);
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
@@ -47,14 +41,14 @@ public class DurableContext {
                 LoggerFactory.getLogger(DurableContext.class),
                 executionManager,
                 requestId,
-                loggerConfig.suppressReplayLogs());
+                durableConfig.getLoggerConfig().suppressReplayLogs());
 
         // Register root context thread as active
         executionManager.registerActiveThreadWithContext(contextId, ThreadType.CONTEXT);
     }
 
-    DurableContext(ExecutionManager executionManager, SerDes serDes, Context lambdaContext, LoggerConfig loggerConfig) {
-        this(executionManager, serDes, lambdaContext, loggerConfig, "Root");
+    DurableContext(ExecutionManager executionManager, DurableConfig config, Context lambdaContext) {
+        this(executionManager, config, lambdaContext, "Root");
     }
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
@@ -121,8 +115,16 @@ public class DurableContext {
         }
 
         // Create and start step operation with TypeToken
-        StepOperation<T> operation =
-                new StepOperation<>(operationId, name, func, typeToken, config, executionManager, logger, serDes);
+        var operation = new StepOperation<>(
+                operationId,
+                name,
+                func,
+                typeToken,
+                config,
+                executionManager,
+                logger,
+                durableConfig.getSerDes(),
+                durableConfig.getExecutorService());
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -209,7 +211,14 @@ public class DurableContext {
 
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
-                operationId, name, functionName, payload, typeToken, config, executionManager, serDes);
+                operationId,
+                name,
+                functionName,
+                payload,
+                typeToken,
+                config,
+                executionManager,
+                durableConfig.getSerDes());
 
         operation.execute(); // checkpoint the invoke operation
         return new DurableFuture<>(operation); // Block (will throw SuspendExecutionException if needed)
@@ -246,7 +255,8 @@ public class DurableContext {
             validateReplay(operationId, OperationType.CALLBACK, name, existing);
         }
 
-        var operation = new CallbackOperation<>(operationId, name, resultType, config, executionManager, serDes);
+        var operation = new CallbackOperation<>(
+                operationId, name, resultType, config, executionManager, durableConfig.getSerDes());
         operation.execute();
 
         return new DurableCallbackFuture<>(operation.getCallbackId(), operation);
@@ -264,7 +274,8 @@ public class DurableContext {
             validateReplay(operationId, OperationType.CALLBACK, name, existing);
         }
 
-        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, serDes);
+        var operation = new CallbackOperation<>(
+                operationId, name, typeToken, config, executionManager, durableConfig.getSerDes());
         operation.execute();
 
         return new DurableCallbackFuture<>(operation.getCallbackId(), operation);

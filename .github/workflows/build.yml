@@ -58,4 +58,4 @@ jobs:
           cache: maven
 
       - name: Build and test
-        run: mvn -B -q install --file pom.xml
+        run: mvn -B install --file pom.xml

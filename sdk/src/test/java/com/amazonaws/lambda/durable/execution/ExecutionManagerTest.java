@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.amazonaws.lambda.durable.TestUtils;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.util.List;
-import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -17,10 +16,9 @@ class ExecutionManagerTest {
 
     private ExecutionManager createManager(List<Operation> operations) {
         var client = TestUtils.createMockClient();
-        var executor = Executors.newCachedThreadPool();
         var initialState = new InitialExecutionState(operations, null);
         return new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client, executor);
+                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client);
     }
 
     private Operation executionOp() {

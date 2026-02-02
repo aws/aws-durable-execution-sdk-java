@@ -86,8 +86,51 @@ public class MyHandler extends DurableHandler<Input, Output> {
 |--------|---------|
 | `lambdaClient` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/com/amazonaws/lambda/durable/DurableConfig.java)) |
 | `serDes` | `JacksonSerDes` |
-| `executor` | `Executors.newCachedThreadPool()` |
+| `executorService` | `Executors.newCachedThreadPool()` (for user-defined operations only) |
 | `loggerConfig` | `LoggerConfig.defaults()` (suppress replay logs) |
+
+### Thread Pool Architecture
+
+The SDK uses two separate thread pools with distinct responsibilities:
+
+**User Executor (`DurableConfig.executorService`):**
+- Runs user-defined operations (the code passed to `ctx.step()` and `ctx.stepAsync()`)
+- Configurable via `DurableConfig.builder().withExecutorService()`
+- Default: cached daemon thread pool
+
+**Internal Executor (`InternalExecutor.INSTANCE`):**
+- Runs SDK coordination tasks: checkpoint batching, polling for wait completion, phaser management
+- Dedicated cached thread pool with daemon threads named `durable-sdk-internal-*`
+- Not configurable by users
+
+**Benefits of this separation:**
+
+| Benefit | Description |
+|---------|-------------|
+| **Isolation** | User operations can't starve SDK internals, and vice versa |
+| **No shutdown management** | Internal pool uses daemon threads; SDK coordination continues even if the user's executor is shut down |
+| **Efficient resource usage** | Cached thread pool creates threads on demand and reuses idle threads (60s timeout) |
+| **Daemon threads** | Internal threads won't prevent JVM shutdown |
+| **Single configuration point** | Changing `InternalExecutor.INSTANCE` in one place affects all SDK coordination |
+
+**Example: Custom thread pool for user operations:**
+```java
+@Override
+protected DurableConfig createConfiguration() {
+    var executor = new ThreadPoolExecutor(
+        4, 10,                          // core/max threads
+        60L, TimeUnit.SECONDS,          // idle timeout
+        new LinkedBlockingQueue<>(100), // bounded queue
+        new ThreadFactoryBuilder()
+            .setNameFormat("order-processor-%d")
+            .setDaemon(true)
+            .build());
+
+    return DurableConfig.builder()
+        .withExecutorService(executor)
+        .build();
+}
+```
 
 ### Step Configuration
 
