@@ -76,9 +76,13 @@ class CloudBasedIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertNotNull(result.getResult(String.class));
 
-        var createGreetingOp = runner.getOperation("invoke-greeting1");
+        var createGreetingOp = runner.getOperation("call-greeting1");
         assertNotNull(createGreetingOp);
-        assertEquals("invoke-greeting1", createGreetingOp.getName());
+        assertEquals("call-greeting1", createGreetingOp.getName());
+
+        var createGreetingOp2 = runner.getOperation("call-greeting2");
+        assertNotNull(createGreetingOp);
+        assertEquals("call-greeting2", createGreetingOp2.getName());
     }
 
     @Test
