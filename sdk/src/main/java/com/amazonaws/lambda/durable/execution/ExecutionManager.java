@@ -12,8 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
@@ -36,14 +34,13 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  * </ul>
  *
  * <p>This is the single entry point for all execution coordination. Internal coordination (polling, checkpointing) uses
- * the common ForkJoinPool, while user operations run on a customer-configured executor.
+ * a dedicated SDK thread pool, while user-defined operations run on a customer-configured executor.
+ *
+ * @see InternalExecutor
  */
 public class ExecutionManager {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
-
-    /** Internal executor for SDK coordination tasks (polling, phaser management). */
-    private static final Executor INTERNAL_EXECUTOR = ForkJoinPool.commonPool();
 
     // ===== Execution State =====
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();
@@ -256,7 +253,7 @@ public class ExecutionManager {
     // wait while another thread is still running and we therefore are not
     // re-invoked because we never suspended.
     public void pollForOperationUpdates(String operationId, Instant firstPollTime, Duration period) {
-        INTERNAL_EXECUTOR.execute(() -> {
+        InternalExecutor.INSTANCE.execute(() -> {
             // Sleep until the start
             try {
                 var sleepDuration = Duration.between(Instant.now(), firstPollTime);
@@ -296,7 +293,7 @@ public class ExecutionManager {
     // re-invoked because we never suspended.
     public void pollUntilReady(
             String operationId, CompletableFuture<Void> future, Instant firstPollTime, Duration period) {
-        INTERNAL_EXECUTOR.execute(() -> {
+        InternalExecutor.INSTANCE.execute(() -> {
             // Sleep until first poll time
             try {
                 Duration sleepDuration = Duration.between(Instant.now(), firstPollTime);

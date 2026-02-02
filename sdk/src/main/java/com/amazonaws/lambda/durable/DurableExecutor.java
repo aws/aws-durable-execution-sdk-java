@@ -142,7 +142,7 @@ public class DurableExecutor {
 
             // We DO NOT shutdown the executor since it should stay warm for re-invokes against a warm Lambda runtime.
             // For example, a re-invoke after a wait should re-use the same executor instance from DurableConfig.
-            // executor.shutdown();
+            // userExecutor.shutdown();
         }
     }
 

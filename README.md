@@ -315,7 +315,7 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withExecutorService()` | Thread pool for user-defined operations | Cached daemon thread pool |
 | `withLoggerConfig()` | Logger behavior configuration | Suppress logs during replay |
 
-The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on the JVM's common `ForkJoinPool`.
+The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
 
 ## Logging
 

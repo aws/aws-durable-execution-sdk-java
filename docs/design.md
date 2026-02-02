@@ -98,8 +98,9 @@ The SDK uses two separate thread pools with distinct responsibilities:
 - Configurable via `DurableConfig.builder().withExecutorService()`
 - Default: cached daemon thread pool
 
-**Internal Executor (`ForkJoinPool.commonPool()`):**
+**Internal Executor (`InternalExecutor.INSTANCE`):**
 - Runs SDK coordination tasks: checkpoint batching, polling for wait completion, phaser management
+- Dedicated cached thread pool with daemon threads named `durable-sdk-internal-*`
 - Not configurable by users
 
 **Benefits of this separation:**
@@ -107,10 +108,10 @@ The SDK uses two separate thread pools with distinct responsibilities:
 | Benefit | Description |
 |---------|-------------|
 | **Isolation** | User operations can't starve SDK internals, and vice versa |
-| **No shutdown management** | The common pool is JVM-managed; SDK coordination continues even if the user's executor is shut down |
-| **Efficient resource usage** | Common pool uses work-stealing and scales with available processors |
-| **Daemon threads** | Common pool threads won't prevent JVM shutdown |
-| **Single configuration point** | Changing `INTERNAL_EXECUTOR` in one place affects all SDK coordination |
+| **No shutdown management** | Internal pool uses daemon threads; SDK coordination continues even if the user's executor is shut down |
+| **Efficient resource usage** | Cached thread pool creates threads on demand and reuses idle threads (60s timeout) |
+| **Daemon threads** | Internal threads won't prevent JVM shutdown |
+| **Single configuration point** | Changing `InternalExecutor.INSTANCE` in one place affects all SDK coordination |
 
 **Example: Custom thread pool for user operations:**
 ```java
