@@ -6,6 +6,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/**' # for testing Github Actions
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
@@ -14,7 +15,6 @@ on:
   push:
     branches:
       - main
-      - chore/cloud-testing # test
     paths:
       - '.github/**'
       - 'sdk/**'
@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   e2e-tests:
-#    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request'
     env:
       AWS_REGION: us-west-2
     runs-on: ubuntu-latest
