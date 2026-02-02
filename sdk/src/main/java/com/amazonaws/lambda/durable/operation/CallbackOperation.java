@@ -25,7 +25,6 @@ public class CallbackOperation<T> implements DurableOperation<T> {
 
     private final String operationId;
     private final String name;
-    private final Class<T> resultType;
     private final TypeToken<T> resultTypeToken;
     private final CallbackConfig config;
     private final ExecutionManager executionManager;
@@ -38,34 +37,12 @@ public class CallbackOperation<T> implements DurableOperation<T> {
     public CallbackOperation(
             String operationId,
             String name,
-            Class<T> resultType,
-            CallbackConfig config,
-            ExecutionManager executionManager,
-            SerDes serDes) {
-        this(operationId, name, resultType, null, config, executionManager, serDes);
-    }
-
-    public CallbackOperation(
-            String operationId,
-            String name,
-            TypeToken<T> resultTypeToken,
-            CallbackConfig config,
-            ExecutionManager executionManager,
-            SerDes serDes) {
-        this(operationId, name, null, resultTypeToken, config, executionManager, serDes);
-    }
-
-    private CallbackOperation(
-            String operationId,
-            String name,
-            Class<T> resultType,
             TypeToken<T> resultTypeToken,
             CallbackConfig config,
             ExecutionManager executionManager,
             SerDes serDes) {
         this.operationId = operationId;
         this.name = name;
-        this.resultType = resultType;
         this.resultTypeToken = resultTypeToken;
         this.config = config;
         this.executionManager = executionManager;
@@ -159,8 +136,7 @@ public class CallbackOperation<T> implements DurableOperation<T> {
             case SUCCEEDED -> {
                 var result = op.callbackDetails().result();
                 try {
-                    var typeToken = resultTypeToken != null ? resultTypeToken : TypeToken.get(resultType);
-                    yield serDes.deserialize(result, typeToken);
+                    yield serDes.deserialize(result, resultTypeToken);
                 } catch (SerDesException e) {
                     logger.warn(
                             "Failed to deserialize callback result for callback ID '{}'. "
