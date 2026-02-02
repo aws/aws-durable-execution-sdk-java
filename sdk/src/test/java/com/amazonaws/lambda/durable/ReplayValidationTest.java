@@ -8,12 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.logging.LoggerConfig;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
-import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -25,7 +22,6 @@ class ReplayValidationTest {
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
-        var executor = Executors.newCachedThreadPool();
         var executionOp = Operation.builder()
                 .id("0")
                 .type(OperationType.EXECUTION)
@@ -35,13 +31,8 @@ class ReplayValidationTest {
                 .toList();
         var initialExecutionState = new InitialExecutionState(operations, null);
         var executionManager = new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
-                "test-token",
-                initialExecutionState,
-                client,
-                executor);
-        var serDes = new JacksonSerDes();
-        return new DurableContext(executionManager, serDes, null, LoggerConfig.defaults());
+                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialExecutionState, client);
+        return new DurableContext(executionManager, DurableConfig.builder().build(), null);
     }
 
     @Test

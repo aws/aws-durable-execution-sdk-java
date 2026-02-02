@@ -312,8 +312,10 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 |--------|-------------|---------|
 | `withLambdaClient()` | Custom AWS Lambda client | Auto-configured Lambda client |
 | `withSerDes()` | Serializer for step results | Jackson with default settings |
-| `withExecutorService()` | Thread pool for async step execution | Cached daemon thread pool |
+| `withExecutorService()` | Thread pool for user-defined operations | Cached daemon thread pool |
 | `withLoggerConfig()` | Logger behavior configuration | Suppress logs during replay |
+
+The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
 
 ## Logging
 

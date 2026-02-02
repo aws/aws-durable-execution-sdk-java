@@ -12,8 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
@@ -35,7 +33,10 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  *   <li>Polling (for waits and retries)
  * </ul>
  *
- * <p>This is the single entry point for all execution coordination.
+ * <p>This is the single entry point for all execution coordination. Internal coordination (polling, checkpointing) uses
+ * a dedicated SDK thread pool, while user-defined operations run on a customer-configured executor.
+ *
+ * @see InternalExecutor
  */
 public class ExecutionManager {
 
@@ -54,9 +55,6 @@ public class ExecutionManager {
     private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
     private final CompletableFuture<Void> suspendExecutionFuture = new CompletableFuture<>();
 
-    // ===== Executors =====
-    private final Executor managedExecutor;
-
     // ===== Checkpoint Batching =====
     private final CheckpointBatcher checkpointBatcher;
     private final DurableExecutionClient client;
@@ -65,8 +63,7 @@ public class ExecutionManager {
             String durableExecutionArn,
             String checkpointToken,
             InitialExecutionState initialExecutionState,
-            DurableExecutionClient client,
-            Executor executor) {
+            DurableExecutionClient client) {
         this.durableExecutionArn = durableExecutionArn;
         this.checkpointToken = checkpointToken;
         this.client = client;
@@ -77,13 +74,9 @@ public class ExecutionManager {
         this.executionMode =
                 new AtomicReference<>(operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
 
-        this.managedExecutor = executor;
-
-        // Create checkpoint manager (package-private)
-        // Pass method references to avoid cyclic dependency
-        var checkpointExecutor = Executors.newSingleThreadExecutor();
+        // Create checkpoint manager using common pool for internal coordination
         this.checkpointBatcher = new CheckpointBatcher(
-                client, checkpointExecutor, durableExecutionArn, this::getCheckpointToken, this::onCheckpointComplete);
+                client, durableExecutionArn, this::getCheckpointToken, this::onCheckpointComplete);
     }
 
     private void loadAllOperations(InitialExecutionState initialExecutionState) {
@@ -260,7 +253,7 @@ public class ExecutionManager {
     // wait while another thread is still running and we therefore are not
     // re-invoked because we never suspended.
     public void pollForOperationUpdates(String operationId, Instant firstPollTime, Duration period) {
-        managedExecutor.execute(() -> {
+        InternalExecutor.INSTANCE.execute(() -> {
             // Sleep until the start
             try {
                 var sleepDuration = Duration.between(Instant.now(), firstPollTime);
@@ -300,7 +293,7 @@ public class ExecutionManager {
     // re-invoked because we never suspended.
     public void pollUntilReady(
             String operationId, CompletableFuture<Void> future, Instant firstPollTime, Duration period) {
-        managedExecutor.execute(() -> {
+        InternalExecutor.INSTANCE.execute(() -> {
             // Sleep until first poll time
             try {
                 Duration sleepDuration = Duration.between(Instant.now(), firstPollTime);
@@ -341,10 +334,6 @@ public class ExecutionManager {
     }
 
     // ===== Utilities =====
-
-    public Executor getManagedExecutor() {
-        return managedExecutor;
-    }
 
     public CompletableFuture<Void> getSuspendExecutionFuture() {
         return suspendExecutionFuture;

@@ -17,6 +17,7 @@ import com.amazonaws.lambda.durable.util.SneakyThrow;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Phaser;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -41,6 +42,7 @@ public class StepOperation<T> implements DurableOperation<T> {
     private final DurableLogger durableLogger;
     private final SerDes serDes;
     private final Phaser phaser;
+    private final ExecutorService userExecutor;
 
     public StepOperation(
             String operationId,
@@ -50,7 +52,8 @@ public class StepOperation<T> implements DurableOperation<T> {
             StepConfig config,
             ExecutionManager executionManager,
             DurableLogger durableLogger,
-            SerDes serDes) {
+            SerDes serDes,
+            ExecutorService userExecutor) {
         if (resultTypeToken == null) {
             throw new IllegalArgumentException("resultTypeToken must be provided");
         }
@@ -64,6 +67,7 @@ public class StepOperation<T> implements DurableOperation<T> {
         this.durableLogger = durableLogger;
         // Use custom SerDes from config if provided, otherwise use default
         this.serDes = (config != null && config.serDes() != null) ? config.serDes() : serDes;
+        this.userExecutor = userExecutor;
 
         this.phaser = executionManager.startPhaser(operationId);
     }
@@ -142,8 +146,8 @@ public class StepOperation<T> implements DurableOperation<T> {
         // thread local OperationContext is set inside the executor since that's where the step actually runs
         executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
 
-        // Execute in managed executor
-        executionManager.getManagedExecutor().execute(() -> {
+        // Execute user code in customer-configured executor
+        userExecutor.execute(() -> {
             // Set thread local OperationContext on the executor thread
             executionManager.setCurrentContext(stepThreadId, ThreadType.STEP);
             // Set operation context for logging in this thread
