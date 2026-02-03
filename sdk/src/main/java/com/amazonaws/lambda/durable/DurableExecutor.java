@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
+import com.amazonaws.lambda.durable.exception.DurableExecutionException;
 import com.amazonaws.lambda.durable.exception.DurableOperationException;
-import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
@@ -150,13 +150,15 @@ public class DurableExecutor {
     }
 
     private static ErrorObject buildErrorObject(Throwable e, SerDes serDes) {
+        // exceptions thrown from operations, e.g. Step
         if (e instanceof DurableOperationException) {
             return ((DurableOperationException) e).getErrorObject();
         }
+        // exceptions thrown from non-operation code
         return ErrorObject.builder()
                 .errorType(e.getClass().getName())
                 .errorMessage(e.getMessage())
-                .stackTrace(StepFailedException.serializeStackTrace(e.getStackTrace()))
+                .stackTrace(DurableExecutionException.serializeStackTrace(e.getStackTrace()))
                 .errorData(serDes.serialize(e))
                 .build();
     }
