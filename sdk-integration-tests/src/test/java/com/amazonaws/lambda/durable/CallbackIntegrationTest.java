@@ -146,6 +146,8 @@ class CallbackIntegrationTest {
         var callbackId2 = runner.getCallbackId("approval2");
         runner.completeCallback(callbackId2, "\"second\"");
 
+        System.out.println("Debug line to test test on Github");
+
         // Third run - both callbacks done, returns result
         result = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
