@@ -248,18 +248,7 @@ public class DurableContext {
     // ========== createCallback methods ==========
 
     public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config) {
-        var operationId = nextOperationId();
-
-        var existing = executionManager.getOperation(operationId);
-        if (existing != null) {
-            validateReplay(operationId, OperationType.CALLBACK, name, existing);
-        }
-
-        var operation = new CallbackOperation<>(
-                operationId, name, resultType, config, executionManager, durableConfig.getSerDes());
-        operation.execute();
-
-        return new DurableCallbackFuture<>(operation.getCallbackId(), operation);
+        return createCallback(name, TypeToken.get(resultType), config);
     }
 
     public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType) {
