@@ -120,14 +120,10 @@ public class DurableExecutor {
             // If response size is acceptable, return the result directly
             logger.debug("Execution completed");
             return DurableExecutionOutput.success(outputPayload);
-        } catch (SuspendExecutionException e) {
-            // Expected: handler suspended via wait/callback/etc
-            logger.debug("Execution suspended");
-            return DurableExecutionOutput.pending();
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
+            //We must catch here in case exception is propagated before suspendFuture resolved
             if (cause instanceof SuspendExecutionException) {
-                // SuspendExecutionException wrapped in CompletionException
                 logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
             }

@@ -193,7 +193,10 @@ public class StepOperation<T> implements DurableOperation<T> {
                 try {
                     executionManager.deregisterActiveThread(stepThreadId);
                 } catch (SuspendExecutionException e) {
-                    // Expected when this is the last active thread - don't let it escape
+                    // Expected when this is the last active thread. Must catch here because:
+                    // 1/ This runs in a worker thread detached from handlerFuture
+                    // 2/ Uncaught exception would prevent phaser from advancing, blocking stepAsync().get()
+                    // Suspension is already signaled via suspendExecutionFuture before the throw.
                 }
                 durableLogger.clearOperationContext();
             }
