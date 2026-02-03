@@ -12,6 +12,9 @@ public class StepInterruptedException extends StepException {
     }
 
     public static boolean isStepInterruptedException(ErrorObject errorObject) {
+        if (errorObject == null) {
+            return false;
+        }
         return StepInterruptedException.toErrorObject().errorType().equals(errorObject.errorType());
     }
 
