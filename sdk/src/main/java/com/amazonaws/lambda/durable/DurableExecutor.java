@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -98,6 +99,10 @@ public class DurableExecutor {
                     handlerFuture.join(); // Will throw the exception
                 } catch (Exception e) {
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    // Check if this is a suspension, not a real failure
+                    if (cause instanceof SuspendExecutionException || suspendFuture.isDone()) {
+                        return DurableExecutionOutput.pending();
+                    }
                     logger.debug("Execution failed: {}", cause.getMessage());
                     return DurableExecutionOutput.failure(cause, serDes);
                 }
