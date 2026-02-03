@@ -122,7 +122,7 @@ public class DurableExecutor {
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            //We must catch here in case exception is propagated before suspendFuture resolved
+            // We must catch here in case exception is propagated before suspendFuture resolved
             if (cause instanceof SuspendExecutionException) {
                 logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
