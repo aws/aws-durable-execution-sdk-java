@@ -140,6 +140,10 @@ public class DurableExecutor {
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
+            // Check if this is a suspension, not a real failure
+            if (cause instanceof SuspendExecutionException) {
+                return DurableExecutionOutput.pending();
+            }
             return DurableExecutionOutput.failure(cause, serDes);
         } finally {
             // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
