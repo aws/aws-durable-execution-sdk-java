@@ -79,11 +79,7 @@ public class DurableExecutor {
                     userExecutor);
 
             // Get suspend future from ExecutionManager. If this future completes, it
-            // indicates
-            // that no threads are active and we can safely suspend. This is useful for
-            // async scenarios where multiple operations are scheduled concurrently and
-            // awaited
-            // at a later point.
+            // indicates that no threads are active and we can safely suspend.
             var suspendFuture = executionManager.getSuspendExecutionFuture();
 
             // Wait for either handler to complete or suspension to occur
@@ -92,20 +88,6 @@ public class DurableExecutor {
             if (suspendFuture.isDone()) {
                 logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
-            }
-
-            if (handlerFuture.isCompletedExceptionally()) {
-                try {
-                    handlerFuture.join(); // Will throw the exception
-                } catch (Exception e) {
-                    Throwable cause = e.getCause() != null ? e.getCause() : e;
-                    // Check if this is a suspension, not a real failure
-                    if (cause instanceof SuspendExecutionException || suspendFuture.isDone()) {
-                        return DurableExecutionOutput.pending();
-                    }
-                    logger.debug("Execution failed: {}", cause.getMessage());
-                    return DurableExecutionOutput.failure(cause, serDes);
-                }
             }
 
             var result = handlerFuture.get();
@@ -138,10 +120,15 @@ public class DurableExecutor {
             // If response size is acceptable, return the result directly
             logger.debug("Execution completed");
             return DurableExecutionOutput.success(outputPayload);
+        } catch (SuspendExecutionException e) {
+            // Expected: handler suspended via wait/callback/etc
+            logger.debug("Execution suspended");
+            return DurableExecutionOutput.pending();
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            // Check if this is a suspension, not a real failure
             if (cause instanceof SuspendExecutionException) {
+                // SuspendExecutionException wrapped in CompletionException
+                logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
             }
             return DurableExecutionOutput.failure(cause, serDes);
