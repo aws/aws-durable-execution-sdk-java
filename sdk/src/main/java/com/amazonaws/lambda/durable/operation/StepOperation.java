@@ -13,7 +13,7 @@ import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.lambda.durable.util.SneakyThrow;
+import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
@@ -206,13 +206,7 @@ public class StepOperation<T> implements DurableOperation<T> {
     }
 
     private void handleStepError(Throwable exception, int attempt) {
-        var errorObject = ErrorObject.builder()
-                .errorType(exception.getClass().getName())
-                .errorMessage(exception.getMessage())
-                .errorData(serDes.serialize(exception))
-                .stackTrace(StepFailedException.serializeStackTrace(exception.getStackTrace()))
-                .build();
-        handleStepFailure(exception, errorObject, attempt);
+        handleStepFailure(exception, ExceptionHelper.buildErrorObject(exception, serDes), attempt);
     }
 
     private void handleStepFailure(Throwable exception, ErrorObject errorObject, int attempt) {
@@ -331,8 +325,8 @@ public class StepOperation<T> implements DurableOperation<T> {
                             errorObject.errorData(), TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
 
                     if (original != null) {
-                        original.setStackTrace(StepFailedException.deserializeStackTrace(errorObject.stackTrace()));
-                        SneakyThrow.sneakyThrow(original);
+                        original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));
+                        ExceptionHelper.sneakyThrow(original);
                     }
                 }
             } catch (ClassNotFoundException e) {

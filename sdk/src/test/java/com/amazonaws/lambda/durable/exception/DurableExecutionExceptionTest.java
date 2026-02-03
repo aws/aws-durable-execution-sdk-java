@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -47,7 +48,7 @@ class DurableExecutionExceptionTest {
             new StackTraceElement("com.example.OtherClass", "otherMethod", "OtherClass.java", 456)
         };
 
-        var serialized = DurableExecutionException.serializeStackTrace(stackTrace);
+        var serialized = ExceptionHelper.serializeStackTrace(stackTrace);
 
         assertEquals(2, serialized.size());
         assertEquals("com.example.MyClass|myMethod|MyClass.java|123", serialized.get(0));
@@ -60,7 +61,7 @@ class DurableExecutionExceptionTest {
                 "com.example.MyClass|myMethod|MyClass.java|123",
                 "com.example.OtherClass|otherMethod|OtherClass.java|456");
 
-        var stackTrace = DurableExecutionException.deserializeStackTrace(serialized);
+        var stackTrace = ExceptionHelper.deserializeStackTrace(serialized);
 
         assertEquals(2, stackTrace.length);
         assertEquals("com.example.MyClass", stackTrace[0].getClassName());
@@ -78,8 +79,8 @@ class DurableExecutionExceptionTest {
         var original =
                 new StackTraceElement[] {new StackTraceElement("TestClass", "testMethod", "TestClass.java", 100)};
 
-        var serialized = DurableExecutionException.serializeStackTrace(original);
-        var deserialized = DurableExecutionException.deserializeStackTrace(serialized);
+        var serialized = ExceptionHelper.serializeStackTrace(original);
+        var deserialized = ExceptionHelper.deserializeStackTrace(serialized);
 
         assertArrayEquals(original, deserialized);
     }

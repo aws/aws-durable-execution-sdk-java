@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.exception.DurableExecutionException;
 import com.amazonaws.lambda.durable.exception.DurableOperationException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.lambda.durable.util.AsyncHelper;
+import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
@@ -101,7 +100,7 @@ public class DurableExecutor {
                 try {
                     handlerFuture.join(); // Will throw the exception
                 } catch (Exception e) {
-                    Throwable cause = AsyncHelper.unwrap(e);
+                    Throwable cause = ExceptionHelper.unwrapCompletableFuture(e);
                     logger.debug("Execution failed: {}", cause.getMessage());
                     return DurableExecutionOutput.failure(buildErrorObject(cause, serDes));
                 }
@@ -138,7 +137,7 @@ public class DurableExecutor {
             logger.debug("Execution completed");
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
-            return DurableExecutionOutput.failure(buildErrorObject(AsyncHelper.unwrap(e), serDes));
+            return DurableExecutionOutput.failure(buildErrorObject(ExceptionHelper.unwrapCompletableFuture(e), serDes));
         } finally {
             // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
             executionManager.shutdown();
@@ -155,12 +154,7 @@ public class DurableExecutor {
             return ((DurableOperationException) e).getErrorObject();
         }
         // exceptions thrown from non-operation code
-        return ErrorObject.builder()
-                .errorType(e.getClass().getName())
-                .errorMessage(e.getMessage())
-                .stackTrace(DurableExecutionException.serializeStackTrace(e.getStackTrace()))
-                .errorData(serDes.serialize(e))
-                .build();
+        return ExceptionHelper.buildErrorObject(e, serDes);
     }
 
     private static <I> I extractUserInput(Operation executionOp, SerDes serDes, Class<I> inputType) {

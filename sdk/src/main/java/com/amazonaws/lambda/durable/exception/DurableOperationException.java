@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.exception;
 
+import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -19,7 +20,7 @@ public class DurableOperationException extends DurableExecutionException {
                 operation,
                 errorObject,
                 errorMessage,
-                errorObject != null ? DurableExecutionException.deserializeStackTrace(errorObject.stackTrace()) : null);
+                errorObject != null ? ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()) : null);
     }
 
     public DurableOperationException(
