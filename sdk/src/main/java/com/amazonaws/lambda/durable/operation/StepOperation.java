@@ -10,6 +10,7 @@ import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
+import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -189,7 +190,11 @@ public class StepOperation<T> implements DurableOperation<T> {
             } catch (Throwable e) {
                 handleStepError(e, attempt);
             } finally {
-                executionManager.deregisterActiveThread(stepThreadId);
+                try {
+                    executionManager.deregisterActiveThread(stepThreadId);
+                } catch (SuspendExecutionException e) {
+                    // Expected when this is the last active thread - don't let it escape
+                }
                 durableLogger.clearOperationContext();
             }
         });
