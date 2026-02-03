@@ -8,12 +8,15 @@ import com.amazonaws.lambda.durable.serde.SerDes;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
 public class TestResult<O> {
+    private static final Set<OperationStatus> FAIL_OPERATION_STATUS = Set.of(
+            OperationStatus.FAILED, OperationStatus.CANCELLED, OperationStatus.TIMED_OUT, OperationStatus.STOPPED);
     private final ExecutionStatus status;
     private final String resultPayload;
     private final ErrorObject error;
@@ -90,7 +93,7 @@ public class TestResult<O> {
 
     public List<TestOperation> getFailedOperations() {
         return operations.stream()
-                .filter(op -> op.getStatus() == OperationStatus.FAILED)
+                .filter(op -> FAIL_OPERATION_STATUS.contains(op.getStatus()))
                 .toList();
     }
 }

@@ -3,11 +3,11 @@
 package com.amazonaws.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.Operation;
 
 public class InvokeStoppedException extends InvokeException {
 
-    public InvokeStoppedException(ErrorObject errorObject) {
-        super(OperationStatus.STOPPED, errorObject);
+    public InvokeStoppedException(Operation operation, ErrorObject errorObject) {
+        super(operation, errorObject);
     }
 }

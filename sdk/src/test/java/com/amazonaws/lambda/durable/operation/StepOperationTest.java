@@ -282,8 +282,8 @@ class StepOperationTest {
         operation.execute();
 
         var thrown = assertThrows(StepInterruptedException.class, operation::get);
-        assertEquals("1", thrown.getOperationId());
-        assertEquals("test-step", thrown.getStepName());
+        assertEquals("1", thrown.getOperation().id());
+        assertEquals("test-step", thrown.getOperation().name());
     }
 
     // Custom exception for testing

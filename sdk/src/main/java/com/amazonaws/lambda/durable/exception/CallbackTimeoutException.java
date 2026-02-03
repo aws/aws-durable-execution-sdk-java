@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.exception;
 
+import software.amazon.awssdk.services.lambda.model.Operation;
+
 /** Exception thrown when a callback times out. */
-public class CallbackTimeoutException extends DurableExecutionException {
-    public CallbackTimeoutException(String callbackId) {
-        super("Callback timed out: " + callbackId);
+public class CallbackTimeoutException extends CallbackException {
+    public CallbackTimeoutException(String callbackId, Operation operation) {
+        super(callbackId, operation, null, "Callback timed out: " + callbackId);
     }
 }

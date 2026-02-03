@@ -183,11 +183,11 @@ public class InvokeOperation<T, U> implements DurableOperation<T> {
         var error = invokeDetails != null ? invokeDetails.error() : null;
         return switch (op.status()) {
             case SUCCEEDED -> serDes.deserialize(result, resultTypeToken);
-            case FAILED -> throw new InvokeFailedException(error);
-            case TIMED_OUT -> throw new InvokeTimedOutException(error);
-            case STOPPED -> throw new InvokeStoppedException(error);
+            case FAILED -> throw new InvokeFailedException(op, error);
+            case TIMED_OUT -> throw new InvokeTimedOutException(op, error);
+            case STOPPED -> throw new InvokeStoppedException(op, error);
             // Unexpected status which should not happen. This is added for forward-compatibility.
-            default -> throw new InvokeException(op.status(), error);
+            default -> throw new InvokeException(op, error);
         };
     }
 }

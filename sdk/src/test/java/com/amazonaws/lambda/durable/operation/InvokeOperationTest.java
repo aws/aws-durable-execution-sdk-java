@@ -112,8 +112,8 @@ class InvokeOperationTest {
                 new JacksonSerDes());
 
         InvokeFailedException ex = assertThrows(InvokeFailedException.class, () -> operation.get());
-        assertEquals("errorData", ex.getErrorData());
-        assertEquals("errorType", ex.getErrorType());
+        assertEquals("errorData", ex.getErrorObject().errorData());
+        assertEquals("errorType", ex.getErrorObject().errorType());
         assertEquals("errorMessage", ex.getMessage());
     }
 
@@ -150,8 +150,8 @@ class InvokeOperationTest {
                 new JacksonSerDes());
 
         InvokeTimedOutException ex = assertThrows(InvokeTimedOutException.class, () -> operation.get());
-        assertEquals("errorData", ex.getErrorData());
-        assertEquals("errorType", ex.getErrorType());
+        assertEquals("errorData", ex.getErrorObject().errorData());
+        assertEquals("errorType", ex.getErrorObject().errorType());
         assertEquals("errorMessage", ex.getMessage());
     }
 
@@ -188,8 +188,8 @@ class InvokeOperationTest {
                 new JacksonSerDes());
 
         InvokeStoppedException ex = assertThrows(InvokeStoppedException.class, () -> operation.get());
-        assertEquals("errorData", ex.getErrorData());
-        assertEquals("errorType", ex.getErrorType());
+        assertEquals("errorData", ex.getErrorObject().errorData());
+        assertEquals("errorType", ex.getErrorObject().errorType());
         assertEquals("errorMessage", ex.getMessage());
     }
 

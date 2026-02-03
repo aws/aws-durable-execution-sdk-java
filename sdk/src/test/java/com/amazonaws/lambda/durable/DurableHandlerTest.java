@@ -7,11 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
-import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
-import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -81,19 +79,20 @@ class DurableHandlerTest {
 
     @Test
     void testObjectMapperSerializesFailureOutputWithErrorObject() throws IOException {
-        var exception = new StepFailedException("Step execution failed", new RuntimeException("Root cause"));
-        var output = DurableExecutionOutput.failure(exception, new JacksonSerDes());
+        var output = DurableExecutionOutput.failure(ErrorObject.builder()
+                .errorType("myErrorType")
+                .errorMessage("myErrorMessage")
+                .errorData("myErrorData")
+                .stackTrace(List.of("s1", "s2"))
+                .build());
 
         var json = objectMapper.writeValueAsString(output);
 
         assertTrue(json.contains("\"Status\":\"FAILED\""));
-        assertTrue(json.contains("\"ErrorType\":\"com.amazonaws.lambda.durable.exception.StepFailedException\""));
-        assertTrue(json.contains("\"ErrorMessage\":\"Step execution failed\""));
+        assertTrue(json.contains("\"ErrorType\":\"myErrorType\""));
+        assertTrue(json.contains("\"ErrorMessage\":\"myErrorMessage\""));
         assertTrue(json.contains("\"StackTrace\":["));
-        assertTrue(json.contains("\"ErrorData\":"));
-        // ErrorData is a JSON string containing the serialized exception
-        assertTrue(json.contains("\\\"cause\\\""));
-        assertTrue(json.contains("\\\"stackTrace\\\""));
+        assertTrue(json.contains("\"ErrorData\":\"myErrorData\""));
     }
 
     @Test

@@ -4,8 +4,6 @@ package com.amazonaws.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.amazonaws.lambda.durable.exception.CallbackFailedException;
-import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -90,9 +88,8 @@ class CallbackIntegrationTest {
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
-        assertEquals(
-                CallbackFailedException.class.getName(), result.getError().get().errorType());
-        assertTrue(result.getError().get().errorMessage().contains("Rejected"));
+        assertEquals("Rejected", result.getError().get().errorType());
+        assertEquals("Request denied", result.getError().get().errorMessage());
     }
 
     @Test
@@ -116,10 +113,9 @@ class CallbackIntegrationTest {
         // Re-run - callback timed out, throws CallbackTimeoutException
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
-        assertTrue(result.getError().isPresent());
+        assertFalse(result.getError().isPresent());
         assertEquals(
-                CallbackTimeoutException.class.getName(),
-                result.getError().get().errorType());
+                OperationStatus.TIMED_OUT, result.getFailedOperations().get(0).getStatus());
     }
 
     @Test
@@ -258,8 +254,8 @@ class CallbackIntegrationTest {
         var result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
-        assertTrue(result.getError().get().errorMessage().contains("ValidationError"));
-        assertTrue(result.getError().get().errorMessage().contains("Invalid input data"));
+        assertEquals("ValidationError", result.getError().get().errorType());
+        assertEquals("Invalid input data", result.getError().get().errorMessage());
         assertNotNull(result.getError().get().stackTrace());
         assertEquals(1, result.getError().get().stackTrace().size());
     }

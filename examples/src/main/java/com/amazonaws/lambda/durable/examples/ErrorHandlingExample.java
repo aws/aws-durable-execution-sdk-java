@@ -85,7 +85,9 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
                             .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                             .build());
         } catch (StepInterruptedException e) {
-            logger.warn("Payment step interrupted, checking external status: {}", e.getOperationId());
+            logger.warn(
+                    "Payment step interrupted, checking external status: {}",
+                    e.getOperation().id());
             // In real code: check payment provider for transaction status
             // If payment went through, return success; otherwise, handle appropriately
             paymentResult = context.step("verify-payment-status", String.class, () -> "verified-payment");
