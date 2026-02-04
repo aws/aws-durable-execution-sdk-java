@@ -27,14 +27,13 @@ public class ExceptionHelper {
      * unwrap the exception that is wrapped by CompletionException
      *
      * @param throwable the throwable to unwrap
-     * @return the unwrapped Throwable
+     * @return the original Throwable that is not a CompletionException
      */
     public static Throwable unwrapCompletableFuture(Throwable throwable) {
-        if (throwable instanceof CompletionException) {
-            return unwrapCompletableFuture(throwable.getCause());
-        } else {
-            return throwable;
+        while (throwable instanceof CompletionException) {
+            throwable = throwable.getCause();
         }
+        return throwable;
     }
 
     /**

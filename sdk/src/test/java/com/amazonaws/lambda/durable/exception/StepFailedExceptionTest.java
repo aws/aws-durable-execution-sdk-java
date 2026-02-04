@@ -17,7 +17,7 @@ class StepFailedExceptionTest {
 
     @Test
     void testConstructorWithNullErrorObject() {
-        var exception = new StepFailedException(OPERATION, null);
+        var exception = new StepFailedException(OPERATION);
         assertEquals(OPERATION, exception.getOperation());
         assertNull(exception.getErrorObject());
         assertEquals("Step failed with null error", exception.getMessage());
@@ -25,7 +25,7 @@ class StepFailedExceptionTest {
 
     @Test
     void testConstructorWithErrorObject() {
-        var exception = new StepFailedException(OPERATION, ERROR_OBJECT);
+        var exception = new StepFailedException(OPERATION);
 
         assertEquals(OPERATION, exception.getOperation());
         assertEquals(ERROR_OBJECT, exception.getErrorObject());

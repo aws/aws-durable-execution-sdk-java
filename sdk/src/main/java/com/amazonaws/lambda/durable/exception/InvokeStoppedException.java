@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.exception;
 
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 
 public class InvokeStoppedException extends InvokeException {
 
-    public InvokeStoppedException(Operation operation, ErrorObject errorObject) {
-        super(operation, errorObject);
+    public InvokeStoppedException(Operation operation) {
+        super(operation);
     }
 }

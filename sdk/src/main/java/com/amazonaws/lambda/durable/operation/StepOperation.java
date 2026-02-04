@@ -338,7 +338,7 @@ public class StepOperation<T> implements DurableOperation<T> {
             }
 
             // Fallback: wrap in StepFailedException
-            throw new StepFailedException(op, errorObject);
+            throw new StepFailedException(op);
         }
     }
 }

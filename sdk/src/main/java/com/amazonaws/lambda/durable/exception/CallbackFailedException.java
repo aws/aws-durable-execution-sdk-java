@@ -7,8 +7,8 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 
 /** Exception thrown when a callback fails due to an error from the external system. */
 public class CallbackFailedException extends CallbackException {
-    public CallbackFailedException(String callbackId, Operation operation, ErrorObject error) {
-        super(callbackId, operation, error, buildMessage(error));
+    public CallbackFailedException(Operation operation) {
+        super(operation, buildMessage(operation.callbackDetails().error()));
     }
 
     private static String buildMessage(ErrorObject error) {
