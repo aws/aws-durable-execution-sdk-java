@@ -42,7 +42,7 @@ public class DurableOperationException extends DurableExecutionException {
         return operation.status();
     }
 
-    public String operationId() {
+    public String getOperationId() {
         return operation.id();
     }
 }

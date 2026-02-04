@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 class InvokeExceptionTest {
@@ -55,12 +56,15 @@ class InvokeExceptionTest {
                         ChainedInvokeDetails.builder().error(errorObject).build())
                 .type(OperationType.CHAINED_INVOKE)
                 .id("10")
+                .status(OperationStatus.FAILED)
                 .build();
         var exception = new InvokeFailedException(op);
 
         assertEquals("error type", exception.getErrorObject().errorType());
         assertEquals("error data", exception.getErrorObject().errorData());
         assertEquals("error message", exception.getMessage());
+        assertEquals(OperationStatus.FAILED, exception.getOperationStatus());
+        assertEquals("10", exception.getOperationId());
         assertEquals(2, exception.getStackTrace().length);
         assertEquals(
                 new StackTraceElement("class1", "method1", "file1", 10),
