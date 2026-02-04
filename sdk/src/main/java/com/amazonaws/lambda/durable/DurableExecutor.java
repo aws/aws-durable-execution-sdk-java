@@ -122,11 +122,11 @@ public class DurableExecutor {
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            // We must catch here in case exception is propagated before suspendFuture resolved
             if (cause instanceof SuspendExecutionException) {
                 logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
             }
+            logger.debug("Execution failed: {}", cause.getMessage());
             return DurableExecutionOutput.failure(cause, serDes);
         } finally {
             // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
