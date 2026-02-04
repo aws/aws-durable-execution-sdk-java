@@ -4,6 +4,7 @@ package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.exception.DurableOperationException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
 import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -81,11 +82,7 @@ public class DurableExecutor {
                     userExecutor);
 
             // Get suspend future from ExecutionManager. If this future completes, it
-            // indicates
-            // that no threads are active and we can safely suspend. This is useful for
-            // async scenarios where multiple operations are scheduled concurrently and
-            // awaited
-            // at a later point.
+            // indicates that no threads are active and we can safely suspend.
             var suspendFuture = executionManager.getSuspendExecutionFuture();
 
             // Wait for either handler to complete or suspension to occur
@@ -94,16 +91,6 @@ public class DurableExecutor {
             if (suspendFuture.isDone()) {
                 logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
-            }
-
-            if (handlerFuture.isCompletedExceptionally()) {
-                try {
-                    handlerFuture.join(); // Will throw the exception
-                } catch (Exception e) {
-                    Throwable cause = ExceptionHelper.unwrapCompletableFuture(e);
-                    logger.debug("Execution failed: {}", cause.getMessage());
-                    return DurableExecutionOutput.failure(buildErrorObject(cause, serDes));
-                }
             }
 
             var result = handlerFuture.get();
@@ -137,7 +124,13 @@ public class DurableExecutor {
             logger.debug("Execution completed");
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
-            return DurableExecutionOutput.failure(buildErrorObject(ExceptionHelper.unwrapCompletableFuture(e), serDes));
+            Throwable cause = ExceptionHelper.unwrapCompletableFuture(e);
+            if (cause instanceof SuspendExecutionException) {
+                logger.debug("Execution suspended");
+                return DurableExecutionOutput.pending();
+            }
+            logger.debug("Execution failed: {}", cause.getMessage());
+            return DurableExecutionOutput.failure(buildErrorObject(cause, serDes));
         } finally {
             // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
             executionManager.shutdown();
