@@ -2,6 +2,7 @@ name: ✨ Feature Request
 description: Suggest a new feature or enhancement
 title: "[Feature]: "
 labels: ["enhancement"]
+projects: ["aws-durable-execution"]
 body:
   - type: markdown
     attributes:

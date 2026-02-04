@@ -2,6 +2,7 @@ name: 📚 Documentation Issue
 description: Report an issue with documentation
 title: "[Docs]: "
 labels: ["documentation"]
+projects: ["aws-durable-execution"]
 body:
   - type: markdown
     attributes:
