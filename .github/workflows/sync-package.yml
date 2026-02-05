@@ -50,7 +50,7 @@ jobs:
       - name: Build with Maven
         run: mvn -B package --file pom.xml
       - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7
         with:
           role-to-assume: "${{ secrets.ACTIONS_SYNC_ROLE_NAME }}"
           role-session-name: samplerolesession
