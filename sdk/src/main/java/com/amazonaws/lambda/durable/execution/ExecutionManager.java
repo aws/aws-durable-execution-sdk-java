@@ -11,9 +11,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -43,9 +43,8 @@ public class ExecutionManager {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
 
     // ===== Execution State =====
-    private final Map<String, Operation> operations = new ConcurrentHashMap<>();
+    private final Map<String, Operation> operations;
     private final String executionOperationId;
-    private volatile String checkpointToken;
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
 
@@ -57,7 +56,6 @@ public class ExecutionManager {
 
     // ===== Checkpoint Batching =====
     private final CheckpointBatcher checkpointBatcher;
-    private final DurableExecutionClient client;
 
     public ExecutionManager(
             String durableExecutionArn,
@@ -65,38 +63,21 @@ public class ExecutionManager {
             InitialExecutionState initialExecutionState,
             DurableExecutionClient client) {
         this.durableExecutionArn = durableExecutionArn;
-        this.checkpointToken = checkpointToken;
-        this.client = client;
         this.executionOperationId = initialExecutionState.operations().get(0).id();
-        loadAllOperations(initialExecutionState);
+
+        // Create checkpoint batcher for internal coordination
+        this.checkpointBatcher =
+                new CheckpointBatcher(client, durableExecutionArn, checkpointToken, this::onCheckpointComplete);
+
+        this.operations =
+                checkpointBatcher
+                        .fetchAllPages(initialExecutionState.operations(), initialExecutionState.nextMarker())
+                        .stream()
+                        .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
         this.executionMode =
                 new AtomicReference<>(operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
-
-        // Create checkpoint manager using common pool for internal coordination
-        this.checkpointBatcher = new CheckpointBatcher(
-                client, durableExecutionArn, this::getCheckpointToken, this::onCheckpointComplete);
-    }
-
-    private void loadAllOperations(InitialExecutionState initialExecutionState) {
-        var initialOperations = initialExecutionState.operations();
-        initialOperations.forEach(op -> operations.put(op.id(), op));
-
-        var nextMarker = initialExecutionState.nextMarker();
-        while (nextMarker != null && !nextMarker.isEmpty()) {
-            var response = client.getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
-            response.operations().forEach(op -> operations.put(op.id(), op));
-            nextMarker = response.nextMarker();
-        }
-    }
-
-    // ===== Checkpoint Completion Handler =====
-
-    /** Called by CheckpointManager when a checkpoint completes. Updates state and advances phasers. */
-    private void onCheckpointComplete(String newToken, List<Operation> newOperations) {
-        this.checkpointToken = newToken;
-        updateOperations(newOperations);
     }
 
     // ===== State Management =====
@@ -109,11 +90,9 @@ public class ExecutionManager {
         return executionMode.get() == ExecutionMode.REPLAY;
     }
 
-    public String getCheckpointToken() {
-        return checkpointToken;
-    }
-
-    private void updateOperations(List<Operation> newOperations) {
+    // ===== Checkpoint Completion Handler =====
+    /** Called by CheckpointManager when a checkpoint completes. Updates state and advances phasers. */
+    private void onCheckpointComplete(List<Operation> newOperations) {
         // Update operation storage
         newOperations.forEach(op -> operations.put(op.id(), op));
 

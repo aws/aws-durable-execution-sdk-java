@@ -17,8 +17,7 @@ interface CheckpointCallback {
     /**
      * Called when a checkpoint completes successfully.
      *
-     * @param newToken New checkpoint token from backend
      * @param newOperations Updated operations from backend
      */
-    void onComplete(String newToken, List<Operation> newOperations);
+    void onComplete(List<Operation> newOperations);
 }
