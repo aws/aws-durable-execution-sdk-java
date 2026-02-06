@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.exception.DurableOperationException;
+import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput;
@@ -83,12 +84,16 @@ public class DurableExecutor {
 
             // Get suspend future from ExecutionManager. If this future completes, it
             // indicates that no threads are active and we can safely suspend.
-            var suspendFuture = executionManager.getSuspendExecutionFuture();
+            executionManager.execute(handlerFuture);
 
             // Wait for either handler to complete or suspension to occur
-            CompletableFuture.anyOf(handlerFuture, suspendFuture).join();
 
-            if (suspendFuture.isDone()) {
+            if (executionManager.shouldTerminate()) {
+                logger.error("Execution terminated");
+                return DurableExecutionOutput.failure(executionManager.getTerminateError());
+            }
+
+            if (executionManager.shouldSuspend()) {
                 logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();
             }
@@ -125,6 +130,12 @@ public class DurableExecutor {
             return DurableExecutionOutput.success(outputPayload);
         } catch (Exception e) {
             Throwable cause = ExceptionHelper.unwrapCompletableFuture(e);
+            if (cause instanceof UnrecoverableDurableExecutionException) {
+                // The execution is immediately terminated as a critical error occurred.
+                logger.error("Execution failed with an unrecoverable exception", cause);
+                return DurableExecutionOutput.failure(
+                        ((UnrecoverableDurableExecutionException) cause).getErrorObject());
+            }
             if (cause instanceof SuspendExecutionException) {
                 logger.debug("Execution suspended");
                 return DurableExecutionOutput.pending();

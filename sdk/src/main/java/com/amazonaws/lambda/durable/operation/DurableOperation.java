@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.operation;
 
+import software.amazon.awssdk.services.lambda.model.OperationType;
+
 /**
  * Base interface for all durable operations (STEP, WAIT, etc.).
  *
@@ -27,6 +29,9 @@ public interface DurableOperation<T> {
 
     /** Gets the operation name (may be null). */
     String getName();
+
+    /** Gets the operation type. */
+    OperationType getType();
 
     /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
     void execute();

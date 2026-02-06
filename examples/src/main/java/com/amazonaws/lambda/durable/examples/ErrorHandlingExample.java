@@ -6,6 +6,7 @@ import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.DurableHandler;
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.StepSemantics;
+import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import org.slf4j.Logger;

@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
@@ -53,6 +54,7 @@ public class ExecutionManager {
     private static final ThreadLocal<OperationContext> currentContext = new ThreadLocal<>();
     private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
     private final CompletableFuture<Void> suspendExecutionFuture = new CompletableFuture<>();
+    private final CompletableFuture<ErrorObject> terminateExecutionFuture = new CompletableFuture<>();
 
     // ===== Checkpoint Batching =====
     private final CheckpointBatcher checkpointBatcher;
@@ -110,10 +112,6 @@ public class ExecutionManager {
         }
     }
 
-    public Operation getOperation(String operationId) {
-        return operations.get(operationId);
-    }
-
     /**
      * Gets an operation by ID and updates replay state. Transitions from REPLAY to EXECUTION mode if the operation is
      * not found or is not in a terminal state (still in progress).
@@ -123,9 +121,11 @@ public class ExecutionManager {
      */
     public Operation getOperationAndUpdateReplayState(String operationId) {
         var existing = operations.get(operationId);
-        if (existing == null || !isTerminalStatus(existing.status())) {
-            if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {
-                logger.debug("Transitioned to EXECUTION mode at operation '{}'", operationId);
+        if (executionMode.get() == ExecutionMode.REPLAY) {
+            if (existing == null || !isTerminalStatus(existing.status())) {
+                if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {
+                    logger.debug("Transitioned to EXECUTION mode at operation '{}'", operationId);
+                }
             }
         }
         return existing;
@@ -136,21 +136,6 @@ public class ExecutionManager {
     }
 
     // ===== Thread Coordination =====
-
-    public void registerActiveThreadWithContext(String threadId, ThreadType threadType) {
-        if (activeThreads.containsKey(threadId)) {
-            logger.trace("Thread '{}' ({}) already registered as active", threadId, threadType);
-            return;
-        }
-        activeThreads.put(threadId, threadType);
-        currentContext.set(new OperationContext(threadId, threadType));
-        logger.trace(
-                "Registered thread '{}' ({}) as active. Active threads: {}",
-                threadId,
-                threadType,
-                activeThreads.size());
-    }
-
     /**
      * Registers a thread as active without setting the thread local OperationContext. Use this when registration must
      * happen on a different thread than execution. Call setCurrentContext() on the execution thread to set the local
@@ -184,7 +169,7 @@ public class ExecutionManager {
         return currentContext.get();
     }
 
-    public void deregisterActiveThread(String threadId) {
+    public void deregisterActiveThreadAndUnsetCurrentContext(String threadId) {
         // Skip if already suspended
         if (suspendExecutionFuture.isDone()) {
             return;
@@ -294,7 +279,7 @@ public class ExecutionManager {
                 sendOperationUpdate(null).join();
 
                 // Check if operation is now READY
-                var op = getOperation(operationId);
+                var op = getOperationAndUpdateReplayState(operationId);
                 if (op != null && op.status() == OperationStatus.READY) {
                     future.complete(null);
                     break;
@@ -313,11 +298,6 @@ public class ExecutionManager {
     }
 
     // ===== Utilities =====
-
-    public CompletableFuture<Void> getSuspendExecutionFuture() {
-        return suspendExecutionFuture;
-    }
-
     public void shutdown() {
         checkpointBatcher.shutdown();
     }
@@ -328,5 +308,26 @@ public class ExecutionManager {
                 || status == OperationStatus.CANCELLED
                 || status == OperationStatus.TIMED_OUT
                 || status == OperationStatus.STOPPED;
+    }
+
+    public void terminateExecution(ErrorObject errorObject) {
+        terminateExecutionFuture.complete(errorObject);
+    }
+
+    public <T> void execute(CompletableFuture<T> userFuture) {
+        CompletableFuture.anyOf(userFuture, suspendExecutionFuture, terminateExecutionFuture)
+                .join();
+    }
+
+    public boolean shouldSuspend() {
+        return suspendExecutionFuture.isDone();
+    }
+
+    public boolean shouldTerminate() {
+        return terminateExecutionFuture.isDone();
+    }
+
+    public ErrorObject getTerminateError() {
+        return terminateExecutionFuture.join();
     }
 }

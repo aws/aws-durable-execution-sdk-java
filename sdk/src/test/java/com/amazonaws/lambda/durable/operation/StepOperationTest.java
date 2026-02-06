@@ -5,7 +5,10 @@ package com.amazonaws.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.amazonaws.lambda.durable.DurableConfig;
+import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.TypeToken;
+import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
@@ -54,7 +57,6 @@ class StepOperationTest {
                 .build();
 
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(operation);
-        when(executionManager.getOperation("1")).thenReturn(operation);
     }
 
     @Test
@@ -69,14 +71,15 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes(),
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
-        var ex = assertThrows(IllegalStateException.class, operation::get);
-        assertTrue(ex.getMessage().contains("Nested step calling is not supported"));
+        var ex = assertThrows(IllegalDurableOperationException.class, operation::get);
+        assertTrue(ex.getMessage().contains("Nested STEP operation is not supported"));
         assertTrue(ex.getMessage().contains("test-step"));
     }
 
@@ -87,7 +90,7 @@ class StepOperationTest {
         phaser.arriveAndDeregister();
         when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperation("1"))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-step")
@@ -102,11 +105,12 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes(),
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
         var result = operation.get();
         assertEquals("cached-result", result);
@@ -131,11 +135,12 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(serDes).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                serDes,
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
         operation.execute();
 
@@ -165,11 +170,12 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(serDes).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                serDes,
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
         operation.execute();
 
@@ -190,11 +196,12 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes(),
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
         operation.execute();
 
@@ -221,11 +228,12 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes(),
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
         operation.execute();
 
@@ -247,11 +255,12 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes(),
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
         operation.execute();
 
@@ -273,11 +282,12 @@ class StepOperationTest {
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
-                null,
+                StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
                 mock(DurableLogger.class),
-                new JacksonSerDes(),
-                Executors.newCachedThreadPool());
+                DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
 
         operation.execute();
 

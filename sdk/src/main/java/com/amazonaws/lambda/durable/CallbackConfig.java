@@ -41,13 +41,23 @@ public class CallbackConfig {
     }
 
     public static Builder builder() {
-        return new Builder();
+        return new Builder(null, null, null);
+    }
+
+    public Builder toBuilder() {
+        return new Builder(timeout, heartbeatTimeout, serDes);
     }
 
     public static class Builder {
         private Duration timeout;
         private Duration heartbeatTimeout;
         private SerDes serDes;
+
+        private Builder(Duration timeout, Duration heartbeatTimeout, SerDes serDes) {
+            this.timeout = timeout;
+            this.heartbeatTimeout = heartbeatTimeout;
+            this.serDes = serDes;
+        }
 
         public Builder timeout(Duration timeout) {
             this.timeout = timeout;

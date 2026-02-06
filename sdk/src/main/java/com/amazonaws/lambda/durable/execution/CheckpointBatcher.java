@@ -10,6 +10,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -18,8 +19,8 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 /**
  * Package-private checkpoint manager for batching and queueing checkpoint API calls.
  *
- * <p>Single responsibility: Queue and batch checkpoint requests efficiently. Uses CheckpointCallback to notify when
- * checkpoints complete, avoiding cyclic dependency.
+ * <p>Single responsibility: Queue and batch checkpoint requests efficiently. Uses a Consumer to notify when checkpoints
+ * complete, avoiding cyclic dependency.
  *
  * <p>Uses a dedicated SDK thread pool for internal coordination, keeping checkpoint processing separate from
  * customer-configured executors used for user-defined operations.
@@ -30,7 +31,7 @@ class CheckpointBatcher {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
     private static final Logger logger = LoggerFactory.getLogger(CheckpointBatcher.class);
 
-    private final CheckpointCallback callback;
+    private final Consumer<List<Operation>> callback;
     private final String durableExecutionArn;
     private final DurableExecutionClient client;
     private final BlockingQueue<CheckpointRequest> queue = new LinkedBlockingQueue<>();
@@ -43,7 +44,7 @@ class CheckpointBatcher {
             DurableExecutionClient client,
             String durableExecutionArn,
             String checkpointToken,
-            CheckpointCallback callback) {
+            Consumer<List<Operation>> callback) {
         this.client = client;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
@@ -109,7 +110,7 @@ class CheckpointBatcher {
                             response.newExecutionState().operations(),
                             response.newExecutionState().nextMarker());
                     if (!operations.isEmpty()) {
-                        callback.onComplete(operations);
+                        callback.accept(operations);
                     }
                 }
 

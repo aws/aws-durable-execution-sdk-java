@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
+import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import com.amazonaws.lambda.durable.retry.RetryStrategy;
 import com.amazonaws.lambda.durable.serde.SerDes;
 
@@ -22,9 +23,9 @@ public class StepConfig {
         this.serDes = builder.serDes;
     }
 
-    /** @return the retry strategy for this step, or null if not specified */
+    /** @return the retry strategy for this step, or NO_RETRY if not specified */
     public RetryStrategy retryStrategy() {
-        return retryStrategy;
+        return retryStrategy != null ? retryStrategy : RetryStrategies.Presets.DEFAULT;
     }
 
     /** @return the delivery semantics for this step, defaults to AT_LEAST_ONCE_PER_RETRY if not specified */
@@ -37,13 +38,17 @@ public class StepConfig {
         return serDes;
     }
 
+    public Builder toBuilder() {
+        return new Builder(retryStrategy, semantics, serDes);
+    }
+
     /**
      * Creates a new builder for StepConfig.
      *
      * @return a new Builder instance
      */
     public static Builder builder() {
-        return new Builder();
+        return new Builder(null, null, null);
     }
 
     /** Builder for creating StepConfig instances. */
@@ -51,6 +56,12 @@ public class StepConfig {
         private RetryStrategy retryStrategy;
         private StepSemantics semantics;
         private SerDes serDes;
+
+        private Builder(RetryStrategy retryStrategy, StepSemantics semantics, SerDes serDes) {
+            this.retryStrategy = retryStrategy;
+            this.semantics = semantics;
+            this.serDes = serDes;
+        }
 
         /**
          * Sets the retry strategy for the step.
