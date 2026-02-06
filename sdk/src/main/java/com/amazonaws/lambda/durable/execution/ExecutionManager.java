@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.time.Duration;
 import java.time.Instant;
@@ -16,7 +17,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
@@ -54,7 +54,6 @@ public class ExecutionManager {
     private static final ThreadLocal<OperationContext> currentContext = new ThreadLocal<>();
     private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
     private final CompletableFuture<Void> suspendExecutionFuture = new CompletableFuture<>();
-    private final CompletableFuture<ErrorObject> terminateExecutionFuture = new CompletableFuture<>();
 
     // ===== Checkpoint Batching =====
     private final CheckpointBatcher checkpointBatcher;
@@ -186,8 +185,7 @@ public class ExecutionManager {
 
         if (activeThreads.isEmpty()) {
             logger.info("No active threads remaining - suspending execution");
-            suspendExecutionFuture.complete(null);
-            throw new SuspendExecutionException();
+            suspendExecution();
         }
     }
 
@@ -310,24 +308,32 @@ public class ExecutionManager {
                 || status == OperationStatus.STOPPED;
     }
 
-    public void terminateExecution(ErrorObject errorObject) {
-        terminateExecutionFuture.complete(errorObject);
+    public void terminateExecution(UnrecoverableDurableExecutionException exception) {
+        suspendExecutionFuture.completeExceptionally(exception);
+        throw exception;
     }
 
-    public <T> void execute(CompletableFuture<T> userFuture) {
-        CompletableFuture.anyOf(userFuture, suspendExecutionFuture, terminateExecutionFuture)
-                .join();
+    public void suspendExecution() {
+        var ex = new SuspendExecutionException();
+        suspendExecutionFuture.completeExceptionally(ex);
+        throw ex;
     }
 
-    public boolean shouldSuspend() {
-        return suspendExecutionFuture.isDone();
-    }
-
-    public boolean shouldTerminate() {
-        return terminateExecutionFuture.isDone();
-    }
-
-    public ErrorObject getTerminateError() {
-        return terminateExecutionFuture.join();
+    /**
+     * execute the customer provided future and completes when one of userFuture, suspendExecutionFuture and
+     * terminateExecutionFuture completes.
+     *
+     * @param userFuture user provided function
+     * @return a future of userFuture result if userFuture completes successfully earlier than suspendExecutionFuture
+     *     and terminateExecutionFuture.
+     */
+    public <T> CompletableFuture<T> execute(CompletableFuture<T> userFuture) {
+        return CompletableFuture.anyOf(userFuture, suspendExecutionFuture).thenApply(v -> {
+            // reaches here only if userFuture complete successfully
+            if (userFuture.isDone()) {
+                return userFuture.join();
+            }
+            return null;
+        });
     }
 }

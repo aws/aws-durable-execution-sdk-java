@@ -6,7 +6,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 
 /** An illegal operation is detected. The execution will be immediately terminated. */
 public class IllegalDurableOperationException extends UnrecoverableDurableExecutionException {
-    public <T> IllegalDurableOperationException(String message) {
+    public IllegalDurableOperationException(String message) {
         super(ErrorObject.builder()
                 .errorType(IllegalDurableOperationException.class.getName())
                 .errorMessage(message)

@@ -10,6 +10,7 @@ import com.amazonaws.lambda.durable.exception.DurableOperationException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
+import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.execution.ThreadType;
@@ -162,7 +163,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> implements Durable
                     // Expected when this is the last active thread. Must catch here because:
                     // 1/ This runs in a worker thread detached from handlerFuture
                     // 2/ Uncaught exception would prevent phaser from advancing, blocking stepAsync().get()
-                    // Suspension is already signaled via suspendExecutionFuture before the throw.
+                    // Suspension/Termination is already signaled via suspendExecutionFuture/terminateExecutionFuture
+                    // before the throw.
                 }
                 durableLogger.clearOperationContext();
             }
@@ -172,7 +174,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> implements Durable
     private void handleStepFailure(Throwable exception, int attempt) {
         var isUnrecoverable = ExceptionHelper.isUnrecoverableDurableException(exception);
         if (isUnrecoverable) {
-            ExceptionHelper.sneakyThrow(exception);
+            terminateExecution((UnrecoverableDurableExecutionException) exception);
         }
 
         final ErrorObject errorObject;

@@ -133,7 +133,8 @@ public abstract class BaseDurableOperation<T> implements DurableOperation<T> {
     }
 
     protected T terminateExecution(UnrecoverableDurableExecutionException exception) {
-        executionManager.terminateExecution(exception.getErrorObject());
+        executionManager.terminateExecution(exception);
+        // Exception is already thrown from above. Keep the throw statement below to make tests happy
         throw exception;
     }
 
