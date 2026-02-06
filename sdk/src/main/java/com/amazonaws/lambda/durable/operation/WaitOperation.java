@@ -16,7 +16,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
 
-public class WaitOperation extends BaseDurableOperation<Void> implements DurableOperation<Void> {
+public class WaitOperation extends BaseDurableOperation<Void> {
 
     private static final Logger logger = LoggerFactory.getLogger(WaitOperation.class);
     private static final SerDes NOOP_SER_DES = new NoopSerDes();

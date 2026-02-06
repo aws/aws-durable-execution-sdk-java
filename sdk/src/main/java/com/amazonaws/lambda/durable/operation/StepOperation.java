@@ -30,7 +30,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 
-public class StepOperation<T> extends BaseDurableOperation<T> implements DurableOperation<T> {
+public class StepOperation<T> extends BaseDurableOperation<T> {
 
     private static final Logger logger = LoggerFactory.getLogger(StepOperation.class);
 
@@ -98,7 +98,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> implements Durable
                     executeStepLogic(existing.stepDetails().attempt());
                 }
                 default ->
-                    throw new RuntimeException(String.format("Unrecognized step status '%s'", existing.status()));
+                    terminateExecutionWithIllegalDurableOperationException(
+                            "Unexpected step status: " + existing.status());
             }
         } else {
             // First execution

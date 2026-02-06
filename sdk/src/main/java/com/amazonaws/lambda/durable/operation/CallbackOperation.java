@@ -3,11 +3,10 @@
 package com.amazonaws.lambda.durable.operation;
 
 import com.amazonaws.lambda.durable.CallbackConfig;
+import com.amazonaws.lambda.durable.DurableCallbackFuture;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
 import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
-import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
-import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,7 +18,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 /** Durable operation for creating and waiting on external callbacks. */
-public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableOperation<T> {
+public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
 
     private static final Logger logger = LoggerFactory.getLogger(CallbackOperation.class);
 
@@ -37,7 +36,7 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
         this.config = config;
     }
 
-    public String getCallbackId() {
+    public String callbackId() {
         return callbackId;
     }
 
@@ -58,10 +57,9 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
                 case STARTED -> {
                     // Still waiting - continue to polling
                 }
-                default -> {
-                    // throws an UnrecoverableDurableExecutionException to immediately terminate the execution
-                    throw new IllegalDurableOperationException("Unexpected callback status: " + existing.status());
-                }
+                default ->
+                    terminateExecutionWithIllegalDurableOperationException(
+                            "Unexpected callback status: " + existing.status());
             }
         } else {
             // First execution: checkpoint and get callback ID
@@ -90,22 +88,11 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
         var op = waitForOperationCompletionIfRunning();
 
         return switch (op.status()) {
-            case SUCCEEDED -> {
-                var result = op.callbackDetails().result();
-                try {
-                    yield deserializeResult(result);
-                } catch (SerDesException e) {
-                    logger.warn(
-                            "Failed to deserialize callback result for callback ID '{}'. "
-                                    + "Ensure the callback completion payload is base64-encoded.",
-                            callbackId);
-                    throw e;
-                }
-            }
+            case SUCCEEDED -> deserializeResult(op.callbackDetails().result());
             case FAILED -> throw new CallbackFailedException(op);
-            case TIMED_OUT -> throw new CallbackTimeoutException(callbackId, op);
+            case TIMED_OUT -> throw new CallbackTimeoutException(op);
             default ->
-                terminateExecution(new IllegalDurableOperationException("Unexpected callback status: " + op.status()));
+                terminateExecutionWithIllegalDurableOperationException("Unexpected callback status: " + op.status());
         };
     }
 

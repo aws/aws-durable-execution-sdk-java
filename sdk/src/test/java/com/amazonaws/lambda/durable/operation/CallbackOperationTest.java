@@ -81,7 +81,7 @@ class CallbackOperationTest {
                 executionManager);
         operation.execute();
 
-        assertNotNull(operation.getCallbackId());
+        assertNotNull(operation.callbackId());
     }
 
     @Test
@@ -102,7 +102,7 @@ class CallbackOperationTest {
         var operation = new CallbackOperation<>("1", "approval", TypeToken.get(String.class), config, executionManager);
         operation.execute();
 
-        assertNotNull(operation.getCallbackId());
+        assertNotNull(operation.callbackId());
     }
 
     @Test
@@ -128,7 +128,7 @@ class CallbackOperationTest {
                 executionManager);
         operation.execute();
 
-        assertEquals("existing-callback-id", operation.getCallbackId());
+        assertEquals("existing-callback-id", operation.callbackId());
     }
 
     @Test

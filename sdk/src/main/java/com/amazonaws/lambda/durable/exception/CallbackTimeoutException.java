@@ -6,7 +6,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 
 /** Exception thrown when a callback times out. */
 public class CallbackTimeoutException extends CallbackException {
-    public CallbackTimeoutException(String callbackId, Operation operation) {
-        super(operation, "Callback timed out: " + callbackId);
+    public CallbackTimeoutException(Operation operation) {
+        super(operation, "Callback timed out: " + operation.callbackDetails().callbackId());
     }
 }

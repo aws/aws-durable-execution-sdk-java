@@ -24,7 +24,7 @@ class CallbackExceptionTest {
 
     @Test
     void testCallbackTimeoutException() {
-        var exception = new CallbackTimeoutException(CALLBACK_ID, OPERATION);
+        var exception = new CallbackTimeoutException(OPERATION);
         assertEquals(CALLBACK_ID, exception.getCallbackId());
         assertEquals(OPERATION, exception.getOperation());
         assertEquals("Callback timed out: " + CALLBACK_ID, exception.getMessage());

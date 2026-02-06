@@ -20,6 +20,8 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 public class DurableContext {
+    private static final String ROOT_CONTEXT = "Root";
+
     private final ExecutionManager executionManager;
     private final DurableConfig durableConfig;
     private final Context lambdaContext;
@@ -48,8 +50,10 @@ public class DurableContext {
     }
 
     DurableContext(ExecutionManager executionManager, DurableConfig config, Context lambdaContext) {
-        this(executionManager, config, lambdaContext, "Root");
+        this(executionManager, config, lambdaContext, ROOT_CONTEXT);
     }
+
+    // ========== step methods ==========
 
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
         return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());
@@ -102,8 +106,10 @@ public class DurableContext {
 
         operation.execute(); // Start the step (returns immediately)
 
-        return new DurableFuture<>(operation);
+        return operation;
     }
+
+    // ========== wait methods ==========
 
     public void wait(Duration duration) {
         wait(null, duration);
@@ -124,6 +130,8 @@ public class DurableContext {
         operation.execute(); // Checkpoint the wait
         operation.get(); // Block (will throw SuspendExecutionException if needed)
     }
+
+    // ========== chained invoke methods ==========
 
     public <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType) {
         return invokeAsync(
@@ -196,28 +204,7 @@ public class DurableContext {
                 new InvokeOperation<>(operationId, name, functionName, payload, typeToken, config, executionManager);
 
         operation.execute(); // checkpoint the invoke operation
-        return new DurableFuture<>(operation); // Block (will throw SuspendExecutionException if needed)
-    }
-
-    public Context getLambdaContext() {
-        return lambdaContext;
-    }
-
-    public DurableLogger getLogger() {
-        return logger;
-    }
-
-    /**
-     * Returns metadata about the current durable execution.
-     *
-     * <p>The execution context provides information that remains constant throughout the execution lifecycle, such as
-     * the durable execution ARN. This is useful for tracking execution progress, correlating logs, and referencing this
-     * execution in external systems.
-     *
-     * @return the execution context
-     */
-    public ExecutionContext getExecutionContext() {
-        return executionContext;
+        return operation; // Block (will throw SuspendExecutionException if needed)
     }
 
     // ========== createCallback methods ==========
@@ -248,9 +235,35 @@ public class DurableContext {
         var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager);
         operation.execute();
 
-        return new DurableCallbackFuture<>(operation.getCallbackId(), operation);
+        return operation;
     }
 
+    // =============== accessors ================
+
+    public Context getLambdaContext() {
+        return lambdaContext;
+    }
+
+    public DurableLogger getLogger() {
+        return logger;
+    }
+
+    /**
+     * Returns metadata about the current durable execution.
+     *
+     * <p>The execution context provides information that remains constant throughout the execution lifecycle, such as
+     * the durable execution ARN. This is useful for tracking execution progress, correlating logs, and referencing this
+     * execution in external systems.
+     *
+     * @return the execution context
+     */
+    public ExecutionContext getExecutionContext() {
+        return executionContext;
+    }
+
+    // ============= internal utilities ===============
+
+    /** Get the next operationId (latest operationId + 1) */
     private String nextOperationId() {
         return String.valueOf(operationCounter.incrementAndGet());
     }

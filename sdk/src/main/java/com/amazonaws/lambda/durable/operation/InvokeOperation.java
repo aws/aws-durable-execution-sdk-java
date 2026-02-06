@@ -19,7 +19,7 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
-public class InvokeOperation<T, U> extends BaseDurableOperation<T> implements DurableOperation<T> {
+public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     private static final Logger logger = LoggerFactory.getLogger(InvokeOperation.class);
 
     private final String functionName;
@@ -57,7 +57,9 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> implements Du
                 // The result isn't ready. Need to wait more
                 case STARTED -> waitTimeout();
                 case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markCompletionDuringReplay();
-                default -> throw new IllegalStateException("Unexpected invoke status: " + existing.statusAsString());
+                default ->
+                    terminateExecutionWithIllegalDurableOperationException(
+                            "Unexpected invoke status: " + existing.statusAsString());
             }
         }
     }

@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.operation;
 
+import com.amazonaws.lambda.durable.DurableFuture;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
+import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ExecutionPhase;
@@ -21,7 +23,25 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
-public abstract class BaseDurableOperation<T> implements DurableOperation<T> {
+/**
+ * Base class for all durable operations (STEP, WAIT, etc.).
+ *
+ * <p>Key methods:
+ *
+ * <ul>
+ *   <li>{@code execute()} starts the operation (returns immediately)
+ *   <li>{@code get()} blocks until complete and returns the result
+ * </ul>
+ *
+ * <p>The separation allows:
+ *
+ * <ul>
+ *   <li>Starting multiple async operations quickly
+ *   <li>Blocking on results later when needed
+ *   <li>Proper thread coordination via Phasers
+ * </ul>
+ */
+public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private static final Logger logger = LoggerFactory.getLogger(BaseDurableOperation.class);
 
     private final String operationId;
@@ -51,21 +71,38 @@ public abstract class BaseDurableOperation<T> implements DurableOperation<T> {
     }
 
     /** Gets the unique identifier for this operation. */
-    @Override
     public String getOperationId() {
         return operationId;
     }
 
     /** Gets the operation name (maybe null). */
-    @Override
     public String getName() {
         return name;
     }
 
-    @Override
+    /** Gets the operation type */
     public OperationType getType() {
         return operationType;
     }
+
+    /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
+    public abstract void execute();
+
+    /**
+     * Blocks until the operation completes and returns the result.
+     *
+     * <p>Handles:
+     *
+     * <ul>
+     *   <li>Thread deregistration (allows suspension)
+     *   <li>Phaser blocking (waits for operation to complete)
+     *   <li>Thread reactivation (resumes execution)
+     *   <li>Result retrieval
+     * </ul>
+     *
+     * @return the operation result
+     */
+    public abstract T get();
 
     protected Operation getOperation() {
         return executionManager.getOperationAndUpdateReplayState(getOperationId());
@@ -79,7 +116,7 @@ public abstract class BaseDurableOperation<T> implements DurableOperation<T> {
                     "Nested %s operation is not supported on %s from within a %s execution.",
                     getType(), getName(), current);
             // terminate execution and throw the exception
-            terminateExecution(new IllegalDurableOperationException(message));
+            terminateExecutionWithIllegalDurableOperationException(message);
         }
     }
 
@@ -117,7 +154,7 @@ public abstract class BaseDurableOperation<T> implements DurableOperation<T> {
         var op = getOperation();
         if (op == null) {
             // throws an UnrecoverableDurableExecutionException to immediately terminate the execution
-            throw new IllegalDurableOperationException(
+            terminateExecutionWithIllegalDurableOperationException(
                     String.format("{%s} operation not found: {%s}", getType(), getOperationId()));
         }
         return op;
@@ -136,6 +173,10 @@ public abstract class BaseDurableOperation<T> implements DurableOperation<T> {
         executionManager.terminateExecution(exception);
         // Exception is already thrown from above. Keep the throw statement below to make tests happy
         throw exception;
+    }
+
+    protected T terminateExecutionWithIllegalDurableOperationException(String message) {
+        return terminateExecution(new IllegalDurableOperationException(message));
     }
 
     // advanced phase control used by Step only
@@ -171,7 +212,15 @@ public abstract class BaseDurableOperation<T> implements DurableOperation<T> {
 
     // serialization/deserialization utilities
     protected T deserializeResult(String result) {
-        return resultSerDes.deserialize(result, resultTypeToken);
+        try {
+            return resultSerDes.deserialize(result, resultTypeToken);
+        } catch (SerDesException e) {
+            logger.warn(
+                    "Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.",
+                    getType(),
+                    getName());
+            throw e;
+        }
     }
 
     protected String serializeResult(T result) {
