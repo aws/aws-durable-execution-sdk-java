@@ -61,7 +61,7 @@ jobs:
           role-session-name: java-language-sdk-test
           aws-region: ${{ env.AWS_REGION }}
       - name: sam build
-        run: export DOCKER_DEFAULT_PLATFORM=linux/amd64 && sam build
+        run: sam build
         working-directory: ./examples
       - name: sam deploy
         run: sam deploy --resolve-image-repos
