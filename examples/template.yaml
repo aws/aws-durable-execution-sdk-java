@@ -20,13 +20,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-step-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -46,12 +39,6 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-                - lambda:InvokeFunction
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-invoke-example"
-            - Effect: Allow
-              Action:
                 - lambda:InvokeFunction
               Resource: '*'
     Metadata:
@@ -69,13 +56,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -91,13 +71,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -113,13 +86,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -135,13 +101,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -157,13 +116,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -179,13 +131,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -201,13 +146,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -223,13 +161,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -245,13 +176,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -267,13 +191,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
@@ -289,13 +206,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example"
     Metadata:
       Dockerfile: examples/Dockerfile
       DockerContext: ../
