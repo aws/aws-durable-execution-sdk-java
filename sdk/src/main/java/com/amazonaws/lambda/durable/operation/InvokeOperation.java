@@ -52,6 +52,7 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
             startInvocation();
             waitTimeout();
         } else {
+            validateReplay(existing);
             // replay
             switch (existing.status()) {
                 // The result isn't ready. Need to wait more

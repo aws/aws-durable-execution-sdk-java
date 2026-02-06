@@ -62,6 +62,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
         var existing = getOperation();
 
         if (existing != null) {
+            validateReplay(existing);
             // This means we are in a replay scenario
             switch (existing.status()) {
                 case SUCCEEDED, FAILED -> markCompletionDuringReplay();

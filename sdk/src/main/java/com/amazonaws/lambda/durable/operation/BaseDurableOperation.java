@@ -5,6 +5,7 @@ package com.amazonaws.lambda.durable.operation;
 import com.amazonaws.lambda.durable.DurableFuture;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
+import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
@@ -14,6 +15,7 @@ import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Phaser;
 import org.slf4j.Logger;
@@ -244,5 +246,24 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             }
         }
         return original;
+    }
+
+    /** Validates that current operation matches checkpointed operation during replay. */
+    protected void validateReplay(Operation checkpointed) {
+        if (checkpointed == null || checkpointed.type() == null) {
+            return; // First execution, no validation needed
+        }
+
+        if (!checkpointed.type().equals(getType())) {
+            throw new NonDeterministicExecutionException(String.format(
+                    "Operation type mismatch for \"%s\". Expected %s, got %s",
+                    operationId, checkpointed.type(), getType()));
+        }
+
+        if (!Objects.equals(checkpointed.name(), getName())) {
+            throw new NonDeterministicExecutionException(String.format(
+                    "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
+                    operationId, checkpointed.name(), getName()));
+        }
     }
 }

@@ -44,6 +44,10 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
     public void execute() {
         var existing = getOperation();
 
+        if (existing != null) {
+            validateReplay(existing);
+        }
+
         if (existing != null && existing.callbackDetails() != null) {
             // Replay: use existing callback ID
             callbackId = existing.callbackDetails().callbackId();

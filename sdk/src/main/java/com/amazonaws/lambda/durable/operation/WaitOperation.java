@@ -31,18 +31,23 @@ public class WaitOperation extends BaseDurableOperation<Void> {
     @Override
     public void execute() {
         var existing = getOperation();
-
-        if (existing != null && existing.status() == OperationStatus.SUCCEEDED) {
-            // Wait already completed
-            markCompletionDuringReplay();
-            return;
-        }
-
-        // Calculate remaining wait time
-        // TODO: if the checkpoint is slow remaining wait time might be off. Track
-        // endTimestamp instead and move calculation in front of polling start.
         Duration remainingWaitTime = duration;
-        if (existing == null) {
+
+        if (existing != null) {
+            validateReplay(existing);
+            if (existing.status() == OperationStatus.SUCCEEDED) {
+                // Wait already completed
+                markCompletionDuringReplay();
+                return;
+            }
+            // Replay - calculate remaining time from scheduledEndTimestamp
+            // TODO: if the checkpoint is slow remaining wait time might be off. Track
+            // endTimestamp instead and move calculation in front of polling start.
+            if (existing.waitDetails() != null && existing.waitDetails().scheduledEndTimestamp() != null) {
+                remainingWaitTime =
+                        Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());
+            }
+        } else {
             // First execution - checkpoint with full duration
             var update = OperationUpdate.builder()
                     .id(getOperationId())
@@ -56,12 +61,6 @@ public class WaitOperation extends BaseDurableOperation<Void> {
                     .build();
 
             sendOperationUpdate(update);
-        } else {
-            // Replay - calculate remaining time from scheduledEndTimestamp
-            if (existing.waitDetails() != null && existing.waitDetails().scheduledEndTimestamp() != null) {
-                remainingWaitTime =
-                        Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());
-            }
         }
 
         logger.debug("Remaining wait time: {} seconds", remainingWaitTime.getSeconds());

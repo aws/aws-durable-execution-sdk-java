@@ -94,12 +94,6 @@ public class DurableContext {
         }
         var operationId = nextOperationId();
 
-        // Validate replay consistency
-        var existing = executionManager.getOperationAndUpdateReplayState(operationId);
-        if (existing != null) {
-            validateReplay(operationId, OperationType.STEP, name, existing);
-        }
-
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
                 operationId, name, func, typeToken, config, executionManager, logger, durableConfig);
@@ -111,24 +105,18 @@ public class DurableContext {
 
     // ========== wait methods ==========
 
-    public void wait(Duration duration) {
-        wait(null, duration);
+    public Void wait(Duration duration) {
+        return wait(null, duration);
     }
 
-    public void wait(String waitName, Duration duration) {
+    public Void wait(String waitName, Duration duration) {
         var operationId = nextOperationId();
-
-        // Validate replay consistency
-        var existing = executionManager.getOperationAndUpdateReplayState(operationId);
-        if (existing != null) {
-            validateReplay(operationId, OperationType.WAIT, waitName, existing);
-        }
 
         // Create and start wait operation
         var operation = new WaitOperation(operationId, waitName, duration, executionManager);
 
         operation.execute(); // Checkpoint the wait
-        operation.get(); // Block (will throw SuspendExecutionException if needed)
+        return operation.get(); // Block (will throw SuspendExecutionException if needed)
     }
 
     // ========== chained invoke methods ==========
@@ -193,12 +181,6 @@ public class DurableContext {
         }
         var operationId = nextOperationId();
 
-        // Validate replay consistency
-        var existing = executionManager.getOperationAndUpdateReplayState(operationId);
-        if (existing != null) {
-            validateReplay(operationId, OperationType.CHAINED_INVOKE, name, existing);
-        }
-
         // Create and start invoke operation
         var operation =
                 new InvokeOperation<>(operationId, name, functionName, payload, typeToken, config, executionManager);
@@ -226,11 +208,6 @@ public class DurableContext {
             config = config.toBuilder().serDes(durableConfig.getSerDes()).build();
         }
         var operationId = nextOperationId();
-
-        var existing = executionManager.getOperationAndUpdateReplayState(operationId);
-        if (existing != null) {
-            validateReplay(operationId, OperationType.CALLBACK, name, existing);
-        }
 
         var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager);
         operation.execute();
@@ -268,23 +245,4 @@ public class DurableContext {
         return String.valueOf(operationCounter.incrementAndGet());
     }
 
-    /** Validates that current operation matches checkpointed operation during replay. */
-    private void validateReplay(
-            String operationId, OperationType expectedType, String expectedName, Operation checkpointed) {
-        if (checkpointed == null || checkpointed.type() == null) {
-            return; // First execution, no validation needed
-        }
-
-        if (!checkpointed.type().equals(expectedType)) {
-            throw new NonDeterministicExecutionException(String.format(
-                    "Operation type mismatch for \"%s\". Expected %s, got %s",
-                    operationId, checkpointed.type(), expectedType));
-        }
-
-        if (!Objects.equals(checkpointed.name(), expectedName)) {
-            throw new NonDeterministicExecutionException(String.format(
-                    "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                    operationId, checkpointed.name(), expectedName));
-        }
-    }
 }
