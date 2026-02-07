@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.util;
 
-import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.util.Arrays;
 import java.util.List;
@@ -73,9 +72,5 @@ public class ExceptionHelper {
                     return new StackTraceElement(tokens[0], tokens[1], tokens[2], Integer.parseInt(tokens[3]));
                 })
                 .toArray(StackTraceElement[]::new);
-    }
-
-    public static boolean isUnrecoverableDurableException(Throwable exception) {
-        return exception instanceof UnrecoverableDurableExecutionException;
     }
 }
