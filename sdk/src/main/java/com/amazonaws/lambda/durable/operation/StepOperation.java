@@ -47,7 +47,6 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             ExecutionManager executionManager,
             DurableLogger durableLogger,
             DurableConfig durableConfig) {
-        // Use custom SerDes from config if provided, otherwise use default
         super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), executionManager);
 
         this.function = function;
