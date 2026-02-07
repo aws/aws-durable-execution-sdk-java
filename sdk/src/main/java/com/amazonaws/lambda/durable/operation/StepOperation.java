@@ -26,7 +26,6 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 
 public class StepOperation<T> extends BaseDurableOperation<T> {
@@ -124,11 +123,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 // Check if we need to send START
                 var existing = getOperation();
                 if (existing == null || existing.status() != OperationStatus.STARTED) {
-                    var startUpdate = OperationUpdate.builder()
-                            .id(getOperationId())
-                            .name(getName())
+                    var startUpdate = getOperationUpdateBuilder()
                             .parentId(null)
-                            .type(OperationType.STEP)
                             .action(OperationAction.START)
                             .build();
 
@@ -145,11 +141,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 T result = function.get();
 
                 // Send SUCCEED
-                var successUpdate = OperationUpdate.builder()
-                        .id(getOperationId())
-                        .name(getName())
+                var successUpdate = getOperationUpdateBuilder()
                         .parentId(null)
-                        .type(OperationType.STEP)
                         .action(OperationAction.SUCCEED)
                         .payload(serializeResult(result))
                         .build();
@@ -189,11 +182,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
 
         if (isRetryable && retryDecision.shouldRetry()) {
             // Send RETRY
-            var retryUpdate = OperationUpdate.builder()
-                    .id(getOperationId())
-                    .name(getName())
+            var retryUpdate = getOperationUpdateBuilder()
                     .parentId(null)
-                    .type(OperationType.STEP)
                     .action(OperationAction.RETRY)
                     .error(errorObject)
                     .stepOptions(StepOptions.builder()
@@ -213,11 +203,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             pollUntilReady(getOperationId(), pendingFuture, nextAttemptTime, Duration.ofMillis(200));
         } else {
             // Send FAIL - retries exhausted
-            var failUpdate = OperationUpdate.builder()
-                    .id(getOperationId())
-                    .name(getName())
+            var failUpdate = getOperationUpdateBuilder()
                     .parentId(null)
-                    .type(OperationType.STEP)
                     .action(OperationAction.FAIL)
                     .error(errorObject)
                     .build();

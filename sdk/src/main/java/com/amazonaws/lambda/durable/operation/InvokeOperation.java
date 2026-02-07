@@ -17,7 +17,6 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     private static final Logger logger = LoggerFactory.getLogger(InvokeOperation.class);
@@ -73,11 +72,8 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     }
 
     private void startInvocation() {
-        var update = OperationUpdate.builder()
-                .id(getOperationId())
-                .name(getName())
+        var update = getOperationUpdateBuilder()
                 .parentId(null)
-                .type(OperationType.CHAINED_INVOKE)
                 .action(OperationAction.START)
                 .chainedInvokeOptions(ChainedInvokeOptions.builder()
                         .functionName(functionName)

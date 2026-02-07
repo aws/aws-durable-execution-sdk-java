@@ -87,6 +87,10 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return operationType;
     }
 
+    public OperationUpdate.Builder getOperationUpdateBuilder() {
+        return OperationUpdate.builder().id(operationId).name(name).type(operationType);
+    }
+
     /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
     public abstract void execute();
 

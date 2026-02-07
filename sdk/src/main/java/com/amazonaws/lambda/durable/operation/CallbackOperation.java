@@ -15,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
@@ -67,11 +66,8 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             }
         } else {
             // First execution: checkpoint and get callback ID
-            var update = OperationUpdate.builder()
-                    .id(getOperationId())
-                    .name(getName())
+            var update = getOperationUpdateBuilder()
                     .parentId(null)
-                    .type(OperationType.CALLBACK)
                     .action(OperationAction.START)
                     .callbackOptions(buildCallbackOptions())
                     .build();

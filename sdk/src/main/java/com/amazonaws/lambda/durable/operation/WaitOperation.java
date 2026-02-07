@@ -13,7 +13,6 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
 
 public class WaitOperation extends BaseDurableOperation<Void> {
@@ -49,11 +48,8 @@ public class WaitOperation extends BaseDurableOperation<Void> {
             }
         } else {
             // First execution - checkpoint with full duration
-            var update = OperationUpdate.builder()
-                    .id(getOperationId())
-                    .name(getName())
+            var update = getOperationUpdateBuilder()
                     .parentId(null)
-                    .type(OperationType.WAIT)
                     .action(OperationAction.START)
                     .waitOptions(WaitOptions.builder()
                             .waitSeconds((int) duration.toSeconds())
