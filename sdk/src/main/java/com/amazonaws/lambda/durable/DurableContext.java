@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
@@ -16,8 +15,6 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.lambda.model.Operation;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 
 public class DurableContext {
     private static final String ROOT_CONTEXT = "Root";
@@ -244,5 +241,4 @@ public class DurableContext {
     private String nextOperationId() {
         return String.valueOf(operationCounter.incrementAndGet());
     }
-
 }

@@ -7,7 +7,6 @@ import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.StepSemantics;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.DurableOperationException;
-import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -247,19 +246,10 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             }
 
             // Attempt to reconstruct and throw the original exception
-            try {
-                Throwable original = deserializeException(errorObject);
-                if (original != null) {
-                    ExceptionHelper.sneakyThrow(original);
-                }
-            } catch (ClassNotFoundException e) {
-                logger.warn(
-                        "Cannot re-construct original exception type. Falling back to generic StepFailedException.");
-            } catch (SerDesException e) {
-                logger.warn(
-                        "Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
+            Throwable original = deserializeException(errorObject);
+            if (original != null) {
+                ExceptionHelper.sneakyThrow(original);
             }
-
             // Fallback: wrap in StepFailedException
             throw new StepFailedException(op);
         }

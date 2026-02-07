@@ -73,6 +73,8 @@ public class WaitOperation extends BaseDurableOperation<Void> {
 
     @Override
     public Void get() {
+        validateCurrentThreadType();
+
         waitForOperationCompletionIfRunning();
 
         return null;

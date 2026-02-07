@@ -106,10 +106,21 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
      */
     public abstract T get();
 
+    /**
+     * Gets the Operation from ExecutionManager and update the replay state from REPLAY to EXECUTE if operation is not
+     * found
+     *
+     * @return the operation if found, otherwise null
+     */
     protected Operation getOperation() {
         return executionManager.getOperationAndUpdateReplayState(getOperationId());
     }
 
+    /**
+     * check if it's called from a Step.
+     *
+     * @throws IllegalDurableOperationException if it's in a step
+     */
     protected void validateCurrentThreadType() {
         ThreadType current = executionManager.getCurrentContext().threadType();
         if (current == ThreadType.STEP) {
@@ -157,7 +168,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         if (op == null) {
             // throws an UnrecoverableDurableExecutionException to immediately terminate the execution
             terminateExecutionWithIllegalDurableOperationException(
-                    String.format("{%s} operation not found: {%s}", getType(), getOperationId()));
+                    String.format("%s operation not found: %s", getType(), getOperationId()));
         }
         return op;
     }
@@ -233,17 +244,29 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return ExceptionHelper.buildErrorObject(throwable, resultSerDes);
     }
 
-    protected Throwable deserializeException(ErrorObject errorObject) throws ClassNotFoundException {
+    protected Throwable deserializeException(ErrorObject errorObject) {
         var errorType = errorObject.errorType();
         var errorData = errorObject.errorData();
         Throwable original = null;
-        Class<?> exceptionClass = Class.forName(errorType);
-        if (Throwable.class.isAssignableFrom(exceptionClass)) {
-            original = resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
 
-            if (original != null) {
-                original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));
+        if (errorType == null) {
+            return original;
+        }
+        try {
+
+            Class<?> exceptionClass = Class.forName(errorType);
+            if (Throwable.class.isAssignableFrom(exceptionClass)) {
+                original =
+                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
+
+                if (original != null) {
+                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));
+                }
             }
+        } catch (ClassNotFoundException e) {
+            logger.warn("Cannot re-construct original exception type. Falling back to generic StepFailedException.");
+        } catch (SerDesException e) {
+            logger.warn("Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
         }
         return original;
     }

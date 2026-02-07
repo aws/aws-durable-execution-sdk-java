@@ -9,8 +9,10 @@ import com.amazonaws.lambda.durable.TestUtils;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
 import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
+import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -59,8 +61,10 @@ class CallbackOperationTest {
     private ExecutionManager createExecutionManager(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
         var initialState = new InitialExecutionState(initialOperations, null);
-        return new ExecutionManager(
+        var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client);
+        executionManager.setCurrentContext("Root", ThreadType.CONTEXT);
+        return executionManager;
     }
 
     @Test
@@ -216,7 +220,6 @@ class CallbackOperationTest {
     @Test
     void operationUsesCustomSerDesWhenConfigContainsOne() {
         var customSerDes = new TrackingSerDes();
-        var defaultSerDes = new JacksonSerDes();
 
         var existingCallback = Operation.builder()
                 .id("1")
@@ -307,7 +310,7 @@ class CallbackOperationTest {
                 .status(OperationStatus.SUCCEEDED)
                 .callbackDetails(CallbackDetails.builder()
                         .callbackId("test-callback-123")
-                        .result("invalid-data")
+                        .result("data")
                         .build())
                 .build();
         var executionManager = createExecutionManager(List.of(existingCallback));
@@ -322,5 +325,34 @@ class CallbackOperationTest {
 
         var exception = assertThrows(SerDesException.class, operation::get);
         assertEquals("Invalid base64 encoding", exception.getMessage());
+    }
+
+    @Test
+    void getThrowsExceptionWhenCalledWithinStep() {
+        var existingCallback = Operation.builder()
+                .id("1")
+                .name("approval")
+                .type(OperationType.CALLBACK)
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("test-callback-123")
+                        .result("invalid-data")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        executionManager.setCurrentContext("Root", ThreadType.STEP);
+
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(new JacksonSerDes()).build(),
+                executionManager);
+        operation.execute();
+
+        var exception = assertThrows(IllegalDurableOperationException.class, operation::get);
+        assertEquals(
+                "Nested CALLBACK operation is not supported on approval from within a Step execution.",
+                exception.getMessage());
     }
 }

@@ -89,6 +89,7 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
 
     @Override
     public T get() {
+        validateCurrentThreadType();
         var op = waitForOperationCompletionIfRunning();
 
         return switch (op.status()) {
