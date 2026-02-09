@@ -1,5 +1,5 @@
 # Build stage
-FROM amazoncorretto:17-alpine AS builder
+FROM amazoncorretto:17.0.18-alpine3.23 AS builder
 
 WORKDIR /build
 
@@ -11,7 +11,7 @@ COPY sdk-integration-tests ./sdk-integration-tests
 COPY examples ./examples
 
 # Check shell
-RUN /bin/sh --version
+RUN /bin/sh --help
 
 # Install Maven
 RUN apk add --no-cache maven
