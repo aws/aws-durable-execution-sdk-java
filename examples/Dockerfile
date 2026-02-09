@@ -1,6 +1,8 @@
 # Build stage
 FROM --platform=linux/amd64 amazoncorretto:17.0.18-alpine3.23 AS builder
 
+RUN uname -a
+
 WORKDIR /build
 
 # Copy parent pom and all modules
