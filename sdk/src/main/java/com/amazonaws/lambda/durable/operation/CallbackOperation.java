@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
@@ -54,7 +55,7 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             switch (existing.status()) {
                 case SUCCEEDED, FAILED, TIMED_OUT -> {
                     // Terminal state - complete phaser immediately
-                    markCompletionDuringReplay();
+                    markAlreadyCompleted();
                     return;
                 }
                 case STARTED -> {
@@ -66,11 +67,10 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             }
         } else {
             // First execution: checkpoint and get callback ID
-            var update = getOperationUpdateBuilder()
+            var update = OperationUpdate.builder()
                     .parentId(null)
                     .action(OperationAction.START)
-                    .callbackOptions(buildCallbackOptions())
-                    .build();
+                    .callbackOptions(buildCallbackOptions());
 
             sendOperationUpdate(update);
 
@@ -80,13 +80,12 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
         }
 
         // Start polling for callback completion (delay first poll to allow suspension)
-        pollForOperationUpdates(getOperationId(), Instant.now().plusMillis(100), Duration.ofMillis(200));
+        pollForOperationUpdates(Instant.now().plusMillis(100), Duration.ofMillis(200));
     }
 
     @Override
     public T get() {
-        validateCurrentThreadType();
-        var op = waitForOperationCompletionIfRunning();
+        var op = waitForOperationCompletion();
 
         return switch (op.status()) {
             case SUCCEEDED -> deserializeResult(op.callbackDetails().result());

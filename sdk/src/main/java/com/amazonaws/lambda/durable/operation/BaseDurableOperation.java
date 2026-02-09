@@ -87,10 +87,6 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return operationType;
     }
 
-    public OperationUpdate.Builder getOperationUpdateBuilder() {
-        return OperationUpdate.builder().id(operationId).name(name).type(operationType);
-    }
-
     /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
     public abstract void execute();
 
@@ -125,10 +121,9 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
      *
      * @throws IllegalDurableOperationException if it's in a step
      */
-    protected void validateCurrentThreadType() {
+    private void validateCurrentThreadType() {
         ThreadType current = executionManager.getCurrentContext().threadType();
         if (current == ThreadType.STEP) {
-            // throws an UnrecoverableDurableExecutionException to immediately terminate the execution
             var message = String.format(
                     "Nested %s operation is not supported on %s from within a %s execution.",
                     getType(), getName(), current);
@@ -138,7 +133,10 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     // phase control utilities
-    protected Operation waitForOperationCompletionIfRunning() {
+    protected Operation waitForOperationCompletion() {
+
+        validateCurrentThreadType();
+
         // If we are in a replay where the operation is already complete (SUCCEEDED /
         // FAILED), the Phaser will be
         // advanced in .execute() already and we don't block but return the result
@@ -170,18 +168,15 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         // Get result based on status
         var op = getOperation();
         if (op == null) {
-            // throws an UnrecoverableDurableExecutionException to immediately terminate the execution
             terminateExecutionWithIllegalDurableOperationException(
                     String.format("%s operation not found: %s", getType(), getOperationId()));
         }
         return op;
     }
 
-    protected void markCompletionDuringReplay() {
-        // Operation is already completed (we are in a replay). We advance and
-        // deregister from the Phaser
-        // so that .get() doesn't block and returns the result immediately. See
-        // StepOperation.get().
+    protected void markAlreadyCompleted() {
+        // Operation is already completed in a relay. We advance and deregister from the Phaser
+        // so that get method doesn't block and returns the result immediately.
         logger.trace("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
         phaser.arriveAndDeregister(); // Phase 0 -> 1
     }
@@ -210,21 +205,21 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     // polling and checkpointing
-    protected void pollForOperationUpdates(String operationId, Instant firstPoll, Duration duration) {
+    protected void pollForOperationUpdates(Instant firstPoll, Duration duration) {
         executionManager.pollForOperationUpdates(operationId, firstPoll, duration);
     }
 
-    protected void pollUntilReady(
-            String operationId, CompletableFuture<Void> pendingFuture, Instant firstPoll, Duration duration) {
+    protected void pollUntilReady(CompletableFuture<Void> pendingFuture, Instant firstPoll, Duration duration) {
         executionManager.pollUntilReady(operationId, pendingFuture, firstPoll, duration);
     }
 
-    protected void sendOperationUpdate(OperationUpdate update) {
-        executionManager.sendOperationUpdate(update).join();
+    protected void sendOperationUpdate(OperationUpdate.Builder builder) {
+        sendOperationUpdateAsync(builder).join();
     }
 
-    protected void sendOperationUpdateAsync(OperationUpdate update) {
-        executionManager.sendOperationUpdate(update);
+    protected CompletableFuture<Void> sendOperationUpdateAsync(OperationUpdate.Builder builder) {
+        return executionManager.sendOperationUpdate(
+                builder.id(operationId).name(name).type(operationType).build());
     }
 
     // serialization/deserialization utilities
@@ -282,15 +277,15 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         }
 
         if (!checkpointed.type().equals(getType())) {
-            throw new NonDeterministicExecutionException(String.format(
+            terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation type mismatch for \"%s\". Expected %s, got %s",
-                    operationId, checkpointed.type(), getType()));
+                    operationId, checkpointed.type(), getType())));
         }
 
         if (!Objects.equals(checkpointed.name(), getName())) {
-            throw new NonDeterministicExecutionException(String.format(
+            terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                    operationId, checkpointed.name(), getName()));
+                    operationId, checkpointed.name(), getName())));
         }
     }
 }

@@ -26,6 +26,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 
 public class StepOperation<T> extends BaseDurableOperation<T> {
@@ -62,7 +63,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             validateReplay(existing);
             // This means we are in a replay scenario
             switch (existing.status()) {
-                case SUCCEEDED, FAILED -> markCompletionDuringReplay();
+                case SUCCEEDED, FAILED -> markAlreadyCompleted();
                 case STARTED -> {
                     var attempt = existing.stepDetails().attempt() != null
                             ? existing.stepDetails().attempt()
@@ -89,7 +90,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                     if (nextAttemptTime == null) {
                         nextAttemptTime = Instant.now().plusSeconds(1);
                     }
-                    pollUntilReady(getOperationId(), pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
+                    pollUntilReady(pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
                 }
                 case READY -> {
                     // Execute with current attempt
@@ -123,10 +124,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 // Check if we need to send START
                 var existing = getOperation();
                 if (existing == null || existing.status() != OperationStatus.STARTED) {
-                    var startUpdate = getOperationUpdateBuilder()
-                            .parentId(null)
-                            .action(OperationAction.START)
-                            .build();
+                    var startUpdate = OperationUpdate.builder().parentId(null).action(OperationAction.START);
 
                     if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
                         // AT_MOST_ONCE: await START checkpoint before executing user code
@@ -141,11 +139,10 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 T result = function.get();
 
                 // Send SUCCEED
-                var successUpdate = getOperationUpdateBuilder()
+                var successUpdate = OperationUpdate.builder()
                         .parentId(null)
                         .action(OperationAction.SUCCEED)
-                        .payload(serializeResult(result))
-                        .build();
+                        .payload(serializeResult(result));
                 sendOperationUpdate(successUpdate);
             } catch (Throwable e) {
                 handleStepFailure(e, attempt);
@@ -182,7 +179,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
 
         if (isRetryable && retryDecision.shouldRetry()) {
             // Send RETRY
-            var retryUpdate = getOperationUpdateBuilder()
+            var retryUpdate = OperationUpdate.builder()
                     .parentId(null)
                     .action(OperationAction.RETRY)
                     .error(errorObject)
@@ -191,8 +188,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                             // 1 (no sub-second numbers)
                             .nextAttemptDelaySeconds(
                                     Math.toIntExact(retryDecision.delay().toSeconds()))
-                            .build())
-                    .build();
+                            .build());
             sendOperationUpdate(retryUpdate);
 
             // Setup polling for retry
@@ -200,23 +196,20 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
 
             var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
-            pollUntilReady(getOperationId(), pendingFuture, nextAttemptTime, Duration.ofMillis(200));
+            pollUntilReady(pendingFuture, nextAttemptTime, Duration.ofMillis(200));
         } else {
             // Send FAIL - retries exhausted
-            var failUpdate = getOperationUpdateBuilder()
+            var failUpdate = OperationUpdate.builder()
                     .parentId(null)
                     .action(OperationAction.FAIL)
-                    .error(errorObject)
-                    .build();
+                    .error(errorObject);
             sendOperationUpdate(failUpdate);
         }
     }
 
     @Override
     public T get() {
-        validateCurrentThreadType();
-
-        var op = waitForOperationCompletionIfRunning();
+        var op = waitForOperationCompletion();
 
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();

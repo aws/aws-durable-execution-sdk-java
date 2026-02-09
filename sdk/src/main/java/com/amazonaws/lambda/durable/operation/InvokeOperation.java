@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     private static final Logger logger = LoggerFactory.getLogger(InvokeOperation.class);
@@ -56,7 +57,7 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
             switch (existing.status()) {
                 // The result isn't ready. Need to wait more
                 case STARTED -> waitTimeout();
-                case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markCompletionDuringReplay();
+                case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
                 default ->
                     terminateExecutionWithIllegalDurableOperationException(
                             "Unexpected invoke status: " + existing.statusAsString());
@@ -68,19 +69,18 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
         var waitTime = invokeConfig.timeout() != null ? invokeConfig.timeout() : Duration.ofSeconds(1);
         logger.debug("Remaining invoke wait time: {} seconds", waitTime.toSeconds());
         Instant firstPoll = Instant.now().plus(waitTime).plusMillis(25);
-        pollForOperationUpdates(getOperationId(), firstPoll, Duration.ofMillis(200));
+        pollForOperationUpdates(firstPoll, Duration.ofMillis(200));
     }
 
     private void startInvocation() {
-        var update = getOperationUpdateBuilder()
+        var update = OperationUpdate.builder()
                 .parentId(null)
                 .action(OperationAction.START)
                 .chainedInvokeOptions(ChainedInvokeOptions.builder()
                         .functionName(functionName)
                         .tenantId(invokeConfig.tenantId())
                         .build())
-                .payload(payloadSerDes.serialize(this.payload))
-                .build();
+                .payload(payloadSerDes.serialize(this.payload));
 
         sendOperationUpdate(update);
     }
@@ -101,9 +101,7 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
      */
     @Override
     public T get() {
-        validateCurrentThreadType();
-
-        var op = waitForOperationCompletionIfRunning();
+        var op = waitForOperationCompletion();
         var invokeDetails = op.chainedInvokeDetails();
         var result = invokeDetails != null ? invokeDetails.result() : null;
         return switch (op.status()) {

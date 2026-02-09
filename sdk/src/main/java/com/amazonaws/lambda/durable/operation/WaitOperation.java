@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
 
 public class WaitOperation extends BaseDurableOperation<Void> {
@@ -36,7 +37,7 @@ public class WaitOperation extends BaseDurableOperation<Void> {
             validateReplay(existing);
             if (existing.status() == OperationStatus.SUCCEEDED) {
                 // Wait already completed
-                markCompletionDuringReplay();
+                markAlreadyCompleted();
                 return;
             }
             // Replay - calculate remaining time from scheduledEndTimestamp
@@ -48,13 +49,12 @@ public class WaitOperation extends BaseDurableOperation<Void> {
             }
         } else {
             // First execution - checkpoint with full duration
-            var update = getOperationUpdateBuilder()
+            var update = OperationUpdate.builder()
                     .parentId(null)
                     .action(OperationAction.START)
                     .waitOptions(WaitOptions.builder()
                             .waitSeconds((int) duration.toSeconds())
-                            .build())
-                    .build();
+                            .build());
 
             sendOperationUpdate(update);
         }
@@ -64,14 +64,12 @@ public class WaitOperation extends BaseDurableOperation<Void> {
         // Poll starting at scheduledEndTimestamp + 25ms, every 200ms
         // The polling will complete the phaser when the backend reports SUCCEEDED
         Instant firstPoll = Instant.now().plus(remainingWaitTime).plusMillis(25);
-        pollForOperationUpdates(getOperationId(), firstPoll, Duration.ofMillis(200));
+        pollForOperationUpdates(firstPoll, Duration.ofMillis(200));
     }
 
     @Override
     public Void get() {
-        validateCurrentThreadType();
-
-        waitForOperationCompletionIfRunning();
+        waitForOperationCompletion();
 
         return null;
     }

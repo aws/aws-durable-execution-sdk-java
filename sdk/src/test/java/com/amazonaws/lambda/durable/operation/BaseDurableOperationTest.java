@@ -67,16 +67,20 @@ class BaseDurableOperationTest {
     }
 
     @Test
-    void validateCurrentThreadTypeThrowsWhenInStep() {
+    void waitForOperationCompletionThrowsIfInStep() {
+        Phaser phaser = new Phaser();
         ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("step-id", ThreadType.STEP));
+        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("context", ThreadType.STEP));
+        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder().build());
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
                     public void execute() {
-                        assertThrows(IllegalDurableOperationException.class, this::validateCurrentThreadType);
+                        assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletion);
                     }
 
                     @Override
@@ -90,28 +94,6 @@ class BaseDurableOperationTest {
     }
 
     @Test
-    void validateCurrentThreadTypeDoesNotThrowsWhenInContext() {
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("context", ThreadType.CONTEXT));
-
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
-                    @Override
-                    public void execute() {
-                        validateCurrentThreadType();
-                    }
-
-                    @Override
-                    public String get() {
-                        return RESULT;
-                    }
-                };
-
-        op.execute();
-    }
-
-    @Test
     void waitForOperationCompletionThrowsIfOperationMissing() {
         Phaser phaser = new Phaser();
         ExecutionManager executionManager = mock(ExecutionManager.class);
@@ -122,17 +104,16 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
-                    public void execute() {
-                        assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletionIfRunning);
-                    }
+                    public void execute() {}
 
                     @Override
                     public String get() {
+                        assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletion);
                         return RESULT;
                     }
                 };
 
-        op.execute();
+        op.get();
         verify(executionManager).terminateExecution(any(IllegalDurableOperationException.class));
     }
 
@@ -151,7 +132,7 @@ class BaseDurableOperationTest {
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
                     public void execute() {
-                        waitForOperationCompletionIfRunning();
+                        waitForOperationCompletion();
                     }
 
                     @Override
@@ -182,7 +163,7 @@ class BaseDurableOperationTest {
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
                     public void execute() {
-                        waitForOperationCompletionIfRunning();
+                        waitForOperationCompletion();
                     }
 
                     @Override
@@ -198,7 +179,7 @@ class BaseDurableOperationTest {
     }
 
     @Test
-    void markCompletionDuringReplay() {
+    void markAlreadyCompleted() {
         Phaser phaser = new Phaser(1);
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
@@ -212,7 +193,7 @@ class BaseDurableOperationTest {
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
                     public void execute() {
-                        markCompletionDuringReplay();
+                        markAlreadyCompleted();
                     }
 
                     @Override
@@ -417,8 +398,8 @@ class BaseDurableOperationTest {
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
                     public void execute() {
-                        pollForOperationUpdates(OPERATION_ID, now, Duration.ofSeconds(1));
-                        pollUntilReady(OPERATION_ID, future, now, Duration.ofSeconds(1));
+                        pollForOperationUpdates(now, Duration.ofSeconds(1));
+                        pollUntilReady(future, now, Duration.ofSeconds(1));
                     }
 
                     @Override
@@ -445,8 +426,8 @@ class BaseDurableOperationTest {
                         .name(OPERATION_NAME)
                         .type(OPERATION_TYPE)
                         .build());
-        OperationUpdate update = OperationUpdate.builder().build();
-        when(executionManager.sendOperationUpdate(update)).thenReturn(CompletableFuture.completedFuture(null));
+        var update = OperationUpdate.builder();
+        when(executionManager.sendOperationUpdate(update.build())).thenReturn(CompletableFuture.completedFuture(null));
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
@@ -465,6 +446,6 @@ class BaseDurableOperationTest {
                 };
 
         op.execute();
-        verify(executionManager, times(2)).sendOperationUpdate(update);
+        verify(executionManager, times(2)).sendOperationUpdate(update.build());
     }
 }
