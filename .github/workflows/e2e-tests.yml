@@ -52,8 +52,9 @@ jobs:
           role-to-assume: "${{ secrets.ACTIONS_INTEGRATION_ROLE_NAME }}"
           role-session-name: java-language-sdk-test
           aws-region: ${{ env.AWS_REGION }}
-      - name: sam build --use-container --build-image public.ecr.aws/sam/build-java17:1.153.1-20260203234556 --no-cached
-        run: sam build
+      - run: uname -a
+      - name: sam build
+        run: sam build --use-container --build-image public.ecr.aws/sam/build-java17:1.153.1-20260203234556 --no-cached
         working-directory: ./examples
       - name: sam deploy
         run: sam deploy --resolve-image-repos
