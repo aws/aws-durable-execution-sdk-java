@@ -1,17 +1,17 @@
 # Build stage
 FROM --platform=linux/amd64 amazoncorretto:17-alpine AS builder
 
-# Install Maven
-RUN apk add --no-cache maven
-
 WORKDIR /build
 
 # Copy parent pom and all modules
+COPY pom.xml .
 COPY sdk ./sdk
 COPY sdk-testing ./sdk-testing
 COPY sdk-integration-tests ./sdk-integration-tests
 COPY examples ./examples
-COPY pom.xml .
+
+# Install Maven
+RUN apk add --no-cache maven
 
 # Build and install the SDK modules first
 RUN mvn clean install -DskipTests -pl sdk,sdk-testing -am
