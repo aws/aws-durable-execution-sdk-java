@@ -1,5 +1,5 @@
 # Build stage
-FROM --platform=linux/arm64 amazoncorretto:17-alpine AS builder
+FROM --platform=linux/amd64 amazoncorretto:17-alpine AS builder
 
 # Install Maven
 RUN apk add --no-cache maven
