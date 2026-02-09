@@ -10,6 +10,9 @@ COPY sdk-testing ./sdk-testing
 COPY sdk-integration-tests ./sdk-integration-tests
 COPY examples ./examples
 
+# Check shell
+RUN /bin/sh --version
+
 # Install Maven
 RUN apk add --no-cache maven
 
