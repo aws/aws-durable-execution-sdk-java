@@ -41,19 +41,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-      - name: Setup Java ${{ matrix.java }}
-        uses: actions/setup-java@v5
-        with:
-          distribution: corretto
-          java-version: ${{ matrix.java }}
-          cache: maven
       - name: Setup AWS SAM CLI
         uses: aws-actions/setup-sam@v2
         with:
           use-installer: true
 #          token: ${{ secrets.GITHUB_TOKEN }} # only enable if we run into throughput issues
-      - name: Build and test
-        run: mvn -B -q install --file pom.xml
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
