@@ -1,5 +1,5 @@
 # Build stage
-FROM amazoncorretto:17.0.18-alpine3.23 AS builder
+FROM --platform=linux/amd64 amazoncorretto:17.0.18-alpine3.23 AS builder
 
 WORKDIR /build
 
