@@ -74,7 +74,6 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
 
     private void startInvocation() {
         var update = OperationUpdate.builder()
-                .parentId(null)
                 .action(OperationAction.START)
                 .chainedInvokeOptions(ChainedInvokeOptions.builder()
                         .functionName(functionName)

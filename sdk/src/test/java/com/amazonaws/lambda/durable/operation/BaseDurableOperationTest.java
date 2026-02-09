@@ -120,7 +120,7 @@ class BaseDurableOperationTest {
     @Test
     void waitForOperationCompletionWhenRunningAndReadyToComplete() {
         Phaser phaser = new Phaser(0);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
+        OperationContext context = new OperationContext("step", ThreadType.CONTEXT);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
         when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
@@ -151,7 +151,7 @@ class BaseDurableOperationTest {
     void waitForOperationCompletionWhenAlreadyCompleted() {
         Phaser phaser = new Phaser(1);
         phaser.arrive(); // completed
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
+        OperationContext context = new OperationContext("step", ThreadType.CONTEXT);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
         when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);

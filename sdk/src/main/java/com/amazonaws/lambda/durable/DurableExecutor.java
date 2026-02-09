@@ -78,8 +78,8 @@ public class DurableExecutor {
                 },
                 config.getExecutorService()); // Get executor from config for running user code
 
-        // Get suspend future from ExecutionManager. If this future completes, it
-        // indicates that no threads are active and we can safely suspend.
+        // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
+        // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a failure.
         return executionManager
                 .execute(handlerFuture)
                 .handle((result, ex) -> {

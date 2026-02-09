@@ -124,7 +124,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 // Check if we need to send START
                 var existing = getOperation();
                 if (existing == null || existing.status() != OperationStatus.STARTED) {
-                    var startUpdate = OperationUpdate.builder().parentId(null).action(OperationAction.START);
+                    var startUpdate = OperationUpdate.builder().action(OperationAction.START);
 
                     if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
                         // AT_MOST_ONCE: await START checkpoint before executing user code
@@ -140,7 +140,6 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
 
                 // Send SUCCEED
                 var successUpdate = OperationUpdate.builder()
-                        .parentId(null)
                         .action(OperationAction.SUCCEED)
                         .payload(serializeResult(result));
                 sendOperationUpdate(successUpdate);
@@ -180,7 +179,6 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
         if (isRetryable && retryDecision.shouldRetry()) {
             // Send RETRY
             var retryUpdate = OperationUpdate.builder()
-                    .parentId(null)
                     .action(OperationAction.RETRY)
                     .error(errorObject)
                     .stepOptions(StepOptions.builder()
@@ -199,10 +197,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             pollUntilReady(pendingFuture, nextAttemptTime, Duration.ofMillis(200));
         } else {
             // Send FAIL - retries exhausted
-            var failUpdate = OperationUpdate.builder()
-                    .parentId(null)
-                    .action(OperationAction.FAIL)
-                    .error(errorObject);
+            var failUpdate =
+                    OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);
             sendOperationUpdate(failUpdate);
         }
     }

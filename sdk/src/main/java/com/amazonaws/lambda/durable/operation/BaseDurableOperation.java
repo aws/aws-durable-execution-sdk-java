@@ -218,8 +218,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     protected CompletableFuture<Void> sendOperationUpdateAsync(OperationUpdate.Builder builder) {
-        return executionManager.sendOperationUpdate(
-                builder.id(operationId).name(name).type(operationType).build());
+        // todo: add parentId when we support operations in child context
+        return executionManager.sendOperationUpdate(builder.id(operationId)
+                .name(name)
+                .type(operationType)
+                .parentId(null)
+                .build());
     }
 
     // serialization/deserialization utilities

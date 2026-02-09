@@ -67,10 +67,8 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             }
         } else {
             // First execution: checkpoint and get callback ID
-            var update = OperationUpdate.builder()
-                    .parentId(null)
-                    .action(OperationAction.START)
-                    .callbackOptions(buildCallbackOptions());
+            var update =
+                    OperationUpdate.builder().action(OperationAction.START).callbackOptions(buildCallbackOptions());
 
             sendOperationUpdate(update);
 

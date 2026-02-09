@@ -50,7 +50,6 @@ public class WaitOperation extends BaseDurableOperation<Void> {
         } else {
             // First execution - checkpoint with full duration
             var update = OperationUpdate.builder()
-                    .parentId(null)
                     .action(OperationAction.START)
                     .waitOptions(WaitOptions.builder()
                             .waitSeconds((int) duration.toSeconds())
