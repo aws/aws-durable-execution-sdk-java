@@ -53,7 +53,7 @@ public class ExecutionManager {
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
     private static final ThreadLocal<OperationContext> currentContext = new ThreadLocal<>();
     private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
-    private final CompletableFuture<Void> suspendExecutionFuture = new CompletableFuture<>();
+    private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
 
     // ===== Checkpoint Batching =====
     private final CheckpointBatcher checkpointBatcher;
@@ -170,7 +170,7 @@ public class ExecutionManager {
 
     public void deregisterActiveThreadAndUnsetCurrentContext(String threadId) {
         // Skip if already suspended
-        if (suspendExecutionFuture.isDone()) {
+        if (executionExceptionFuture.isDone()) {
             return;
         }
 
@@ -228,7 +228,7 @@ public class ExecutionManager {
 
             // Poll while phaser is in phase 0
             while (this.getPhaser(operationId).getPhase() == ExecutionPhase.RUNNING.getValue()) {
-                if (suspendExecutionFuture.isDone()) {
+                if (executionExceptionFuture.isDone()) {
                     logger.debug("Polling for '{}': execution suspended, stopping", operationId);
                     return;
                 }
@@ -268,7 +268,7 @@ public class ExecutionManager {
 
             // Poll while future is not done
             while (!future.isDone()) {
-                if (suspendExecutionFuture.isDone()) {
+                if (executionExceptionFuture.isDone()) {
                     logger.debug("Polling for '{}': execution suspended, stopping", operationId);
                     return;
                 }
@@ -309,13 +309,13 @@ public class ExecutionManager {
     }
 
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-        suspendExecutionFuture.completeExceptionally(exception);
+        executionExceptionFuture.completeExceptionally(exception);
         throw exception;
     }
 
     public void suspendExecution() {
         var ex = new SuspendExecutionException();
-        suspendExecutionFuture.completeExceptionally(ex);
+        executionExceptionFuture.completeExceptionally(ex);
         throw ex;
     }
 
@@ -328,7 +328,7 @@ public class ExecutionManager {
      *     and terminateExecutionFuture.
      */
     public <T> CompletableFuture<T> execute(CompletableFuture<T> userFuture) {
-        return CompletableFuture.anyOf(userFuture, suspendExecutionFuture).thenApply(v -> {
+        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -> {
             // reaches here only if userFuture complete successfully
             if (userFuture.isDone()) {
                 return userFuture.join();
