@@ -7,7 +7,7 @@ Globals:
     Timeout: 900
     MemorySize: 512
     Architectures:
-      - amd64
+      - x86_64
 
 Resources:
   SimpleStepExampleFunction:
