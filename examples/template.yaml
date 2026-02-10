@@ -16,7 +16,7 @@ Parameters:
     Description: path to Dockerfile
   FunctionNameSuffix:
     Type: String
-    Default: ""
+    Default: ''
     Description: Suffix to append to all function names
 
 Globals:
@@ -31,7 +31,10 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: simple-step-example
+      FunctionName: !Join
+        - ''
+        - - simple-step-example
+        - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.SimpleStepExample::handleRequest"]
       DurableConfig:
@@ -47,8 +50,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - simple-invoke-example
+        - ''
+        - - 'simple-invoke-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.SimpleInvokeExample::handleRequest"]
@@ -77,8 +80,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - wait-example
+        - ''
+        - - 'wait-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitExample::handleRequest"]
@@ -102,8 +105,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - retry-example
+        - ''
+        - - 'retry-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.RetryExample::handleRequest"]
@@ -127,8 +130,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - wait-at-least-example
+        - ''
+        - - 'wait-at-least-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastExample::handleRequest"]
@@ -152,8 +155,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - wait-at-least-in-process-example
+        - ''
+        - - 'wait-at-least-in-process-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastInProcessExample::handleRequest"]
@@ -177,8 +180,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - retry-in-process-example
+        - ''
+        - - 'retry-in-process-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.RetryInProcessExample::handleRequest"]
@@ -202,8 +205,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - generic-types-example
+        - ''
+        - - 'generic-types-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.GenericTypesExample::handleRequest"]
@@ -227,8 +230,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - custom-config-example
+        - ''
+        - - 'custom-config-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.CustomConfigExample::handleRequest"]
@@ -252,8 +255,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - logging-example
+        - ''
+        - - 'logging-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.LoggingExample::handleRequest"]
@@ -277,8 +280,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - error-handling-example
+        - ''
+        - - 'error-handling-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.ErrorHandlingExample::handleRequest"]
@@ -302,8 +305,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - callback-example
+        - ''
+        - - 'callback-example'
         - - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.CallbackExample::handleRequest"]
@@ -327,8 +330,8 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - ""
-        - - many-async-steps-example
+        - ''
+        - - 'many-async-steps-example'
         - - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.ManyAsyncStepsExample::handleRequest"]
