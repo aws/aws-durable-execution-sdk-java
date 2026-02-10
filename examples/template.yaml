@@ -2,12 +2,25 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: AWS Lambda Durable Execution SDK Examples
 
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  DockerFile:
+    Type: String
+    Default: examples/Dockerfile
+    Description: path to Dockerfile
+
 Globals:
   Function:
     Timeout: 900
     MemorySize: 512
     Architectures:
-      - x86_64
+      - !Ref Architecture
 
 Resources:
   SimpleStepExampleFunction:
@@ -28,7 +41,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-step-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -55,7 +68,7 @@ Resources:
                 - lambda:InvokeFunction
               Resource: '*'
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -77,7 +90,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -99,7 +112,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -121,7 +134,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -143,7 +156,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -165,7 +178,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -187,7 +200,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -209,7 +222,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -231,7 +244,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -253,7 +266,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -275,7 +288,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -297,7 +310,7 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
