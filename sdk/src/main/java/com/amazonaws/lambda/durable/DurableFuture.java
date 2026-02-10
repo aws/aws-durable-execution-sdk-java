@@ -2,17 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import com.amazonaws.lambda.durable.operation.DurableOperation;
 import java.util.Arrays;
 import java.util.List;
 
-public class DurableFuture<T> {
-    private final DurableOperation<T> operation;
-
-    public DurableFuture(DurableOperation<T> operation) {
-        this.operation = operation;
-    }
-
+public interface DurableFuture<T> {
     /**
      * Blocks until the operation completes and returns the result.
      *
@@ -21,9 +14,7 @@ public class DurableFuture<T> {
      *
      * @return the operation result
      */
-    public T get() {
-        return operation.get();
-    }
+    T get();
 
     /**
      * Waits for all provided futures to complete and returns their results in order.
@@ -36,7 +27,7 @@ public class DurableFuture<T> {
      * @return a list of results in the same order as the input futures
      */
     @SafeVarargs
-    public static <T> List<T> allOf(DurableFuture<T>... futures) {
+    static <T> List<T> allOf(DurableFuture<T>... futures) {
         return Arrays.stream(futures).map(DurableFuture::get).toList();
     }
 
@@ -50,7 +41,7 @@ public class DurableFuture<T> {
      * @param <T> the result type of the futures
      * @return a list of results in the same order as the input futures
      */
-    public static <T> List<T> allOf(List<DurableFuture<T>> futures) {
+    static <T> List<T> allOf(List<DurableFuture<T>> futures) {
         return futures.stream().map(DurableFuture::get).toList();
     }
 }

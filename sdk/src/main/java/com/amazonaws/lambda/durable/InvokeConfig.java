@@ -34,8 +34,12 @@ public class InvokeConfig {
         return tenantId;
     }
 
-    public static InvokeConfig.Builder builder() {
-        return new InvokeConfig.Builder();
+    public static Builder builder() {
+        return new Builder(null, null, null, null);
+    }
+
+    public Builder toBuilder() {
+        return new Builder(timeout, payloadSerDes, resultSerDes, tenantId);
     }
 
     /** Builder for creating InvokeConfig instances. */
@@ -44,6 +48,13 @@ public class InvokeConfig {
         private SerDes payloadSerDes;
         private SerDes resultSerDes;
         private String tenantId;
+
+        private Builder(Duration timeout, SerDes payloadSerDes, SerDes resultSerDes, String tenantId) {
+            this.timeout = timeout;
+            this.payloadSerDes = payloadSerDes;
+            this.resultSerDes = resultSerDes;
+            this.tenantId = tenantId;
+        }
 
         public Builder tenantId(String tenantId) {
             this.tenantId = tenantId;

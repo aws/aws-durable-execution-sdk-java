@@ -384,13 +384,22 @@ protected DurableConfig createConfiguration() {
 
 The SDK throws specific exceptions to help you handle different failure scenarios:
 
-| Exception | When Thrown | How to Handle |
-|-----------|-------------|---------------|
-| `StepFailedException` | Step exhausted all retry attempts | Catch to implement fallback logic or let execution fail |
-| `StepInterruptedException` | `AT_MOST_ONCE` step was interrupted before completion | Implement manual recovery (check if operation completed externally) |
-| `CallbackTimeoutException` | Callback exceeded its timeout duration | Implement fallback logic or escalation |
-| `CallbackFailedException` | External system sent an error response to the callback | Handle the error or propagate failure |
-| `NonDeterministicExecutionException` | Code changed between original execution and replay | Fix code to maintain determinism; don't change step order/names |
+```
+DurableExecutionException              - General durable exception
+├── NonDeterministicExecutionException - Code changed between original execution and replay. Fix code to maintain determinism; don't change step order/names.
+├── SerDesException                    - Serialization and deserialization exception.
+└── DurableOperationException          - General operation exception
+    ├── StepException                  - General Step exception
+    │   ├── StepFailedException        - Step exhausted all retry attempts.Catch to implement fallback logic or let execution fail.
+    │   └── StepInterruptedException   - `AT_MOST_ONCE` step was interrupted before completion. Implement manual recovery (check if operation completed externally)
+    ├── InvokeException                - General chained invocation exception
+    │   ├── InvokeFailedException      - Chained invocation failed. Handle the error or propagate failure.
+    │   ├── InvokeTimedoutException    - Chained invocation timed out. Handle the error or propagate failure.
+    │   └── InvokeStoppedException     - Chained invocation stopped. Handle the error or propagate failure.
+    └── CallbackException              - General callback exception
+        ├── CallbackFailedException    - External system sent an error response to the callback. Handle the error or propagate failure
+        └── CallbackTimeoutException   - Callback exceeded its timeout duration. Handle the error or propagate the failure
+```
 
 ```java
 try {

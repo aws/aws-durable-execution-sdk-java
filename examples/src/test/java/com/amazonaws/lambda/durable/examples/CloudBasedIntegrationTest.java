@@ -69,6 +69,23 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
+    void testSimpleInvokeExample() {
+        var runner = CloudDurableTestRunner.create(arn("simple-invoke-example"), Map.class, String.class);
+        var result = runner.run(Map.of("message", "test"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertNotNull(result.getResult(String.class));
+
+        var createGreetingOp = runner.getOperation("call-greeting1");
+        assertNotNull(createGreetingOp);
+        assertEquals("call-greeting1", createGreetingOp.getName());
+
+        var createGreetingOp2 = runner.getOperation("call-greeting2");
+        assertNotNull(createGreetingOp);
+        assertEquals("call-greeting2", createGreetingOp2.getName());
+    }
+
+    @Test
     void testRetryExample() {
         var runner = CloudDurableTestRunner.create(arn("retry-example"), String.class, String.class);
         var result = runner.run("{}");

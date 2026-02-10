@@ -3,20 +3,12 @@
 package com.amazonaws.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
 
 /** Exception thrown when a callback fails due to an error from the external system. */
-public class CallbackFailedException extends DurableExecutionException {
-    public CallbackFailedException(ErrorObject error) {
-        super(
-                buildMessage(error),
-                null,
-                error.stackTrace() != null && !error.stackTrace().isEmpty()
-                        ? deserializeStackTrace(error.stackTrace())
-                        : new StackTraceElement[0]);
-    }
-
-    public CallbackFailedException(String message) {
-        super(message);
+public class CallbackFailedException extends CallbackException {
+    public CallbackFailedException(Operation operation) {
+        super(operation, buildMessage(operation.callbackDetails().error()));
     }
 
     private static String buildMessage(ErrorObject error) {

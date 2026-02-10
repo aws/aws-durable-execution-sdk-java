@@ -37,13 +37,6 @@ Resources:
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-step-example"
     Metadata:
       Dockerfile: !Ref DockerFile
       DockerContext: ../

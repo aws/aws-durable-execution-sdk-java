@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.amazonaws.lambda.durable.exception.InvokeFailedException;
@@ -93,8 +94,8 @@ class InvokeIntegrationTest {
                 return new TestOutput(result);
             } catch (InvokeFailedException ex) {
                 assertEquals("error output", ex.getMessage());
-                assertEquals("error data", ex.getErrorData());
-                assertEquals("error type", ex.getErrorType());
+                assertEquals("error data", ex.getErrorObject().errorData());
+                assertEquals("error type", ex.getErrorObject().errorType());
                 throw ex;
             }
         });
@@ -114,9 +115,8 @@ class InvokeIntegrationTest {
         var output2 = runner.run(new TestInput("test"));
 
         assertEquals(ExecutionStatus.FAILED, output2.getStatus());
-        // todo: the error object should equal to the error object returned by chained invoke
         ErrorObject error = output2.getError().orElseThrow();
-        assertEquals("com.amazonaws.lambda.durable.exception.InvokeFailedException", error.errorType());
+        assertEquals("error type", error.errorType());
         assertEquals("error output", error.errorMessage());
     }
 
@@ -128,8 +128,8 @@ class InvokeIntegrationTest {
                 return new TestOutput(result);
             } catch (InvokeFailedException ex) {
                 assertEquals("error output", ex.getMessage());
-                assertEquals("error data", ex.getErrorData());
-                assertEquals("error type", ex.getErrorType());
+                assertEquals("error data", ex.getErrorObject().errorData());
+                assertEquals("error type", ex.getErrorObject().errorType());
                 throw ex;
             }
         });
@@ -149,9 +149,8 @@ class InvokeIntegrationTest {
         var output2 = runner.run(new TestInput("test"));
 
         assertEquals(ExecutionStatus.FAILED, output2.getStatus());
-        // todo: the error object should equal to the error object returned by chained invoke
         ErrorObject error = output2.getError().orElseThrow();
-        assertEquals("com.amazonaws.lambda.durable.exception.InvokeStoppedException", error.errorType());
+        assertEquals("error type", error.errorType());
         assertEquals("error output", error.errorMessage());
     }
 
@@ -163,8 +162,8 @@ class InvokeIntegrationTest {
                 return new TestOutput(result);
             } catch (InvokeFailedException ex) {
                 assertNull(ex.getMessage());
-                assertNull(ex.getErrorData());
-                assertNull(ex.getErrorType());
+                assertNull(ex.getErrorObject().errorData());
+                assertNull(ex.getErrorObject().errorType());
                 throw ex;
             }
         });
@@ -178,9 +177,6 @@ class InvokeIntegrationTest {
         var output2 = runner.run(new TestInput("test"));
 
         assertEquals(ExecutionStatus.FAILED, output2.getStatus());
-        // todo: the error object should equal to the error object returned by chained invoke
-        ErrorObject error = output2.getError().orElseThrow();
-        assertEquals("com.amazonaws.lambda.durable.exception.InvokeTimedOutException", error.errorType());
-        assertNull(error.errorMessage());
+        assertFalse(output2.getError().isPresent());
     }
 }

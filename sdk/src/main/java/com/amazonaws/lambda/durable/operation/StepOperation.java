@@ -2,23 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.operation;
 
+import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.StepSemantics;
 import com.amazonaws.lambda.durable.TypeToken;
-import com.amazonaws.lambda.durable.exception.SerDesException;
+import com.amazonaws.lambda.durable.exception.DurableOperationException;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
+import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.execution.ExecutionPhase;
+import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
-import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.lambda.durable.util.SneakyThrow;
+import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Phaser;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,19 +29,13 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 
-public class StepOperation<T> implements DurableOperation<T> {
+public class StepOperation<T> extends BaseDurableOperation<T> {
 
     private static final Logger logger = LoggerFactory.getLogger(StepOperation.class);
 
-    private final String operationId;
-    private final String name;
     private final Supplier<T> function;
-    private final TypeToken<T> resultTypeToken;
     private final StepConfig config;
-    private final ExecutionManager executionManager;
     private final DurableLogger durableLogger;
-    private final SerDes serDes;
-    private final Phaser phaser;
     private final ExecutorService userExecutor;
 
     public StepOperation(
@@ -52,58 +46,31 @@ public class StepOperation<T> implements DurableOperation<T> {
             StepConfig config,
             ExecutionManager executionManager,
             DurableLogger durableLogger,
-            SerDes serDes,
-            ExecutorService userExecutor) {
-        if (resultTypeToken == null) {
-            throw new IllegalArgumentException("resultTypeToken must be provided");
-        }
+            DurableConfig durableConfig) {
+        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), executionManager);
 
-        this.operationId = operationId;
-        this.name = name;
         this.function = function;
-        this.resultTypeToken = resultTypeToken;
         this.config = config;
-        this.executionManager = executionManager;
         this.durableLogger = durableLogger;
-        // Use custom SerDes from config if provided, otherwise use default
-        this.serDes = (config != null && config.serDes() != null) ? config.serDes() : serDes;
-        this.userExecutor = userExecutor;
-
-        this.phaser = executionManager.startPhaser(operationId);
-    }
-
-    @Override
-    public String getOperationId() {
-        return operationId;
-    }
-
-    @Override
-    public String getName() {
-        return name;
+        this.userExecutor = durableConfig.getExecutorService();
     }
 
     @Override
     public void execute() {
-        var existing = executionManager.getOperationAndUpdateReplayState(operationId);
+        var existing = getOperation();
 
         if (existing != null) {
+            validateReplay(existing);
             // This means we are in a replay scenario
             switch (existing.status()) {
-                case SUCCEEDED, FAILED -> {
-                    // Operation is already completed (we are in a replay). We advance and
-                    // deregister from the Phaser
-                    // so that .get() doesn't block and returns the result immediately. See
-                    // StepOperation.get().
-                    logger.trace("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
-                    phaser.arriveAndDeregister(); // Phase 0 -> 1
-                }
+                case SUCCEEDED, FAILED -> markAlreadyCompleted();
                 case STARTED -> {
                     var attempt = existing.stepDetails().attempt() != null
                             ? existing.stepDetails().attempt()
                             : 0;
-                    if (getSemantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                    if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
                         // AT_MOST_ONCE: treat as interrupted, go through retry logic
-                        handleInterruptedStep(attempt);
+                        handleStepFailure(new StepInterruptedException(existing), attempt + 1);
                     } else {
                         // AT_LEAST_ONCE: re-execute the step
                         executeStepLogic(attempt);
@@ -123,14 +90,15 @@ public class StepOperation<T> implements DurableOperation<T> {
                     if (nextAttemptTime == null) {
                         nextAttemptTime = Instant.now().plusSeconds(1);
                     }
-                    executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
+                    pollUntilReady(pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
                 }
                 case READY -> {
                     // Execute with current attempt
                     executeStepLogic(existing.stepDetails().attempt());
                 }
                 default ->
-                    throw new RuntimeException(String.format("Unrecognized step status '%s'", existing.status()));
+                    terminateExecutionWithIllegalDurableOperationException(
+                            "Unexpected step status: " + existing.status());
             }
         } else {
             // First execution
@@ -140,36 +108,30 @@ public class StepOperation<T> implements DurableOperation<T> {
 
     private void executeStepLogic(int attempt) {
         // TODO: Modify this logic when child contexts are introduced such that the child context id is in this key
-        var stepThreadId = operationId + "-step";
+        var stepThreadId = getOperationId() + "-step";
 
         // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
         // thread local OperationContext is set inside the executor since that's where the step actually runs
-        executionManager.registerActiveThread(stepThreadId, ThreadType.STEP);
+        registerActiveThread(stepThreadId, ThreadType.STEP);
 
         // Execute user code in customer-configured executor
         userExecutor.execute(() -> {
             // Set thread local OperationContext on the executor thread
-            executionManager.setCurrentContext(stepThreadId, ThreadType.STEP);
+            setCurrentContext(stepThreadId, ThreadType.STEP);
             // Set operation context for logging in this thread
-            durableLogger.setOperationContext(operationId, name, attempt);
+            durableLogger.setOperationContext(getOperationId(), getName(), attempt);
             try {
                 // Check if we need to send START
-                var existing = executionManager.getOperation(operationId);
+                var existing = getOperation();
                 if (existing == null || existing.status() != OperationStatus.STARTED) {
-                    var startUpdate = OperationUpdate.builder()
-                            .id(operationId)
-                            .name(name)
-                            .parentId(null)
-                            .type(OperationType.STEP)
-                            .action(OperationAction.START)
-                            .build();
+                    var startUpdate = OperationUpdate.builder().action(OperationAction.START);
 
-                    if (getSemantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                    if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
                         // AT_MOST_ONCE: await START checkpoint before executing user code
-                        executionManager.sendOperationUpdate(startUpdate).join();
+                        sendOperationUpdate(startUpdate);
                     } else {
                         // AT_LEAST_ONCE: fire-and-forget START checkpoint
-                        executionManager.sendOperationUpdate(startUpdate);
+                        sendOperationUpdateAsync(startUpdate);
                     }
                 }
 
@@ -178,180 +140,93 @@ public class StepOperation<T> implements DurableOperation<T> {
 
                 // Send SUCCEED
                 var successUpdate = OperationUpdate.builder()
-                        .id(operationId)
-                        .name(name)
-                        .parentId(null)
-                        .type(OperationType.STEP)
                         .action(OperationAction.SUCCEED)
-                        .payload(serDes.serialize(result))
-                        .build();
-                executionManager.sendOperationUpdate(successUpdate).join();
+                        .payload(serializeResult(result));
+                sendOperationUpdate(successUpdate);
             } catch (Throwable e) {
-                handleStepError(e, attempt);
+                handleStepFailure(e, attempt);
             } finally {
-                executionManager.deregisterActiveThread(stepThreadId);
+                try {
+                    deregisterActiveThreadAndUnsetCurrentContext(stepThreadId);
+                } catch (SuspendExecutionException e) {
+                    // Expected when this is the last active thread. Must catch here because:
+                    // 1/ This runs in a worker thread detached from handlerFuture
+                    // 2/ Uncaught exception would prevent phaser from advancing, blocking stepAsync().get()
+                    // Suspension/Termination is already signaled via suspendExecutionFuture/terminateExecutionFuture
+                    // before the throw.
+                }
                 durableLogger.clearOperationContext();
             }
         });
     }
 
-    private void handleInterruptedStep(int attempt) {
-        var error = new StepInterruptedException(operationId, name);
-        handleStepFailure(error, attempt + 1);
-    }
+    private void handleStepFailure(Throwable exception, int attempt) {
+        if (exception instanceof UnrecoverableDurableExecutionException) {
+            // terminate the execution and throw the exception if it's not recoverable
+            terminateExecution((UnrecoverableDurableExecutionException) exception);
+        }
 
-    private StepSemantics getSemantics() {
-        return config != null ? config.semantics() : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
-    }
-
-    private void handleStepError(Throwable e, int attempt) {
-        handleStepFailure(e, attempt);
-    }
-
-    private void handleStepFailure(Throwable error, int attempt) {
-        var errorObject = ErrorObject.builder()
-                .errorType(error.getClass().getName())
-                .errorMessage(error.getMessage())
-                .errorData(serDes.serialize(error))
-                .stackTrace(StepFailedException.serializeStackTrace(error.getStackTrace()))
-                .build();
-
-        if (config != null && config.retryStrategy() != null) {
-            var retryDecision = config.retryStrategy().makeRetryDecision(error, attempt);
-
-            if (retryDecision.shouldRetry()) {
-                // Send RETRY
-                var retryUpdate = OperationUpdate.builder()
-                        .id(operationId)
-                        .name(name)
-                        .parentId(null)
-                        .type(OperationType.STEP)
-                        .action(OperationAction.RETRY)
-                        .error(errorObject)
-                        .stepOptions(StepOptions.builder()
-                                // RetryDecisions always produce integer number of seconds greater or equals to
-                                // 1 (no sub-second numbers)
-                                .nextAttemptDelaySeconds(
-                                        Math.toIntExact(retryDecision.delay().toSeconds()))
-                                .build())
-                        .build();
-                executionManager.sendOperationUpdate(retryUpdate).join();
-
-                // Setup polling for retry
-                var pendingFuture = new CompletableFuture<Void>();
-                pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
-
-                var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
-                executionManager.pollUntilReady(operationId, pendingFuture, nextAttemptTime, Duration.ofMillis(200));
-            } else {
-                // Send FAIL - retries exhausted
-                var failUpdate = OperationUpdate.builder()
-                        .id(operationId)
-                        .name(name)
-                        .parentId(null)
-                        .type(OperationType.STEP)
-                        .action(OperationAction.FAIL)
-                        .error(errorObject)
-                        .build();
-                executionManager.sendOperationUpdate(failUpdate).join();
-            }
+        final ErrorObject errorObject;
+        if (exception instanceof DurableOperationException) {
+            errorObject = ((DurableOperationException) exception).getErrorObject();
         } else {
-            // No retry - send FAIL
-            var failUpdate = OperationUpdate.builder()
-                    .id(operationId)
-                    .name(name)
-                    .parentId(null)
-                    .type(OperationType.STEP)
-                    .action(OperationAction.FAIL)
+            errorObject = serializeException(exception);
+        }
+
+        var isRetryable = !(exception instanceof StepInterruptedException);
+        var retryDecision = config.retryStrategy().makeRetryDecision(exception, attempt);
+
+        if (isRetryable && retryDecision.shouldRetry()) {
+            // Send RETRY
+            var retryUpdate = OperationUpdate.builder()
+                    .action(OperationAction.RETRY)
                     .error(errorObject)
-                    .build();
-            executionManager.sendOperationUpdate(failUpdate).join();
+                    .stepOptions(StepOptions.builder()
+                            // RetryDecisions always produce integer number of seconds greater or equals to
+                            // 1 (no sub-second numbers)
+                            .nextAttemptDelaySeconds(
+                                    Math.toIntExact(retryDecision.delay().toSeconds()))
+                            .build());
+            sendOperationUpdate(retryUpdate);
+
+            // Setup polling for retry
+            var pendingFuture = new CompletableFuture<Void>();
+            pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
+
+            var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
+            pollUntilReady(pendingFuture, nextAttemptTime, Duration.ofMillis(200));
+        } else {
+            // Send FAIL - retries exhausted
+            var failUpdate =
+                    OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);
+            sendOperationUpdate(failUpdate);
         }
     }
 
     @Override
     public T get() {
-        // Get current context from ThreadLocal
-        var currentContext = executionManager.getCurrentContext();
-
-        // Nested steps are not supported
-        if (currentContext.threadType() == ThreadType.STEP) {
-            throw new IllegalStateException("Nested step calling is not supported. Cannot call get() on step '" + name
-                    + "' from within another step's execution.");
-        }
-
-        // If we are in a replay where the operation is already complete (SUCCEEDED /
-        // FAILED), the Phaser will be
-        // advanced in .execute() already and we don't block but return the result
-        // immediately.
-        if (phaser.getPhase() == ExecutionPhase.RUNNING.getValue()) {
-            // Operation not done yet
-            phaser.register();
-
-            // Deregister current context - allows suspension
-            logger.debug("StepOperation.get() attempting to deregister context: {}", currentContext.contextId());
-            executionManager.deregisterActiveThread(currentContext.contextId());
-
-            // Block until operation completes
-            logger.trace("Waiting for operation to finish {} (Phaser: {})", operationId, phaser);
-            phaser.arriveAndAwaitAdvance(); // Wait for phase 0
-
-            // Reactivate current context
-            executionManager.registerActiveThreadWithContext(currentContext.contextId(), currentContext.threadType());
-
-            // Complete phase 1
-            phaser.arriveAndDeregister();
-        }
-
-        // Get result from coordinator
-        var op = executionManager.getOperation(operationId);
-        if (op == null) {
-            throw new IllegalStateException("Step '" + name + "' operation not found");
-        }
+        var op = waitForOperationCompletion();
 
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();
             var result = (stepDetails != null) ? stepDetails.result() : null;
 
-            return serDes.deserialize(result, resultTypeToken);
+            return deserializeResult(result);
         } else {
-            var errorType = op.stepDetails().error().errorType();
+            var errorObject = op.stepDetails().error();
 
             // Throw StepInterruptedException directly for AT_MOST_ONCE interrupted steps
-            if (StepInterruptedException.class.getName().equals(errorType)) {
-                throw new StepInterruptedException(operationId, name);
+            if (StepInterruptedException.isStepInterruptedException(errorObject)) {
+                throw new StepInterruptedException(op);
             }
 
             // Attempt to reconstruct and throw the original exception
-            try {
-                Class<?> exceptionClass = Class.forName(errorType);
-                if (Throwable.class.isAssignableFrom(exceptionClass)) {
-                    Throwable original = serDes.deserialize(
-                            op.stepDetails().error().errorData(),
-                            TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
-
-                    if (original != null) {
-                        original.setStackTrace(StepFailedException.deserializeStackTrace(
-                                op.stepDetails().error().stackTrace()));
-                        SneakyThrow.sneakyThrow(original);
-                    }
-                }
-            } catch (ClassNotFoundException e) {
-                logger.warn(
-                        "Cannot re-construct original exception type. Falling back to generic StepFailedException.");
-            } catch (SerDesException e) {
-                logger.warn(
-                        "Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
+            Throwable original = deserializeException(errorObject);
+            if (original != null) {
+                ExceptionHelper.sneakyThrow(original);
             }
-
             // Fallback: wrap in StepFailedException
-            throw new StepFailedException(
-                    String.format(
-                            "Step failed with error of type %s. Message: %s",
-                            errorType, op.stepDetails().error().errorMessage()),
-                    null,
-                    StepFailedException.deserializeStackTrace(
-                            op.stepDetails().error().stackTrace()));
+            throw new StepFailedException(op);
         }
     }
 }

@@ -5,36 +5,34 @@ package com.amazonaws.lambda.durable.exception;
 import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
 
 class StepFailedExceptionTest {
+    ErrorObject ERROR_OBJECT = ErrorObject.builder()
+            .errorType("MyErrorType")
+            .errorMessage("MyErrorMessage")
+            .build();
 
     @Test
-    void testConstructorWithMessageAndCause() {
-        var cause = new RuntimeException("Original error");
-        var exception = new StepFailedException("Step failed", cause);
-
-        assertEquals("Step failed", exception.getMessage());
-        assertEquals(cause, exception.getCause());
+    void testConstructorWithNullErrorObject() {
+        var op = Operation.builder().stepDetails(StepDetails.builder().build()).build();
+        var exception = new StepFailedException(op);
+        assertEquals(op, exception.getOperation());
+        assertNull(exception.getErrorObject());
+        assertEquals("Step failed without an error", exception.getMessage());
     }
 
     @Test
-    void testConstructorWithMessageCauseAndStackTrace() {
-        var cause = new RuntimeException("Original error");
-        var stackTrace =
-                new StackTraceElement[] {new StackTraceElement("StepClass", "executeStep", "StepClass.java", 50)};
-        var exception = new StepFailedException("Step failed", cause, stackTrace);
+    void testConstructorWithErrorObject() {
+        var op = Operation.builder()
+                .stepDetails(StepDetails.builder().error(ERROR_OBJECT).build())
+                .build();
+        var exception = new StepFailedException(op);
 
-        assertEquals("Step failed", exception.getMessage());
-        assertEquals(cause, exception.getCause());
-        assertArrayEquals(stackTrace, exception.getStackTrace());
-    }
-
-    @Test
-    void testExtendsRuntimeException() {
-        var cause = new RuntimeException("Test");
-        var exception = new StepFailedException("Test message", cause);
-
-        assertInstanceOf(RuntimeException.class, exception);
-        assertInstanceOf(DurableExecutionException.class, exception);
+        assertEquals(op, exception.getOperation());
+        assertEquals(ERROR_OBJECT, exception.getErrorObject());
+        assertEquals("Step failed with error of type MyErrorType. Message: MyErrorMessage", exception.getMessage());
     }
 }

@@ -7,52 +7,64 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 
 class InvokeExceptionTest {
 
     @Test
     void testNullError() {
-        var exception = new InvokeFailedException(null);
+        var op = Operation.builder()
+                .chainedInvokeDetails(ChainedInvokeDetails.builder().build())
+                .type(OperationType.CHAINED_INVOKE)
+                .id("10")
+                .build();
+        var exception = new InvokeFailedException(op);
 
-        assertNull(exception.getErrorData());
-        assertNull(exception.getErrorType());
+        assertNull(exception.getErrorObject());
         assertNull(exception.getMessage());
     }
 
     @Test
     void testConstructorWithDefaultErrorObject() {
-        ErrorObject errorObject = ErrorObject.builder().build();
-        var exception = new InvokeTimedOutException(errorObject);
+        var errorObject = ErrorObject.builder().build();
+        var op = Operation.builder()
+                .chainedInvokeDetails(
+                        ChainedInvokeDetails.builder().error(errorObject).build())
+                .type(OperationType.CHAINED_INVOKE)
+                .id("10")
+                .build();
+        var exception = new InvokeTimedOutException(op);
 
-        assertNull(exception.getErrorType());
-        assertNull(exception.getErrorData());
-        assertNull(exception.getMessage());
-    }
-
-    @Test
-    void testInvokeStoppedExceptionWithDefaultErrorObject() {
-        ErrorObject errorObject = ErrorObject.builder().build();
-        var exception = new InvokeStoppedException(errorObject);
-
-        assertNull(exception.getErrorType());
-        assertNull(exception.getErrorData());
+        assertEquals(errorObject, exception.getErrorObject());
         assertNull(exception.getMessage());
     }
 
     @Test
     void testConstructorWithErrorObject() {
-        ErrorObject errorObject = ErrorObject.builder()
+        var errorObject = ErrorObject.builder()
                 .errorMessage("error message")
                 .errorType("error type")
                 .errorData("error data")
                 .stackTrace(List.of("class1|method1|file1|10", "class2|method2|file2|20"))
                 .build();
-        var exception = new InvokeFailedException(errorObject);
+        var op = Operation.builder()
+                .chainedInvokeDetails(
+                        ChainedInvokeDetails.builder().error(errorObject).build())
+                .type(OperationType.CHAINED_INVOKE)
+                .id("10")
+                .status(OperationStatus.FAILED)
+                .build();
+        var exception = new InvokeFailedException(op);
 
-        assertEquals("error type", exception.getErrorType());
-        assertEquals("error data", exception.getErrorData());
+        assertEquals("error type", exception.getErrorObject().errorType());
+        assertEquals("error data", exception.getErrorObject().errorData());
         assertEquals("error message", exception.getMessage());
+        assertEquals(OperationStatus.FAILED, exception.getOperationStatus());
+        assertEquals("10", exception.getOperationId());
         assertEquals(2, exception.getStackTrace().length);
         assertEquals(
                 new StackTraceElement("class1", "method1", "file1", 10),

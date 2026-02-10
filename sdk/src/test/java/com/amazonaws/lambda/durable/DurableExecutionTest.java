@@ -203,12 +203,12 @@ class DurableExecutionTest {
                 "token1",
                 new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
 
-        var exception = assertThrows(
-                IllegalStateException.class,
-                () -> DurableExecutor.execute(
-                        input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
+        var result = DurableExecutor.execute(
+                input, null, String.class, (userInput, ctx) -> "result", configWithMockClient());
 
-        assertEquals("EXECUTION operation missing executionDetails", exception.getMessage());
+        assertEquals(ExecutionStatus.FAILED, result.status());
+        assertEquals(
+                "EXECUTION operation missing executionDetails", result.error().errorMessage());
     }
 
     @Test

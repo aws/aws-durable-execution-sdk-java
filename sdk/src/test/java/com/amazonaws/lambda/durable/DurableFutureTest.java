@@ -5,7 +5,7 @@ package com.amazonaws.lambda.durable;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import com.amazonaws.lambda.durable.operation.DurableOperation;
+import com.amazonaws.lambda.durable.operation.BaseDurableOperation;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -17,11 +17,7 @@ class DurableFutureTest {
         var op2 = mockOperation("second");
         var op3 = mockOperation("third");
 
-        var future1 = new DurableFuture<>(op1);
-        var future2 = new DurableFuture<>(op2);
-        var future3 = new DurableFuture<>(op3);
-
-        var results = DurableFuture.allOf(future1, future2, future3);
+        var results = DurableFuture.allOf(op1, op2, op3);
 
         assertEquals(List.of("first", "second", "third"), results);
         verify(op1).get();
@@ -35,9 +31,7 @@ class DurableFutureTest {
         var op2 = mockOperation(2);
         var op3 = mockOperation(3);
 
-        var futures = List.of(new DurableFuture<>(op1), new DurableFuture<>(op2), new DurableFuture<>(op3));
-
-        var results = DurableFuture.allOf(futures);
+        var results = DurableFuture.allOf(List.of(op1, op2, op3));
 
         assertEquals(List.of(1, 2, 3), results);
     }
@@ -59,9 +53,8 @@ class DurableFutureTest {
     @Test
     void allOfSingleFutureReturnsSingleResult() {
         var op = mockOperation("only");
-        var future = new DurableFuture<>(op);
 
-        var results = DurableFuture.allOf(future);
+        var results = DurableFuture.allOf(op);
 
         assertEquals(List.of("only"), results);
     }
@@ -70,18 +63,15 @@ class DurableFutureTest {
     void allOfPropagatesException() {
         var op1 = mockOperation("first");
         @SuppressWarnings("unchecked")
-        DurableOperation<String> op2 = mock(DurableOperation.class);
+        BaseDurableOperation<String> op2 = mock(BaseDurableOperation.class);
         when(op2.get()).thenThrow(new RuntimeException("Step failed"));
 
-        var future1 = new DurableFuture<>(op1);
-        var future2 = new DurableFuture<>(op2);
-
-        assertThrows(RuntimeException.class, () -> DurableFuture.allOf(future1, future2));
+        assertThrows(RuntimeException.class, () -> DurableFuture.allOf(op1, op2));
     }
 
     @SuppressWarnings("unchecked")
-    private <T> DurableOperation<T> mockOperation(T result) {
-        DurableOperation<T> op = mock(DurableOperation.class);
+    private <T> BaseDurableOperation<T> mockOperation(T result) {
+        BaseDurableOperation<T> op = mock(BaseDurableOperation.class);
         when(op.get()).thenReturn(result);
         return op;
     }

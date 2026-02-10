@@ -9,8 +9,10 @@ import com.amazonaws.lambda.durable.TestUtils;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
 import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
+import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -59,8 +61,10 @@ class CallbackOperationTest {
     private ExecutionManager createExecutionManager(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
         var initialState = new InitialExecutionState(initialOperations, null);
-        return new ExecutionManager(
+        var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client);
+        executionManager.setCurrentContext("Root", ThreadType.CONTEXT);
+        return executionManager;
     }
 
     @Test
@@ -73,10 +77,15 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(executionOp));
         var serDes = new JacksonSerDes();
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, serDes);
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(serDes).build(),
+                executionManager);
         operation.execute();
 
-        assertNotNull(operation.getCallbackId());
+        assertNotNull(operation.callbackId());
     }
 
     @Test
@@ -91,12 +100,13 @@ class CallbackOperationTest {
         var config = CallbackConfig.builder()
                 .timeout(Duration.ofMinutes(5))
                 .heartbeatTimeout(Duration.ofSeconds(30))
+                .serDes(serDes)
                 .build();
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, config, executionManager, serDes);
+        var operation = new CallbackOperation<>("1", "approval", TypeToken.get(String.class), config, executionManager);
         operation.execute();
 
-        assertNotNull(operation.getCallbackId());
+        assertNotNull(operation.callbackId());
     }
 
     @Test
@@ -114,10 +124,15 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
         var serDes = new JacksonSerDes();
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, serDes);
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(serDes).build(),
+                executionManager);
         operation.execute();
 
-        assertEquals("existing-callback-id", operation.getCallbackId());
+        assertEquals("existing-callback-id", operation.callbackId());
     }
 
     @Test
@@ -135,7 +150,12 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
         var serDes = new JacksonSerDes();
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, serDes);
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(serDes).build(),
+                executionManager);
         operation.execute();
         var result = operation.get();
 
@@ -160,7 +180,12 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
         var serDes = new JacksonSerDes();
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, serDes);
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(serDes).build(),
+                executionManager);
         operation.execute();
 
         var exception = assertThrows(CallbackFailedException.class, operation::get);
@@ -180,7 +205,12 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
         var serDes = new JacksonSerDes();
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, serDes);
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(serDes).build(),
+                executionManager);
         operation.execute();
 
         var exception = assertThrows(CallbackTimeoutException.class, operation::get);
@@ -190,7 +220,6 @@ class CallbackOperationTest {
     @Test
     void operationUsesCustomSerDesWhenConfigContainsOne() {
         var customSerDes = new TrackingSerDes();
-        var defaultSerDes = new JacksonSerDes();
 
         var existingCallback = Operation.builder()
                 .id("1")
@@ -205,7 +234,7 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
 
         var config = CallbackConfig.builder().serDes(customSerDes).build();
-        var operation = new CallbackOperation<>("1", "approval", String.class, config, executionManager, defaultSerDes);
+        var operation = new CallbackOperation<>("1", "approval", TypeToken.get(String.class), config, executionManager);
         operation.execute();
         var result = operation.get();
 
@@ -230,7 +259,12 @@ class CallbackOperationTest {
                 .build();
         var executionManager = createExecutionManager(List.of(existingCallback));
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, customSerDes);
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(customSerDes).build(),
+                executionManager);
         operation.execute();
         var result = operation.get();
 
@@ -255,8 +289,8 @@ class CallbackOperationTest {
                 .build();
         var executionManager = createExecutionManager(List.of(existingCallback));
 
-        var config = CallbackConfig.builder().serDes(null).build();
-        var operation = new CallbackOperation<>("1", "approval", String.class, config, executionManager, customSerDes);
+        var config = CallbackConfig.builder().serDes(customSerDes).build();
+        var operation = new CallbackOperation<>("1", "approval", TypeToken.get(String.class), config, executionManager);
         operation.execute();
         var result = operation.get();
 
@@ -276,15 +310,49 @@ class CallbackOperationTest {
                 .status(OperationStatus.SUCCEEDED)
                 .callbackDetails(CallbackDetails.builder()
                         .callbackId("test-callback-123")
-                        .result("invalid-data")
+                        .result("data")
                         .build())
                 .build();
         var executionManager = createExecutionManager(List.of(existingCallback));
 
-        var operation = new CallbackOperation<>("1", "approval", String.class, null, executionManager, failingSerDes);
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(failingSerDes).build(),
+                executionManager);
         operation.execute();
 
         var exception = assertThrows(SerDesException.class, operation::get);
         assertEquals("Invalid base64 encoding", exception.getMessage());
+    }
+
+    @Test
+    void getThrowsExceptionWhenCalledWithinStep() {
+        var existingCallback = Operation.builder()
+                .id("1")
+                .name("approval")
+                .type(OperationType.CALLBACK)
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("test-callback-123")
+                        .result("invalid-data")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        executionManager.setCurrentContext("Root", ThreadType.STEP);
+
+        var operation = new CallbackOperation<>(
+                "1",
+                "approval",
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(new JacksonSerDes()).build(),
+                executionManager);
+        operation.execute();
+
+        var exception = assertThrows(IllegalDurableOperationException.class, operation::get);
+        assertEquals(
+                "Nested CALLBACK operation is not supported on approval from within a Step execution.",
+                exception.getMessage());
     }
 }

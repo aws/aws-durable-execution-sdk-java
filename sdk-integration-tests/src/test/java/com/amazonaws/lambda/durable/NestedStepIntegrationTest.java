@@ -27,7 +27,7 @@ class NestedStepIntegrationTest {
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         var errorMessage = result.getError().get().errorMessage();
         assertTrue(
-                errorMessage.contains("Nested step calling is not supported"),
+                errorMessage.contains("Nested STEP operation is not supported"),
                 "Expected error about nested step calling, got: " + errorMessage);
     }
 
@@ -49,7 +49,7 @@ class NestedStepIntegrationTest {
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         var errorMessage = result.getError().get().errorMessage();
         assertTrue(
-                errorMessage.contains("Nested step calling is not supported"),
+                errorMessage.contains("Nested STEP operation is not supported"),
                 "Expected error about nested step calling, got: " + errorMessage);
     }
 }

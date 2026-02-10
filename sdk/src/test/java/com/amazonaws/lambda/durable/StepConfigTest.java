@@ -14,7 +14,7 @@ class StepConfigTest {
 
     @Test
     void testBuilderWithRetryStrategy() {
-        var strategy = RetryStrategies.Presets.DEFAULT;
+        var strategy = RetryStrategies.Presets.NO_RETRY;
 
         var config = StepConfig.builder().retryStrategy(strategy).build();
 
@@ -25,12 +25,12 @@ class StepConfigTest {
     void testBuilderWithoutRetryStrategy() {
         var config = StepConfig.builder().build();
 
-        assertNull(config.retryStrategy());
+        assertEquals(RetryStrategies.Presets.DEFAULT, config.retryStrategy());
     }
 
     @Test
     void testBuilderChaining() {
-        var strategy = RetryStrategies.Presets.NO_RETRY;
+        var strategy = RetryStrategies.Presets.DEFAULT;
         var customSerDes = new JacksonSerDes();
 
         var config = StepConfig.builder()
@@ -48,7 +48,7 @@ class StepConfigTest {
     void testBuilderWithNullRetryStrategy() {
         var config = StepConfig.builder().retryStrategy(null).build();
 
-        assertNull(config.retryStrategy());
+        assertEquals(RetryStrategies.Presets.DEFAULT, config.retryStrategy());
     }
 
     @Test
