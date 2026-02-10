@@ -12,21 +12,20 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * This class simplifies automatic batching of async requests. Your code deals with individual items, the service you
- * are calling asynchronously has a cheaper batch API. You are willing to trade some latency by waiting for more calls
- * to arrive to group them in a single batch call into the service. The batch call will be made when either a full batch
- * is built, too much time has passed, or size limits are reached. This class builds a single batch at a time with
- * thread-safe synchronization: - There is no batch yet. - First call arrives. Create a batch with one item in it, start
- * a timer. No call to service is made yet. - More calls arrive. They get added to the same batch if size limits allow.
- * - Either the batch is full, the timer has elapsed, or size limits are reached. Send the batch request. Now a new
- * batch can now be built. - If entire batch call fails, each call will fail. - If batch call succeeded, outcome is
- * analyzed one by one to complete results of each call. When you extend this class, you are expected to implement the
- * actual batch operation and to expose a public method to perform a single action. The batcher includes comprehensive
- * metrics tracking for performance monitoring.
+ * This class simplifies automatic batching of api requests. The individual request items will be grouped if the service
+ * has a cheaper batch API, and we want to trade some latency by waiting for more calls to arrive. The batch call will
+ * be made when either a full batch is built, too much time has passed, or size limits are reached. This class builds a
+ * single batch at a time with thread-safe synchronization: - There is no batch yet. - First call arrives. Create a
+ * batch with one item in it, start a timer. No call to service is made yet. - More calls arrive. They get added to the
+ * same batch if size limits allow. - Either the batch is full, the timer has elapsed, or size limits are reached. Send
+ * the batch request. Now a new batch can now be built. - If entire batch call fails, each call will fail. - If batch
+ * call succeeded, outcome is analyzed one by one to complete results of each call. When you extend this class, you are
+ * expected to implement the actual batch operation and to expose a public method to perform a single action. The
+ * batcher includes comprehensive metrics tracking for performance monitoring.
  *
  * @param <T> Input of every call
  */
-public class AsyncBatcher<T> {
+public class ApiRequestBatcher<T> {
 
     /** Maximum time to wait before flushing a batch */
     private final Duration maxDelay;
@@ -115,14 +114,14 @@ public class AsyncBatcher<T> {
     private CompletableFuture<Void> batchFlushFuture;
 
     /**
-     * Creates a new AsyncBatcher with the specified configuration.
+     * Creates a new ApiRequestBatcher with the specified configuration.
      *
      * @param maxDelay Maximum time to wait before flushing a batch
      * @param maxBatchSize Maximum number of items per batch
      * @param maxBatchBinarySizeInBytes Maximum total size in bytes for all items in a batch
      * @param itemSizeInBytesProvider Function to calculate the size in bytes of each item
      */
-    public AsyncBatcher(
+    public ApiRequestBatcher(
             Duration maxDelay,
             int maxBatchSize,
             int maxBatchBinarySizeInBytes,

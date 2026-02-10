@@ -31,6 +31,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  */
 class CheckpointBatcher {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
+    private static final int MAX_BATCH_SIZE = 100; // max updates in one batch
     private static final Logger logger = LoggerFactory.getLogger(CheckpointBatcher.class);
 
     private final Consumer<List<Operation>> callback;
@@ -39,9 +40,8 @@ class CheckpointBatcher {
     private final AtomicBoolean isRunning = new AtomicBoolean(true);
     private final Duration pollingInterval;
     private final Map<String, List<CompletableFuture<Operation>>> pollingFutures = new ConcurrentHashMap<>();
-    private final AsyncBatcher<OperationUpdate> checkpointAsyncBatcher;
+    private final ApiRequestBatcher<OperationUpdate> checkpointApiRequestBatcher;
     private String checkpointToken;
-    private final Object batchCheckpointLock = new Object();
 
     CheckpointBatcher(
             DurableConfig config,
@@ -53,9 +53,9 @@ class CheckpointBatcher {
         this.callback = callback;
         this.checkpointToken = checkpointToken;
         this.pollingInterval = config.getPollingInterval();
-        this.checkpointAsyncBatcher = new AsyncBatcher<>(
+        this.checkpointApiRequestBatcher = new ApiRequestBatcher<>(
                 config.getCheckpointDelay(),
-                Integer.MAX_VALUE,
+                MAX_BATCH_SIZE,
                 MAX_BATCH_SIZE_BYTES,
                 CheckpointBatcher::estimateSize,
                 this::doBatchAction);
@@ -65,7 +65,7 @@ class CheckpointBatcher {
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
-        return checkpointAsyncBatcher.doAction(update);
+        return checkpointApiRequestBatcher.doAction(update);
     }
 
     CompletableFuture<Operation> pollForUpdate(String operationId) {
@@ -76,6 +76,7 @@ class CheckpointBatcher {
             pollingFutures
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
+            pollingFutures.notifyAll();
         }
         return future;
     }
@@ -111,17 +112,30 @@ class CheckpointBatcher {
         // background thread running
         while (isRunning.get()) {
             if (!pollingFutures.isEmpty()) {
+                // If pollers exist, poll for updates periodically.
+                // When wake from wait, sleep for an initial delay before calling the API
+                try {
+                    Thread.sleep(pollingInterval.toMillis());
+                } catch (InterruptedException ignored) {
+                    // ignored
+                }
                 doBatchAction(List.of()).join();
-            }
-            try {
-                Thread.sleep(pollingInterval.toMillis());
-            } catch (InterruptedException ignored) {
+            } else {
+                // if empty, waiting for new pollers
+                synchronized (pollingFutures) {
+                    try {
+                        pollingFutures.wait(pollingInterval.toMillis());
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
         }
     }
 
     protected CompletableFuture<Void> doBatchAction(List<OperationUpdate> updates) {
-        // doBatchAction will be called from the polling thread and also from AsyncBatcher.
+        // doBatchAction will be called from the polling thread and also from ApiRequestBatcher.
         // Use synchronized here to make sure no concurrent checkpoint API calls
         synchronized (pollingFutures) {
             logger.debug("Calling durable API checkpointDurableExecution with {} updates", updates.size());
