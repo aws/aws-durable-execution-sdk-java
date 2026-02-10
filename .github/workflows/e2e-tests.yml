@@ -54,7 +54,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - run: uname -a
       - name: sam build
-        run: sam build --use-container --build-image public.ecr.aws/sam/build-java17:1.153.1-20260203234556 --no-cached
+        run: sam build --no-cached
         working-directory: ./examples
       - name: sam deploy
         run: sam deploy --resolve-image-repos

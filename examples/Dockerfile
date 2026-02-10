@@ -5,6 +5,8 @@ RUN uname -a
 
 WORKDIR /build
 
+RUN uname -a
+
 # Copy parent pom and all modules
 COPY pom.xml .
 COPY sdk ./sdk
