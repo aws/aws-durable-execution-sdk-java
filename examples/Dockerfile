@@ -1,11 +1,7 @@
 # Build stage
 FROM --platform=linux/amd64 amazoncorretto:17-alpine AS builder
 
-RUN pwd
-
 WORKDIR /build
-
-RUN pwd
 
 # Copy parent pom and all modules
 COPY pom.xml .
