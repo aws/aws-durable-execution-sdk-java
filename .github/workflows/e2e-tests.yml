@@ -58,7 +58,7 @@ jobs:
         run: sam build --parameter-overrides 'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=DockerFile,ParameterValue=examples/Dockerfile-java${{ matrix.java }}' # --no-cached # uncomment if debugging sam build
         working-directory: ./examples
       - name: sam deploy
-        run: sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM
+        run: sam deploy --stack-name Java${{ matrix.java }}SDKCloudBasedIntegrationTestStack --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM
         working-directory: ./examples
       - name: Setup Java ${{ matrix.java }}
         uses: actions/setup-java@v5
