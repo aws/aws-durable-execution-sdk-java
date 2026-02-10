@@ -302,8 +302,9 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - callback-example
-        - !Ref FunctionNameSuffix
+        - ""
+        - - callback-example
+        - - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.CallbackExample::handleRequest"]
       DurableConfig:
@@ -326,8 +327,9 @@ Resources:
     Properties:
       PackageType: Image
       FunctionName: !Join
-        - many-async-steps-example
-        - !Ref FunctionNameSuffix
+        - ""
+        - - many-async-steps-example
+        - - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.ManyAsyncStepsExample::handleRequest"]
       DurableConfig:
