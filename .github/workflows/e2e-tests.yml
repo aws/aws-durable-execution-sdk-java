@@ -56,7 +56,7 @@ jobs:
         run: sam build --no-cached
         working-directory: ./examples
       - name: sam deploy
-        run: sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack --resolve-image-repos
+        run: sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack --resolve-image-repos --resolve-s3
         working-directory: ./examples
       - name: Cloud Based Integration Tests
         run: mvn clean test -B -q -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
