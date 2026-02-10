@@ -320,14 +320,15 @@ public class ExecutionManager {
     }
 
     /**
-     * execute the customer provided future and completes when one of userFuture, suspendExecutionFuture and
-     * terminateExecutionFuture completes.
+     * return a future that completes when userFuture completes successfully or the execution is terminated or
+     * suspended.
      *
      * @param userFuture user provided function
-     * @return a future of userFuture result if userFuture completes successfully earlier than suspendExecutionFuture
-     *     and terminateExecutionFuture.
+     * @return a future of userFuture result if userFuture completes successfully, a user exception if userFuture
+     *     completes with an exception, a SuspendExecutionException if the execution is suspended, or an
+     *     UnrecoverableDurableExecutionException if the execution is terminated.
      */
-    public <T> CompletableFuture<T> execute(CompletableFuture<T> userFuture) {
+    public <T> CompletableFuture<T> runUntilCompleteOrSuspend(CompletableFuture<T> userFuture) {
         return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -> {
             // reaches here only if userFuture complete successfully
             if (userFuture.isDone()) {

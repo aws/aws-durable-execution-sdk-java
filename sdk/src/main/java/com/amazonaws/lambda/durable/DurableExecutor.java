@@ -81,7 +81,7 @@ public class DurableExecutor {
         // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
         // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a failure.
         return executionManager
-                .execute(handlerFuture)
+                .runUntilCompleteOrSuspend(handlerFuture)
                 .handle((result, ex) -> {
                     if (ex != null) {
                         // an exception thrown from handlerFuture or suspension/termination occurred
