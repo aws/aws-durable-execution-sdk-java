@@ -198,7 +198,7 @@ public class ExecutionManager {
 
     // ===== Checkpointing =====
 
-    // This method will checkpoint the operation updates to the DAR backend and return a future which completes
+    // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
         return checkpointBatcher.checkpoint(update);
@@ -206,10 +206,10 @@ public class ExecutionManager {
 
     // ===== Polling =====
 
-    // This method will poll the operation from the DAR backend and return a future which completes
+    // This method will poll the operation updates from the durable backend and return a future which completes
     // when an update of the operation is received.
     // This is useful for in-process waits. For example, we want to
-    // wait while another thread is still running and we therefore are not
+    // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId) {
         return checkpointBatcher.pollForUpdate(operationId);

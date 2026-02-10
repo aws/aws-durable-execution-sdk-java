@@ -72,6 +72,7 @@ class CheckpointBatcher {
         logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
         synchronized (pollingFutures) {
+            // register the future in pollingFutures, which will be completed by the polling thread
             pollingFutures
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
@@ -120,25 +121,28 @@ class CheckpointBatcher {
     }
 
     protected CompletableFuture<Void> doBatchAction(List<OperationUpdate> updates) {
-        logger.debug("Calling durable API checkpointDurableExecution with {} updates", updates.size());
-        var response = client.checkpoint(durableExecutionArn, checkpointToken, updates);
-        logger.debug("Durable API checkpointDurableExecution called: {}.", response);
+        // doBatchAction will be called from the polling thread and also from AsyncBatcher.
+        // Use synchronized here to make sure no concurrent checkpoint API calls
+        synchronized (pollingFutures) {
+            logger.debug("Calling durable API checkpointDurableExecution with {} updates", updates.size());
+            var response = client.checkpoint(durableExecutionArn, checkpointToken, updates);
+            logger.debug("Durable API checkpointDurableExecution called: {}.", response);
 
-        // Notify callback of completion
-        // TODO: sam local backend returns no new execution state when called with zero
-        // updates. WHY?
-        // This means the polling will never receive an operation update and complete
-        // the Phaser.
-        checkpointToken = response.checkpointToken();
-        if (response.newExecutionState() != null) {
-            var operations = fetchAllPages(
-                    response.newExecutionState().operations(),
-                    response.newExecutionState().nextMarker());
-            if (!operations.isEmpty()) {
-                callback.accept(operations);
-            }
+            // Notify callback of completion
+            // TODO: sam local backend returns no new execution state when called with zero
+            // updates. WHY?
+            // This means the polling will never receive an operation update and complete
+            // the Phaser.
+            checkpointToken = response.checkpointToken();
+            if (response.newExecutionState() != null) {
+                var operations = fetchAllPages(
+                        response.newExecutionState().operations(),
+                        response.newExecutionState().nextMarker());
+                if (!operations.isEmpty()) {
+                    callback.accept(operations);
+                }
 
-            synchronized (pollingFutures) {
+                // complete the registered pollingFutures
                 for (var operation : operations) {
                     var pollers = pollingFutures.remove(operation.id());
                     if (pollers != null) {
@@ -150,7 +154,7 @@ class CheckpointBatcher {
         return CompletableFuture.completedFuture(null);
     }
 
-    public static int estimateSize(OperationUpdate update) {
+    private static int estimateSize(OperationUpdate update) {
         if (update == null) {
             return 0;
         }
