@@ -38,6 +38,8 @@ jobs:
       matrix:
         java:
           - 17
+          - 21
+          - 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -53,7 +55,7 @@ jobs:
           role-session-name: java-language-sdk-test
           aws-region: ${{ env.AWS_REGION }}
       - name: sam build
-        run: sam build # --no-cached # uncomment if debugging sam build
+        run: sam build --parameter-overrides 'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=DockerFile,ParameterValue=examples/Dockerfile-java${{ matrix.java }}' # --no-cached # uncomment if debugging sam build
         working-directory: ./examples
       - name: sam deploy
         run: sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM
