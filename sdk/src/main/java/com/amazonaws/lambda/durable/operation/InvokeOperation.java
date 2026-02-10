@@ -10,16 +10,12 @@ import com.amazonaws.lambda.durable.exception.InvokeStoppedException;
 import com.amazonaws.lambda.durable.exception.InvokeTimedOutException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
-    private static final Logger logger = LoggerFactory.getLogger(InvokeOperation.class);
-
     private final String functionName;
     private final U payload;
     private final InvokeConfig invokeConfig;

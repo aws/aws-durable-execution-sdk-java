@@ -69,6 +69,7 @@ public final class DurableConfig {
     private final ExecutorService executorService;
     private final LoggerConfig loggerConfig;
     private final Duration pollingInterval;
+    private final Duration checkpointDelay;
 
     private DurableConfig(Builder builder) {
         this.durableExecutionClient = builder.durableExecutionClient != null
@@ -78,6 +79,7 @@ public final class DurableConfig {
         this.executorService = builder.executorService != null ? builder.executorService : createDefaultExecutor();
         this.loggerConfig = builder.loggerConfig != null ? builder.loggerConfig : LoggerConfig.defaults();
         this.pollingInterval = builder.pollingInterval != null ? builder.pollingInterval : Duration.ofSeconds(1);
+        this.checkpointDelay = builder.checkpointDelay != null ? builder.checkpointDelay : Duration.ofSeconds(0);
     }
 
     /**
@@ -140,6 +142,15 @@ public final class DurableConfig {
      * @return polling interval in Duration.
      */
     public Duration getPollingInterval() {
+        return pollingInterval;
+    }
+
+    /**
+     * Gets the configured checkpoint delay.
+     *
+     * @return check point in Duration.
+     */
+    public Duration getCheckpointDelay() {
         return pollingInterval;
     }
 
@@ -207,7 +218,8 @@ public final class DurableConfig {
         private SerDes serDes;
         private ExecutorService executorService;
         private LoggerConfig loggerConfig;
-        public Duration pollingInterval;
+        private Duration pollingInterval;
+        private Duration checkpointDelay;
 
         private Builder() {}
 
@@ -301,6 +313,18 @@ public final class DurableConfig {
          */
         public Builder withPollingInterval(Duration duration) {
             this.pollingInterval = duration;
+            return this;
+        }
+
+        /**
+         * Sets how often the SDK checkpoints updates to backend. If not set, defaults to 0, which disables checkpoint
+         * batching.
+         *
+         * @param duration the checkpoint delay in Duration
+         * @return This builder
+         */
+        public Builder withCheckpointDelay(Duration duration) {
+            this.checkpointDelay = duration;
             return this;
         }
 

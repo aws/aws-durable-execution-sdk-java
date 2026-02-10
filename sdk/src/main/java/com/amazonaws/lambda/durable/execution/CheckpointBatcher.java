@@ -9,11 +9,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -39,13 +36,12 @@ class CheckpointBatcher {
     private final Consumer<List<Operation>> callback;
     private final String durableExecutionArn;
     private final DurableExecutionClient client;
-    private final BlockingQueue<CheckpointRequest> queue = new LinkedBlockingQueue<>();
     private final AtomicBoolean isRunning = new AtomicBoolean(true);
     private final Duration pollingInterval;
     private final Map<String, List<CompletableFuture<Operation>>> pollingFutures = new ConcurrentHashMap<>();
+    private final AsyncBatcher<OperationUpdate> checkpointAsyncBatcher;
     private String checkpointToken;
-
-    record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {}
+    private final Object batchCheckpointLock = new Object();
 
     CheckpointBatcher(
             DurableConfig config,
@@ -57,39 +53,42 @@ class CheckpointBatcher {
         this.callback = callback;
         this.checkpointToken = checkpointToken;
         this.pollingInterval = config.getPollingInterval();
+        this.checkpointAsyncBatcher = new AsyncBatcher<>(
+                config.getCheckpointDelay(),
+                Integer.MAX_VALUE,
+                MAX_BATCH_SIZE_BYTES,
+                CheckpointBatcher::estimateSize,
+                this::doBatchAction);
 
         InternalExecutor.INSTANCE.execute(this::processQueue);
     }
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
-        var future = new CompletableFuture<Void>();
-        queue.add(new CheckpointRequest(update, future));
-        return future;
+        return checkpointAsyncBatcher.doAction(update);
     }
 
     CompletableFuture<Operation> pollForUpdate(String operationId) {
+        logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
-        pollingFutures
-                .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
-                .add(future);
+        synchronized (pollingFutures) {
+            pollingFutures
+                    .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
+                    .add(future);
+        }
         return future;
     }
 
     void shutdown() {
-        var remaining = new ArrayList<CheckpointRequest>();
         isRunning.set(false);
-        queue.drainTo(remaining);
-
-        // fail the checkpoint requests
-        remaining.forEach(
-                req -> req.completion().completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
 
         // fail the pollers
-        for (var operationId : pollingFutures.keySet()) {
-            pollingFutures
-                    .remove(operationId)
-                    .forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
+        synchronized (pollingFutures) {
+            for (var operationId : pollingFutures.keySet()) {
+                pollingFutures
+                        .remove(operationId)
+                        .forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
+            }
         }
     }
 
@@ -108,80 +107,50 @@ class CheckpointBatcher {
     }
 
     private void processQueue() {
+        // background thread running
         while (isRunning.get()) {
-            if (queue.isEmpty() && pollingFutures.isEmpty()) {
-                // nothing to process
-                try {
-                    Thread.sleep(pollingInterval.toMillis());
-                } catch (InterruptedException ignored) {
-                }
+            if (!pollingFutures.isEmpty()) {
+                doBatchAction(List.of()).join();
             }
             try {
-                var batch = collectBatch();
-                // Filter out null updates (empty checkpoints for polling)
-                var updates = batch.stream()
-                        .map(CheckpointRequest::update)
-                        .filter(Objects::nonNull)
-                        .toList();
+                Thread.sleep(pollingInterval.toMillis());
+            } catch (InterruptedException ignored) {
+            }
+        }
+    }
 
-                var response = client.checkpoint(durableExecutionArn, checkpointToken, updates);
-                logger.debug("Durable API checkpointDurableExecution called: {}.", response);
+    protected CompletableFuture<Void> doBatchAction(List<OperationUpdate> updates) {
+        logger.debug("Calling durable API checkpointDurableExecution with {} updates", updates.size());
+        var response = client.checkpoint(durableExecutionArn, checkpointToken, updates);
+        logger.debug("Durable API checkpointDurableExecution called: {}.", response);
 
-                // Notify callback of completion
-                // TODO: sam local backend returns no new execution state when called with zero
-                // updates. WHY?
-                // This means the polling will never receive an operation update and complete
-                // the Phaser.
-                checkpointToken = response.checkpointToken();
-                if (response.newExecutionState() != null) {
-                    var operations = fetchAllPages(
-                            response.newExecutionState().operations(),
-                            response.newExecutionState().nextMarker());
-                    if (!operations.isEmpty()) {
-                        callback.accept(operations);
-                    }
+        // Notify callback of completion
+        // TODO: sam local backend returns no new execution state when called with zero
+        // updates. WHY?
+        // This means the polling will never receive an operation update and complete
+        // the Phaser.
+        checkpointToken = response.checkpointToken();
+        if (response.newExecutionState() != null) {
+            var operations = fetchAllPages(
+                    response.newExecutionState().operations(),
+                    response.newExecutionState().nextMarker());
+            if (!operations.isEmpty()) {
+                callback.accept(operations);
+            }
 
-                    for (var operation : operations) {
-                        var pollers = pollingFutures.remove(operation.id());
-                        if (pollers != null) {
-                            pollers.forEach(poller -> poller.complete(operation));
-                        }
+            synchronized (pollingFutures) {
+                for (var operation : operations) {
+                    var pollers = pollingFutures.remove(operation.id());
+                    if (pollers != null) {
+                        pollers.forEach(poller -> poller.complete(operation));
                     }
                 }
-
-                // checkpoint operation completed
-                batch.forEach(req -> req.completion().complete(null));
-            } catch (Throwable e) {
-                var batch = new ArrayList<CheckpointRequest>();
-                queue.drainTo(batch);
-                batch.forEach(req -> req.completion().completeExceptionally(e));
             }
         }
+        return CompletableFuture.completedFuture(null);
     }
 
-    private List<CheckpointRequest> collectBatch() {
-        var batch = new ArrayList<CheckpointRequest>();
-        var currentSize = 0;
-
-        CheckpointRequest req;
-        while ((req = queue.peek()) != null) {
-            var itemSize = estimateSize(req.update());
-
-            // will include the big item in the batch if the batch is empty
-            if (currentSize + itemSize > MAX_BATCH_SIZE_BYTES && !batch.isEmpty()) {
-                break;
-            }
-
-            queue.remove();
-
-            batch.add(req);
-            currentSize += itemSize;
-        }
-
-        return batch;
-    }
-
-    private int estimateSize(OperationUpdate update) {
+    public static int estimateSize(OperationUpdate update) {
         if (update == null) {
             return 0;
         }
