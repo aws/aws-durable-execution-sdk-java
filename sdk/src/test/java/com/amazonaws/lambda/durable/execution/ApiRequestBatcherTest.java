@@ -52,7 +52,7 @@ class ApiRequestBatcherTest {
 
     @Test
     void whenSingleActionPerformed_anUncompletedFutureIsReturned() {
-        CompletableFuture<Void> resultFuture = cut.doAction(input);
+        CompletableFuture<Void> resultFuture = cut.submit(input);
 
         verify(doBatchAction, never()).apply(any());
         assertFalse(resultFuture.isDone());
@@ -62,7 +62,7 @@ class ApiRequestBatcherTest {
     void whenMultipleActionsPerformedBelowMaxBatchSize_anUncompletedFutureIsReturnedEachTime() {
         List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
         for (int i = 0; i < MAX_BATCH_SIZE - 1; i++) {
-            resultFutures.add(cut.doAction(input));
+            resultFutures.add(cut.submit(input));
         }
 
         verify(doBatchAction, never()).apply(any());
@@ -73,7 +73,7 @@ class ApiRequestBatcherTest {
     void whenMultipleActionsPerformedMatchingMaxBatchSize_batchInvokeIsPerformed() {
         List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
         for (int i = 0; i < MAX_BATCH_SIZE; i++) {
-            resultFutures.add(cut.doAction(input));
+            resultFutures.add(cut.submit(input));
         }
 
         verify(doBatchAction).apply(any());
@@ -82,9 +82,9 @@ class ApiRequestBatcherTest {
 
     @Test
     void whenBatchInvokeThrows_allFuturesCompleteWithThatException() throws InterruptedException {
-        CompletableFuture<Void> resultFuture1 = cut.doAction(input);
-        CompletableFuture<Void> resultFuture2 = cut.doAction(input);
-        CompletableFuture<Void> resultFuture3 = cut.doAction(input);
+        CompletableFuture<Void> resultFuture1 = cut.submit(input);
+        CompletableFuture<Void> resultFuture2 = cut.submit(input);
+        CompletableFuture<Void> resultFuture3 = cut.submit(input);
 
         assertFalse(resultFuture1.isDone());
         assertFalse(resultFuture2.isDone());
@@ -108,9 +108,9 @@ class ApiRequestBatcherTest {
         Input input2 = mock(Input.class);
         Input input3 = mock(Input.class);
 
-        CompletableFuture<Void> resultFuture1 = cut.doAction(input1);
-        CompletableFuture<Void> resultFuture2 = cut.doAction(input2);
-        CompletableFuture<Void> resultFuture3 = cut.doAction(input3);
+        CompletableFuture<Void> resultFuture1 = cut.submit(input1);
+        CompletableFuture<Void> resultFuture2 = cut.submit(input2);
+        CompletableFuture<Void> resultFuture3 = cut.submit(input3);
 
         assertFalse(resultFuture1.isDone());
         assertFalse(resultFuture2.isDone());
@@ -128,7 +128,7 @@ class ApiRequestBatcherTest {
     }
 
     @Test
-    void testDoAction_whenCannotAddItemDueToBinarySizeConstraint_thenFlushCurrentBatchAndCreateNewOne() {
+    void testSubmit_whenCannotAddItemDueToBinarySizeConstraint_thenFlushCurrentBatchAndCreateNewOne() {
         var cut = new ApiRequestBatcher<>(
                 MAX_DELAY_MILLIS,
                 MAX_BATCH_SIZE,
@@ -137,8 +137,8 @@ class ApiRequestBatcherTest {
                 doBatchAction);
         List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
 
-        resultFutures.add(cut.doAction(input));
-        resultFutures.add(cut.doAction(input));
+        resultFutures.add(cut.submit(input));
+        resultFutures.add(cut.submit(input));
 
         verify(doBatchAction).apply(any());
 
@@ -150,7 +150,7 @@ class ApiRequestBatcherTest {
         var timerCut = new ApiRequestBatcher<>(
                 Duration.ofMillis(1), MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, doBatchAction);
 
-        CompletableFuture<Void> resultFuture = timerCut.doAction(input);
+        CompletableFuture<Void> resultFuture = timerCut.submit(input);
 
         // Wait for the timeout to trigger
         CompletableFuture.delayedExecutor(10, TimeUnit.MILLISECONDS).execute(() -> {});
@@ -161,9 +161,9 @@ class ApiRequestBatcherTest {
 
     @Test
     void whenBatchInvokeThrowsCompletionException_allFuturesCompleteWithUnwrappedCause() throws InterruptedException {
-        CompletableFuture<Void> resultFuture1 = cut.doAction(input);
-        CompletableFuture<Void> resultFuture2 = cut.doAction(input);
-        CompletableFuture<Void> resultFuture3 = cut.doAction(input);
+        CompletableFuture<Void> resultFuture1 = cut.submit(input);
+        CompletableFuture<Void> resultFuture2 = cut.submit(input);
+        CompletableFuture<Void> resultFuture3 = cut.submit(input);
 
         RuntimeException rootCause = new RuntimeException("Root cause");
         batchResultFuture.completeExceptionally(rootCause);

@@ -31,7 +31,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  */
 class CheckpointBatcher {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
-    private static final int MAX_BATCH_SIZE = 100; // max updates in one batch
+    private static final int MAX_ITEM_COUNT = 100; // max updates in one batch
     private static final Logger logger = LoggerFactory.getLogger(CheckpointBatcher.class);
 
     private final Consumer<List<Operation>> callback;
@@ -55,7 +55,7 @@ class CheckpointBatcher {
         this.pollingInterval = config.getPollingInterval();
         this.checkpointApiRequestBatcher = new ApiRequestBatcher<>(
                 config.getCheckpointDelay(),
-                MAX_BATCH_SIZE,
+                MAX_ITEM_COUNT,
                 MAX_BATCH_SIZE_BYTES,
                 CheckpointBatcher::estimateSize,
                 this::doBatchAction);
@@ -65,7 +65,7 @@ class CheckpointBatcher {
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
-        return checkpointApiRequestBatcher.doAction(update);
+        return checkpointApiRequestBatcher.submit(update);
     }
 
     CompletableFuture<Operation> pollForUpdate(String operationId) {
@@ -84,13 +84,14 @@ class CheckpointBatcher {
     void shutdown() {
         isRunning.set(false);
 
-        // fail the pollers
+       List<List<CompletableFuture<Operation>>> allFutures;
+
         synchronized (pollingFutures) {
-            for (var operationId : pollingFutures.keySet()) {
-                pollingFutures
-                        .remove(operationId)
-                        .forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
-            }
+            allFutures = new ArrayList<>(pollingFutures.values());
+            pollingFutures.clear();
+        }
+        for (var futures : allFutures) {
+            futures.forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
         }
     }
 
@@ -109,35 +110,43 @@ class CheckpointBatcher {
     }
 
     private void processQueue() {
-        // background thread running
+        // the background thread runs until shutdown
         while (isRunning.get()) {
-            if (!pollingFutures.isEmpty()) {
-                // If pollers exist, poll for updates periodically.
-                // When wake from wait, sleep for an initial delay before calling the API
-                try {
+            try {
+                if (!pollingFutures.isEmpty()) {
+                    // If pollers exist, poll for updates periodically.
+                    // When wake from wait, sleep for an initial delay before calling the API
                     Thread.sleep(pollingInterval.toMillis());
-                } catch (InterruptedException ignored) {
-                    // ignored
-                }
-                doBatchAction(List.of()).join();
-            } else {
-                // if empty, waiting for new pollers
-                synchronized (pollingFutures) {
-                    try {
-                        pollingFutures.wait(pollingInterval.toMillis());
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
+
+                    // call the API if pollers still exist after the initial delay, during which another
+                    // checkpoint call could have cleared the pollers
+                    if (!pollingFutures.isEmpty()) {
+                        doBatchAction(List.of()).join();
+                    }
+                } else{
+                    // if empty, waiting for new pollers
+                    synchronized (pollingFutures) {
+                        // Check again because another thread may have called pollForUpdate() since we checked earlier.
+                        if (pollingFutures.isEmpty()) {
+                            pollingFutures.wait(pollingInterval.toMillis());
+                        }
                     }
                 }
+            } catch (InterruptedException ignored) {
+                // shutdown the batcher if the thread is stopped
+                shutdown();
             }
+
         }
     }
 
-    protected CompletableFuture<Void> doBatchAction(List<OperationUpdate> updates) {
+    protected void doBatchAction(List<OperationUpdate> updates) {
         // doBatchAction will be called from the polling thread and also from ApiRequestBatcher.
         // Use synchronized here to make sure no concurrent checkpoint API calls
         synchronized (pollingFutures) {
+            if (pollingFutures.isEmpty() && updates.isEmpty()) {
+                return;
+            }
             logger.debug("Calling durable API checkpointDurableExecution with {} updates", updates.size());
             var response = client.checkpoint(durableExecutionArn, checkpointToken, updates);
             logger.debug("Durable API checkpointDurableExecution called: {}.", response);
@@ -165,7 +174,6 @@ class CheckpointBatcher {
                 }
             }
         }
-        return CompletableFuture.completedFuture(null);
     }
 
     private static int estimateSize(OperationUpdate update) {
