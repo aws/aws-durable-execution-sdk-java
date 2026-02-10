@@ -64,8 +64,8 @@ jobs:
           distribution: corretto
           java-version: ${{ matrix.java }}
           cache: maven
-      - name: Build locally and run unit tests
+      - name: Build locally
         run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: Cloud Based Integration Tests
-        run: mvn clean test -B -q -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
+        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
         working-directory: ./examples
