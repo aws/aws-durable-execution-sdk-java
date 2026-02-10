@@ -34,7 +34,7 @@ Resources:
       FunctionName: !Join
         - ''
         - - simple-step-example
-        - !Ref FunctionNameSuffix
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.SimpleStepExample::handleRequest"]
       DurableConfig:
@@ -307,7 +307,7 @@ Resources:
       FunctionName: !Join
         - ''
         - - 'callback-example'
-        - - !Ref FunctionNameSuffix
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.CallbackExample::handleRequest"]
       DurableConfig:
@@ -332,7 +332,7 @@ Resources:
       FunctionName: !Join
         - ''
         - - 'many-async-steps-example'
-        - - !Ref FunctionNameSuffix
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.ManyAsyncStepsExample::handleRequest"]
       DurableConfig:
