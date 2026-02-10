@@ -58,6 +58,14 @@ jobs:
       - name: sam deploy
         run: sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM
         working-directory: ./examples
+      - name: Setup Java ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build locally and run unit tests
+        run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: Cloud Based Integration Tests
         run: mvn clean test -B -q -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
         working-directory: ./examples
