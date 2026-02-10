@@ -22,7 +22,6 @@ import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Phaser;
@@ -398,8 +397,7 @@ class BaseDurableOperationTest {
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
                     public void execute() {
-                        pollForOperationUpdates(now, Duration.ofSeconds(1));
-                        pollUntilReady(future, now, Duration.ofSeconds(1));
+                        pollForOperationUpdates();
                     }
 
                     @Override
@@ -410,8 +408,7 @@ class BaseDurableOperationTest {
                 };
 
         op.execute();
-        verify(executionManager).pollForOperationUpdates(OPERATION_ID, now, Duration.ofSeconds(1));
-        verify(executionManager).pollUntilReady(OPERATION_ID, future, now, Duration.ofSeconds(1));
+        verify(executionManager).pollForOperationUpdates(OPERATION_ID);
     }
 
     @Test
@@ -427,7 +424,6 @@ class BaseDurableOperationTest {
                         .type(OPERATION_TYPE)
                         .build());
         var update = OperationUpdate.builder();
-        when(executionManager.sendOperationUpdate(update.build())).thenReturn(CompletableFuture.completedFuture(null));
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
@@ -435,7 +431,6 @@ class BaseDurableOperationTest {
                     @Override
                     public void execute() {
                         sendOperationUpdate(update);
-                        sendOperationUpdateAsync(update);
                     }
 
                     @Override
@@ -446,6 +441,6 @@ class BaseDurableOperationTest {
                 };
 
         op.execute();
-        verify(executionManager, times(2)).sendOperationUpdate(update.build());
+        verify(executionManager, times(1)).sendOperationUpdate(update.build());
     }
 }

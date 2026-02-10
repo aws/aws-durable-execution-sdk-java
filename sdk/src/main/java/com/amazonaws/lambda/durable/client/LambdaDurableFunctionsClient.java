@@ -35,7 +35,7 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
                 .checkpointToken(token)
                 .updates(updates)
                 .build();
-        logger.debug("Calling DAR backend with {} updates: {}", updates.size(), request);
+        logger.debug("Calling durable backend with {} updates: {}", updates.size(), request);
 
         return lambdaClient.checkpointDurableExecution(request);
     }

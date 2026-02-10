@@ -170,7 +170,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
      *
      * <p>Customer-facing serialization uses SerDes from DurableConfig.
      *
-     * @return Configured ObjectMapper for DAR backend communication
+     * @return Configured ObjectMapper for durable backend communication
      */
     public static ObjectMapper createObjectMapper() {
         var dateModule = new SimpleModule();

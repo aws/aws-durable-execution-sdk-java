@@ -8,8 +8,6 @@ import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
 import com.amazonaws.lambda.durable.exception.CallbackTimeoutException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import java.time.Duration;
-import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
@@ -78,7 +76,7 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
         }
 
         // Start polling for callback completion (delay first poll to allow suspension)
-        pollForOperationUpdates(Instant.now().plusMillis(100), Duration.ofMillis(200));
+        pollForOperationUpdates();
     }
 
     @Override

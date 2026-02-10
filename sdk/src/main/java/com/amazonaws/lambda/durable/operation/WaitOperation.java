@@ -59,11 +59,7 @@ public class WaitOperation extends BaseDurableOperation<Void> {
         }
 
         logger.debug("Remaining wait time: {} seconds", remainingWaitTime.getSeconds());
-        // Start polling for wait completion
-        // Poll starting at scheduledEndTimestamp + 25ms, every 200ms
-        // The polling will complete the phaser when the backend reports SUCCEEDED
-        Instant firstPoll = Instant.now().plus(remainingWaitTime).plusMillis(25);
-        pollForOperationUpdates(firstPoll, Duration.ofMillis(200));
+        pollForOperationUpdates();
     }
 
     @Override

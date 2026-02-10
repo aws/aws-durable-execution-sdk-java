@@ -4,6 +4,7 @@ package com.amazonaws.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.TestUtils;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.util.List;
@@ -18,7 +19,10 @@ class ExecutionManagerTest {
         var client = TestUtils.createMockClient();
         var initialState = new InitialExecutionState(operations, null);
         return new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client);
+                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                "test-token",
+                initialState,
+                DurableConfig.builder().withDurableExecutionClient(client).build());
     }
 
     private Operation executionOp() {

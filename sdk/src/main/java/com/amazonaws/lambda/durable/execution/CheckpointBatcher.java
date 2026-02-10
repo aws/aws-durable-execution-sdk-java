@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.execution;
 
+import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -35,41 +40,57 @@ class CheckpointBatcher {
     private final String durableExecutionArn;
     private final DurableExecutionClient client;
     private final BlockingQueue<CheckpointRequest> queue = new LinkedBlockingQueue<>();
-    private final AtomicBoolean isProcessing = new AtomicBoolean(false);
+    private final AtomicBoolean isRunning = new AtomicBoolean(true);
+    private final Duration pollingInterval;
+    private final Map<String, List<CompletableFuture<Operation>>> pollingFutures = new ConcurrentHashMap<>();
     private String checkpointToken;
 
     record CheckpointRequest(OperationUpdate update, CompletableFuture<Void> completion) {}
 
     CheckpointBatcher(
-            DurableExecutionClient client,
+            DurableConfig config,
             String durableExecutionArn,
             String checkpointToken,
             Consumer<List<Operation>> callback) {
-        this.client = client;
+        this.client = config.getDurableExecutionClient();
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
         this.checkpointToken = checkpointToken;
+        this.pollingInterval = config.getPollingInterval();
+
+        InternalExecutor.INSTANCE.execute(this::processQueue);
     }
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
-        logger.debug(
-                "Checkpoint request received: Action {}",
-                update != null ? update.action() : "NULL (Checkpoint request)");
+        logger.debug("Checkpoint request received: Action {}", update.action());
         var future = new CompletableFuture<Void>();
         queue.add(new CheckpointRequest(update, future));
+        return future;
+    }
 
-        if (isProcessing.compareAndSet(false, true)) {
-            InternalExecutor.INSTANCE.execute(this::processQueue);
-        }
-
+    CompletableFuture<Operation> pollForUpdate(String operationId) {
+        var future = new CompletableFuture<Operation>();
+        pollingFutures
+                .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
+                .add(future);
         return future;
     }
 
     void shutdown() {
         var remaining = new ArrayList<CheckpointRequest>();
+        isRunning.set(false);
         queue.drainTo(remaining);
+
+        // fail the checkpoint requests
         remaining.forEach(
                 req -> req.completion().completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
+
+        // fail the pollers
+        for (var operationId : pollingFutures.keySet()) {
+            pollingFutures
+                    .remove(operationId)
+                    .forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
+        }
     }
 
     public List<Operation> fetchAllPages(List<Operation> initialOperations, String nextMarker) {
@@ -79,7 +100,7 @@ class CheckpointBatcher {
         }
         while (nextMarker != null && !nextMarker.isEmpty()) {
             var response = client.getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
-            logger.debug("DAR getExecutionState called: {}.", response);
+            logger.debug("Durable API getExecutionState called: {}.", response);
             operations.addAll(response.operations());
             nextMarker = response.nextMarker();
         }
@@ -87,9 +108,16 @@ class CheckpointBatcher {
     }
 
     private void processQueue() {
-        try {
-            var batch = collectBatch();
-            if (!batch.isEmpty()) {
+        while (isRunning.get()) {
+            if (queue.isEmpty() && pollingFutures.isEmpty()) {
+                // nothing to process
+                try {
+                    Thread.sleep(pollingInterval.toMillis());
+                } catch (InterruptedException ignored) {
+                }
+            }
+            try {
+                var batch = collectBatch();
                 // Filter out null updates (empty checkpoints for polling)
                 var updates = batch.stream()
                         .map(CheckpointRequest::update)
@@ -97,7 +125,7 @@ class CheckpointBatcher {
                         .toList();
 
                 var response = client.checkpoint(durableExecutionArn, checkpointToken, updates);
-                logger.debug("DAR checkpointDurableExecution called: {}.", response);
+                logger.debug("Durable API checkpointDurableExecution called: {}.", response);
 
                 // Notify callback of completion
                 // TODO: sam local backend returns no new execution state when called with zero
@@ -112,19 +140,21 @@ class CheckpointBatcher {
                     if (!operations.isEmpty()) {
                         callback.accept(operations);
                     }
+
+                    for (var operation : operations) {
+                        var pollers = pollingFutures.remove(operation.id());
+                        if (pollers != null) {
+                            pollers.forEach(poller -> poller.complete(operation));
+                        }
+                    }
                 }
 
+                // checkpoint operation completed
                 batch.forEach(req -> req.completion().complete(null));
-            }
-        } catch (Exception e) {
-            var batch = new ArrayList<CheckpointRequest>();
-            queue.drainTo(batch);
-            batch.forEach(req -> req.completion().completeExceptionally(e));
-        } finally {
-            isProcessing.set(false);
-
-            if (!queue.isEmpty() && isProcessing.compareAndSet(false, true)) {
-                InternalExecutor.INSTANCE.execute(this::processQueue);
+            } catch (Throwable e) {
+                var batch = new ArrayList<CheckpointRequest>();
+                queue.drainTo(batch);
+                batch.forEach(req -> req.completion().completeExceptionally(e));
             }
         }
     }
@@ -134,13 +164,15 @@ class CheckpointBatcher {
         var currentSize = 0;
 
         CheckpointRequest req;
-        while ((req = queue.poll()) != null) {
+        while ((req = queue.peek()) != null) {
             var itemSize = estimateSize(req.update());
 
+            // will include the big item in the batch if the batch is empty
             if (currentSize + itemSize > MAX_BATCH_SIZE_BYTES && !batch.isEmpty()) {
-                queue.add(req);
                 break;
             }
+
+            queue.remove();
 
             batch.add(req);
             currentSize += itemSize;

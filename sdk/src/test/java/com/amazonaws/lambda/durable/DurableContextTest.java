@@ -32,7 +32,7 @@ class DurableContextTest {
                         + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",
                 "test-token",
                 initialExecutionState,
-                client);
+                DurableConfig.builder().withDurableExecutionClient(client).build());
         return new DurableContext(executionManager, DurableConfig.builder().build(), null);
     }
 

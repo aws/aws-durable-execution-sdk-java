@@ -13,8 +13,6 @@ import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Phaser;
@@ -205,12 +203,8 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     // polling and checkpointing
-    protected void pollForOperationUpdates(Instant firstPoll, Duration duration) {
-        executionManager.pollForOperationUpdates(operationId, firstPoll, duration);
-    }
-
-    protected void pollUntilReady(CompletableFuture<Void> pendingFuture, Instant firstPoll, Duration duration) {
-        executionManager.pollUntilReady(operationId, pendingFuture, firstPoll, duration);
+    protected CompletableFuture<Operation> pollForOperationUpdates() {
+        return executionManager.pollForOperationUpdates(operationId);
     }
 
     protected void sendOperationUpdate(OperationUpdate.Builder builder) {

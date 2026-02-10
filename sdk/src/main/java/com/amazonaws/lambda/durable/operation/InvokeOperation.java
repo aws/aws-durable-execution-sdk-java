@@ -10,8 +10,6 @@ import com.amazonaws.lambda.durable.exception.InvokeStoppedException;
 import com.amazonaws.lambda.durable.exception.InvokeTimedOutException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import java.time.Duration;
-import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
@@ -50,26 +48,19 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
         if (existing == null) {
             // first execution
             startInvocation();
-            waitTimeout();
+            pollForOperationUpdates();
         } else {
             validateReplay(existing);
             // replay
             switch (existing.status()) {
                 // The result isn't ready. Need to wait more
-                case STARTED -> waitTimeout();
+                case STARTED -> pollForOperationUpdates();
                 case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
                 default ->
                     terminateExecutionWithIllegalDurableOperationException(
                             "Unexpected invoke status: " + existing.statusAsString());
             }
         }
-    }
-
-    private void waitTimeout() {
-        var waitTime = invokeConfig.timeout() != null ? invokeConfig.timeout() : Duration.ofSeconds(1);
-        logger.debug("Remaining invoke wait time: {} seconds", waitTime.toSeconds());
-        Instant firstPoll = Instant.now().plus(waitTime).plusMillis(25);
-        pollForOperationUpdates(firstPoll, Duration.ofMillis(200));
     }
 
     private void startInvocation() {

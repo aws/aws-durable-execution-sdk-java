@@ -15,8 +15,6 @@ import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Supplier;
@@ -76,26 +74,11 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                         executeStepLogic(attempt);
                     }
                 }
-                case PENDING -> {
-                    // Step is pending retry - setup polling
-                    // Create a future that will be completed when step transitions to READY
-                    var pendingFuture = new CompletableFuture<Void>();
-
-                    // When future completes, execute the step
-                    pendingFuture.thenRun(
-                            () -> executeStepLogic(existing.stepDetails().attempt()));
-
-                    // Start polling for PENDING -> READY transition
-                    var nextAttemptTime = existing.stepDetails().nextAttemptTimestamp();
-                    if (nextAttemptTime == null) {
-                        nextAttemptTime = Instant.now().plusSeconds(1);
-                    }
-                    pollUntilReady(pendingFuture, nextAttemptTime, Duration.ofSeconds(1));
-                }
-                case READY -> {
-                    // Execute with current attempt
-                    executeStepLogic(existing.stepDetails().attempt());
-                }
+                // Step is pending retry - Start polling for PENDING -> READY transition
+                case PENDING ->
+                    pollReadyAndExecuteStepLogic(existing.stepDetails().attempt());
+                // Execute with current attempt
+                case READY -> executeStepLogic(existing.stepDetails().attempt());
                 default ->
                     terminateExecutionWithIllegalDurableOperationException(
                             "Unexpected step status: " + existing.status());
@@ -104,6 +87,14 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             // First execution
             executeStepLogic(0);
         }
+    }
+
+    private CompletableFuture<Void> pollReadyAndExecuteStepLogic(int attempt) {
+        return pollForOperationUpdates()
+                .thenCompose(op -> op.status() == OperationStatus.READY
+                        ? CompletableFuture.completedFuture(op)
+                        : pollForOperationUpdates())
+                .thenRun(() -> executeStepLogic(attempt));
     }
 
     private void executeStepLogic(int attempt) {
@@ -189,12 +180,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                             .build());
             sendOperationUpdate(retryUpdate);
 
-            // Setup polling for retry
-            var pendingFuture = new CompletableFuture<Void>();
-            pendingFuture.thenRun(() -> executeStepLogic(attempt + 1));
-
-            var nextAttemptTime = Instant.now().plus(retryDecision.delay()).plusMillis(25);
-            pollUntilReady(pendingFuture, nextAttemptTime, Duration.ofMillis(200));
+            pollReadyAndExecuteStepLogic(attempt + 1);
         } else {
             // Send FAIL - retries exhausted
             var failUpdate =

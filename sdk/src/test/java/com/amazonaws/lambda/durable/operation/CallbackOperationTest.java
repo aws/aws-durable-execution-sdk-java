@@ -5,6 +5,7 @@ package com.amazonaws.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.CallbackConfig;
+import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.TestUtils;
 import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.CallbackFailedException;
@@ -62,7 +63,10 @@ class CallbackOperationTest {
         var client = TestUtils.createMockClient();
         var initialState = new InitialExecutionState(initialOperations, null);
         var executionManager = new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState, client);
+                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                "test-token",
+                initialState,
+                DurableConfig.builder().withDurableExecutionClient(client).build());
         executionManager.setCurrentContext("Root", ThreadType.CONTEXT);
         return executionManager;
     }

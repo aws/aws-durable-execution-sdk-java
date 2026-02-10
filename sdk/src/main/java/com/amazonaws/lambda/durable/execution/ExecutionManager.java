@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.execution;
 
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
+import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -62,13 +60,13 @@ public class ExecutionManager {
             String durableExecutionArn,
             String checkpointToken,
             InitialExecutionState initialExecutionState,
-            DurableExecutionClient client) {
+            DurableConfig config) {
         this.durableExecutionArn = durableExecutionArn;
         this.executionOperationId = initialExecutionState.operations().get(0).id();
 
         // Create checkpoint batcher for internal coordination
         this.checkpointBatcher =
-                new CheckpointBatcher(client, durableExecutionArn, checkpointToken, this::onCheckpointComplete);
+                new CheckpointBatcher(config, durableExecutionArn, checkpointToken, this::onCheckpointComplete);
 
         this.operations =
                 checkpointBatcher
@@ -198,101 +196,23 @@ public class ExecutionManager {
         return phaser;
     }
 
-    public Phaser getPhaser(String operationId) {
-        return openPhasers.get(operationId);
-    }
-
     // ===== Checkpointing =====
 
+    // This method will checkpoint the operation updates to the DAR backend and return a future which completes
+    // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
         return checkpointBatcher.checkpoint(update);
     }
 
     // ===== Polling =====
 
-    // This method will poll the operation from the DAR backend until it moves to a
-    // terminal state. This is useful for in-process waits. For example, we want to
+    // This method will poll the operation from the DAR backend and return a future which completes
+    // when an update of the operation is received.
+    // This is useful for in-process waits. For example, we want to
     // wait while another thread is still running and we therefore are not
     // re-invoked because we never suspended.
-    public void pollForOperationUpdates(String operationId, Instant firstPollTime, Duration period) {
-        InternalExecutor.INSTANCE.execute(() -> {
-            // Sleep until the start
-            try {
-                var sleepDuration = Duration.between(Instant.now(), firstPollTime);
-                if (!sleepDuration.isNegative()) {
-                    logger.debug("Polling for '{}': sleeping {} before polling", operationId, sleepDuration);
-                    Thread.sleep(sleepDuration.toMillis());
-                }
-            } catch (InterruptedException ignored) {
-            }
-
-            // Poll while phaser is in phase 0
-            while (this.getPhaser(operationId).getPhase() == ExecutionPhase.RUNNING.getValue()) {
-                if (executionExceptionFuture.isDone()) {
-                    logger.debug("Polling for '{}': execution suspended, stopping", operationId);
-                    return;
-                }
-
-                logger.debug("Polling for '{}': doing a poll", operationId);
-                sendOperationUpdate(null).join();
-
-                try {
-                    Thread.sleep(period.toMillis());
-                } catch (InterruptedException ignored) {
-                    return;
-                }
-            }
-
-            logger.debug("Polling for '{}': done polling", operationId);
-        });
-    }
-
-    // This method will poll the operation from the DAR backend until we move to a
-    // READY state. If we are ready (based on NextScheduleTimestamp),
-    // the provided future will be completed. This is useful for in-process retries.
-    // For example, we
-    // want to retry while another thread is still running and we therefore are not
-    // re-invoked because we never suspended.
-    public void pollUntilReady(
-            String operationId, CompletableFuture<Void> future, Instant firstPollTime, Duration period) {
-        InternalExecutor.INSTANCE.execute(() -> {
-            // Sleep until first poll time
-            try {
-                Duration sleepDuration = Duration.between(Instant.now(), firstPollTime);
-                if (!sleepDuration.isNegative()) {
-                    logger.debug("Polling for '{}': sleeping {} before first poll", operationId, sleepDuration);
-                    Thread.sleep(sleepDuration.toMillis());
-                }
-            } catch (InterruptedException e) {
-            }
-
-            // Poll while future is not done
-            while (!future.isDone()) {
-                if (executionExceptionFuture.isDone()) {
-                    logger.debug("Polling for '{}': execution suspended, stopping", operationId);
-                    return;
-                }
-
-                logger.debug("Polling for '{}': sending empty checkpoint", operationId);
-                sendOperationUpdate(null).join();
-
-                // Check if operation is now READY
-                var op = getOperationAndUpdateReplayState(operationId);
-                if (op != null && op.status() == OperationStatus.READY) {
-                    future.complete(null);
-                    break;
-                }
-
-                try {
-                    Thread.sleep(period.toMillis());
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-
-            logger.debug("Polling for '{}': future complete", operationId);
-        });
+    public CompletableFuture<Operation> pollForOperationUpdates(String operationId) {
+        return checkpointBatcher.pollForUpdate(operationId);
     }
 
     // ===== Utilities =====
