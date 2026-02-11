@@ -78,7 +78,7 @@ public final class DurableConfig {
         this.serDes = builder.serDes != null ? builder.serDes : new JacksonSerDes();
         this.executorService = builder.executorService != null ? builder.executorService : createDefaultExecutor();
         this.loggerConfig = builder.loggerConfig != null ? builder.loggerConfig : LoggerConfig.defaults();
-        this.pollingInterval = builder.pollingInterval != null ? builder.pollingInterval : Duration.ofSeconds(1);
+        this.pollingInterval = builder.pollingInterval != null ? builder.pollingInterval : Duration.ofMillis(1000);
         this.checkpointDelay = builder.checkpointDelay != null ? builder.checkpointDelay : Duration.ofSeconds(0);
     }
 

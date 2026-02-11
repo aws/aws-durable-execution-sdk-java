@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -30,91 +29,22 @@ public class ApiRequestBatcher<T> {
     /** Executes the batch operation */
     private final Consumer<List<T>> executeBatch;
 
+    /** Accumulated requests */
+    private final List<Item<T>> items;
+
+    /** Current batch size in bytes */
+    private volatile int totalBytes;
+
+    /** Time when the current batch must be flushed */
+    private volatile long expireTime;
+
+    /** Timer to auto-flush incomplete batch */
+    private CompletableFuture<Void> flushTimer;
+
+    /** Future of flushing previous batch */
+    private CompletableFuture<Void> previousBatchFuture;
+
     private record Item<T>(T request, CompletableFuture<Void> result) {}
-
-    /** Batch accumulator */
-    private class Batch {
-        /** Accumulated requests */
-        private final List<Item<T>> items;
-        /** Current batch size in bytes */
-        private int totalBytes;
-
-        long expireTime;
-        /** Timer to auto-flush incomplete batch */
-        private final CompletableFuture<Void> flushTimer;
-
-        Batch() {
-            this.items = new ArrayList<>();
-            this.totalBytes = 0;
-            this.expireTime = System.nanoTime() + MAX_DELAY.toNanos();
-            this.flushTimer = new CompletableFuture<>();
-            this.flushTimer.thenRunAsync(this::execute, InternalExecutor.INSTANCE);
-        }
-
-        /** Adds request to batch and returns its result future */
-        CompletableFuture<Void> add(T request, Duration delay) {
-            totalBytes += calculateItemSize.apply(request);
-            CompletableFuture<Void> result = new CompletableFuture<>();
-            items.add(new Item<>(request, result));
-            long newExpireTime = System.nanoTime() + delay.toNanos();
-            if (expireTime > newExpireTime) {
-                // the batch needs to be completed earlier than previously scheduled
-                expireTime = newExpireTime;
-                flushAfterDelay(delay.toNanos());
-            }
-            return result;
-        }
-
-        /** Returns true if request fits within byte limit */
-        boolean canFit(T request) {
-            return totalBytes + calculateItemSize.apply(request) <= maxBatchBytes;
-        }
-
-        /** Returns true if batch has reached item count limit */
-        boolean isFull() {
-            return items.size() >= maxItemCount;
-        }
-
-        void flushAfterDelay(long delayInNanos) {
-            flushTimer.completeOnTimeout(null, delayInNanos, TimeUnit.NANOSECONDS);
-        }
-
-        void flushNow() {
-            flushAfterDelay(0);
-        }
-
-        void cancel() {
-            var ex = new IllegalDurableOperationException("Batch cancelled");
-            for (Item<T> item : items) {
-                item.result().completeExceptionally(ex);
-            }
-        }
-
-        /** Executes batch and completes all item futures */
-        private void execute() {
-            // detach this from active batch if it's still active
-            detachActiveBatchAndCreateNew(this);
-
-            List<T> requests = new ArrayList<>(items.size());
-            for (Item<T> item : items) {
-                requests.add(item.request());
-            }
-
-            try {
-                executeBatch.accept(requests);
-                for (Item<T> item : items) {
-                    item.result().complete(null);
-                }
-            } catch (Throwable ex) {
-                for (Item<T> item : items) {
-                    item.result().completeExceptionally(ex);
-                }
-            }
-        }
-    }
-
-    /** Current batch accepting requests */
-    private final AtomicReference<Batch> activeBatchAtom;
 
     /**
      * Creates a new ApiRequestBatcher with the specified configuration.
@@ -133,7 +63,22 @@ public class ApiRequestBatcher<T> {
         this.maxBatchBytes = maxBatchBytes;
         this.calculateItemSize = calculateItemSize;
         this.executeBatch = executeBatch;
-        this.activeBatchAtom = new AtomicReference<>(new Batch());
+        this.previousBatchFuture = CompletableFuture.allOf();
+        this.items = new ArrayList<>();
+
+        initializeBatch();
+    }
+
+    private void initializeBatch() {
+        this.items.clear();
+        this.totalBytes = 0;
+        this.expireTime = System.nanoTime() + MAX_DELAY.toNanos();
+        this.flushTimer = new CompletableFuture<>();
+        this.flushTimer.thenRun(() -> {
+            synchronized (items) {
+                execute();
+            }
+        });
     }
 
     /**
@@ -144,49 +89,90 @@ public class ApiRequestBatcher<T> {
      */
     public CompletableFuture<Void> submit(T request, Duration flushDelay) {
         // Flush the current batch if request doesn't fit
-        while (true) {
-            Batch activeBatch = activeBatchAtom.get();
-
-            if (activeBatch.isFull() || !activeBatch.canFit(request)) {
-                if (!flushActiveBatchAndCreateNew(activeBatch)) {
-                    // failed to flush due to a race condition.
-                    continue;
-                }
+        synchronized (items) {
+            if (isFull() || !canFit(request)) {
+                flushNow();
             }
 
-            var result = activeBatch.add(request, flushDelay);
+            var future = add(request, flushDelay);
 
-            // Flush early if batch is full
-            if (activeBatch.isFull()) {
-                flushActiveBatchAndCreateNew(activeBatch);
+            if (isFull()) {
+                // Flush early if batch is full
+                flushNow();
+            }
+            return future;
+        }
+    }
+
+    /** Adds request to batch and returns its result future */
+    CompletableFuture<Void> add(T request, Duration delay) {
+        synchronized (items) {
+            totalBytes += calculateItemSize.apply(request);
+            CompletableFuture<Void> result = new CompletableFuture<>();
+            items.add(new Item<>(request, result));
+            long newExpireTime = System.nanoTime() + delay.toNanos();
+            if (expireTime > newExpireTime) {
+                // the batch needs to be completed earlier than previously scheduled
+                expireTime = newExpireTime;
+                flushAfterDelay(delay.toNanos());
             }
             return result;
         }
     }
 
-    private Batch detachActiveBatchAndCreateNew(Batch oldBatch) {
-        if (activeBatchAtom.compareAndSet(oldBatch, new Batch())) {
-            return oldBatch;
-        }
-
-        return null;
+    /** Returns true if request fits within byte limit */
+    private boolean canFit(T request) {
+        return totalBytes + calculateItemSize.apply(request) <= maxBatchBytes;
     }
 
-    /** flushes active batch and crate a new batch. Return true if successful */
-    private boolean flushActiveBatchAndCreateNew(Batch oldBatch) {
-        Batch activeBatch = detachActiveBatchAndCreateNew(oldBatch);
-        if (activeBatch != null) {
-            activeBatch.flushNow();
-        }
-        return activeBatch != null;
+    /** Returns true if batch has reached item count limit */
+    private boolean isFull() {
+        return items.size() >= maxItemCount;
+    }
+
+    private void flushAfterDelay(long delayInNanos) {
+        flushTimer.completeOnTimeout(null, delayInNanos, TimeUnit.NANOSECONDS);
+    }
+
+    private void flushNow() {
+        this.flushTimer.cancel(false);
+        // wait for new batch to be ready
+        execute();
     }
 
     public void shutdown() {
-        Batch activeBatch = activeBatchAtom.get();
-        while (!activeBatchAtom.compareAndSet(activeBatch, new Batch())) {
-            // try again
-            activeBatch = activeBatchAtom.get();
+        var ex = new IllegalDurableOperationException("Batch cancelled");
+        synchronized (items) {
+            for (Item<T> item : items) {
+                item.result().completeExceptionally(ex);
+            }
+            initializeBatch();
         }
-        activeBatchAtom.get().cancel();
+    }
+
+    /** Executes batch and completes all item futures */
+    private void execute() {
+        if (items.isEmpty()) {
+            return;
+        }
+        var copyItems = new ArrayList<>(items);
+        initializeBatch();
+
+        // append the current batch to the previous one
+        previousBatchFuture = previousBatchFuture.thenRunAsync(
+                () -> {
+                    try {
+                        var requests = copyItems.stream().map(Item::request).toList();
+                        executeBatch.accept(requests);
+                        for (Item<T> item : copyItems) {
+                            item.result().complete(null);
+                        }
+                    } catch (Throwable ex) {
+                        for (Item<T> item : copyItems) {
+                            item.result().completeExceptionally(ex);
+                        }
+                    }
+                },
+                InternalExecutor.INSTANCE);
     }
 }

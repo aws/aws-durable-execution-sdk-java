@@ -4,21 +4,22 @@ package com.amazonaws.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,6 @@ class ApiRequestBatcherTest {
     private static class Input {}
 
     private Input input;
-    private Clock fixedClock;
     private ApiRequestBatcher<Input> cut;
     private Consumer<List<Input>> doBatchAction;
 
@@ -39,38 +39,40 @@ class ApiRequestBatcherTest {
     void setUp() {
         input = mock(Input.class);
         doBatchAction = mock();
-        fixedClock = Clock.fixed(Instant.now(), ZoneOffset.UTC);
         cut = new ApiRequestBatcher<>(MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, doBatchAction);
     }
 
     @Test
     void whenSingleActionPerformed_anUncompletedFutureIsReturned() {
         CompletableFuture<Void> resultFuture = cut.submit(input, MAX_DELAY_MILLIS);
+        assertThrows(TimeoutException.class, () -> resultFuture.get(50, TimeUnit.MILLISECONDS));
 
         verify(doBatchAction, never()).accept(any());
         assertFalse(resultFuture.isDone());
     }
 
     @Test
-    void whenMultipleActionsPerformedBelowMaxBatchSize_anUncompletedFutureIsReturnedEachTime() {
+    void whenMultipleActionsPerformedBelowMaxBatchSize_anUncompletedFutureIsReturnedEachTime()
+            throws ExecutionException, InterruptedException, TimeoutException {
         List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
         for (int i = 0; i < MAX_BATCH_SIZE - 1; i++) {
             resultFutures.add(cut.submit(input, MAX_DELAY_MILLIS));
         }
 
+        assertThrows(TimeoutException.class, () -> resultFutures.get(0).get(50, TimeUnit.MILLISECONDS));
+
         verify(doBatchAction, never()).accept(any());
-        assertTrue(resultFutures.stream().noneMatch(CompletableFuture::isDone));
     }
 
     @Test
     void whenMultipleActionsPerformedMatchingMaxBatchSize_batchInvokeIsPerformed() {
         List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
-        for (int i = 0; i < MAX_BATCH_SIZE; i++) {
+        for (int i = 0; i < MAX_BATCH_SIZE * 2; i++) {
             resultFutures.add(cut.submit(input, MAX_DELAY_MILLIS));
         }
 
         CompletableFuture.allOf(resultFutures.toArray(CompletableFuture[]::new)).join();
-        verify(doBatchAction).accept(any());
+        verify(doBatchAction, times(2)).accept(any());
     }
 
     @Test
@@ -98,7 +100,7 @@ class ApiRequestBatcherTest {
     }
 
     @Test
-    void whenBatchInvokeReturnsOutcome_allFuturesCompleteSuccessfully() {
+    void whenBatchInvokeReturns_allFuturesCompleteSuccessfully() {
         Input input1 = mock(Input.class);
         Input input2 = mock(Input.class);
         Input input3 = mock(Input.class);
@@ -118,7 +120,7 @@ class ApiRequestBatcherTest {
         var future1 = cut.submit(input, MAX_DELAY_MILLIS);
         var future2 = cut.submit(input, MAX_DELAY_MILLIS);
         CompletableFuture.allOf(future1, future2)
-                .thenAccept(v -> verify(doBatchAction).accept(any()))
+                .thenAccept(v -> verify(doBatchAction, times(2)).accept(any()))
                 .join();
     }
 
@@ -158,14 +160,5 @@ class ApiRequestBatcherTest {
                     return null;
                 });
         CompletableFuture.allOf(resultFuture1, resultFuture2, resultFuture3).join();
-    }
-
-    private Throwable getFutureCause(CompletableFuture<?> failedFuture) throws InterruptedException {
-        try {
-            failedFuture.get();
-            return null;
-        } catch (ExecutionException cause) {
-            return cause.getCause();
-        }
     }
 }

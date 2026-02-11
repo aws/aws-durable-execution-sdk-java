@@ -242,9 +242,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     protected Throwable deserializeException(ErrorObject errorObject) {
+        Throwable original = null;
+        if (errorObject == null) {
+            return original;
+        }
         var errorType = errorObject.errorType();
         var errorData = errorObject.errorData();
-        Throwable original = null;
 
         if (errorType == null) {
             return original;
