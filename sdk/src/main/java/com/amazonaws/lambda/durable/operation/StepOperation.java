@@ -152,6 +152,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void handleStepFailure(Throwable exception, int attempt) {
+        exception = ExceptionHelper.unwrapCompletableFuture(exception);
         if (exception instanceof UnrecoverableDurableExecutionException) {
             // terminate the execution and throw the exception if it's not recoverable
             terminateExecution((UnrecoverableDurableExecutionException) exception);
