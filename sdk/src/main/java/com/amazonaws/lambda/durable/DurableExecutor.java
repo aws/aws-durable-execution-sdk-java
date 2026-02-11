@@ -46,11 +46,6 @@ public class DurableExecutor {
                         : 0);
 
         // Validate initial operation is an EXECUTION operation
-        // TODO: Double check if very large inputs (close to 6MB) have a null
-        // initialExecutionState.
-        // Potentially, we need to call the backend to fetch it. Give it to the manager,
-        // have it load it from the
-        // if null.
         if (input.initialExecutionState() == null
                 || input.initialExecutionState().operations() == null
                 || input.initialExecutionState().operations().isEmpty()
