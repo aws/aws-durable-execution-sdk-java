@@ -152,11 +152,11 @@ public class ApiRequestBatcher<T> {
 
     /** Executes batch and completes all item futures */
     private void execute() {
-        if (items.isEmpty()) {
-            return;
-        }
         var copyItems = new ArrayList<>(items);
         initializeBatch();
+        if (copyItems.isEmpty()) {
+            return;
+        }
 
         // append the current batch to the previous one
         previousBatchFuture = previousBatchFuture.thenRunAsync(
