@@ -3,15 +3,13 @@
 package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.DurableConfig;
-import com.amazonaws.lambda.durable.client.DurableExecutionClient;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,11 +34,9 @@ class CheckpointBatcher {
 
     private final Consumer<List<Operation>> callback;
     private final String durableExecutionArn;
-    private final DurableExecutionClient client;
-    private final AtomicBoolean isRunning = new AtomicBoolean(true);
-    private final Duration pollingInterval;
     private final Map<String, List<CompletableFuture<Operation>>> pollingFutures = new ConcurrentHashMap<>();
     private final ApiRequestBatcher<OperationUpdate> checkpointApiRequestBatcher;
+    private final DurableConfig config;
     private String checkpointToken;
 
     CheckpointBatcher(
@@ -48,24 +44,17 @@ class CheckpointBatcher {
             String durableExecutionArn,
             String checkpointToken,
             Consumer<List<Operation>> callback) {
-        this.client = config.getDurableExecutionClient();
+        this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
         this.checkpointToken = checkpointToken;
-        this.pollingInterval = config.getPollingInterval();
         this.checkpointApiRequestBatcher = new ApiRequestBatcher<>(
-                config.getCheckpointDelay(),
-                MAX_ITEM_COUNT,
-                MAX_BATCH_SIZE_BYTES,
-                CheckpointBatcher::estimateSize,
-                this::doBatchAction);
-
-        InternalExecutor.INSTANCE.execute(this::processQueue);
+                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointBatcher::estimateSize, this::doBatchAction);
     }
 
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
-        return checkpointApiRequestBatcher.submit(update);
+        return checkpointApiRequestBatcher.submit(update, config.getCheckpointDelay());
     }
 
     CompletableFuture<Operation> pollForUpdate(String operationId) {
@@ -76,20 +65,20 @@ class CheckpointBatcher {
             pollingFutures
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
-            pollingFutures.notifyAll();
         }
+        checkpointApiRequestBatcher.submit(null, config.getPollingInterval());
         return future;
     }
 
     void shutdown() {
-        isRunning.set(false);
-
-       List<List<CompletableFuture<Operation>>> allFutures;
+        List<List<CompletableFuture<Operation>>> allFutures;
+        checkpointApiRequestBatcher.shutdown();
 
         synchronized (pollingFutures) {
             allFutures = new ArrayList<>(pollingFutures.values());
             pollingFutures.clear();
         }
+
         for (var futures : allFutures) {
             futures.forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
         }
@@ -101,7 +90,8 @@ class CheckpointBatcher {
             operations.addAll(initialOperations);
         }
         while (nextMarker != null && !nextMarker.isEmpty()) {
-            var response = client.getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
+            var response = config.getDurableExecutionClient()
+                    .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
             logger.debug("Durable API getExecutionState called: {}.", response);
             operations.addAll(response.operations());
             nextMarker = response.nextMarker();
@@ -109,46 +99,18 @@ class CheckpointBatcher {
         return operations;
     }
 
-    private void processQueue() {
-        // the background thread runs until shutdown
-        while (isRunning.get()) {
-            try {
-                if (!pollingFutures.isEmpty()) {
-                    // If pollers exist, poll for updates periodically.
-                    // When wake from wait, sleep for an initial delay before calling the API
-                    Thread.sleep(pollingInterval.toMillis());
-
-                    // call the API if pollers still exist after the initial delay, during which another
-                    // checkpoint call could have cleared the pollers
-                    if (!pollingFutures.isEmpty()) {
-                        doBatchAction(List.of()).join();
-                    }
-                } else{
-                    // if empty, waiting for new pollers
-                    synchronized (pollingFutures) {
-                        // Check again because another thread may have called pollForUpdate() since we checked earlier.
-                        if (pollingFutures.isEmpty()) {
-                            pollingFutures.wait(pollingInterval.toMillis());
-                        }
-                    }
-                }
-            } catch (InterruptedException ignored) {
-                // shutdown the batcher if the thread is stopped
-                shutdown();
-            }
-
-        }
-    }
-
-    protected void doBatchAction(List<OperationUpdate> updates) {
-        // doBatchAction will be called from the polling thread and also from ApiRequestBatcher.
-        // Use synchronized here to make sure no concurrent checkpoint API calls
+    private void doBatchAction(List<OperationUpdate> updates) {
+        // doBatchAction can be called concurrently from ApiRequestBatcher.
         synchronized (pollingFutures) {
             if (pollingFutures.isEmpty() && updates.isEmpty()) {
                 return;
             }
-            logger.debug("Calling durable API checkpointDurableExecution with {} updates", updates.size());
-            var response = client.checkpoint(durableExecutionArn, checkpointToken, updates);
+
+            // filter the null values from pollers
+            var request = updates.stream().filter(Objects::nonNull).toList();
+
+            logger.debug("Calling durable API checkpointDurableExecution with {} updates", request.size());
+            var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
             logger.debug("Durable API checkpointDurableExecution called: {}.", response);
 
             // Notify callback of completion

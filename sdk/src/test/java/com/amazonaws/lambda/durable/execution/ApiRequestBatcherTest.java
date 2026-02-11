@@ -6,11 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -20,8 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,26 +33,21 @@ class ApiRequestBatcherTest {
     private Input input;
     private Clock fixedClock;
     private ApiRequestBatcher<Input> cut;
-    private Function<List<Input>, CompletableFuture<Void>> doBatchAction;
-    private CompletableFuture<Void> batchResultFuture;
+    private Consumer<List<Input>> doBatchAction;
 
     @BeforeEach
     void setUp() {
         input = mock(Input.class);
         doBatchAction = mock();
-        batchResultFuture = new CompletableFuture<>();
         fixedClock = Clock.fixed(Instant.now(), ZoneOffset.UTC);
-        cut = new ApiRequestBatcher<>(
-                MAX_DELAY_MILLIS, MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, doBatchAction);
-
-        when(doBatchAction.apply(any())).thenReturn(batchResultFuture);
+        cut = new ApiRequestBatcher<>(MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, doBatchAction);
     }
 
     @Test
     void whenSingleActionPerformed_anUncompletedFutureIsReturned() {
-        CompletableFuture<Void> resultFuture = cut.submit(input);
+        CompletableFuture<Void> resultFuture = cut.submit(input, MAX_DELAY_MILLIS);
 
-        verify(doBatchAction, never()).apply(any());
+        verify(doBatchAction, never()).accept(any());
         assertFalse(resultFuture.isDone());
     }
 
@@ -62,10 +55,10 @@ class ApiRequestBatcherTest {
     void whenMultipleActionsPerformedBelowMaxBatchSize_anUncompletedFutureIsReturnedEachTime() {
         List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
         for (int i = 0; i < MAX_BATCH_SIZE - 1; i++) {
-            resultFutures.add(cut.submit(input));
+            resultFutures.add(cut.submit(input, MAX_DELAY_MILLIS));
         }
 
-        verify(doBatchAction, never()).apply(any());
+        verify(doBatchAction, never()).accept(any());
         assertTrue(resultFutures.stream().noneMatch(CompletableFuture::isDone));
     }
 
@@ -73,33 +66,35 @@ class ApiRequestBatcherTest {
     void whenMultipleActionsPerformedMatchingMaxBatchSize_batchInvokeIsPerformed() {
         List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
         for (int i = 0; i < MAX_BATCH_SIZE; i++) {
-            resultFutures.add(cut.submit(input));
+            resultFutures.add(cut.submit(input, MAX_DELAY_MILLIS));
         }
 
-        verify(doBatchAction).apply(any());
-        assertTrue(resultFutures.stream().noneMatch(CompletableFuture::isDone));
+        CompletableFuture.allOf(resultFutures.toArray(CompletableFuture[]::new)).join();
+        verify(doBatchAction).accept(any());
     }
 
     @Test
-    void whenBatchInvokeThrows_allFuturesCompleteWithThatException() throws InterruptedException {
-        CompletableFuture<Void> resultFuture1 = cut.submit(input);
-        CompletableFuture<Void> resultFuture2 = cut.submit(input);
-        CompletableFuture<Void> resultFuture3 = cut.submit(input);
+    void whenBatchInvokeThrows_allFuturesCompleteWithThatException() {
+        Throwable batchCause = new RuntimeException();
+        doThrow(batchCause).when(doBatchAction).accept(any());
 
-        assertFalse(resultFuture1.isDone());
-        assertFalse(resultFuture2.isDone());
-        assertFalse(resultFuture3.isDone());
+        CompletableFuture<Void> resultFuture1 = cut.submit(input, MAX_DELAY_MILLIS)
+                .handle((v, ex) -> {
+                    assertEquals(batchCause, ex);
+                    return null;
+                });
+        CompletableFuture<Void> resultFuture2 = cut.submit(input, MAX_DELAY_MILLIS)
+                .handle((v, ex) -> {
+                    assertEquals(batchCause, ex);
+                    return null;
+                });
+        CompletableFuture<Void> resultFuture3 = cut.submit(input, MAX_DELAY_MILLIS)
+                .handle((v, ex) -> {
+                    assertEquals(batchCause, ex);
+                    return null;
+                });
 
-        Throwable batchCause = mock(Throwable.class);
-        batchResultFuture.completeExceptionally(batchCause);
-
-        assertTrue(resultFuture1.isCompletedExceptionally());
-        assertTrue(resultFuture2.isCompletedExceptionally());
-        assertTrue(resultFuture3.isCompletedExceptionally());
-
-        assertEquals(batchCause, getFutureCause(resultFuture1));
-        assertEquals(batchCause, getFutureCause(resultFuture2));
-        assertEquals(batchCause, getFutureCause(resultFuture3));
+        CompletableFuture.allOf(resultFuture1, resultFuture2, resultFuture3).join();
     }
 
     @Test
@@ -108,74 +103,61 @@ class ApiRequestBatcherTest {
         Input input2 = mock(Input.class);
         Input input3 = mock(Input.class);
 
-        CompletableFuture<Void> resultFuture1 = cut.submit(input1);
-        CompletableFuture<Void> resultFuture2 = cut.submit(input2);
-        CompletableFuture<Void> resultFuture3 = cut.submit(input3);
+        CompletableFuture<Void> resultFuture1 = cut.submit(input1, MAX_DELAY_MILLIS);
+        CompletableFuture<Void> resultFuture2 = cut.submit(input2, MAX_DELAY_MILLIS);
+        CompletableFuture<Void> resultFuture3 = cut.submit(input3, MAX_DELAY_MILLIS);
 
-        assertFalse(resultFuture1.isDone());
-        assertFalse(resultFuture2.isDone());
-        assertFalse(resultFuture3.isDone());
-
-        batchResultFuture.complete(null);
-
-        assertTrue(resultFuture1.isDone());
-        assertTrue(resultFuture2.isDone());
-        assertTrue(resultFuture3.isDone());
-
-        assertFalse(resultFuture1.isCompletedExceptionally());
-        assertFalse(resultFuture2.isCompletedExceptionally());
-        assertFalse(resultFuture3.isCompletedExceptionally());
+        CompletableFuture.allOf(resultFuture1, resultFuture2, resultFuture3).join();
     }
 
     @Test
     void testSubmit_whenCannotAddItemDueToBinarySizeConstraint_thenFlushCurrentBatchAndCreateNewOne() {
         var cut = new ApiRequestBatcher<>(
-                MAX_DELAY_MILLIS,
-                MAX_BATCH_SIZE,
-                MAX_BATCH_BINARY_SIZE_IN_BYTES,
-                item -> MAX_BATCH_BINARY_SIZE_IN_BYTES,
-                doBatchAction);
-        List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
+                MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> MAX_BATCH_BINARY_SIZE_IN_BYTES, doBatchAction);
 
-        resultFutures.add(cut.submit(input));
-        resultFutures.add(cut.submit(input));
-
-        verify(doBatchAction).apply(any());
-
-        assertTrue(resultFutures.stream().noneMatch(CompletableFuture::isDone));
+        var future1 = cut.submit(input, MAX_DELAY_MILLIS);
+        var future2 = cut.submit(input, MAX_DELAY_MILLIS);
+        CompletableFuture.allOf(future1, future2)
+                .thenAccept(v -> verify(doBatchAction).accept(any()))
+                .join();
     }
 
     @Test
     void whenTimerFires_batchIsProcessed() {
-        var timerCut = new ApiRequestBatcher<>(
-                Duration.ofMillis(1), MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, doBatchAction);
+        var timerCut =
+                new ApiRequestBatcher<>(MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, doBatchAction);
+        long startTime = System.nanoTime();
 
-        CompletableFuture<Void> resultFuture = timerCut.submit(input);
+        CompletableFuture<Void> resultFuture = timerCut.submit(input, Duration.ofMillis(1));
 
         // Wait for the timeout to trigger
-        CompletableFuture.delayedExecutor(10, TimeUnit.MILLISECONDS).execute(() -> {});
+        CompletableFuture.allOf(resultFuture).join();
 
-        verify(doBatchAction, timeout(50)).apply(any());
-        assertFalse(resultFuture.isDone());
+        assertTrue(System.nanoTime() - startTime < Duration.ofMillis(20).toNanos());
+        verify(doBatchAction).accept(any());
     }
 
     @Test
     void whenBatchInvokeThrowsCompletionException_allFuturesCompleteWithUnwrappedCause() throws InterruptedException {
-        CompletableFuture<Void> resultFuture1 = cut.submit(input);
-        CompletableFuture<Void> resultFuture2 = cut.submit(input);
-        CompletableFuture<Void> resultFuture3 = cut.submit(input);
-
         RuntimeException rootCause = new RuntimeException("Root cause");
-        batchResultFuture.completeExceptionally(rootCause);
+        doThrow(rootCause).when(doBatchAction).accept(any());
 
-        assertTrue(resultFuture1.isCompletedExceptionally());
-        assertTrue(resultFuture2.isCompletedExceptionally());
-        assertTrue(resultFuture3.isCompletedExceptionally());
-
-        // Should get unwrapped root cause, not the CompletionException wrapper
-        assertEquals(rootCause, getFutureCause(resultFuture1));
-        assertEquals(rootCause, getFutureCause(resultFuture2));
-        assertEquals(rootCause, getFutureCause(resultFuture3));
+        CompletableFuture<Void> resultFuture1 = cut.submit(input, MAX_DELAY_MILLIS)
+                .handle((v, ex) -> {
+                    assertEquals(rootCause, ex);
+                    return null;
+                });
+        CompletableFuture<Void> resultFuture2 = cut.submit(input, MAX_DELAY_MILLIS)
+                .handle((v, ex) -> {
+                    assertEquals(rootCause, ex);
+                    return null;
+                });
+        CompletableFuture<Void> resultFuture3 = cut.submit(input, MAX_DELAY_MILLIS)
+                .handle((v, ex) -> {
+                    assertEquals(rootCause, ex);
+                    return null;
+                });
+        CompletableFuture.allOf(resultFuture1, resultFuture2, resultFuture3).join();
     }
 
     private Throwable getFutureCause(CompletableFuture<?> failedFuture) throws InterruptedException {
