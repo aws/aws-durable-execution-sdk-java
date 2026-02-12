@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.execution;
 
-import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -140,14 +139,14 @@ public class ApiRequestBatcher<T> {
         execute();
     }
 
+    /** Flushes pending batch and waits for completion */
     public void shutdown() {
-        var ex = new IllegalDurableOperationException("Batch cancelled");
         synchronized (items) {
-            for (Item<T> item : items) {
-                item.result().completeExceptionally(ex);
-            }
-            initializeBatch();
+            flushNow();
         }
+
+        // wait for previous batches to be flushed
+        previousBatchFuture.join();
     }
 
     /** Executes batch and completes all item futures */

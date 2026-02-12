@@ -3,7 +3,6 @@
 package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.DurableConfig;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -59,10 +58,12 @@ class CheckpointBatcher {
         return checkpointApiRequestBatcher.submit(update, config.getCheckpointDelay());
     }
 
+    /** Poll for updates of the specified operation with preconfigured intervals */
     CompletableFuture<Operation> pollForUpdate(String operationId) {
         return pollForUpdate(operationId, config.getPollingInterval());
     }
 
+    /** Poll for updates of the specified operation with specified delay */
     CompletableFuture<Operation> pollForUpdate(String operationId, Duration delay) {
         logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
@@ -72,14 +73,21 @@ class CheckpointBatcher {
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
         }
-        checkpointApiRequestBatcher.submit(null, delay);
+        checkpointApiRequestBatcher.submit(null, delay).thenCompose(v -> {
+            if (future.isDone()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return checkpointApiRequestBatcher.submit(null, delay);
+        });
         return future;
     }
 
     void shutdown() {
-        List<List<CompletableFuture<Operation>>> allFutures;
+        // wait for all checkpoint requests to complete
         checkpointApiRequestBatcher.shutdown();
 
+        // complete all polling futures with an exception
+        List<List<CompletableFuture<Operation>>> allFutures;
         synchronized (pollingFutures) {
             allFutures = new ArrayList<>(pollingFutures.values());
             pollingFutures.clear();
@@ -90,6 +98,7 @@ class CheckpointBatcher {
         }
     }
 
+    /** Calling GetExecutionState API to get all pages of operations given the nextMarker */
     public List<Operation> fetchAllPages(List<Operation> initialOperations, String nextMarker) {
         List<Operation> operations = new ArrayList<>();
         if (initialOperations != null) {

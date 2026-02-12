@@ -5,7 +5,6 @@ package com.amazonaws.lambda.durable.execution;
 import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
-
 import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
