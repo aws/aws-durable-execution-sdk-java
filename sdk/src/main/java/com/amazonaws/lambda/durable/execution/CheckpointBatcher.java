@@ -51,20 +51,21 @@ class CheckpointBatcher {
         this.callback = callback;
         this.checkpointToken = checkpointToken;
         this.checkpointApiRequestBatcher = new ApiRequestBatcher<>(
-                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointBatcher::estimateSize, this::doBatchAction);
+                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointBatcher::estimateSize, this::checkpointBatch);
     }
 
+    /** Queues a checkpoint request for batched execution */
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
         return checkpointApiRequestBatcher.submit(update, config.getCheckpointDelay());
     }
 
-    /** Poll for updates of the specified operation with preconfigured intervals */
+    /** Polls for updates of the specified operation with preconfigured intervals */
     CompletableFuture<Operation> pollForUpdate(String operationId) {
         return pollForUpdate(operationId, config.getPollingInterval());
     }
 
-    /** Poll for updates of the specified operation with specified delay */
+    /** Polls for updates of the specified operation with specified delay */
     CompletableFuture<Operation> pollForUpdate(String operationId, Duration delay) {
         logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
@@ -83,6 +84,7 @@ class CheckpointBatcher {
         return future;
     }
 
+    /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
     void shutdown() {
         // complete all polling futures with an exception
         List<List<CompletableFuture<Operation>>> allFutures;
@@ -99,7 +101,10 @@ class CheckpointBatcher {
         checkpointApiRequestBatcher.shutdown();
     }
 
-    /** Calling GetExecutionState API to get all pages of operations given the nextMarker */
+    /**
+     * Calling GetExecutionState API to get all pages of operations given CheckpointUpdatedExecutionState(operations,
+     * nextMarker)
+     */
     public List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
         List<Operation> operations = new ArrayList<>();
         if (checkpointUpdatedExecutionState == null) {
@@ -123,8 +128,7 @@ class CheckpointBatcher {
         return operations;
     }
 
-    private void doBatchAction(List<OperationUpdate> updates) {
-        // doBatchAction can be called concurrently from ApiRequestBatcher.
+    private void checkpointBatch(List<OperationUpdate> updates) {
         synchronized (pollingFutures) {
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
