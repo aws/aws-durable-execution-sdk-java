@@ -42,7 +42,7 @@ jobs:
           - 25
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Setup AWS SAM CLI
         uses: aws-actions/setup-sam@v2
         with:
