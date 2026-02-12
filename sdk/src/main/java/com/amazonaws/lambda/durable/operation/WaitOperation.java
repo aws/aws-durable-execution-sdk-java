@@ -59,7 +59,7 @@ public class WaitOperation extends BaseDurableOperation<Void> {
         }
 
         logger.debug("Remaining wait time: {} seconds", remainingWaitTime.getSeconds());
-        pollForOperationUpdates();
+        pollForOperationUpdates(remainingWaitTime);
     }
 
     @Override

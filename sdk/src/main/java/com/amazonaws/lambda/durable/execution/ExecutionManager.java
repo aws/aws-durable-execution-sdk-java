@@ -5,6 +5,8 @@ package com.amazonaws.lambda.durable.execution;
 import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
+
+import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -213,6 +215,10 @@ public class ExecutionManager {
     // re-invoked because we never suspended.
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId) {
         return checkpointBatcher.pollForUpdate(operationId);
+    }
+
+    public CompletableFuture<Operation> pollForOperationUpdates(String operationId, Duration delay) {
+        return checkpointBatcher.pollForUpdate(operationId, delay);
     }
 
     // ===== Utilities =====

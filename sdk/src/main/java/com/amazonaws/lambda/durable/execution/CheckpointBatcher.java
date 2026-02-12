@@ -3,6 +3,8 @@
 package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.DurableConfig;
+
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -58,6 +60,10 @@ class CheckpointBatcher {
     }
 
     CompletableFuture<Operation> pollForUpdate(String operationId) {
+        return pollForUpdate(operationId, config.getPollingInterval());
+    }
+
+    CompletableFuture<Operation> pollForUpdate(String operationId, Duration delay) {
         logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
         synchronized (pollingFutures) {
@@ -66,7 +72,7 @@ class CheckpointBatcher {
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
         }
-        checkpointApiRequestBatcher.submit(null, config.getPollingInterval());
+        checkpointApiRequestBatcher.submit(null, delay);
         return future;
     }
 
