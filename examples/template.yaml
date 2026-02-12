@@ -2,26 +2,46 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: AWS Lambda Durable Execution SDK Examples
 
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  DockerFile:
+    Type: String
+    Default: examples/Dockerfile
+    Description: path to Dockerfile
+  FunctionNameSuffix:
+    Type: String
+    Default: ''
+    Description: Suffix to append to all function names
+
 Globals:
   Function:
     Timeout: 900
     MemorySize: 512
     Architectures:
-      - arm64
+      - !Ref Architecture
 
 Resources:
   SimpleStepExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: simple-step-example
+      FunctionName: !Join
+        - ''
+        - - simple-step-example
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.SimpleStepExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -29,7 +49,10 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: simple-invoke-example
+      FunctionName: !Join
+        - ''
+        - - 'simple-invoke-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.SimpleInvokeExample::handleRequest"]
       DurableConfig:
@@ -39,10 +62,16 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+                - lambda:InvokeFunction
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-invoke-example${FunctionNameSuffix}"
+            - Effect: Allow
+              Action:
                 - lambda:InvokeFunction
               Resource: '*'
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -50,14 +79,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: wait-example
+      FunctionName: !Join
+        - ''
+        - - 'wait-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -65,14 +104,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: retry-example
+      FunctionName: !Join
+        - ''
+        - - 'retry-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.RetryExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -80,14 +129,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: wait-at-least-example
+      FunctionName: !Join
+        - ''
+        - - 'wait-at-least-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -95,14 +154,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: wait-at-least-in-process-example
+      FunctionName: !Join
+        - ''
+        - - 'wait-at-least-in-process-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastInProcessExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -110,14 +179,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: retry-in-process-example
+      FunctionName: !Join
+        - ''
+        - - 'retry-in-process-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.RetryInProcessExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -125,14 +204,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: generic-types-example
+      FunctionName: !Join
+        - ''
+        - - 'generic-types-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.GenericTypesExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -140,14 +229,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: custom-config-example
+      FunctionName: !Join
+        - ''
+        - - 'custom-config-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.CustomConfigExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -155,14 +254,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: logging-example
+      FunctionName: !Join
+        - ''
+        - - 'logging-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.LoggingExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -170,14 +279,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: error-handling-example
+      FunctionName: !Join
+        - ''
+        - - 'error-handling-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.ErrorHandlingExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -185,14 +304,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: callback-example
+      FunctionName: !Join
+        - ''
+        - - 'callback-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.CallbackExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 
@@ -200,14 +329,24 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      FunctionName: many-async-steps-example
+      FunctionName: !Join
+        - ''
+        - - 'many-async-steps-example'
+          - !Ref FunctionNameSuffix
       ImageConfig:
         Command: ["com.amazonaws.lambda.durable.examples.ManyAsyncStepsExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example${FunctionNameSuffix}"
     Metadata:
-      Dockerfile: examples/Dockerfile
+      Dockerfile: !Ref DockerFile
       DockerContext: ../
       DockerTag: durable-examples
 

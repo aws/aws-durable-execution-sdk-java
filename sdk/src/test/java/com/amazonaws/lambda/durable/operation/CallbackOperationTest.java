@@ -14,7 +14,6 @@ import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
-import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
@@ -61,7 +60,9 @@ class CallbackOperationTest {
 
     private ExecutionManager createExecutionManager(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
-        var initialState = new InitialExecutionState(initialOperations, null);
+        var initialState = CheckpointUpdatedExecutionState.builder()
+                .operations(initialOperations)
+                .build();
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "test-token",

@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
@@ -99,11 +100,15 @@ class CheckpointBatcher {
     }
 
     /** Calling GetExecutionState API to get all pages of operations given the nextMarker */
-    public List<Operation> fetchAllPages(List<Operation> initialOperations, String nextMarker) {
+    public List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
         List<Operation> operations = new ArrayList<>();
-        if (initialOperations != null) {
-            operations.addAll(initialOperations);
+        if (checkpointUpdatedExecutionState == null) {
+            return operations;
         }
+        if (checkpointUpdatedExecutionState.operations() != null) {
+            operations.addAll(checkpointUpdatedExecutionState.operations());
+        }
+        var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
             var response = config.getDurableExecutionClient()
                     .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
@@ -135,12 +140,11 @@ class CheckpointBatcher {
             // the Phaser.
             checkpointToken = response.checkpointToken();
             if (response.newExecutionState() != null) {
-                var operations = fetchAllPages(
-                        response.newExecutionState().operations(),
-                        response.newExecutionState().nextMarker());
-                if (!operations.isEmpty()) {
-                    callback.accept(operations);
-                }
+                // fetch all pages of operations
+                var operations = fetchAllPages(response.newExecutionState());
+
+                // call the callback
+                callback.accept(operations);
 
                 // complete the registered pollingFutures
                 for (var operation : operations) {

@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.TestUtils;
-import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -17,7 +17,8 @@ class ExecutionManagerTest {
 
     private ExecutionManager createManager(List<Operation> operations) {
         var client = TestUtils.createMockClient();
-        var initialState = new InitialExecutionState(operations, null);
+        var initialState =
+                CheckpointUpdatedExecutionState.builder().operations(operations).build();
         return new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "test-token",

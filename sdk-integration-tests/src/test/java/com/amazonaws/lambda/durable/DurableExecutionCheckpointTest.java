@@ -33,7 +33,9 @@ class DurableExecutionCheckpointTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         var largeString = "x".repeat(7 * 1024 * 1024); // 7MB string
 
@@ -67,7 +69,9 @@ class DurableExecutionCheckpointTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         var smallResult = "Small result";
 

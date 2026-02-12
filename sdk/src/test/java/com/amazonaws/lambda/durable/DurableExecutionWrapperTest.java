@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable;
 
-import static java.util.List.of;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
@@ -12,7 +11,9 @@ import com.amazonaws.lambda.durable.model.DurableExecutionOutput;
 import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import java.util.List;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -71,7 +72,9 @@ class DurableExecutionWrapperTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token-1",
-                new DurableExecutionInput.InitialExecutionState(of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         // Execute
         var output = handler.handleRequest(input, null);
@@ -105,7 +108,9 @@ class DurableExecutionWrapperTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token-1",
-                new DurableExecutionInput.InitialExecutionState(of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         var output = handler.handleRequest(input, null);
 

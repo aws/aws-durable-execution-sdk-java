@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.model;
 
-import java.util.List;
-import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 
 public record DurableExecutionInput(
-        String durableExecutionArn, String checkpointToken, InitialExecutionState initialExecutionState) {
-    public record InitialExecutionState(List<Operation> operations, String nextMarker) {}
-}
+        String durableExecutionArn, String checkpointToken, CheckpointUpdatedExecutionState initialExecutionState) {}

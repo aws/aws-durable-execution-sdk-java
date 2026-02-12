@@ -1,0 +1,78 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/**' # for testing Github Actions
+      - 'sdk/**'
+      - 'sdk-testing/**'
+      - 'sdk-integration-tests/**'
+      - 'examples/**'
+      - 'pom.xml'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/**'
+      - 'sdk/**'
+      - 'sdk-testing/**'
+      - 'sdk-integration-tests/**'
+      - 'examples/**'
+      - 'pom.xml'
+
+# permission can be added at job level or workflow level
+permissions:
+  id-token: write # This is required for requesting the JWT
+  contents: read # This is required for actions/checkout
+
+jobs:
+  e2e-tests:
+    if: github.event_name == 'pull_request'
+    env:
+      AWS_REGION: us-west-2
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java:
+          - 17
+          - 21
+          - 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+#          token: ${{ secrets.GITHUB_TOKEN }} # only enable if we run into throughput issues
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: "${{ secrets.ACTIONS_INTEGRATION_ROLE_NAME }}"
+          role-session-name: java-language-sdk-test
+          aws-region: ${{ env.AWS_REGION }}
+      - name: sam build
+        run: | # add --no-cached  if debugging sam build
+          sam build --parameter-overrides \
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=DockerFile,ParameterValue=examples/Dockerfile-java${{ matrix.java }} ParameterKey=FunctionNameSuffix,ParameterValue=-java${{ matrix.java }}'
+        working-directory: ./examples
+      - name: sam deploy
+        run: | 
+          sam deploy --stack-name Java${{ matrix.java }}SDKCloudBasedIntegrationTestStack \
+            --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides \
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=DockerFile,ParameterValue=examples/Dockerfile-java${{ matrix.java }} ParameterKey=FunctionNameSuffix,ParameterValue=-java${{ matrix.java }}'
+        working-directory: ./examples
+      - name: Setup Java ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build locally
+        run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
+      - name: Cloud Based Integration Tests
+        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
+        working-directory: ./examples
