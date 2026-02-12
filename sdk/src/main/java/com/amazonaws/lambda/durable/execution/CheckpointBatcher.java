@@ -84,9 +84,6 @@ class CheckpointBatcher {
     }
 
     void shutdown() {
-        // wait for all checkpoint requests to complete
-        checkpointApiRequestBatcher.shutdown();
-
         // complete all polling futures with an exception
         List<List<CompletableFuture<Operation>>> allFutures;
         synchronized (pollingFutures) {
@@ -97,6 +94,9 @@ class CheckpointBatcher {
         for (var futures : allFutures) {
             futures.forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
         }
+
+        // wait for all checkpoint requests to complete
+        checkpointApiRequestBatcher.shutdown();
     }
 
     /** Calling GetExecutionState API to get all pages of operations given the nextMarker */
@@ -122,12 +122,13 @@ class CheckpointBatcher {
     private void doBatchAction(List<OperationUpdate> updates) {
         // doBatchAction can be called concurrently from ApiRequestBatcher.
         synchronized (pollingFutures) {
-            if (pollingFutures.isEmpty() && updates.isEmpty()) {
-                return;
-            }
-
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
+
+            if (pollingFutures.isEmpty() && request.isEmpty()) {
+                // ignore the batch if no pollers and no data to checkpoint
+                return;
+            }
 
             logger.debug("Calling durable API checkpointDurableExecution with {} updates", request.size());
             var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
