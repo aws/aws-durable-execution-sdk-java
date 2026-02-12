@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
-import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import java.time.Duration;
 import java.util.List;
@@ -26,7 +25,9 @@ class DurableContextTest {
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
-        var initialExecutionState = new InitialExecutionState(initialOperations, null);
+        var initialExecutionState = CheckpointUpdatedExecutionState.builder()
+                .operations(initialOperations)
+                .build();
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
                         + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",

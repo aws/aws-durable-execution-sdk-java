@@ -14,6 +14,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -268,7 +269,7 @@ public class LocalDurableTestRunner<I, O> {
         return new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "test-token",
-                new DurableExecutionInput.InitialExecutionState(allOps, null));
+                CheckpointUpdatedExecutionState.builder().operations(allOps).build());
     }
 
     private Context mockLambdaContext() {

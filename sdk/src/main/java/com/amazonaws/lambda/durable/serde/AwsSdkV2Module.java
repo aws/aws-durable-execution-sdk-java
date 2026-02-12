@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 
@@ -24,7 +25,8 @@ public class AwsSdkV2Module extends SimpleModule {
      *
      * <p>See https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
      */
-    private static final List<Class<?>> SDK_CLASSES = List.of(Operation.class, ErrorObject.class);
+    private static final List<Class<?>> SDK_CLASSES =
+            List.of(Operation.class, ErrorObject.class, CheckpointUpdatedExecutionState.class);
 
     public AwsSdkV2Module() {
         super("AwsSdkV2Module");

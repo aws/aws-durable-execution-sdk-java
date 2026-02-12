@@ -14,6 +14,7 @@ import com.amazonaws.lambda.durable.model.ExecutionStatus;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -42,7 +43,9 @@ class DurableExecutionTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         var output = DurableExecutor.execute(
                 input,
@@ -70,7 +73,9 @@ class DurableExecutionTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         var output = DurableExecutor.execute(
                 input,
@@ -101,7 +106,9 @@ class DurableExecutionTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         var output = DurableExecutor.execute(
                 input,
@@ -140,7 +147,9 @@ class DurableExecutionTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token2",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp, completedStep), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp, completedStep))
+                        .build());
 
         var output = DurableExecutor.execute(
                 input,
@@ -158,7 +167,7 @@ class DurableExecutionTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(), null));
+                CheckpointUpdatedExecutionState.builder().operations(List.of()).build());
 
         var exception = assertThrows(
                 IllegalStateException.class,
@@ -180,7 +189,9 @@ class DurableExecutionTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(stepOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(stepOp))
+                        .build());
 
         var exception = assertThrows(
                 IllegalStateException.class,
@@ -201,7 +212,9 @@ class DurableExecutionTest {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         var result = DurableExecutor.execute(
                 input, null, String.class, (userInput, ctx) -> "result", configWithMockClient());
@@ -232,7 +245,9 @@ class DurableExecutionTest {
         var input1 = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token1",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
 
         // Execute first handler
         var output1 = DurableExecutor.execute(
@@ -258,7 +273,9 @@ class DurableExecutionTest {
         var input2 = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "token2",
-                new DurableExecutionInput.InitialExecutionState(List.of(executionOp2), null));
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp2))
+                        .build());
 
         // Execute second handler using the same config (and thus same executor)
         var output2 = DurableExecutor.execute(

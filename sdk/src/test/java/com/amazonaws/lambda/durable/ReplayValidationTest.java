@@ -8,11 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.time.Duration;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -29,7 +29,8 @@ class ReplayValidationTest {
                 .build();
         var operations = Stream.concat(Stream.of(executionOp), initialOperations.stream())
                 .toList();
-        var initialExecutionState = new InitialExecutionState(operations, null);
+        var initialExecutionState =
+                CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialExecutionState, client);
         return new DurableContext(executionManager, DurableConfig.builder().build(), null);

@@ -4,7 +4,6 @@ package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
-import com.amazonaws.lambda.durable.model.DurableExecutionInput.InitialExecutionState;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
@@ -17,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
@@ -61,7 +61,7 @@ public class ExecutionManager {
     public ExecutionManager(
             String durableExecutionArn,
             String checkpointToken,
-            InitialExecutionState initialExecutionState,
+            CheckpointUpdatedExecutionState initialExecutionState,
             DurableExecutionClient client) {
         this.durableExecutionArn = durableExecutionArn;
         this.executionOperationId = initialExecutionState.operations().get(0).id();
@@ -70,11 +70,8 @@ public class ExecutionManager {
         this.checkpointBatcher =
                 new CheckpointBatcher(client, durableExecutionArn, checkpointToken, this::onCheckpointComplete);
 
-        this.operations =
-                checkpointBatcher
-                        .fetchAllPages(initialExecutionState.operations(), initialExecutionState.nextMarker())
-                        .stream()
-                        .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
+        this.operations = checkpointBatcher.fetchAllPages(initialExecutionState).stream()
+                .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
         this.executionMode =

@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
@@ -72,11 +73,15 @@ class CheckpointBatcher {
                 req -> req.completion().completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
     }
 
-    public List<Operation> fetchAllPages(List<Operation> initialOperations, String nextMarker) {
+    public List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
         List<Operation> operations = new ArrayList<>();
-        if (initialOperations != null) {
-            operations.addAll(initialOperations);
+        if (checkpointUpdatedExecutionState == null) {
+            return operations;
         }
+        if (checkpointUpdatedExecutionState.operations() != null) {
+            operations.addAll(checkpointUpdatedExecutionState.operations());
+        }
+        var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
             var response = client.getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
             logger.debug("DAR getExecutionState called: {}.", response);
@@ -105,14 +110,9 @@ class CheckpointBatcher {
                 // This means the polling will never receive an operation update and complete
                 // the Phaser.
                 checkpointToken = response.checkpointToken();
-                if (response.newExecutionState() != null) {
-                    var operations = fetchAllPages(
-                            response.newExecutionState().operations(),
-                            response.newExecutionState().nextMarker());
-                    if (!operations.isEmpty()) {
-                        callback.accept(operations);
-                    }
-                }
+
+                // fetch all pages of operations and call the callback
+                callback.accept(fetchAllPages(response.newExecutionState()));
 
                 batch.forEach(req -> req.completion().complete(null));
             }
