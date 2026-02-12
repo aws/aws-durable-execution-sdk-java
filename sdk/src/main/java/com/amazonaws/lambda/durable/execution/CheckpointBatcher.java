@@ -110,9 +110,13 @@ class CheckpointBatcher {
         }
         var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
+            var startTime = System.nanoTime();
             var response = config.getDurableExecutionClient()
                     .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
-            logger.debug("Durable API getExecutionState called: {}.", response);
+            logger.debug(
+                    "Durable getExecutionState API called (latency={}ns): {}.",
+                    System.nanoTime() - startTime,
+                    response);
             operations.addAll(response.operations());
             nextMarker = response.nextMarker();
         }
@@ -130,9 +134,10 @@ class CheckpointBatcher {
                 return;
             }
 
-            logger.debug("Calling durable API checkpointDurableExecution with {} updates", request.size());
+            var startTime = System.nanoTime();
+            logger.debug("Calling durable checkpoint API with {} updates: {}", updates.size(), request);
             var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
-            logger.debug("Durable API checkpointDurableExecution called: {}.", response);
+            logger.debug("Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
             // Notify callback of completion
             // TODO: sam local backend returns no new execution state when called with zero
@@ -144,6 +149,10 @@ class CheckpointBatcher {
                 // fetch all pages of operations
                 var operations = fetchAllPages(response.newExecutionState());
 
+                var processStartTime = System.nanoTime();
+                int completedFutures = 0;
+                logger.debug(
+                        "Processing {} operations. ({} pending pollers)", operations.size(), pollingFutures.size());
                 // call the callback
                 callback.accept(operations);
 
@@ -151,9 +160,15 @@ class CheckpointBatcher {
                 for (var operation : operations) {
                     var pollers = pollingFutures.remove(operation.id());
                     if (pollers != null) {
+                        completedFutures += pollers.size();
                         pollers.forEach(poller -> poller.complete(operation));
                     }
                 }
+                logger.debug(
+                        "{} operations processed and {} pollers completed (latency={}ns). ",
+                        operations.size(),
+                        completedFutures,
+                        System.nanoTime() - processStartTime);
             }
         }
     }
