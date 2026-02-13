@@ -137,14 +137,15 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
         validateCurrentThreadType();
 
+        // register to prevent the state from advancing
+        phaser.register();
+
         // If we are in a replay where the operation is already complete (SUCCEEDED /
         // FAILED), the Phaser will be
         // advanced in .execute() already and we don't block but return the result
         // immediately.
         if (phaser.getPhase() == ExecutionPhase.RUNNING.getValue()) {
             // Operation not done yet
-            phaser.register();
-
             var context = executionManager.getCurrentContext();
             // Deregister current context - allows suspension
             logger.debug(
@@ -162,6 +163,9 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             setCurrentContext(context.contextId(), context.threadType());
 
             // Complete phase 1
+            phaser.arriveAndDeregister();
+        } else {
+            // The phaser is already completed. Deregister now.
             phaser.arriveAndDeregister();
         }
 
