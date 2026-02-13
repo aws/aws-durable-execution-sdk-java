@@ -151,7 +151,7 @@ public final class DurableConfig {
      * @return check point in Duration.
      */
     public Duration getCheckpointDelay() {
-        return pollingInterval;
+        return checkpointDelay;
     }
 
     /**
