@@ -54,18 +54,19 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private final Phaser phaser;
 
     public BaseDurableOperation(
-            String operationId,
             String name,
             OperationType operationType,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             ExecutionManager executionManager) {
-        this.operationId = operationId;
         this.name = name;
         this.operationType = operationType;
         this.executionManager = executionManager;
         this.resultTypeToken = resultTypeToken;
         this.resultSerDes = resultSerDes;
+
+        // get the next operation id from executionManager
+        this.operationId = executionManager.nextOperationId();
 
         // todo: phaser could be used only in ExecutionManager and invisible from operations.
         this.phaser = executionManager.startPhaser(operationId);

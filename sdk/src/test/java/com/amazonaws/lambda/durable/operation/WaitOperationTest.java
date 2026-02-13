@@ -15,20 +15,29 @@ import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import java.time.Duration;
 import java.util.concurrent.Phaser;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 
 class WaitOperationTest {
 
+    private static final String OPERATION_ID = "2";
+    private ExecutionManager executionManager;
+
+    @BeforeEach
+    void setUp() {
+        executionManager = mock(ExecutionManager.class);
+        when(executionManager.nextOperationId()).thenReturn(OPERATION_ID);
+    }
+
     @Test
     void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
-        var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(1);
         when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("1-step", ThreadType.STEP));
 
-        var operation = new WaitOperation("2", "test-invoke", Duration.ofSeconds(10), executionManager);
+        var operation = new WaitOperation("test-invoke", Duration.ofSeconds(10), executionManager);
 
         var ex = assertThrows(IllegalDurableOperationException.class, operation::get);
         assertEquals(
@@ -37,20 +46,19 @@ class WaitOperationTest {
 
     @Test
     void getDoesNotThrowWhenCalledFromHandlerContext() {
-        var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(1);
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
-                        .id("1")
+                        .id(OPERATION_ID)
                         .name("test-invoke")
                         .status(OperationStatus.SUCCEEDED)
                         .waitDetails(WaitDetails.builder().build())
                         .build());
 
-        var operation = new WaitOperation("1", "test-invoke", Duration.ofSeconds(10), executionManager);
+        var operation = new WaitOperation("test-invoke", Duration.ofSeconds(10), executionManager);
 
         var result = operation.get();
         assertNull(result);
@@ -58,18 +66,17 @@ class WaitOperationTest {
 
     @Test
     void getSucceededWhenStarted() {
-        var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(0);
         when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
-                        .id("1")
+                        .id(OPERATION_ID)
                         .name("test-invoke")
                         .status(OperationStatus.STARTED)
                         .build());
 
-        var operation = new WaitOperation("1", "test-invoke", Duration.ofSeconds(10), executionManager);
+        var operation = new WaitOperation("test-invoke", Duration.ofSeconds(10), executionManager);
 
         // we currently don't check the operation status at all, so it's not blocked or failed
         var op = operation.get();

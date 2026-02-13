@@ -25,12 +25,8 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
     private String callbackId;
 
     public CallbackOperation(
-            String operationId,
-            String name,
-            TypeToken<T> resultTypeToken,
-            CallbackConfig config,
-            ExecutionManager executionManager) {
-        super(operationId, name, OperationType.CALLBACK, resultTypeToken, config.serDes(), executionManager);
+            String name, TypeToken<T> resultTypeToken, CallbackConfig config, ExecutionManager executionManager) {
+        super(name, OperationType.CALLBACK, resultTypeToken, config.serDes(), executionManager);
         this.config = config;
     }
 

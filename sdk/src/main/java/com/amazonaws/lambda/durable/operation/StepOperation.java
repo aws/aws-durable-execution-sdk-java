@@ -37,7 +37,6 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     private final ExecutorService userExecutor;
 
     public StepOperation(
-            String operationId,
             String name,
             Supplier<T> function,
             TypeToken<T> resultTypeToken,
@@ -45,7 +44,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             ExecutionManager executionManager,
             DurableLogger durableLogger,
             DurableConfig durableConfig) {
-        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), executionManager);
+        super(name, OperationType.STEP, resultTypeToken, config.serDes(), executionManager);
 
         this.function = function;
         this.config = config;

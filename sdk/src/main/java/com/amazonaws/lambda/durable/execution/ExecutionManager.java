@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Phaser;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -47,6 +48,7 @@ public class ExecutionManager {
     private final String executionOperationId;
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
+    private final AtomicInteger operationCounter;
 
     // ===== Thread Coordination =====
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
@@ -62,6 +64,7 @@ public class ExecutionManager {
             String checkpointToken,
             CheckpointUpdatedExecutionState initialExecutionState,
             DurableConfig config) {
+        this.operationCounter = new AtomicInteger(0);
         this.durableExecutionArn = durableExecutionArn;
         this.executionOperationId = initialExecutionState.operations().get(0).id();
 
@@ -217,7 +220,15 @@ public class ExecutionManager {
         return checkpointBatcher.pollForUpdate(operationId, delay);
     }
 
-    // ===== Utilities =====
+    // ============= internal utilities ===============
+
+    /** Get the next operationId (latest operationId + 1) */
+    public String nextOperationId() {
+        return String.valueOf(operationCounter.incrementAndGet());
+    }
+
+    // ============= lifecycle management =================
+
     public void shutdown() {
         checkpointBatcher.shutdown();
     }

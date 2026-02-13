@@ -12,7 +12,6 @@ import com.amazonaws.lambda.durable.operation.WaitOperation;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 
@@ -22,7 +21,6 @@ public class DurableContext {
     private final ExecutionManager executionManager;
     private final DurableConfig durableConfig;
     private final Context lambdaContext;
-    private final AtomicInteger operationCounter;
     private final DurableLogger logger;
     private final ExecutionContext executionContext;
 
@@ -31,7 +29,6 @@ public class DurableContext {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
-        this.operationCounter = new AtomicInteger(0);
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
 
         var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
@@ -89,11 +86,8 @@ public class DurableContext {
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(durableConfig.getSerDes()).build();
         }
-        var operationId = nextOperationId();
-
         // Create and start step operation with TypeToken
-        var operation = new StepOperation<>(
-                operationId, name, func, typeToken, config, executionManager, logger, durableConfig);
+        var operation = new StepOperation<>(name, func, typeToken, config, executionManager, logger, durableConfig);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -107,10 +101,8 @@ public class DurableContext {
     }
 
     public Void wait(String waitName, Duration duration) {
-        var operationId = nextOperationId();
-
         // Create and start wait operation
-        var operation = new WaitOperation(operationId, waitName, duration, executionManager);
+        var operation = new WaitOperation(waitName, duration, executionManager);
 
         operation.execute(); // Checkpoint the wait
         return operation.get(); // Block (will throw SuspendExecutionException if needed)
@@ -176,11 +168,8 @@ public class DurableContext {
         if (config.payloadSerDes() == null) {
             config = config.toBuilder().payloadSerDes(durableConfig.getSerDes()).build();
         }
-        var operationId = nextOperationId();
-
         // Create and start invoke operation
-        var operation =
-                new InvokeOperation<>(operationId, name, functionName, payload, typeToken, config, executionManager);
+        var operation = new InvokeOperation<>(name, functionName, payload, typeToken, config, executionManager);
 
         operation.execute(); // checkpoint the invoke operation
         return operation; // Block (will throw SuspendExecutionException if needed)
@@ -204,9 +193,7 @@ public class DurableContext {
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(durableConfig.getSerDes()).build();
         }
-        var operationId = nextOperationId();
-
-        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager);
+        var operation = new CallbackOperation<>(name, typeToken, config, executionManager);
         operation.execute();
 
         return operation;
@@ -233,12 +220,5 @@ public class DurableContext {
      */
     public ExecutionContext getExecutionContext() {
         return executionContext;
-    }
-
-    // ============= internal utilities ===============
-
-    /** Get the next operationId (latest operationId + 1) */
-    private String nextOperationId() {
-        return String.valueOf(operationCounter.incrementAndGet());
     }
 }

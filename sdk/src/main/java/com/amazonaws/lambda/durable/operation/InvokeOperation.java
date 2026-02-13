@@ -22,14 +22,13 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     private final SerDes payloadSerDes;
 
     public InvokeOperation(
-            String operationId,
             String name,
             String functionName,
             U payload,
             TypeToken<T> resultTypeToken,
             InvokeConfig config,
             ExecutionManager executionManager) {
-        super(operationId, name, OperationType.CHAINED_INVOKE, resultTypeToken, config.serDes(), executionManager);
+        super(name, OperationType.CHAINED_INVOKE, resultTypeToken, config.serDes(), executionManager);
 
         this.functionName = functionName;
         this.payload = payload;

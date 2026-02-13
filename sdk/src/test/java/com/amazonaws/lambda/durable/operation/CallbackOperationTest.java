@@ -83,7 +83,6 @@ class CallbackOperationTest {
         var serDes = new JacksonSerDes();
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(serDes).build(),
@@ -108,7 +107,7 @@ class CallbackOperationTest {
                 .serDes(serDes)
                 .build();
 
-        var operation = new CallbackOperation<>("1", "approval", TypeToken.get(String.class), config, executionManager);
+        var operation = new CallbackOperation<>("approval", TypeToken.get(String.class), config, executionManager);
         operation.execute();
 
         assertNotNull(operation.callbackId());
@@ -130,7 +129,6 @@ class CallbackOperationTest {
         var serDes = new JacksonSerDes();
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(serDes).build(),
@@ -156,7 +154,6 @@ class CallbackOperationTest {
         var serDes = new JacksonSerDes();
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(serDes).build(),
@@ -186,7 +183,6 @@ class CallbackOperationTest {
         var serDes = new JacksonSerDes();
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(serDes).build(),
@@ -211,7 +207,6 @@ class CallbackOperationTest {
         var serDes = new JacksonSerDes();
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(serDes).build(),
@@ -239,7 +234,7 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
 
         var config = CallbackConfig.builder().serDes(customSerDes).build();
-        var operation = new CallbackOperation<>("1", "approval", TypeToken.get(String.class), config, executionManager);
+        var operation = new CallbackOperation<>("approval", TypeToken.get(String.class), config, executionManager);
         operation.execute();
         var result = operation.get();
 
@@ -265,7 +260,6 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(customSerDes).build(),
@@ -295,7 +289,7 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
 
         var config = CallbackConfig.builder().serDes(customSerDes).build();
-        var operation = new CallbackOperation<>("1", "approval", TypeToken.get(String.class), config, executionManager);
+        var operation = new CallbackOperation<>("approval", TypeToken.get(String.class), config, executionManager);
         operation.execute();
         var result = operation.get();
 
@@ -321,7 +315,6 @@ class CallbackOperationTest {
         var executionManager = createExecutionManager(List.of(existingCallback));
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(failingSerDes).build(),
@@ -348,7 +341,6 @@ class CallbackOperationTest {
         executionManager.setCurrentContext("Root", ThreadType.STEP);
 
         var operation = new CallbackOperation<>(
-                "1",
                 "approval",
                 TypeToken.get(String.class),
                 CallbackConfig.builder().serDes(new JacksonSerDes()).build(),

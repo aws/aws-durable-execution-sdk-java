@@ -23,8 +23,8 @@ public class WaitOperation extends BaseDurableOperation<Void> {
 
     private final Duration duration;
 
-    public WaitOperation(String operationId, String name, Duration duration, ExecutionManager executionManager) {
-        super(operationId, name, OperationType.WAIT, TypeToken.get(Void.class), NOOP_SER_DES, executionManager);
+    public WaitOperation(String name, Duration duration, ExecutionManager executionManager) {
+        super(name, OperationType.WAIT, TypeToken.get(Void.class), NOOP_SER_DES, executionManager);
         this.duration = duration;
     }
 

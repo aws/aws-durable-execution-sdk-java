@@ -49,7 +49,7 @@ class CheckpointBatcher {
                 MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointBatcher::estimateSize, this::checkpointBatch);
     }
 
-    /** Queues a checkpoint request for batched execution */
+    /** Queues a operation update for batched checkpoint */
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
         return checkpointApiRequestBatcher.submit(update, config.getCheckpointDelay());
