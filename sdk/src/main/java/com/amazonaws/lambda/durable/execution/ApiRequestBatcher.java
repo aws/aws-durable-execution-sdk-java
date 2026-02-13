@@ -14,6 +14,10 @@ import java.util.function.Function;
  * Batches API requests to optimize throughput by grouping individual calls into batch operations. Batches are flushed
  * when full, when size limits are reached, or after a timeout.
  *
+ * <p>Uses a dedicated SDK thread pool for internal coordination, keeping checkpoint processing separate from
+ * customer-configured executors used for user-defined operations.
+ *
+ * @see InternalExecutor
  * @param <T> Request type
  */
 public class ApiRequestBatcher<T> {
@@ -32,10 +36,10 @@ public class ApiRequestBatcher<T> {
     private final List<Item<T>> items;
 
     /** Current batch size in bytes */
-    private volatile int totalBytes;
+    private int totalBytes;
 
     /** Time when the current batch must be flushed */
-    private volatile long expireTime;
+    private long expireTime;
 
     /** Timer to auto-flush incomplete batch */
     private CompletableFuture<Void> flushTimer;
@@ -68,32 +72,31 @@ public class ApiRequestBatcher<T> {
         initializeBatch();
     }
 
-    private void initializeBatch() {
-        this.items.clear();
-        this.totalBytes = 0;
-        this.expireTime = System.nanoTime() + MAX_DELAY.toNanos();
-        this.flushTimer = new CompletableFuture<>();
-        this.flushTimer.thenRun(() -> {
-            synchronized (items) {
-                execute();
-            }
-        });
-    }
-
     /**
      * Submits request for batched execution.
      *
      * @param request Request to batch
      * @return Future completed when batch executes
      */
-    public CompletableFuture<Void> submit(T request, Duration flushDelay) {
-        // Flush the current batch if request doesn't fit
+    CompletableFuture<Void> submit(T request, Duration flushDelay) {
         synchronized (items) {
+            // Flush the current batch if request doesn't fit
             if (isFull() || !canFit(request)) {
                 flushNow();
             }
 
-            var future = add(request, flushDelay);
+            // add the request to the current batch
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            totalBytes += calculateItemSize.apply(request);
+            items.add(new Item<>(request, future));
+
+            // create or update the flush timer
+            long newExpireTime = System.nanoTime() + flushDelay.toNanos();
+            if (expireTime > newExpireTime) {
+                // the batch needs to be completed earlier than previously scheduled
+                expireTime = newExpireTime;
+                flushAfterDelay(flushDelay.toNanos());
+            }
 
             if (isFull()) {
                 // Flush early if batch is full
@@ -103,20 +106,30 @@ public class ApiRequestBatcher<T> {
         }
     }
 
-    /** Adds request to batch and returns its result future */
-    CompletableFuture<Void> add(T request, Duration delay) {
+    /** Flushes pending batch and waits for completion */
+    void shutdown() {
         synchronized (items) {
-            totalBytes += calculateItemSize.apply(request);
-            CompletableFuture<Void> result = new CompletableFuture<>();
-            items.add(new Item<>(request, result));
-            long newExpireTime = System.nanoTime() + delay.toNanos();
-            if (expireTime > newExpireTime) {
-                // the batch needs to be completed earlier than previously scheduled
-                expireTime = newExpireTime;
-                flushAfterDelay(delay.toNanos());
-            }
-            return result;
+            flushNow();
         }
+
+        // wait for previous batches to be flushed
+        previousBatchFuture.join();
+    }
+
+    /** clear the current batch and creates a new batch */
+    private void initializeBatch() {
+        this.items.clear();
+        this.totalBytes = 0;
+        // MAX_DELAY is longer than a single Lambda invocation
+        this.expireTime = System.nanoTime() + MAX_DELAY.toNanos();
+
+        // the timer future is created initially without a timeout until an item is added to the batch
+        this.flushTimer = new CompletableFuture<>();
+        this.flushTimer.thenRun(() -> {
+            synchronized (items) {
+                execute();
+            }
+        });
     }
 
     /** Returns true if request fits within byte limit */
@@ -134,19 +147,10 @@ public class ApiRequestBatcher<T> {
     }
 
     private void flushNow() {
+        // cancel the flush timer if it has not been triggered
         this.flushTimer.cancel(false);
-        // wait for new batch to be ready
+        // execute the current batch now
         execute();
-    }
-
-    /** Flushes pending batch and waits for completion */
-    public void shutdown() {
-        synchronized (items) {
-            flushNow();
-        }
-
-        // wait for previous batches to be flushed
-        previousBatchFuture.join();
     }
 
     /** Executes batch and completes all item futures */
@@ -157,7 +161,7 @@ public class ApiRequestBatcher<T> {
             return;
         }
 
-        // append the current batch to the previous one
+        // append the current batch to the previous one so that the batches can run sequentially
         previousBatchFuture = previousBatchFuture.thenRunAsync(
                 () -> {
                     try {

@@ -23,11 +23,6 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  *
  * <p>Single responsibility: Queue and batch checkpoint requests efficiently. Uses a Consumer to notify when checkpoints
  * complete, avoiding cyclic dependency.
- *
- * <p>Uses a dedicated SDK thread pool for internal coordination, keeping checkpoint processing separate from
- * customer-configured executors used for user-defined operations.
- *
- * @see InternalExecutor
  */
 class CheckpointBatcher {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
@@ -97,7 +92,7 @@ class CheckpointBatcher {
             futures.forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
         }
 
-        // wait for all checkpoint requests to complete
+        // wait for all non-polling checkpoint requests to complete
         checkpointApiRequestBatcher.shutdown();
     }
 
@@ -105,7 +100,7 @@ class CheckpointBatcher {
      * Calling GetExecutionState API to get all pages of operations given CheckpointUpdatedExecutionState(operations,
      * nextMarker)
      */
-    public List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
+    List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
         List<Operation> operations = new ArrayList<>();
         if (checkpointUpdatedExecutionState == null) {
             return operations;
