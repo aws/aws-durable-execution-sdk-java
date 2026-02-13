@@ -32,6 +32,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  *   <li>Phaser management (coordination)
  *   <li>Checkpoint batching (via CheckpointManager)
  *   <li>Polling (for waits and retries)
+ *   <li>operationCounter (to generate the next OperationId)
  * </ul>
  *
  * <p>This is the single entry point for all execution coordination. Internal coordination (polling, checkpointing) uses
