@@ -43,6 +43,15 @@ class ExecutionManagerTest {
     }
 
     @Test
+    void nextOperationId() {
+        var manager = createManager(List.of(executionOp()));
+        assertEquals("1", manager.nextOperationId());
+        assertEquals("2", manager.nextOperationId());
+        assertEquals("3", manager.nextOperationId());
+    }
+
+
+    @Test
     void startsInReplayModeWhenOperationsExist() {
         var manager = createManager(List.of(executionOp(), stepOp("1", OperationStatus.SUCCEEDED)));
 
