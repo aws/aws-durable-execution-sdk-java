@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicReference;
@@ -131,6 +132,17 @@ public class ExecutionManager {
 
     public Operation getExecutionOperation() {
         return operations.get(OperationKey.of(null, executionOperationId));
+    }
+
+    /**
+     * Checks whether there are any cached operations for the given parent context ID. Used to initialize per-context
+     * replay state — a context starts in replay mode if the ExecutionManager has cached operations belonging to it.
+     *
+     * @param parentId the context ID to check (null for root context)
+     * @return true if at least one operation exists with the given parentId
+     */
+    public boolean hasOperationsForContext(String parentId) {
+        return operations.keySet().stream().anyMatch(key -> Objects.equals(key.parentId(), parentId));
     }
 
     // ===== Thread Coordination =====

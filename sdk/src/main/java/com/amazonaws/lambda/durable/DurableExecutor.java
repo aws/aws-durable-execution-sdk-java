@@ -65,7 +65,7 @@ public class DurableExecutor {
                     var userInput =
                             extractUserInput(executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                     // Create context in the executor thread so it detects the correct thread name
-                    var context = new DurableContext(executionManager, config, lambdaContext);
+                    var context = DurableContext.createRootContext(executionManager, config, lambdaContext);
                     return handler.apply(userInput, context);
                 },
                 config.getExecutorService()); // Get executor from config for running user code

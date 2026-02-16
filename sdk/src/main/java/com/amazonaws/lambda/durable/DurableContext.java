@@ -26,15 +26,18 @@ public class DurableContext {
     private final DurableLogger logger;
     private final ExecutionContext executionContext;
     private final String parentId;
+    private boolean isReplaying;
 
-    DurableContext(
-            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
+    /** Shared initialization — sets all fields but performs no thread registration. */
+    private DurableContext(
+            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String parentId) {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
-        this.parentId = null;
+        this.parentId = parentId;
         this.operationCounter = new AtomicInteger(0);
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
+        this.isReplaying = executionManager.hasOperationsForContext(parentId);
 
         var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
         this.logger = new DurableLogger(
@@ -42,14 +45,37 @@ public class DurableContext {
                 executionManager,
                 requestId,
                 durableConfig.getLoggerConfig().suppressReplayLogs());
-
-        // Register root context thread as active
-        executionManager.registerActiveThread(contextId, ThreadType.CONTEXT);
-        executionManager.setCurrentContext(contextId, ThreadType.CONTEXT);
     }
 
-    DurableContext(ExecutionManager executionManager, DurableConfig config, Context lambdaContext) {
-        this(executionManager, config, lambdaContext, ROOT_CONTEXT);
+    /** Creates a root context with the given contextId and registers the current thread. */
+    static DurableContext createRootContext(
+            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
+        var ctx = new DurableContext(executionManager, durableConfig, lambdaContext, null);
+        executionManager.registerActiveThread(contextId, ThreadType.CONTEXT);
+        executionManager.setCurrentContext(contextId, ThreadType.CONTEXT);
+        return ctx;
+    }
+
+    /** Creates a root context with the default "Root" contextId and registers the current thread. */
+    static DurableContext createRootContext(
+            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
+        return createRootContext(executionManager, durableConfig, lambdaContext, ROOT_CONTEXT);
+    }
+
+    /**
+     * Creates a child context without registering the current thread. Thread registration is handled by
+     * ChildContextOperation, which registers on the parent thread before the executor runs and sets the context on the
+     * child thread inside the executor.
+     *
+     * @param executionManager the execution manager
+     * @param durableConfig the durable configuration
+     * @param lambdaContext the Lambda context
+     * @param contextId the child context's ID (the CONTEXT operation's operation ID)
+     * @return a new DurableContext for the child context
+     */
+    static DurableContext createChildContext(
+            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
+        return new DurableContext(executionManager, durableConfig, lambdaContext, contextId);
     }
 
     // ========== step methods ==========
@@ -242,6 +268,18 @@ public class DurableContext {
     /** Gets the context ID for this context. Null for root context, set for child contexts. */
     String getContextId() {
         return parentId;
+    }
+
+    /** Returns whether this context is currently in replay mode. */
+    boolean isReplaying() {
+        return isReplaying;
+    }
+
+    /**
+     * Transitions this context from replay to execution mode. Called when the first un-cached operation is encountered.
+     */
+    void setExecutionMode() {
+        this.isReplaying = false;
     }
 
     /** Get the next operationId (latest operationId + 1) */

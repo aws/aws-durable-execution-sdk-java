@@ -34,7 +34,8 @@ class DurableContextTest {
                 "test-token",
                 initialExecutionState,
                 DurableConfig.builder().withDurableExecutionClient(client).build());
-        return new DurableContext(executionManager, DurableConfig.builder().build(), null);
+        return DurableContext.createRootContext(
+                executionManager, DurableConfig.builder().build(), null);
     }
 
     @Test
