@@ -25,6 +25,7 @@ class EventProcessor {
             case CHAINED_INVOKE -> buildInvokeEvent(builder, update, operation);
             case EXECUTION -> buildExecutionEvent(builder, update);
             case CALLBACK -> buildCallbackEvent(builder, update);
+            case CONTEXT -> buildContextEvent(builder, update);
             default -> throw new IllegalArgumentException("Unsupported operation type: " + update.type());
         };
     }
@@ -154,6 +155,15 @@ class EventProcessor {
             case SUCCEED -> builder.eventType(CALLBACK_SUCCEEDED).build();
             case FAIL -> builder.eventType(CALLBACK_FAILED).build();
             default -> throw new IllegalArgumentException("Unsupported callback action: " + update.action());
+        };
+    }
+
+    private Event buildContextEvent(Event.Builder builder, OperationUpdate update) {
+        return switch (update.action()) {
+            case START -> builder.eventType(EventType.CONTEXT_STARTED).build();
+            case SUCCEED -> builder.eventType(EventType.CONTEXT_SUCCEEDED).build();
+            case FAIL -> builder.eventType(EventType.CONTEXT_FAILED).build();
+            default -> throw new IllegalArgumentException("Unsupported context action: " + update.action());
         };
     }
 

@@ -65,7 +65,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Advance all operations (simulates time passing for retries/waits). */
     public void advanceReadyOperations() {
-        operations.replaceAll((id, op) -> {
+        operations.replaceAll((key, op) -> {
             if (op.status() == OperationStatus.PENDING) {
                 return op.toBuilder().status(OperationStatus.READY).build();
             }
@@ -74,7 +74,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                         op.toBuilder().status(OperationStatus.SUCCEEDED).build();
                 // Generate WaitSucceeded event
                 var update = OperationUpdate.builder()
-                        .id(id)
+                        .id(op.id())
                         .name(op.name())
                         .type(OperationType.WAIT)
                         .action(OperationAction.SUCCEED)
@@ -113,7 +113,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                     .build();
             var event = eventProcessor.processUpdate(update, newOp);
             allEvents.add(event);
-            operations.put(op.id(), newOp);
+            operations.put(compositeKey(op.parentId(), op.id()), newOp);
         }
     }
 
@@ -150,7 +150,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
         var startedOp = op.toBuilder().status(OperationStatus.STARTED).build();
-        operations.put(op.id(), startedOp);
+        operations.put(compositeKey(op.parentId(), op.id()), startedOp);
     }
 
     /** Simulate fire-and-forget checkpoint loss by removing the operation entirely */
@@ -159,15 +159,20 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         if (op == null) {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
-        operations.remove(op.id());
+        operations.remove(compositeKey(op.parentId(), op.id()));
     }
 
     private void applyUpdate(OperationUpdate update) {
         var operation = toOperation(update);
-        operations.put(update.id(), operation);
+        var key = compositeKey(update.parentId(), update.id());
+        operations.put(key, operation);
 
         var event = eventProcessor.processUpdate(update, operation);
         allEvents.add(event);
+    }
+
+    private static String compositeKey(String parentId, String operationId) {
+        return (parentId != null ? parentId : "") + ":" + operationId;
     }
 
     private Operation toOperation(OperationUpdate update) {
@@ -175,6 +180,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 .id(update.id())
                 .name(update.name())
                 .type(update.type())
+                .parentId(update.parentId())
                 .status(deriveStatus(update.action()));
 
         switch (update.type()) {
@@ -183,7 +189,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             case CALLBACK -> builder.callbackDetails(buildCallbackDetails(update));
             case EXECUTION -> {} // No details needed for EXECUTION operations
             case CHAINED_INVOKE -> builder.chainedInvokeDetails(buildChainedInvokeDetails(update));
-            case CONTEXT -> throw new UnsupportedOperationException("CONTEXT not supported");
+            case CONTEXT -> builder.contextDetails(buildContextDetails(update));
             case UNKNOWN_TO_SDK_VERSION ->
                 throw new UnsupportedOperationException("UNKNOWN_TO_SDK_VERSION not supported");
         }
@@ -201,6 +207,17 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 .build();
     }
 
+    private ContextDetails buildContextDetails(OperationUpdate update) {
+        var detailsBuilder = ContextDetails.builder().result(update.payload()).error(update.error());
+
+        if (update.contextOptions() != null
+                && Boolean.TRUE.equals(update.contextOptions().replayChildren())) {
+            detailsBuilder.replayChildren(true);
+        }
+
+        return detailsBuilder.build();
+    }
+
     private WaitDetails buildWaitDetails(OperationUpdate update) {
         if (update.waitOptions() == null) return null;
 
@@ -209,7 +226,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     private StepDetails buildStepDetails(OperationUpdate update) {
-        var existingOp = operations.get(update.id());
+        var key = compositeKey(update.parentId(), update.id());
+        var existingOp = operations.get(key);
         var existing = existingOp != null ? existingOp.stepDetails() : null;
 
         var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();
@@ -227,7 +245,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     private CallbackDetails buildCallbackDetails(OperationUpdate update) {
-        var existingOp = operations.get(update.id());
+        var key = compositeKey(update.parentId(), update.id());
+        var existingOp = operations.get(key);
         var existing = existingOp != null ? existingOp.callbackDetails() : null;
 
         // Preserve existing callbackId, or generate new one on START
@@ -259,7 +278,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 .status(OperationStatus.SUCCEEDED)
                 .callbackDetails(op.callbackDetails().toBuilder().result(result).build())
                 .build();
-        operations.put(op.id(), updated);
+        operations.put(compositeKey(op.parentId(), op.id()), updated);
     }
 
     /** Simulate external system failing callback. */
@@ -272,7 +291,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 .status(OperationStatus.FAILED)
                 .callbackDetails(op.callbackDetails().toBuilder().error(error).build())
                 .build();
-        operations.put(op.id(), updated);
+        operations.put(compositeKey(op.parentId(), op.id()), updated);
     }
 
     /** Simulate callback timeout. */
@@ -282,7 +301,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             throw new IllegalStateException("Callback not found: " + callbackId);
         }
         var updated = op.toBuilder().status(OperationStatus.TIMED_OUT).build();
-        operations.put(op.id(), updated);
+        operations.put(compositeKey(op.parentId(), op.id()), updated);
     }
 
     private Operation findOperationByCallbackId(String callbackId) {

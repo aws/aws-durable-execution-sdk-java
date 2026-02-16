@@ -107,8 +107,10 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                 T result = function.apply(childContext);
 
                 if (replayChildContext) {
-                    // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing
+                    // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
+                    // Advance the phaser so get() doesn't block waiting for a checkpoint response.
                     this.reconstructedResult = result;
+                    markAlreadyCompleted();
                     return;
                 }
 
@@ -135,7 +137,9 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                     .subType(SUB_TYPE)
                     .payload(serialized));
         } else {
-            // Large result: checkpoint with empty payload + ReplayChildren flag
+            // Large result: checkpoint with empty payload + ReplayChildren flag.
+            // Store the result so get() can return it directly without deserializing the empty payload.
+            this.reconstructedResult = result;
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .subType(SUB_TYPE)
@@ -169,7 +173,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         var op = waitForOperationCompletion();
 
         if (op.status() == OperationStatus.SUCCEEDED) {
-            if (replayChildContext && reconstructedResult != null) {
+            if (reconstructedResult != null) {
                 return reconstructedResult;
             }
             var contextDetails = op.contextDetails();
