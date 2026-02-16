@@ -9,15 +9,14 @@ import com.amazonaws.lambda.durable.testing.LocalDurableTestRunner;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 
-/** Integration tests for child context correctness properties. */
+/** Integration tests for child context behavior. */
 class ChildContextIntegrationTest {
 
     /**
-     * Property 1: Child context result round-trip
-     *
-     * <p>For any child context that completes successfully, running the execution to completion and then replaying it
-     * SHALL produce the same result without re-executing the user function.
+     * A child context that completes successfully SHALL produce the same result on replay without re-executing the user
+     * function.
      */
     @Test
     void childContextResultSurvivesReplay() {
@@ -44,10 +43,8 @@ class ChildContextIntegrationTest {
     }
 
     /**
-     * Property 2: Child context failure preservation
-     *
-     * <p>For any child context that fails with a reconstructable exception, the exception type, message, and error
-     * details SHALL be preserved through the checkpoint-and-replay cycle.
+     * A child context that fails with a reconstructable exception SHALL preserve the exception type, message, and error
+     * details through the checkpoint-and-replay cycle.
      */
     @Test
     void childContextExceptionPreservedOnReplay() {
@@ -75,12 +72,7 @@ class ChildContextIntegrationTest {
         assertEquals(1, childExecutionCount.get(), "Child function should not re-execute on failed replay");
     }
 
-    /**
-     * Property 3: ParentId propagation
-     *
-     * <p>For any operation checkpointed from within a child context, the operation's parentId field SHALL equal the
-     * child context's context ID.
-     */
+    /** Operations checkpointed from within a child context SHALL have the child context's ID as their parentId. */
     @Test
     void operationsInChildContextHaveCorrectParentId() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
@@ -99,12 +91,7 @@ class ChildContextIntegrationTest {
         assertNotNull(innerStep, "Inner step should exist");
     }
 
-    /**
-     * Property 4: Operation counter independence
-     *
-     * <p>Each child context SHALL maintain its own operation counter, so the first operation ID within each context is
-     * "1".
-     */
+    /** Each child context SHALL maintain its own operation counter. */
     @Test
     void childContextsHaveIndependentOperationCounters() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
@@ -128,11 +115,7 @@ class ChildContextIntegrationTest {
         assertNotNull(stepB);
     }
 
-    /**
-     * Property 5: Operation scoping prevents cross-context interference
-     *
-     * <p>Two child contexts with operations that have the same local IDs SHALL NOT interfere with each other.
-     */
+    /** Two child contexts with operations that have the same local IDs SHALL NOT interfere with each other. */
     @Test
     void parallelChildContextsWithSameLocalIdsDoNotInterfere() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
@@ -151,11 +134,7 @@ class ChildContextIntegrationTest {
         assertEquals("result-a+result-b", result.getResult(String.class));
     }
 
-    /**
-     * Property 6: Multiple async child contexts produce correct results
-     *
-     * <p>Each concurrently running async child context SHALL complete with its own correct result.
-     */
+    /** Each concurrently running async child context SHALL complete with its own correct result. */
     @Test
     void multipleAsyncChildContextsReturnCorrectResults() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
@@ -176,11 +155,7 @@ class ChildContextIntegrationTest {
         assertEquals("one,two,three", result.getResult(String.class));
     }
 
-    /**
-     * Property 7: allOf preserves result ordering
-     *
-     * <p>The results returned by DurableFuture.allOf() SHALL be in the same order as the input futures.
-     */
+    /** The results returned by DurableFuture.allOf() SHALL be in the same order as the input futures. */
     @Test
     void allOfReturnsResultsInOrder() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
@@ -204,9 +179,7 @@ class ChildContextIntegrationTest {
     }
 
     /**
-     * Property 8: Wait within child context suspends and resumes correctly
-     *
-     * <p>A wait() inside a child context SHALL suspend the execution. After the wait completes, the child context SHALL
+     * A wait() inside a child context SHALL suspend the execution. After the wait completes, the child context SHALL
      * resume and complete with the correct result.
      */
     @Test
@@ -226,10 +199,8 @@ class ChildContextIntegrationTest {
     }
 
     /**
-     * Property 8b: Wait within child context returns PENDING before time advances
-     *
-     * <p>A wait() inside a child context SHALL cause the execution to return PENDING. After advancing time and
-     * re-running, the execution SHALL complete successfully.
+     * A wait() inside a child context SHALL cause the execution to return PENDING. After advancing time and re-running,
+     * the execution SHALL complete successfully.
      */
     @Test
     void waitInsideChildContextReturnsPendingThenCompletes() {
@@ -256,9 +227,7 @@ class ChildContextIntegrationTest {
     }
 
     /**
-     * Property 8c: Two async child contexts that both wait suspend and resume correctly
-     *
-     * <p>When two concurrent child contexts each contain a wait(), the execution SHALL return PENDING. After advancing
+     * When two concurrent child contexts each contain a wait(), the execution SHALL return PENDING. After advancing
      * time and re-running, both child contexts SHALL resume and complete with correct results.
      */
     @Test
@@ -292,9 +261,7 @@ class ChildContextIntegrationTest {
     }
 
     /**
-     * Property 8d: One child context waits while another keeps processing — suspension only after work finishes
-     *
-     * <p>When one async child context contains a long wait and another is actively processing, the execution SHALL NOT
+     * When one async child context contains a long wait and another is actively processing, the execution SHALL NOT
      * suspend until the busy child finishes its work. After the busy child completes, the execution suspends (PENDING)
      * because the waiting child's wait is still outstanding. After advancing time, both complete.
      */
@@ -337,10 +304,8 @@ class ChildContextIntegrationTest {
     }
 
     /**
-     * Property 9: Large result ReplayChildren round-trip
-     *
-     * <p>A child context with a result ≥256KB SHALL trigger the ReplayChildren flow. On replay, the child context SHALL
-     * be re-executed to reconstruct the result.
+     * A child context with a result ≥256KB SHALL trigger the ReplayChildren flow. On replay, the child context SHALL be
+     * re-executed to reconstruct the result.
      */
     @Test
     void largeResultTriggersReplayChildrenAndReconstructsCorrectly() {
@@ -368,5 +333,168 @@ class ChildContextIntegrationTest {
         assertEquals(largePayload, result.getResult(String.class));
         // Child function IS re-executed for ReplayChildren (to reconstruct the large result)
         assertTrue(childExecutionCount.get() >= 2, "Child should re-execute for ReplayChildren reconstruction");
+    }
+
+    // ===== Edge Case Tests =====
+
+    /**
+     * A child context created within another child context SHALL have its own independent operation counter and correct
+     * parentId propagation.
+     */
+    @Test
+    void nestedChildContextsWithIndependentCountersAndCorrectParentId() {
+        var outerChildCount = new AtomicInteger(0);
+        var innerChildCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            return ctx.runInChildContext("outer-child", String.class, outerChild -> {
+                outerChildCount.incrementAndGet();
+                var outerStep = outerChild.step("outer-step", String.class, () -> "outer");
+
+                var innerResult = outerChild.runInChildContext("inner-child", String.class, innerChild -> {
+                    innerChildCount.incrementAndGet();
+                    return innerChild.step("inner-step", String.class, () -> "inner");
+                });
+
+                return outerStep + "+" + innerResult;
+            });
+        });
+
+        // First run - executes both nested child contexts
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("outer+inner", result.getResult(String.class));
+        assertEquals(1, outerChildCount.get());
+        assertEquals(1, innerChildCount.get());
+
+        // Replay - should return cached results without re-executing
+        result = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("outer+inner", result.getResult(String.class));
+        assertEquals(1, outerChildCount.get(), "Outer child should not re-execute on replay");
+        assertEquals(1, innerChildCount.get(), "Inner child should not re-execute on replay");
+
+        // Verify both steps exist (independent counters — both have local ID "1" in their respective contexts)
+        var outerStep = result.getOperation("outer-step");
+        var innerStep = result.getOperation("inner-step");
+        assertNotNull(outerStep, "Outer step should exist");
+        assertNotNull(innerStep, "Inner step should exist");
+    }
+
+    /**
+     * When a child context is replayed but the current code uses a different operation name at the same position, the
+     * execution SHALL fail with a non-deterministic execution error.
+     */
+    @Test
+    void nonDeterministicReplayDetectionForChildContext() {
+        var callCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            var count = callCount.incrementAndGet();
+            if (count == 1) {
+                // First execution: create child context with name "original-name"
+                return ctx.runInChildContext("original-name", String.class, child -> {
+                    return child.step("work", String.class, () -> "result");
+                });
+            } else {
+                // Second execution: use a different name at the same operation position
+                // This should trigger NonDeterministicExecutionException
+                return ctx.runInChildContext("different-name", String.class, child -> {
+                    return child.step("work", String.class, () -> "result");
+                });
+            }
+        });
+
+        // First run succeeds
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("result", result.getResult(String.class));
+
+        // Second run with different name should fail with non-deterministic error
+        result = runner.run("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertTrue(result.getError().isPresent());
+        var error = result.getError().get();
+        assertTrue(
+                error.errorType().contains("NonDeterministicExecutionException"),
+                "Expected NonDeterministicExecutionException, got: " + error.errorType());
+        assertTrue(
+                error.errorMessage().contains("name mismatch"),
+                "Expected name mismatch message, got: " + error.errorMessage());
+    }
+
+    /**
+     * A child context whose function returns a value immediately without performing any durable operations SHALL
+     * complete successfully and replay correctly.
+     */
+    @Test
+    void emptyChildContextReturnsImmediately() {
+        var childExecutionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            return ctx.runInChildContext("empty", String.class, child -> {
+                childExecutionCount.incrementAndGet();
+                return "immediate-result";
+            });
+        });
+
+        // First run - child context returns immediately
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("immediate-result", result.getResult(String.class));
+        assertEquals(1, childExecutionCount.get());
+
+        // Replay - should return cached result without re-executing
+        result = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("immediate-result", result.getResult(String.class));
+        assertEquals(1, childExecutionCount.get(), "Empty child should not re-execute on replay");
+    }
+
+    /**
+     * Operations within a child context SHALL use the child context's own operation counter, producing IDs independent
+     * of the parent context. Multiple operations within a single child context should get sequential IDs.
+     */
+    @Test
+    void stepAndInvokeWithinChildContextUseChildOperationCounter() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            // Parent context: operation 1 is a step
+            var parentStep = ctx.step("parent-step", String.class, () -> "parent");
+
+            // Parent context: operation 2 is a child context
+            var childResult = ctx.runInChildContext("child-ctx", String.class, child -> {
+                // Child context: operations 1, 2, 3 are steps (independent counter)
+                var s1 = child.step("child-step-1", String.class, () -> "c1");
+                var s2 = child.step("child-step-2", String.class, () -> "c2");
+                var s3 = child.step("child-step-3", String.class, () -> "c3");
+                return s1 + "," + s2 + "," + s3;
+            });
+
+            // Parent context: operation 3 is another step (counter continues from parent)
+            var afterStep = ctx.step("after-step", String.class, () -> "after");
+
+            return parentStep + "|" + childResult + "|" + afterStep;
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("parent|c1,c2,c3|after", result.getResult(String.class));
+
+        // Verify all operations exist and completed
+        assertNotNull(result.getOperation("parent-step"), "Parent step should exist");
+        assertNotNull(result.getOperation("child-step-1"), "Child step 1 should exist");
+        assertNotNull(result.getOperation("child-step-2"), "Child step 2 should exist");
+        assertNotNull(result.getOperation("child-step-3"), "Child step 3 should exist");
+        assertNotNull(result.getOperation("after-step"), "After step should exist");
+
+        // Verify child context operation exists
+        var childCtxOp = result.getOperation("child-ctx");
+        assertNotNull(childCtxOp, "Child context operation should exist");
+        assertEquals(OperationType.CONTEXT, childCtxOp.getType());
+
+        // Replay should produce the same result
+        var replayResult = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, replayResult.getStatus());
+        assertEquals("parent|c1,c2,c3|after", replayResult.getResult(String.class));
     }
 }
