@@ -25,12 +25,14 @@ public class DurableContext {
     private final AtomicInteger operationCounter;
     private final DurableLogger logger;
     private final ExecutionContext executionContext;
+    private final String parentId;
 
     DurableContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
+        this.parentId = null;
         this.operationCounter = new AtomicInteger(0);
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
 
@@ -93,7 +95,7 @@ public class DurableContext {
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
-                operationId, name, func, typeToken, config, executionManager, logger, durableConfig);
+                operationId, name, func, typeToken, config, executionManager, logger, durableConfig, parentId);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -110,7 +112,7 @@ public class DurableContext {
         var operationId = nextOperationId();
 
         // Create and start wait operation
-        var operation = new WaitOperation(operationId, waitName, duration, executionManager);
+        var operation = new WaitOperation(operationId, waitName, duration, executionManager, parentId);
 
         operation.execute(); // Checkpoint the wait
         return operation.get(); // Block (will throw SuspendExecutionException if needed)
@@ -179,8 +181,8 @@ public class DurableContext {
         var operationId = nextOperationId();
 
         // Create and start invoke operation
-        var operation =
-                new InvokeOperation<>(operationId, name, functionName, payload, typeToken, config, executionManager);
+        var operation = new InvokeOperation<>(
+                operationId, name, functionName, payload, typeToken, config, executionManager, parentId);
 
         operation.execute(); // checkpoint the invoke operation
         return operation; // Block (will throw SuspendExecutionException if needed)
@@ -206,7 +208,7 @@ public class DurableContext {
         }
         var operationId = nextOperationId();
 
-        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager);
+        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, parentId);
         operation.execute();
 
         return operation;
@@ -236,6 +238,11 @@ public class DurableContext {
     }
 
     // ============= internal utilities ===============
+
+    /** Gets the context ID for this context. Null for root context, set for child contexts. */
+    String getContextId() {
+        return parentId;
+    }
 
     /** Get the next operationId (latest operationId + 1) */
     private String nextOperationId() {

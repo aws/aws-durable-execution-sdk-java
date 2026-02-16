@@ -23,9 +23,22 @@ public class WaitOperation extends BaseDurableOperation<Void> {
 
     private final Duration duration;
 
-    public WaitOperation(String operationId, String name, Duration duration, ExecutionManager executionManager) {
-        super(operationId, name, OperationType.WAIT, TypeToken.get(Void.class), NOOP_SER_DES, executionManager);
+    public WaitOperation(
+            String operationId, String name, Duration duration, ExecutionManager executionManager, String parentId) {
+        super(
+                operationId,
+                name,
+                OperationType.WAIT,
+                TypeToken.get(Void.class),
+                NOOP_SER_DES,
+                executionManager,
+                parentId);
         this.duration = duration;
+    }
+
+    /** Convenience constructor for root-context operations where parentId is null. */
+    public WaitOperation(String operationId, String name, Duration duration, ExecutionManager executionManager) {
+        this(operationId, name, duration, executionManager, null);
     }
 
     @Override

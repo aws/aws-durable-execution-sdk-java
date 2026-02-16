@@ -44,13 +44,36 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             StepConfig config,
             ExecutionManager executionManager,
             DurableLogger durableLogger,
-            DurableConfig durableConfig) {
-        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), executionManager);
+            DurableConfig durableConfig,
+            String parentId) {
+        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), executionManager, parentId);
 
         this.function = function;
         this.config = config;
         this.durableLogger = durableLogger;
         this.userExecutor = durableConfig.getExecutorService();
+    }
+
+    /** Convenience constructor for root-context operations where parentId is null. */
+    public StepOperation(
+            String operationId,
+            String name,
+            Supplier<T> function,
+            TypeToken<T> resultTypeToken,
+            StepConfig config,
+            ExecutionManager executionManager,
+            DurableLogger durableLogger,
+            DurableConfig durableConfig) {
+        this(
+                operationId,
+                name,
+                function,
+                resultTypeToken,
+                config,
+                executionManager,
+                durableLogger,
+                durableConfig,
+                null);
     }
 
     @Override
@@ -98,8 +121,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void executeStepLogic(int attempt) {
-        // TODO: Modify this logic when child contexts are introduced such that the child context id is in this key
-        var stepThreadId = getOperationId() + "-step";
+        var stepThreadId = (getParentId() != null ? getParentId() + ":" : "") + getOperationId() + "-step";
 
         // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
         // thread local OperationContext is set inside the executor since that's where the step actually runs

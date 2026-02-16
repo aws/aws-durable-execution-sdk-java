@@ -28,13 +28,33 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
             U payload,
             TypeToken<T> resultTypeToken,
             InvokeConfig config,
-            ExecutionManager executionManager) {
-        super(operationId, name, OperationType.CHAINED_INVOKE, resultTypeToken, config.serDes(), executionManager);
+            ExecutionManager executionManager,
+            String parentId) {
+        super(
+                operationId,
+                name,
+                OperationType.CHAINED_INVOKE,
+                resultTypeToken,
+                config.serDes(),
+                executionManager,
+                parentId);
 
         this.functionName = functionName;
         this.payload = payload;
         this.invokeConfig = config;
         this.payloadSerDes = config.payloadSerDes() != null ? config.payloadSerDes() : config.serDes();
+    }
+
+    /** Convenience constructor for root-context operations where parentId is null. */
+    public InvokeOperation(
+            String operationId,
+            String name,
+            String functionName,
+            U payload,
+            TypeToken<T> resultTypeToken,
+            InvokeConfig config,
+            ExecutionManager executionManager) {
+        this(operationId, name, functionName, payload, resultTypeToken, config, executionManager, null);
     }
 
     /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
