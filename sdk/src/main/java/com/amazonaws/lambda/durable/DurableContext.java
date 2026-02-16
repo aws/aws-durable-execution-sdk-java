@@ -6,6 +6,7 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.operation.CallbackOperation;
+import com.amazonaws.lambda.durable.operation.ChildContextOperation;
 import com.amazonaws.lambda.durable.operation.InvokeOperation;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
@@ -13,6 +14,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 
@@ -237,6 +239,41 @@ public class DurableContext {
         var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, parentId);
         operation.execute();
 
+        return operation;
+    }
+
+    // ========== runInChildContext methods ==========
+
+    public <T> T runInChildContext(String name, Class<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(name, TypeToken.get(resultType), func).get();
+    }
+
+    public <T> T runInChildContext(String name, TypeToken<T> typeToken, Function<DurableContext, T> func) {
+        return runInChildContextAsync(name, typeToken, func).get();
+    }
+
+    public <T> DurableFuture<T> runInChildContextAsync(
+            String name, Class<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(name, TypeToken.get(resultType), func);
+    }
+
+    public <T> DurableFuture<T> runInChildContextAsync(
+            String name, TypeToken<T> typeToken, Function<DurableContext, T> func) {
+        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        var operationId = nextOperationId();
+
+        var operation = new ChildContextOperation<>(
+                operationId,
+                name,
+                func,
+                typeToken,
+                durableConfig.getSerDes(),
+                executionManager,
+                durableConfig,
+                lambdaContext,
+                parentId);
+
+        operation.execute();
         return operation;
     }
 
