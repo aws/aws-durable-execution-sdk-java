@@ -73,7 +73,7 @@ public class DurableContext {
      * @param contextId the child context's ID (the CONTEXT operation's operation ID)
      * @return a new DurableContext for the child context
      */
-    static DurableContext createChildContext(
+    public static DurableContext createChildContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
         return new DurableContext(executionManager, durableConfig, lambdaContext, contextId);
     }
