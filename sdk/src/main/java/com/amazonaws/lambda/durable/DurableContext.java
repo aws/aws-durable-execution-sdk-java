@@ -319,8 +319,13 @@ public class DurableContext {
         this.isReplaying = false;
     }
 
-    /** Get the next operationId (latest operationId + 1) */
+    /**
+     * Get the next operationId. For root contexts, returns sequential IDs like "1", "2", "3". For child contexts,
+     * prefixes with the parentId to ensure global uniqueness, e.g. "1-1", "1-2" for operations inside child context
+     * "1". This matches the JavaScript SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
+     */
     private String nextOperationId() {
-        return String.valueOf(operationCounter.incrementAndGet());
+        var counter = String.valueOf(operationCounter.incrementAndGet());
+        return parentId != null ? parentId + "-" + counter : counter;
     }
 }

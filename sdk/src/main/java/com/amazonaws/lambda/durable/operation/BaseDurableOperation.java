@@ -71,7 +71,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         this.resultSerDes = resultSerDes;
 
         // todo: phaser could be used only in ExecutionManager and invisible from operations.
-        this.phaser = executionManager.startPhaser(parentId, operationId);
+        this.phaser = executionManager.startPhaser(operationId);
     }
 
     /** Convenience constructor for root-context operations where parentId is null. */
@@ -126,13 +126,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     /**
      * Gets the Operation from ExecutionManager and update the replay state from REPLAY to EXECUTE if operation is not
-     * found. Uses the operation's {@code parentId} for scoped lookups — {@code null} for root-context operations, or
-     * the child context's ID for operations within a child context.
+     * found. Operation IDs are globally unique (prefixed for child contexts), so no parentId is needed for lookups.
      *
      * @return the operation if found, otherwise null
      */
     protected Operation getOperation() {
-        return executionManager.getOperationAndUpdateReplayState(parentId, getOperationId());
+        return executionManager.getOperationAndUpdateReplayState(getOperationId());
     }
 
     /**

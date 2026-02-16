@@ -60,7 +60,7 @@ class ExecutionManagerTest {
     void staysInReplayModeForTerminalOperation() {
         var manager = createManager(List.of(executionOp(), stepOp("1", OperationStatus.SUCCEEDED)));
 
-        var op = manager.getOperationAndUpdateReplayState(null, "1");
+        var op = manager.getOperationAndUpdateReplayState("1");
 
         assertNotNull(op);
         assertTrue(manager.isReplaying());
@@ -72,7 +72,7 @@ class ExecutionManagerTest {
 
         assertTrue(manager.isReplaying());
 
-        var op = manager.getOperationAndUpdateReplayState(null, "1");
+        var op = manager.getOperationAndUpdateReplayState("1");
 
         assertNotNull(op);
         assertFalse(manager.isReplaying());
@@ -84,7 +84,7 @@ class ExecutionManagerTest {
 
         assertTrue(manager.isReplaying());
 
-        var op = manager.getOperationAndUpdateReplayState(null, "2");
+        var op = manager.getOperationAndUpdateReplayState("2");
 
         assertNull(op);
         assertFalse(manager.isReplaying());
@@ -94,7 +94,7 @@ class ExecutionManagerTest {
     void transitionsToExecutionModeForPendingOperation() {
         var manager = createManager(List.of(executionOp(), stepOp("1", OperationStatus.PENDING)));
 
-        var op = manager.getOperationAndUpdateReplayState(null, "1");
+        var op = manager.getOperationAndUpdateReplayState("1");
 
         assertNotNull(op);
         assertFalse(manager.isReplaying());
@@ -104,7 +104,7 @@ class ExecutionManagerTest {
     void staysInReplayModeForFailedOperation() {
         var manager = createManager(List.of(executionOp(), stepOp("1", OperationStatus.FAILED)));
 
-        var op = manager.getOperationAndUpdateReplayState(null, "1");
+        var op = manager.getOperationAndUpdateReplayState("1");
 
         assertNotNull(op);
         assertTrue(manager.isReplaying());

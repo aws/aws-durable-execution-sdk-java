@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Lambda Durable Execution SDK - ChildContext Example
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  DockerFile:
+    Type: String
+    Default: examples/Dockerfile
+    Description: path to Dockerfile
+  FunctionNameSuffix:
+    Type: String
+    Default: ''
+    Description: Suffix to append to all function names
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 512
+    Architectures:
+      - !Ref Architecture
+
+Resources:
+  ChildContextExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'child-context-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.ChildContextExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:child-context-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
+Outputs:
+  ChildContextExampleFunction:
+    Description: Child Context Example Function ARN
+    Value: !GetAtt ChildContextExampleFunction.Arn
+
+  ChildContextExampleFunctionName:
+    Description: Child Context Example Function Name
+    Value: !Ref ChildContextExampleFunction

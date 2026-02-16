@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -142,8 +143,26 @@ public class HistoryEventProcessor {
                     // Unknown event type - log and ignore gracefully
                 }
 
-                case CONTEXT_STARTED, CONTEXT_SUCCEEDED, CONTEXT_FAILED -> {
-                    throw new UnsupportedOperationException("Context operations currently not supported");
+                case CONTEXT_STARTED -> {
+                    if (operationId != null) {
+                        operations.putIfAbsent(
+                                operationId,
+                                createContextOperation(operationId, event.name(), OperationStatus.STARTED, event));
+                    }
+                }
+                case CONTEXT_SUCCEEDED -> {
+                    if (operationId != null) {
+                        operations.put(
+                                operationId,
+                                createContextOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));
+                    }
+                }
+                case CONTEXT_FAILED -> {
+                    if (operationId != null) {
+                        operations.put(
+                                operationId,
+                                createContextOperation(operationId, event.name(), OperationStatus.FAILED, event));
+                    }
                 }
 
                 case CHAINED_INVOKE_STARTED,
@@ -290,6 +309,30 @@ public class HistoryEventProcessor {
                 .status(status)
                 .type(OperationType.CHAINED_INVOKE)
                 .chainedInvokeDetails(builder.build())
+                .build();
+    }
+
+    private Operation createContextOperation(String id, String name, OperationStatus status, Event event) {
+        var builder = ContextDetails.builder();
+
+        if (event.contextSucceededDetails() != null) {
+            var details = event.contextSucceededDetails();
+            if (details.result() != null && details.result().payload() != null) {
+                builder.result(details.result().payload());
+            }
+        } else if (event.contextFailedDetails() != null) {
+            var details = event.contextFailedDetails();
+            if (details.error() != null && details.error().payload() != null) {
+                builder.error(details.error().payload());
+            }
+        }
+
+        return Operation.builder()
+                .id(id)
+                .name(name)
+                .status(status)
+                .type(OperationType.CONTEXT)
+                .contextDetails(builder.build())
                 .build();
     }
 }

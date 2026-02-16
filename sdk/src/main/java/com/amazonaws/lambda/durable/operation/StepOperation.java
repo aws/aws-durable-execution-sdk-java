@@ -121,7 +121,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void executeStepLogic(int attempt) {
-        var stepThreadId = (getParentId() != null ? getParentId() + ":" : "") + getOperationId() + "-step";
+        var stepThreadId = getOperationId() + "-step";
 
         // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
         // thread local OperationContext is set inside the executor since that's where the step actually runs

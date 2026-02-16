@@ -31,19 +31,21 @@ This aligns the Java SDK with the TypeScript and Python reference implementation
 A child context is a `CONTEXT` operation in the checkpoint log. Its lifecycle:
 
 1. **START** (fire-and-forget) — marks the child context as in-progress
-2. Inner operations checkpoint with `parentId` set to the child context's ID
+2. Inner operations checkpoint with `parentId` set to the child context's operation ID
 3. **SUCCEED** or **FAIL** (blocking) — finalizes the child context
 
 ```
 Op ID | Parent ID | Type    | Action  | Payload
 ------|-----------|---------|---------|--------
 3     | null      | CONTEXT | START   | —
-1     | 3         | STEP    | START   | —
-1     | 3         | STEP    | SUCCEED | "result"
+3-1   | 3         | STEP    | START   | —
+3-1   | 3         | STEP    | SUCCEED | "result"
 3     | null      | CONTEXT | SUCCEED | "final result"
 ```
 
-For nested child contexts, the `parentId` uses the qualified context path (e.g., `"3:2"` for a child context created as operation `"2"` inside parent context `"3"`).
+Inner operation IDs are prefixed with the parent context's operation ID using `-` as separator (e.g., `"3-1"`, `"3-2"`). This matches the JavaScript SDK's `stepPrefix` convention and ensures operation IDs are globally unique — the backend validates type consistency by operation ID, so bare sequential IDs inside child contexts would collide with root-level operations.
+
+For nested child contexts, the prefix chains naturally (e.g., `"3-2-1"` for the first operation inside a nested child context that is operation `"2"` inside parent context `"3"`).
 
 ### Replay behavior
 
@@ -54,28 +56,24 @@ For nested child contexts, the `parentId` uses the qualified context path (e.g.,
 | FAILED | Re-throw cached error |
 | STARTED | Re-execute (was interrupted mid-flight) |
 
-### Operation scoping
+### Operation ID prefixing
 
-Child contexts restart their operation counter at 1. To avoid ID collisions, `ExecutionManager` uses a composite key:
+To ensure global uniqueness, `DurableContext.nextOperationId()` prefixes operation IDs with the context's `parentId` when inside a child context:
 
-```java
-record OperationKey(String parentId, String operationId) { ... }
-```
-
-This applies to the `operations` map, `openPhasers` map, and all checkpoint completion handlers. The backend's `ParentId` field on each `Operation` is the source of truth for scoping.
-
-### Nested context ID qualification
-
-To prevent `OperationKey` collisions when sibling contexts at different nesting levels share the same local operation ID, child contexts build a globally unique `contextId` by qualifying with the parent's context path:
-
-- Root-level child contexts use just their operation ID (e.g., `"3"`)
-- Nested child contexts include the parent path (e.g., `"3:2"` for operation `"2"` inside parent context `"3"`)
+- Root context: IDs are `"1"`, `"2"`, `"3"` (no prefix)
+- Child context `"1"`: IDs are `"1-1"`, `"1-2"`, `"1-3"`
+- Nested child context `"1-2"`: IDs are `"1-2-1"`, `"1-2-2"`
 
 ```java
-var contextId = getParentId() != null ? getParentId() + ":" + getOperationId() : getOperationId();
+private String nextOperationId() {
+    var counter = String.valueOf(operationCounter.incrementAndGet());
+    return parentId != null ? parentId + "-" + counter : counter;
+}
 ```
 
-This qualified `contextId` is used as the `parentId` for all operations within the child context.
+This matches the JavaScript SDK's `_stepPrefix` mechanism. The backend validates type consistency by operation ID alone, so without prefixing, a CONTEXT operation with ID `"1"` and an inner STEP with ID `"1"` (different `parentId`) would trigger an `InvalidParameterValueException`.
+
+`ExecutionManager` still uses plain `String` keys (the globally unique operation ID) for its internal maps, since prefixed IDs are inherently unique across all contexts.
 
 ### Thread model
 
@@ -95,13 +93,14 @@ The `DurableContext` stores its context identity in a `parentId` field — `null
 
 | File | Change |
 |------|--------|
-| `ChildContextOperation` (new) | Extends `BaseDurableOperation<T>`. Manages child context lifecycle, thread coordination, large result handling. Builds qualified `contextId` for nested contexts (e.g., `"3:2"`). |
+| `ChildContextOperation` (new) | Extends `BaseDurableOperation<T>`. Manages child context lifecycle, thread coordination, large result handling. Uses `getOperationId()` directly as `contextId` (already globally unique via prefixed IDs). |
 | `ChildContextFailedException` (new) | Extends `DurableOperationException`. Wraps the `Operation` object; extracts error from `contextDetails()`. |
-| `DurableContext` | New `runInChildContext`/`runInChildContextAsync` methods. New `createChildContext` factory (skips thread registration). Stores `parentId` field (null for root, contextId for child). Per-context replay tracking via `isReplaying` field. |
+| `DurableContext` | New `runInChildContext`/`runInChildContextAsync` methods. New `createChildContext` factory (skips thread registration). Stores `parentId` field (null for root, contextId for child). Per-context replay tracking via `isReplaying` field. `nextOperationId()` prefixes with `parentId` for child contexts (e.g., `"1-1"`). |
 | `BaseDurableOperation` | New `parentId` constructor parameter. `sendOperationUpdateAsync` uses it instead of hardcoded `null`. Protected `getParentId()` getter. |
-| `ExecutionManager` | `OperationKey` record for composite keys. All maps (`operations`, `openPhasers`) use composite keys. `getOperationAndUpdateReplayState` accepts `parentId`. `startPhaser` takes `parentId` + `operationId`. New `hasOperationsForContext(parentId)` method for per-context replay initialization. |
-| `StepOperation` | Thread ID includes parent context: `(parentId != null ? parentId + ":" : "") + operationId + "-step"` |
+| `ExecutionManager` | All maps (`operations`, `openPhasers`) use plain `String` keys (globally unique operation IDs). `getOperationAndUpdateReplayState` and `startPhaser` take a single `operationId` argument. New `hasOperationsForContext(parentId)` method for per-context replay initialization. |
+| `StepOperation` | Thread ID uses `getOperationId() + "-step"` (operation IDs are globally unique via prefixing). |
 | `LocalMemoryExecutionClient` | Handles `CONTEXT` operations (was `throw UnsupportedOperationException`). Propagates `parentId` for all operation types. |
+| `HistoryEventProcessor` | Handles `CONTEXT_STARTED`, `CONTEXT_SUCCEEDED`, `CONTEXT_FAILED` events (was `throw UnsupportedOperationException`). Builds `ContextDetails` with result/error extraction. |
 
 ## Large result handling
 
