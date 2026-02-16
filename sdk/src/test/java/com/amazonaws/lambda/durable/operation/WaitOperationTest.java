@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -43,7 +42,7 @@ class WaitOperationTest {
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")
@@ -63,7 +62,7 @@ class WaitOperationTest {
         var phaser = new Phaser(0);
         when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")

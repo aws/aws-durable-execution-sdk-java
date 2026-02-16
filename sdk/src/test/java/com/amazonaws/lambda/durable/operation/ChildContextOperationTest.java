@@ -65,7 +65,7 @@ class ChildContextOperationTest {
     @Test
     void replaySucceededReturnsCachedResult() {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -98,7 +98,7 @@ class ChildContextOperationTest {
         var originalException = new IllegalArgumentException("bad input");
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
 
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -132,7 +132,7 @@ class ChildContextOperationTest {
     void replayFailedFallsBackToChildContextFailedException() {
         var executionManager = createMockExecutionManager();
 
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -161,7 +161,7 @@ class ChildContextOperationTest {
     @Test
     void replayStartedReExecutesChildContext() throws Exception {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -190,7 +190,7 @@ class ChildContextOperationTest {
     @Test
     void replayChildrenReExecutesToReconstructResult() throws Exception {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -220,7 +220,7 @@ class ChildContextOperationTest {
     @Test
     void replayWithTypeMismatchTerminatesExecution() {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -237,7 +237,7 @@ class ChildContextOperationTest {
     @Test
     void replayWithNameMismatchTerminatesExecution() {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(eq("1")))
+        when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("different-name") // Wrong name
