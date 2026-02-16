@@ -356,16 +356,9 @@ class CloudBasedIntegrationTest {
         var result = runner.run(new GreetingRequest("Alice"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-
-        var finalResult = result.getResult(String.class);
-        assertNotNull(finalResult);
-        assertTrue(finalResult.contains("Order for Alice"));
-        assertTrue(finalResult.contains("[validated]"));
-        assertTrue(finalResult.contains("Stock available for Alice"));
-        assertTrue(finalResult.contains("[confirmed]"));
-        assertTrue(finalResult.contains("Base rate for Alice"));
-        assertTrue(finalResult.contains("regional adjustment"));
-        assertTrue(finalResult.contains("[shipping ready]"));
+        assertEquals(
+                "Order for Alice [validated] | Stock available for Alice [confirmed] | Base rate for Alice + regional adjustment [shipping ready]",
+                result.getResult(String.class));
 
         // Verify child context operations were tracked
         assertNotNull(runner.getOperation("order-validation"));

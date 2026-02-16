@@ -17,6 +17,7 @@ import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Phaser;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -76,7 +77,7 @@ class ChildContextOperationTest {
                                 .build())
                         .build());
 
-        var functionCalled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var functionCalled = new AtomicBoolean(false);
         var operation = createOperation(executionManager, ctx -> {
             functionCalled.set(true);
             return "should-not-execute";
@@ -114,7 +115,7 @@ class ChildContextOperationTest {
                                 .build())
                         .build());
 
-        var functionCalled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var functionCalled = new AtomicBoolean(false);
         var operation = createOperation(executionManager, ctx -> {
             functionCalled.set(true);
             return "should-not-execute";
@@ -171,7 +172,7 @@ class ChildContextOperationTest {
         // hasOperationsForContext for the child context ID "1"
         when(executionManager.hasOperationsForContext("1")).thenReturn(false);
 
-        var functionCalled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var functionCalled = new AtomicBoolean(false);
         var operation = createOperation(executionManager, ctx -> {
             functionCalled.set(true);
             return "re-executed";
@@ -201,7 +202,7 @@ class ChildContextOperationTest {
                         .build());
         when(executionManager.hasOperationsForContext("1")).thenReturn(false);
 
-        var functionCalled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var functionCalled = new AtomicBoolean(false);
         var operation = createOperation(executionManager, ctx -> {
             functionCalled.set(true);
             return "reconstructed-value";
