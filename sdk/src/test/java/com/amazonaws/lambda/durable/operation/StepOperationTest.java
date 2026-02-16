@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.amazonaws.lambda.durable.DurableConfig;
@@ -56,7 +57,7 @@ class StepOperationTest {
                         .build())
                 .build();
 
-        when(executionManager.getOperationAndUpdateReplayState(null, "1")).thenReturn(operation);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1"))).thenReturn(operation);
     }
 
     @Test
@@ -90,7 +91,7 @@ class StepOperationTest {
         phaser.arriveAndDeregister();
         when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-step")

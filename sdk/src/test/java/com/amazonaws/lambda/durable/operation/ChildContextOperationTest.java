@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.amazonaws.lambda.durable.DurableConfig;
@@ -23,11 +24,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
-/**
- * Unit tests for ChildContextOperation.
- *
- * <p>Validates: Requirements 1.4, 1.5, 2.1, 2.2, 2.3, 2.5
- */
+/** Unit tests for ChildContextOperation. */
 class ChildContextOperationTest {
 
     private static final JacksonSerDes SERDES = new JacksonSerDes();
@@ -62,17 +59,13 @@ class ChildContextOperationTest {
                 null);
     }
 
-    // ===== Property 1: Child context result round-trip =====
+    // ===== SUCCEEDED replay =====
 
-    /**
-     * Validates: Requirements 1.4, 2.1
-     *
-     * <p>SUCCEEDED replay returns cached result without re-executing the function.
-     */
+    /** SUCCEEDED replay returns cached result without re-executing the function. */
     @Test
     void replaySucceededReturnsCachedResult() {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -96,20 +89,16 @@ class ChildContextOperationTest {
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
     }
 
-    // ===== Property 2: Child context failure preservation =====
+    // ===== FAILED replay =====
 
-    /**
-     * Validates: Requirements 1.5, 2.2
-     *
-     * <p>FAILED replay throws the original exception without re-executing.
-     */
+    /** FAILED replay throws the original exception without re-executing. */
     @Test
     void replayFailedThrowsOriginalException() {
         var executionManager = createMockExecutionManager();
         var originalException = new IllegalArgumentException("bad input");
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
 
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -138,16 +127,12 @@ class ChildContextOperationTest {
         assertFalse(functionCalled.get(), "Function should not be called during FAILED replay");
     }
 
-    /**
-     * Validates: Requirements 1.5, 2.2
-     *
-     * <p>FAILED replay falls back to ChildContextFailedException when original cannot be reconstructed.
-     */
+    /** FAILED replay falls back to ChildContextFailedException when original cannot be reconstructed. */
     @Test
     void replayFailedFallsBackToChildContextFailedException() {
         var executionManager = createMockExecutionManager();
 
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -172,15 +157,11 @@ class ChildContextOperationTest {
 
     // ===== Replay STARTED =====
 
-    /**
-     * Validates: Requirements 2.3
-     *
-     * <p>STARTED replay re-executes the child context (interrupted mid-execution).
-     */
+    /** STARTED replay re-executes the child context (interrupted mid-execution). */
     @Test
     void replayStartedReExecutesChildContext() throws Exception {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -205,15 +186,11 @@ class ChildContextOperationTest {
 
     // ===== ReplayChildren path =====
 
-    /**
-     * Validates: Requirements 2.1
-     *
-     * <p>SUCCEEDED with replayChildren=true re-executes to reconstruct the result.
-     */
+    /** SUCCEEDED with replayChildren=true re-executes to reconstruct the result. */
     @Test
     void replayChildrenReExecutesToReconstructResult() throws Exception {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -239,15 +216,11 @@ class ChildContextOperationTest {
 
     // ===== Non-deterministic detection =====
 
-    /**
-     * Validates: Requirements 2.5
-     *
-     * <p>Type mismatch during replay terminates execution.
-     */
+    /** Type mismatch during replay terminates execution. */
     @Test
     void replayWithTypeMismatchTerminatesExecution() {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("test-context")
@@ -260,15 +233,11 @@ class ChildContextOperationTest {
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }
 
-    /**
-     * Validates: Requirements 2.5
-     *
-     * <p>Name mismatch during replay terminates execution.
-     */
+    /** Name mismatch during replay terminates execution. */
     @Test
     void replayWithNameMismatchTerminatesExecution() {
         var executionManager = createMockExecutionManager();
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(Operation.builder()
                         .id("1")
                         .name("different-name") // Wrong name

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -44,7 +45,7 @@ class BaseDurableOperationTest {
     void getOperation() {
         ExecutionManager executionManager = mock(ExecutionManager.class);
         Operation operation = mock(Operation.class);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(operation);
 
         BaseDurableOperation<String> op =
@@ -71,8 +72,8 @@ class BaseDurableOperationTest {
         Phaser phaser = new Phaser();
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("context", ThreadType.STEP));
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder().build());
 
         BaseDurableOperation<String> op =
@@ -98,7 +99,7 @@ class BaseDurableOperationTest {
         Phaser phaser = new Phaser();
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("context", ThreadType.CONTEXT));
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
@@ -123,8 +124,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.CONTEXT);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder().build());
 
         BaseDurableOperation<String> op =
@@ -154,8 +155,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.CONTEXT);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder().build());
 
         BaseDurableOperation<String> op =
@@ -184,8 +185,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder().build());
 
         BaseDurableOperation<String> op =
@@ -213,8 +214,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(
                         Operation.builder().type(OperationType.CHAINED_INVOKE).build());
 
@@ -240,8 +241,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder()
                         .name("another name")
                         .type(OPERATION_TYPE)
@@ -269,8 +270,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(null);
 
         BaseDurableOperation<String> op =
@@ -293,8 +294,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder()
                         .name(OPERATION_NAME)
                         .type(OPERATION_TYPE)
@@ -320,8 +321,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder()
                         .name(OPERATION_NAME)
                         .type(OPERATION_TYPE)
@@ -350,8 +351,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder()
                         .name(OPERATION_NAME)
                         .type(OPERATION_TYPE)
@@ -385,8 +386,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder()
                         .name(OPERATION_NAME)
                         .type(OPERATION_TYPE)
@@ -419,8 +420,8 @@ class BaseDurableOperationTest {
         OperationContext context = new OperationContext("step", ThreadType.STEP);
         ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(null, OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(null, OPERATION_ID))
+        when(executionManager.startPhaser(any(), eq(OPERATION_ID))).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq(OPERATION_ID)))
                 .thenReturn(Operation.builder()
                         .name(OPERATION_NAME)
                         .type(OPERATION_TYPE)

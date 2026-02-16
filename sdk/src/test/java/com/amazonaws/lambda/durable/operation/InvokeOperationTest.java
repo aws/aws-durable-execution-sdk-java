@@ -5,7 +5,8 @@ package com.amazonaws.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.any;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -55,7 +56,7 @@ class InvokeOperationTest {
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")
@@ -86,7 +87,7 @@ class InvokeOperationTest {
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")
@@ -123,7 +124,7 @@ class InvokeOperationTest {
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")
@@ -160,7 +161,7 @@ class InvokeOperationTest {
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")
@@ -197,7 +198,7 @@ class InvokeOperationTest {
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
         when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
+        when(executionManager.getOperationAndUpdateReplayState(any(), eq("1")))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")
