@@ -23,6 +23,8 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 - `ctx.createCallback()` – Wait for external events (approvals, webhooks)
 - `ctx.invoke()` – Invoke another Lambda function and wait for the result
 - `ctx.invokeAsync()` – Start a concurrent Lambda function invocation
+- `ctx.runInChildContext()` – Run an isolated child context with its own checkpoint log
+- `ctx.runInChildContextAsync()` – Start a concurrent child context
 
 ## Quick Start
 
@@ -187,6 +189,30 @@ var result = ctx.invoke("invoke-function",
                         .build()
         );
                 
+```
+
+### runInChildContext() – Isolated Execution Contexts
+
+Child contexts run an isolated stream of work with their own operation counter and checkpoint log. They support the full range of durable operations — `step`, `wait`, `invoke`, `createCallback`, and nested child contexts.
+
+```java
+// Sync: blocks until the child context completes
+var result = ctx.runInChildContext("validate-order", String.class, child -> {
+    var data = child.step("fetch", String.class, () -> fetchData());
+    child.wait(Duration.ofMinutes(5));
+    return child.step("validate", String.class, () -> validate(data));
+});
+
+// Async: returns a DurableFuture for concurrent execution
+var futureA = ctx.runInChildContextAsync("branch-a", String.class, child -> {
+    return child.step("work-a", String.class, () -> doWorkA());
+});
+var futureB = ctx.runInChildContextAsync("branch-b", String.class, child -> {
+    return child.step("work-b", String.class, () -> doWorkB());
+});
+
+// Wait for all child contexts to complete
+var results = DurableFuture.allOf(futureA, futureB);
 ```
 
 ## Step Configuration
@@ -396,9 +422,10 @@ DurableExecutionException              - General durable exception
     │   ├── InvokeFailedException      - Chained invocation failed. Handle the error or propagate failure.
     │   ├── InvokeTimedoutException    - Chained invocation timed out. Handle the error or propagate failure.
     │   └── InvokeStoppedException     - Chained invocation stopped. Handle the error or propagate failure.
-    └── CallbackException              - General callback exception
-        ├── CallbackFailedException    - External system sent an error response to the callback. Handle the error or propagate failure
-        └── CallbackTimeoutException   - Callback exceeded its timeout duration. Handle the error or propagate the failure
+    ├── CallbackException              - General callback exception
+    │   ├── CallbackFailedException    - External system sent an error response to the callback. Handle the error or propagate failure
+    │   └── CallbackTimeoutException   - Callback exceeded its timeout duration. Handle the error or propagate the failure
+    └── ChildContextFailedException    - Child context failed and the original exception could not be reconstructed
 ```
 
 ```java

@@ -43,6 +43,8 @@ Op ID | Parent ID | Type    | Action  | Payload
 3     | null      | CONTEXT | SUCCEED | "final result"
 ```
 
+For nested child contexts, the `parentId` uses the qualified context path (e.g., `"3:2"` for a child context created as operation `"2"` inside parent context `"3"`).
+
 ### Replay behavior
 
 | Cached status | Behavior |
@@ -62,6 +64,19 @@ record OperationKey(String parentId, String operationId) { ... }
 
 This applies to the `operations` map, `openPhasers` map, and all checkpoint completion handlers. The backend's `ParentId` field on each `Operation` is the source of truth for scoping.
 
+### Nested context ID qualification
+
+To prevent `OperationKey` collisions when sibling contexts at different nesting levels share the same local operation ID, child contexts build a globally unique `contextId` by qualifying with the parent's context path:
+
+- Root-level child contexts use just their operation ID (e.g., `"3"`)
+- Nested child contexts include the parent path (e.g., `"3:2"` for operation `"2"` inside parent context `"3"`)
+
+```java
+var contextId = getParentId() != null ? getParentId() + ":" + getOperationId() : getOperationId();
+```
+
+This qualified `contextId` is used as the `parentId` for all operations within the child context.
+
 ### Thread model
 
 Child context user code runs in a separate thread (same pattern as `StepOperation`):
@@ -72,18 +87,20 @@ Child context user code runs in a separate thread (same pattern as `StepOperatio
 
 ### Per-context replay state
 
-The current global `executionMode` (REPLAY → EXECUTION) doesn't work for child contexts — a child may be replaying while the parent is already executing. Each `DurableContext` tracks its own replay state independently, matching the TypeScript SDK's per-entity approach.
+The current global `executionMode` (REPLAY → EXECUTION) doesn't work for child contexts — a child may be replaying while the parent is already executing. Each `DurableContext` tracks its own replay state independently via an `isReplaying` field, initialized by checking `ExecutionManager.hasOperationsForContext(parentId)`. This matches the TypeScript SDK's per-entity approach.
+
+The `DurableContext` stores its context identity in a `parentId` field — `null` for the root context, set to the qualified context ID for child contexts. This field is passed directly to operations as their `parentId` when constructing them.
 
 ## Key changes by file
 
 | File | Change |
 |------|--------|
-| `ChildContextOperation` (new) | Extends `BaseDurableOperation<T>`. Manages child context lifecycle, thread coordination, large result handling. |
-| `ChildContextFailedException` (new) | Exception for failed child contexts where the original exception can't be reconstructed. |
-| `DurableContext` | New `runInChildContext`/`runInChildContextAsync` methods. New `createChildContext` factory (skips thread registration). Stores and exposes `contextId`. Per-context replay tracking. |
-| `BaseDurableOperation` | New `parentId` constructor parameter. `sendOperationUpdateAsync` uses it instead of hardcoded `null`. |
-| `ExecutionManager` | `OperationKey` record for composite keys. All maps (`operations`, `openPhasers`) use composite keys. `getOperationAndUpdateReplayState` accepts `parentId`. `startPhaser` takes `parentId` + `operationId`. |
-| `StepOperation` | Thread ID includes context ID: `contextId:operationId-step` |
+| `ChildContextOperation` (new) | Extends `BaseDurableOperation<T>`. Manages child context lifecycle, thread coordination, large result handling. Builds qualified `contextId` for nested contexts (e.g., `"3:2"`). |
+| `ChildContextFailedException` (new) | Extends `DurableOperationException`. Wraps the `Operation` object; extracts error from `contextDetails()`. |
+| `DurableContext` | New `runInChildContext`/`runInChildContextAsync` methods. New `createChildContext` factory (skips thread registration). Stores `parentId` field (null for root, contextId for child). Per-context replay tracking via `isReplaying` field. |
+| `BaseDurableOperation` | New `parentId` constructor parameter. `sendOperationUpdateAsync` uses it instead of hardcoded `null`. Protected `getParentId()` getter. |
+| `ExecutionManager` | `OperationKey` record for composite keys. All maps (`operations`, `openPhasers`) use composite keys. `getOperationAndUpdateReplayState` accepts `parentId`. `startPhaser` takes `parentId` + `operationId`. New `hasOperationsForContext(parentId)` method for per-context replay initialization. |
+| `StepOperation` | Thread ID includes parent context: `(parentId != null ? parentId + ":" : "") + operationId + "-step"` |
 | `LocalMemoryExecutionClient` | Handles `CONTEXT` operations (was `throw UnsupportedOperationException`). Propagates `parentId` for all operation types. |
 
 ## Large result handling
@@ -95,19 +112,24 @@ Results < 256KB (measured in UTF-8 bytes) are checkpointed directly. Results ≥
 
 `summaryGenerator` (optional compact summary for observability) is deferred for the initial implementation.
 
-## Orphan detection
+## Orphan detection (deferred)
 
-When a parent CONTEXT completes, in-flight child operations must be prevented from checkpointing stale state. The `CheckpointBatcher` tracks completed context IDs and silently skips checkpoints from orphaned operations. This matches both the Python SDK (`_parent_done` set) and TypeScript SDK (`markAncestorFinished`).
+> **Status: Deferred** — orphan detection is not implemented in this release. The mechanism described below is the intended design for a future release, matching the Python and TypeScript SDKs.
+
+When a parent CONTEXT completes, in-flight child operations must be prevented from checkpointing stale state. The `CheckpointBatcher` would track completed context IDs and silently skip checkpoints from orphaned operations. This matches both the Python SDK (`_parent_done` set) and TypeScript SDK (`markAncestorFinished`).
 
 ## Error handling
 
 `ChildContextFailedException` follows the same pattern as `StepFailedException`:
+- Extends `DurableOperationException`, wrapping the `Operation` object
+- Extracts the `ErrorObject` from `operation.contextDetails().error()`
 - `get()` first attempts to reconstruct and re-throw the original exception
-- Falls back to `ChildContextFailedException` wrapping the `ErrorObject`
+- Falls back to `ChildContextFailedException` if reconstruction fails
 
 Exceptions from inner operations propagate up through the child context naturally.
 
 ## What's deferred
 
+- Orphan detection in `CheckpointBatcher` — preventing stale checkpoints from in-flight child operations after a parent CONTEXT completes (see "Orphan detection" section above)
 - `summaryGenerator` for large-result observability
 - Higher-level `map`/`parallel` combinators (different `SubType` values, same `CONTEXT` operation type)
