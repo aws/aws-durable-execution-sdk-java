@@ -68,7 +68,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         this.resultSerDes = resultSerDes;
 
         // todo: phaser could be used only in ExecutionManager and invisible from operations.
-        this.phaser = executionManager.startPhaser(operationId);
+        this.phaser = executionManager.startPhaser(null, operationId);
     }
 
     /** Gets the unique identifier for this operation. */
@@ -107,12 +107,13 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     /**
      * Gets the Operation from ExecutionManager and update the replay state from REPLAY to EXECUTE if operation is not
-     * found
+     * found. Uses {@code null} as parentId for root-context operations; child context operations will override this
+     * once parentId support is added.
      *
      * @return the operation if found, otherwise null
      */
     protected Operation getOperation() {
-        return executionManager.getOperationAndUpdateReplayState(getOperationId());
+        return executionManager.getOperationAndUpdateReplayState(null, getOperationId());
     }
 
     /**

@@ -25,7 +25,7 @@ class WaitOperationTest {
     void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
         var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(1);
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
+        when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("1-step", ThreadType.STEP));
 
         var operation = new WaitOperation("2", "test-invoke", Duration.ofSeconds(10), executionManager);
@@ -40,9 +40,9 @@ class WaitOperationTest {
         var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(1);
         phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
+        when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
+        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")
@@ -60,9 +60,9 @@ class WaitOperationTest {
     void getSucceededWhenStarted() {
         var executionManager = mock(ExecutionManager.class);
         var phaser = new Phaser(0);
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
+        when(executionManager.startPhaser(any(), any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
+        when(executionManager.getOperationAndUpdateReplayState(null, "1"))
                 .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
                         .id("1")
                         .name("test-invoke")

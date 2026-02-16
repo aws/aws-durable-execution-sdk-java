@@ -43,7 +43,7 @@ public class ExecutionManager {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
 
     // ===== Execution State =====
-    private final Map<String, Operation> operations;
+    private final Map<OperationKey, Operation> operations;
     private final String executionOperationId;
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
@@ -51,7 +51,7 @@ public class ExecutionManager {
     // ===== Thread Coordination =====
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
     private static final ThreadLocal<OperationContext> currentContext = new ThreadLocal<>();
-    private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
+    private final Map<OperationKey, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
 
     // ===== Checkpoint Batching =====
@@ -70,7 +70,7 @@ public class ExecutionManager {
                 new CheckpointBatcher(config, durableExecutionArn, checkpointToken, this::onCheckpointComplete);
 
         this.operations = checkpointBatcher.fetchAllPages(initialExecutionState).stream()
-                .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
+                .collect(Collectors.toConcurrentMap(OperationKey::fromOperation, op -> op));
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
         this.executionMode =
@@ -91,12 +91,13 @@ public class ExecutionManager {
     /** Called by CheckpointManager when a checkpoint completes. Updates state and advances phasers. */
     private void onCheckpointComplete(List<Operation> newOperations) {
         // Update operation storage
-        newOperations.forEach(op -> operations.put(op.id(), op));
+        newOperations.forEach(op -> operations.put(OperationKey.fromOperation(op), op));
 
         // Advance phasers for completed operations
         for (Operation operation : newOperations) {
-            if (openPhasers.containsKey(operation.id()) && isTerminalStatus(operation.status())) {
-                var phaser = openPhasers.get(operation.id());
+            var key = OperationKey.fromOperation(operation);
+            if (openPhasers.containsKey(key) && isTerminalStatus(operation.status())) {
+                var phaser = openPhasers.get(key);
 
                 // Two-phase completion
                 logger.trace("Advancing phaser 0 -> 1: {}", phaser);
@@ -108,14 +109,16 @@ public class ExecutionManager {
     }
 
     /**
-     * Gets an operation by ID and updates replay state. Transitions from REPLAY to EXECUTION mode if the operation is
-     * not found or is not in a terminal state (still in progress).
+     * Gets an operation by parentId and operationId, and updates replay state. Transitions from REPLAY to EXECUTION
+     * mode if the operation is not found or is not in a terminal state (still in progress).
      *
+     * @param parentId the parent context ID (null for root context operations)
      * @param operationId the operation ID to get
      * @return the existing operation, or null if not found (first execution)
      */
-    public Operation getOperationAndUpdateReplayState(String operationId) {
-        var existing = operations.get(operationId);
+    public Operation getOperationAndUpdateReplayState(String parentId, String operationId) {
+        var key = OperationKey.of(parentId, operationId);
+        var existing = operations.get(key);
         if (executionMode.get() == ExecutionMode.REPLAY) {
             if (existing == null || !isTerminalStatus(existing.status())) {
                 if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {
@@ -127,7 +130,7 @@ public class ExecutionManager {
     }
 
     public Operation getExecutionOperation() {
-        return operations.get(executionOperationId);
+        return operations.get(OperationKey.of(null, executionOperationId));
     }
 
     // ===== Thread Coordination =====
@@ -187,10 +190,11 @@ public class ExecutionManager {
 
     // ===== Phaser Management =====
 
-    public Phaser startPhaser(String operationId) {
+    public Phaser startPhaser(String parentId, String operationId) {
+        var key = OperationKey.of(parentId, operationId);
         var phaser = new Phaser(1);
-        openPhasers.put(operationId, phaser);
-        logger.trace("Started phaser for operation '{}'", operationId);
+        openPhasers.put(key, phaser);
+        logger.trace("Started phaser for operation '{}' (parentId='{}')", operationId, parentId);
         return phaser;
     }
 
