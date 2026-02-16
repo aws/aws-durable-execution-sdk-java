@@ -214,14 +214,14 @@ class ChildContextIntegrationTest {
         runner.withSkipTime(false);
 
         // First run - should suspend at the wait
-        var result = runner.runUntilComplete("test");
+        var result = runner.run("test");
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
         // Advance time so the wait completes
         runner.advanceTime();
 
         // Second run - should complete
-        var result2 = runner.runUntilComplete("test");
+        var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals("done", result2.getResult(String.class));
     }
@@ -287,7 +287,7 @@ class ChildContextIntegrationTest {
         runner.withSkipTime(false);
 
         // First run: busy child completes its work, but waiter's wait is still outstanding → PENDING
-        var result = runner.runUntilComplete("test");
+        var result = runner.run("test");
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
         // The busy child's step should have been checkpointed before suspension
@@ -298,7 +298,7 @@ class ChildContextIntegrationTest {
         runner.advanceTime();
 
         // Second run: both children complete
-        var result2 = runner.runUntilComplete("test");
+        var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals("done-working|waited", result2.getResult(String.class));
     }
