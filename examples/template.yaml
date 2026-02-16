@@ -350,6 +350,31 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  ChildContextExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'child-context-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.ChildContextExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:child-context-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
@@ -454,3 +479,11 @@ Outputs:
   ManyAsyncStepsExampleFunctionName:
     Description: Many Async Steps Example Function Name
     Value: !Ref ManyAsyncStepsExampleFunction
+
+  ChildContextExampleFunction:
+    Description: Child Context Example Function ARN
+    Value: !GetAtt ChildContextExampleFunction.Arn
+
+  ChildContextExampleFunctionName:
+    Description: Child Context Example Function Name
+    Value: !Ref ChildContextExampleFunction

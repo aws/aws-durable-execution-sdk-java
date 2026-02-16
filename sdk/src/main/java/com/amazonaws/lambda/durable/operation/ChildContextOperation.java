@@ -93,7 +93,12 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void executeChildContext() {
-        var contextId = getOperationId();
+        // Build a globally unique contextId by qualifying with the parent's context path.
+        // Root-level child contexts use just their operationId (e.g., "3").
+        // Nested child contexts include the parent path (e.g., "3:2" for operation "2" inside parent "3").
+        // This prevents OperationKey collisions when sibling contexts at different nesting levels
+        // happen to share the same local operation ID.
+        var contextId = getParentId() != null ? getParentId() + ":" + getOperationId() : getOperationId();
 
         // Register child context thread before executor runs (prevents suspension)
         registerActiveThread(contextId, ThreadType.CONTEXT);

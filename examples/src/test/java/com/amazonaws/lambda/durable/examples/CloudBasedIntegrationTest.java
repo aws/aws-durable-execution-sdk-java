@@ -351,6 +351,29 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
+    void testChildContextExample() {
+        var runner = CloudDurableTestRunner.create(arn("child-context-example"), GreetingRequest.class, String.class);
+        var result = runner.run(new GreetingRequest("Alice"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult(String.class);
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("Order for Alice"));
+        assertTrue(finalResult.contains("[validated]"));
+        assertTrue(finalResult.contains("Stock available for Alice"));
+        assertTrue(finalResult.contains("[confirmed]"));
+        assertTrue(finalResult.contains("Base rate for Alice"));
+        assertTrue(finalResult.contains("regional adjustment"));
+        assertTrue(finalResult.contains("[shipping ready]"));
+
+        // Verify child context operations were tracked
+        assertNotNull(runner.getOperation("order-validation"));
+        assertNotNull(runner.getOperation("inventory-check"));
+        assertNotNull(runner.getOperation("shipping-estimate"));
+    }
+
+    @Test
     void testManyAsyncStepsExample() {
         var runner = CloudDurableTestRunner.create(
                 arn("many-async-steps-example"), ManyAsyncStepsExample.Input.class, String.class);
