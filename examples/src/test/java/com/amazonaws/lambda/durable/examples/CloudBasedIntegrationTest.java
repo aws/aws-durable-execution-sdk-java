@@ -54,7 +54,8 @@ class CloudBasedIntegrationTest {
     }
 
     private static String arn(String functionName) {
-        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionName + functionNameSuffix + ":$LATEST";
+        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionName + functionNameSuffix
+                + ":$LATEST";
     }
 
     @Test
