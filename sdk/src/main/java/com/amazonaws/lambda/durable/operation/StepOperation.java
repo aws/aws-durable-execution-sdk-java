@@ -133,6 +133,9 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 var successUpdate = OperationUpdate.builder()
                         .action(OperationAction.SUCCEED)
                         .payload(serializeResult(result));
+
+                // sendOperationUpdate must be synchronous here. When waiting for the return of this call, the context
+                // threads waiting for the result of this step operation will be wakened up and registered.
                 sendOperationUpdate(successUpdate);
             } catch (Throwable e) {
                 handleStepFailure(e, attempt);
@@ -142,7 +145,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 } catch (SuspendExecutionException e) {
                     // Expected when this is the last active thread. Must catch here because:
                     // 1/ This runs in a worker thread detached from handlerFuture
-                    // 2/ Uncaught exception would prevent phaser from advancing, blocking stepAsync().get()
+                    // 2/ Uncaught exception would prevent stepAsync().get() from resume
                     // Suspension/Termination is already signaled via suspendExecutionFuture/terminateExecutionFuture
                     // before the throw.
                 }

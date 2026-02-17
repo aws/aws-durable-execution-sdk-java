@@ -52,7 +52,7 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
 
             switch (existing.status()) {
                 case SUCCEEDED, FAILED, TIMED_OUT -> {
-                    // Terminal state - complete phaser immediately
+                    // Terminal state - complete the operation immediately
                     markAlreadyCompleted();
                     return;
                 }

@@ -74,15 +74,6 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     /**
      * Blocks until the operation completes and returns the result.
      *
-     * <p>Handles:
-     *
-     * <ul>
-     *   <li>Thread deregistration (allows suspension)
-     *   <li>Phaser blocking (waits for operation to complete)
-     *   <li>Thread reactivation (resumes execution)
-     *   <li>Result retrieval
-     * </ul>
-     *
      * @return the operation result
      */
     @Override

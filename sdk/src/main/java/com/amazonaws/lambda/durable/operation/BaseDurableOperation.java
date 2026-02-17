@@ -9,18 +9,17 @@ import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.execution.ExecutionPhase;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Phaser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
@@ -39,7 +38,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  * <ul>
  *   <li>Starting multiple async operations quickly
  *   <li>Blocking on results later when needed
- *   <li>Proper thread coordination via Phasers
+ *   <li>Proper thread coordination via future
  * </ul>
  */
 public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
@@ -51,7 +50,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private final ExecutionManager executionManager;
     private final TypeToken<T> resultTypeToken;
     private final SerDes resultSerDes;
-    private final Phaser phaser;
+    private final CompletableFuture<Void> completionFuture;
 
     public BaseDurableOperation(
             String operationId,
@@ -67,8 +66,10 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         this.resultTypeToken = resultTypeToken;
         this.resultSerDes = resultSerDes;
 
-        // todo: phaser could be used only in ExecutionManager and invisible from operations.
-        this.phaser = executionManager.startPhaser(operationId);
+        this.completionFuture = new CompletableFuture<>();
+
+        // register this operation in ExecutionManager so that the operation can receive updates from ExecutionManager
+        executionManager.registerOperation(this);
     }
 
     /** Gets the unique identifier for this operation. */
@@ -96,7 +97,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
      *
      * <ul>
      *   <li>Thread deregistration (allows suspension)
-     *   <li>Phaser blocking (waits for operation to complete)
+     *   <li>Blocking (waits for operation to complete)
      *   <li>Thread reactivation (resumes execution)
      *   <li>Result retrieval
      * </ul>
@@ -116,7 +117,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     /**
-     * check if it's called from a Step.
+     * Checks if it's called from a Step.
      *
      * @throws IllegalDurableOperationException if it's in a step
      */
@@ -131,42 +132,42 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         }
     }
 
-    // phase control utilities
+    /** Checks if this operation is completed */
+    protected boolean isOperationCompleted() {
+        return completionFuture.isDone();
+    }
+
+    /** Waits for the operation to complete and suspends the execution if no active thread is running */
     protected Operation waitForOperationCompletion() {
 
         validateCurrentThreadType();
 
-        // register to prevent the state from advancing
-        phaser.register();
+        var context = executionManager.getCurrentContext();
 
-        // If we are in a replay where the operation is already complete (SUCCEEDED /
-        // FAILED), the Phaser will be
-        // advanced in .execute() already and we don't block but return the result
-        // immediately.
-        if (phaser.getPhase() == ExecutionPhase.RUNNING.getValue()) {
-            // Operation not done yet
-            var context = executionManager.getCurrentContext();
-            // Deregister current context - allows suspension
-            logger.debug(
-                    "get() on {} attempting to deregister context: {}",
-                    getType(),
-                    executionManager.getCurrentContext().contextId());
-            deregisterActiveThreadAndUnsetCurrentContext(context.contextId());
+        // Use a synchronized block here to prevent the completionFuture from being completed by the execution thread
+        // (a step or child context thread) when it's inside the `if` block where the completion check is done (not
+        // completed) while the callback isn't added to the completionFuture or the current thread isn't deregistered.
+        synchronized (completionFuture) {
+            if (!isOperationCompleted()) {
+                // Operation not done yet
+                logger.debug("get() on {} attempting to deregister context: {}", getType(), context.contextId());
 
-            // Block until operation completes
-            logger.trace("Waiting for operation to finish {} (Phaser: {})", getOperationId(), phaser);
-            phaser.arriveAndAwaitAdvance();
+                // Add a callback to completionFuture so that when the completionFuture is completed,
+                // it will register the current Context thread synchronously to make sure it is always registered
+                // before the execution thread (Step or child context) is deregistered.
+                completionFuture.thenRun(() -> registerActiveThread(context.contextId(), context.threadType()));
 
-            // Reactivate current context
-            registerActiveThread(context.contextId(), context.threadType());
-            setCurrentContext(context.contextId(), context.threadType());
-
-            // Complete phase 1
-            phaser.arriveAndDeregister();
-        } else {
-            // The phaser is already completed. Deregister now.
-            phaser.arriveAndDeregister();
+                // Deregister the current thread to allow suspension
+                deregisterActiveThreadAndUnsetCurrentContext(context.contextId());
+            }
         }
+
+        // Block until operation completes. No-op if the future is already completed.
+        logger.trace("Waiting for operation to finish {} ({})", getOperationId(), completionFuture);
+        completionFuture.join();
+
+        // Reactivate current context. No-op if this is called twice.
+        setCurrentContext(context.contextId(), context.threadType());
 
         // Get result based on status
         var op = getOperation();
@@ -177,13 +178,27 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return op;
     }
 
-    protected void markAlreadyCompleted() {
-        // Operation is already completed in a relay. We advance and deregister from the Phaser
-        // so that get method doesn't block and returns the result immediately.
-        logger.trace("Detected terminal status during replay. Advancing phaser 0 -> 1 {}.", phaser);
-        phaser.arriveAndDeregister(); // Phase 0 -> 1
+    /** Receives operation updates from ExecutionManager and updates the internal state of the operation */
+    public void onCheckpointComplete(Operation operation) {
+        if (isTerminalStatus(operation.status())) {
+            synchronized (completionFuture) {
+                logger.trace("In onCheckpointComplete, completing operation {} ({})", operationId, completionFuture);
+                completionFuture.complete(null);
+            }
+        }
     }
 
+    /** Marks the operation as already completed (in replay). */
+    protected void markAlreadyCompleted() {
+        // When the operation is already completed in a replay, we complete completionFuture immediately
+        // so that the `get` method will be unblocked and the context thread will be registered
+        logger.trace("In markAlreadyCompleted, completing operation: {} ({}).", operationId, completionFuture);
+        synchronized (completionFuture) {
+            completionFuture.complete(null);
+        }
+    }
+
+    // terminate the execution
     protected T terminateExecution(UnrecoverableDurableExecutionException exception) {
         executionManager.terminateExecution(exception);
         // Exception is already thrown from above. Keep the throw statement below to make tests happy
@@ -194,7 +209,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return terminateExecution(new IllegalDurableOperationException(message));
     }
 
-    // advanced phase control used by Step only
+    // advanced thread and context control
     protected void deregisterActiveThreadAndUnsetCurrentContext(String threadId) {
         executionManager.deregisterActiveThreadAndUnsetCurrentContext(threadId);
     }
@@ -297,5 +312,13 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
                     "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     operationId, checkpointed.name(), getName())));
         }
+    }
+
+    private boolean isTerminalStatus(OperationStatus status) {
+        return status == OperationStatus.SUCCEEDED
+                || status == OperationStatus.FAILED
+                || status == OperationStatus.CANCELLED
+                || status == OperationStatus.TIMED_OUT
+                || status == OperationStatus.STOPPED;
     }
 }

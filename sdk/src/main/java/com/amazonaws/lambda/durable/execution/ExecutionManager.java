@@ -4,13 +4,13 @@ package com.amazonaws.lambda.durable.execution;
 
 import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import com.amazonaws.lambda.durable.operation.BaseDurableOperation;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -28,8 +28,8 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
  * <ul>
  *   <li>Execution state (operations, checkpoint token)
  *   <li>Thread lifecycle (registration/deregistration)
- *   <li>Phaser management (coordination)
- *   <li>Checkpoint batching (via CheckpointManager)
+ *   <li>Checkpoint batching (via CheckpointBatcher)
+ *   <li>Checkpoint result handling (CheckpointBatcher callback)
  *   <li>Polling (for waits and retries)
  * </ul>
  *
@@ -43,15 +43,16 @@ public class ExecutionManager {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
 
     // ===== Execution State =====
-    private final Map<String, Operation> operations;
+    private final Map<String, Operation> operationStorage;
     private final String executionOperationId;
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
 
     // ===== Thread Coordination =====
+    private final Map<String, BaseDurableOperation<?>> registeredOperations =
+            Collections.synchronizedMap(new HashMap<>());
     private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
     private static final ThreadLocal<OperationContext> currentContext = new ThreadLocal<>();
-    private final Map<String, Phaser> openPhasers = Collections.synchronizedMap(new HashMap<>());
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
 
     // ===== Checkpoint Batching =====
@@ -69,12 +70,12 @@ public class ExecutionManager {
         this.checkpointBatcher =
                 new CheckpointBatcher(config, durableExecutionArn, checkpointToken, this::onCheckpointComplete);
 
-        this.operations = checkpointBatcher.fetchAllPages(initialExecutionState).stream()
+        this.operationStorage = checkpointBatcher.fetchAllPages(initialExecutionState).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
         this.executionMode =
-                new AtomicReference<>(operations.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
+                new AtomicReference<>(operationStorage.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
     }
 
     // ===== State Management =====
@@ -87,24 +88,22 @@ public class ExecutionManager {
         return executionMode.get() == ExecutionMode.REPLAY;
     }
 
+    public void registerOperation(BaseDurableOperation<?> operation) {
+        registeredOperations.put(operation.getOperationId(), operation);
+    }
+
     // ===== Checkpoint Completion Handler =====
-    /** Called by CheckpointManager when a checkpoint completes. Updates state and advances phasers. */
+    /** Called by CheckpointManager when a checkpoint completes. Updates operationStorage and notify operations . */
     private void onCheckpointComplete(List<Operation> newOperations) {
-        // Update operation storage
-        newOperations.forEach(op -> operations.put(op.id(), op));
-
-        // Advance phasers for completed operations
-        for (Operation operation : newOperations) {
-            if (openPhasers.containsKey(operation.id()) && isTerminalStatus(operation.status())) {
-                var phaser = openPhasers.get(operation.id());
-
-                // Two-phase completion
-                logger.trace("Advancing phaser 0 -> 1: {}", phaser);
-                phaser.arriveAndAwaitAdvance();
-                logger.trace("Advancing phaser 1 -> 2: {}", phaser);
-                phaser.arriveAndAwaitAdvance();
-            }
-        }
+        newOperations.forEach(op -> {
+            // Update operation storage
+            operationStorage.put(op.id(), op);
+            // call registered operation's onCheckpointComplete method for completed operations
+            registeredOperations.computeIfPresent(op.id(), (id, operation) -> {
+                operation.onCheckpointComplete(op);
+                return operation;
+            });
+        });
     }
 
     /**
@@ -115,7 +114,7 @@ public class ExecutionManager {
      * @return the existing operation, or null if not found (first execution)
      */
     public Operation getOperationAndUpdateReplayState(String operationId) {
-        var existing = operations.get(operationId);
+        var existing = operationStorage.get(operationId);
         if (executionMode.get() == ExecutionMode.REPLAY) {
             if (existing == null || !isTerminalStatus(existing.status())) {
                 if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {
@@ -127,7 +126,7 @@ public class ExecutionManager {
     }
 
     public Operation getExecutionOperation() {
-        return operations.get(executionOperationId);
+        return operationStorage.get(executionOperationId);
     }
 
     // ===== Thread Coordination =====
@@ -183,15 +182,6 @@ public class ExecutionManager {
             logger.info("No active threads remaining - suspending execution");
             suspendExecution();
         }
-    }
-
-    // ===== Phaser Management =====
-
-    public Phaser startPhaser(String operationId) {
-        var phaser = new Phaser(1);
-        openPhasers.put(operationId, phaser);
-        logger.trace("Started phaser for operation '{}'", operationId);
-        return phaser;
     }
 
     // ===== Checkpointing =====

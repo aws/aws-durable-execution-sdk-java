@@ -9,8 +9,8 @@ public interface DurableFuture<T> {
     /**
      * Blocks until the operation completes and returns the result.
      *
-     * <p>This delegates to operation.get() which handles: - Phaser blocking (arriveAndAwaitAdvance) - Thread
-     * deregistration (allows suspension) - Thread reactivation (resumes execution) - Result retrieval
+     * <p>This delegates to operation.get() which handles: - Thread deregistration (allows suspension) - Thread
+     * reactivation (resumes execution) - Result retrieval
      *
      * @return the operation result
      */

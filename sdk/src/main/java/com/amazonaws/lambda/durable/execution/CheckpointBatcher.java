@@ -139,10 +139,6 @@ class CheckpointBatcher {
             logger.debug("Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
             // Notify callback of completion
-            // TODO: sam local backend returns no new execution state when called with zero
-            // updates. WHY?
-            // This means the polling will never receive an operation update and complete
-            // the Phaser.
             checkpointToken = response.checkpointToken();
             if (response.newExecutionState() != null) {
                 // fetch all pages of operations

@@ -18,7 +18,6 @@ import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.util.List;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Phaser;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -27,11 +26,10 @@ import software.amazon.awssdk.services.lambda.model.StepDetails;
 
 class StepOperationTest {
 
+    private static final String OPERATION_ID = "1";
+
     private ExecutionManager createMockExecutionManager() {
         var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister();
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
         return executionManager;
     }
@@ -43,7 +41,7 @@ class StepOperationTest {
             String errorData,
             List<String> stackTrace) {
         var operation = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID)
                 .name("test-step")
                 .status(OperationStatus.FAILED)
                 .stepDetails(StepDetails.builder()
@@ -62,12 +60,10 @@ class StepOperationTest {
     @Test
     void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
         var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("1-step", ThreadType.STEP));
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -85,23 +81,18 @@ class StepOperationTest {
 
     @Test
     void getDoesNotThrowWhenCalledFromHandlerContext() {
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-step")
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder().result("\"cached-result\"").build())
+                .build();
         var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister();
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
-                .thenReturn(Operation.builder()
-                        .id("1")
-                        .name("test-step")
-                        .status(OperationStatus.SUCCEEDED)
-                        .stepDetails(StepDetails.builder()
-                                .result("\"cached-result\"")
-                                .build())
-                        .build());
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -111,6 +102,7 @@ class StepOperationTest {
                 DurableConfig.builder()
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
+        operation.onCheckpointComplete(op);
 
         var result = operation.get();
         assertEquals("cached-result", result);
@@ -131,7 +123,7 @@ class StepOperationTest {
                 stackTrace);
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -166,7 +158,7 @@ class StepOperationTest {
                 stackTrace);
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -192,7 +184,7 @@ class StepOperationTest {
         mockFailedOperation(executionManager, "NonExistentException", "This class doesn't exist", "{}", stackTrace);
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -224,7 +216,7 @@ class StepOperationTest {
                 stackTrace);
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -251,7 +243,7 @@ class StepOperationTest {
                 executionManager, RuntimeException.class.getName(), "Something went wrong", null, stackTrace);
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -278,7 +270,7 @@ class StepOperationTest {
                 executionManager, StepInterruptedException.class.getName(), "Step was interrupted", null, stackTrace);
 
         var operation = new StepOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-step",
                 () -> "result",
                 TypeToken.get(String.class),
@@ -292,7 +284,7 @@ class StepOperationTest {
         operation.execute();
 
         var thrown = assertThrows(StepInterruptedException.class, operation::get);
-        assertEquals("1", thrown.getOperation().id());
+        assertEquals(OPERATION_ID, thrown.getOperation().id());
         assertEquals("test-step", thrown.getOperation().name());
     }
 
