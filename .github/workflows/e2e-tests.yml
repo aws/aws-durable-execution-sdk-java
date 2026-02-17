@@ -15,7 +15,6 @@ on:
   push:
     branches:
       - main
-      - chore/fix-e2e
     paths:
       - '.github/**'
       - 'sdk/**'
