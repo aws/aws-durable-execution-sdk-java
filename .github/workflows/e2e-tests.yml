@@ -73,5 +73,5 @@ jobs:
       - name: Build locally
         run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: Cloud Based Integration Tests
-        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest
+        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest -Dtest.function.name.suffix='-java${{ matrix.java }}'
         working-directory: ./examples

@@ -5,6 +5,8 @@ package com.amazonaws.lambda.durable.examples;
 import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.DurableHandler;
 
+import java.time.Duration;
+
 /**
  * Simple example demonstrating basic step execution with the Durable Execution SDK.
  *
