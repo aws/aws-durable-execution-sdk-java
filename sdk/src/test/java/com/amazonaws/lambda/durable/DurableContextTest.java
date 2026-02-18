@@ -10,9 +10,12 @@ import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.*;
 
 class DurableContextTest {
+    private static final Logger logger = LoggerFactory.getLogger(DurableContextTest.class);
 
     private DurableContext createTestContext() {
         var executionOp = Operation.builder()
@@ -39,6 +42,7 @@ class DurableContextTest {
 
     @Test
     void testContextCreation() {
+        logger.info("testContextCreation");
         var context = createTestContext();
 
         assertNotNull(context);
@@ -47,6 +51,7 @@ class DurableContextTest {
 
     @Test
     void testGetExecutionContext() {
+        logger.info("testGetExecutionContext");
         var context = createTestContext();
 
         var executionContext = context.getExecutionContext();
@@ -61,6 +66,7 @@ class DurableContextTest {
 
     @Test
     void testStepExecution() {
+        logger.info("testStepExecution");
         var context = createTestContext();
 
         var result = context.step("test", String.class, () -> "Hello World");
@@ -70,6 +76,7 @@ class DurableContextTest {
 
     @Test
     void testStepReplay() {
+        logger.info("testStepReplay");
         // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
@@ -86,6 +93,7 @@ class DurableContextTest {
 
     @Test
     void testStepAsync() throws Exception {
+        logger.info("testStepAsync");
         var context = createTestContext();
 
         var future = context.stepAsync("async-test", String.class, () -> "Async Result");
@@ -96,6 +104,7 @@ class DurableContextTest {
 
     @Test
     void testStepAsyncReplay() throws Exception {
+        logger.info("testStepAsyncReplay");
         // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
@@ -112,6 +121,7 @@ class DurableContextTest {
 
     @Test
     void testWait() {
+        logger.info("testWait");
         var context = createTestContext();
 
         // Wait should throw SuspendExecutionException
@@ -122,6 +132,7 @@ class DurableContextTest {
 
     @Test
     void testWaitReplay() {
+        logger.info("testWaitReplay");
         // Create context with completed wait operation
         var existingOp =
                 Operation.builder().id("1").status(OperationStatus.SUCCEEDED).build();
@@ -135,24 +146,29 @@ class DurableContextTest {
 
     @Test
     void testCombinedSyncAsyncWait() throws Exception {
+        logger.info("testCombinedSyncAsyncWait");
         var context = createTestContext();
 
         // Execute sync step
         var syncResult = context.step("sync-step", String.class, () -> "Sync Done");
         assertEquals("Sync Done", syncResult);
+        logger.info("testCombinedSyncAsyncWait - Sync Done");
 
         // Execute async step
         var asyncFuture = context.stepAsync("async-step", Integer.class, () -> 42);
         assertEquals(42, asyncFuture.get());
+        logger.info("testCombinedSyncAsyncWait - Async Done");
 
         // Wait should suspend (throw exception)
         assertThrows(SuspendExecutionException.class, () -> {
             context.wait(Duration.ofSeconds(30));
+            logger.info("testCombinedSyncAsyncWait - Wait Done");
         });
     }
 
     @Test
     void testCombinedReplay() throws Exception {
+        logger.info("testCombinedReplay");
         // Create context with all operations completed
         var syncOp = Operation.builder()
                 .id("1")
@@ -183,6 +199,7 @@ class DurableContextTest {
 
     @Test
     void testNamedWait() {
+        logger.info("testNamedWait");
         var ctx = createTestContext();
 
         // Named wait should throw SuspendExecutionException
@@ -203,6 +220,7 @@ class DurableContextTest {
 
     @Test
     void testStepWithTypeToken() {
+        logger.info("testStepWithTypeToken");
         var context = createTestContext();
 
         List<String> result = context.step("test-list", new TypeToken<List<String>>() {}, () -> List.of("a", "b", "c"));
@@ -214,6 +232,7 @@ class DurableContextTest {
 
     @Test
     void testStepWithTypeTokenReplay() {
+        logger.info("testStepWithTypeTokenReplay");
         // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
@@ -235,6 +254,7 @@ class DurableContextTest {
 
     @Test
     void testStepWithTypeTokenAndConfig() {
+        logger.info("testStepWithTypeTokenAndConfig");
         var context = createTestContext();
 
         List<Integer> result = context.step(
@@ -252,6 +272,7 @@ class DurableContextTest {
 
     @Test
     void testStepAsyncWithTypeToken() throws Exception {
+        logger.info("testStepAsyncWithTypeToken");
         var context = createTestContext();
 
         DurableFuture<List<String>> future =
@@ -265,6 +286,7 @@ class DurableContextTest {
 
     @Test
     void testStepAsyncWithTypeTokenReplay() throws Exception {
+        logger.info("testStepAsyncWithTypeTokenReplay");
         // Create context with existing operation
         var existingOp = Operation.builder()
                 .id("1")
@@ -287,6 +309,7 @@ class DurableContextTest {
 
     @Test
     void testStepAsyncWithTypeTokenAndConfig() throws Exception {
+        logger.info("testStepAsyncWithTypeTokenAndConfig");
         var context = createTestContext();
 
         DurableFuture<List<Integer>> future = context.stepAsync(

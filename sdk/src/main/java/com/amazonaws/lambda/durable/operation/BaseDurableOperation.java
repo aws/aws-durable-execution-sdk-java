@@ -135,6 +135,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     protected Operation waitForOperationCompletion() {
 
         validateCurrentThreadType();
+        logger.info("Start waiting for operation to finish {} (Phaser: {})", getOperationId(), phaser);
 
         // register to prevent the state from advancing
         phaser.register();
@@ -147,14 +148,14 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             // Operation not done yet
             var context = executionManager.getCurrentContext();
             // Deregister current context - allows suspension
-            logger.debug(
+            logger.info(
                     "get() on {} attempting to deregister context: {}",
                     getType(),
                     executionManager.getCurrentContext().contextId());
             deregisterActiveThreadAndUnsetCurrentContext(context.contextId());
 
             // Block until operation completes
-            logger.trace("Waiting for operation to finish {} (Phaser: {})", getOperationId(), phaser);
+            logger.info("Waiting for operation to finish {} (Phaser: {})", getOperationId(), phaser);
             phaser.arriveAndAwaitAdvance();
 
             // Reactivate current context
