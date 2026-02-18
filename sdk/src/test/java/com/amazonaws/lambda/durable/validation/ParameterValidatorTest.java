@@ -30,7 +30,7 @@ class ParameterValidatorTest {
                 IllegalArgumentException.class,
                 () -> ParameterValidator.validateDuration(Duration.ofSeconds(0), "testParam"));
 
-        assertEquals("testParam must be at least 1 second, got: 0 seconds", exception.getMessage());
+        assertEquals("testParam must be at least 1 second, got: PT0S", exception.getMessage());
     }
 
     @Test
@@ -39,7 +39,7 @@ class ParameterValidatorTest {
                 IllegalArgumentException.class,
                 () -> ParameterValidator.validateDuration(Duration.ofMillis(500), "testParam"));
 
-        assertEquals("testParam must be at least 1 second, got: 0 seconds", exception.getMessage());
+        assertEquals("testParam must be at least 1 second, got: PT0.5S", exception.getMessage());
     }
 
     @Test
@@ -48,7 +48,7 @@ class ParameterValidatorTest {
                 IllegalArgumentException.class,
                 () -> ParameterValidator.validateDuration(Duration.ofSeconds(-5), "testParam"));
 
-        assertEquals("testParam must be at least 1 second, got: -5 seconds", exception.getMessage());
+        assertEquals("testParam must be at least 1 second, got: PT-5S", exception.getMessage());
     }
 
     @Test
@@ -68,7 +68,7 @@ class ParameterValidatorTest {
                 IllegalArgumentException.class,
                 () -> ParameterValidator.validateOptionalDuration(Duration.ofMillis(999), "testParam"));
 
-        assertEquals("testParam must be at least 1 second, got: 0 seconds", exception.getMessage());
+        assertEquals("testParam must be at least 1 second, got: PT0.999S", exception.getMessage());
     }
 
     @Test

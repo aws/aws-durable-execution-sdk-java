@@ -30,7 +30,7 @@ public final class ParameterValidator {
         }
         if (duration.toSeconds() < MIN_DURATION_SECONDS) {
             throw new IllegalArgumentException(parameterName + " must be at least " + MIN_DURATION_SECONDS
-                    + " second, got: " + duration.toSeconds() + " seconds");
+                    + " second, got: " + duration);
         }
     }
 
@@ -44,7 +44,7 @@ public final class ParameterValidator {
     public static void validateOptionalDuration(Duration duration, String parameterName) {
         if (duration != null && duration.toSeconds() < MIN_DURATION_SECONDS) {
             throw new IllegalArgumentException(parameterName + " must be at least " + MIN_DURATION_SECONDS
-                    + " second, got: " + duration.toSeconds() + " seconds");
+                    + " second, got: " + duration);
         }
     }
 
