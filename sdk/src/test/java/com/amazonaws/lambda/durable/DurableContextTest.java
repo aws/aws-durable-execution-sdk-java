@@ -145,6 +145,11 @@ class DurableContextTest {
         var asyncFuture = context.stepAsync("async-step", Integer.class, () -> 42);
         assertEquals(42, asyncFuture.get());
 
+        // Receiving results from `get` calls doesn't mean the step threads have been deregistered.So we wait for 500ms
+        // to make sure the above step threads have been deregistered. Otherwise, the wait call will be stuck forever
+        // and SuspendExecutionException will be thrown from the step thread
+        Thread.sleep(500);
+
         // Wait should suspend (throw exception)
         assertThrows(SuspendExecutionException.class, () -> {
             context.wait(Duration.ofSeconds(30));
