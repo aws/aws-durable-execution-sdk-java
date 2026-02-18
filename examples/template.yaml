@@ -393,6 +393,31 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  NestedAsyncStepsExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'nested-async-steps-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["com.amazonaws.lambda.durable.examples.NestedAsyncStepsExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:nested-async-steps-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
   ChildContextExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -588,6 +613,14 @@ Outputs:
   ManyAsyncStepsExampleFunctionName:
     Description: Many Async Steps Example Function Name
     Value: !Ref ManyAsyncStepsExampleFunction
+
+  NestedAsyncStepsExampleFunction:
+    Description: Nested Async Steps Example Function ARN
+    Value: !GetAtt NestedAsyncStepsExampleFunction.Arn
+
+  NestedAsyncStepsExampleFunctionName:
+    Description: Nested Async Steps Example Function Name
+    Value: !Ref NestedAsyncStepsExampleFunction
 
   ChildContextExampleFunction:
     Description: Child Context Example Function ARN

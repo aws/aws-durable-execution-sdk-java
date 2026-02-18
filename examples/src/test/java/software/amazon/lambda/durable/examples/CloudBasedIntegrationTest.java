@@ -539,4 +539,31 @@ class CloudBasedIntegrationTest {
         assertTrue(minimalReplayTimeMs < maxReplayTime);
         assertTrue(minimalExecutionTimeMs < maxExecutionTime);
     }
+
+    @Test
+    void testNestedAsyncStepsExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("nested-async-steps-example"), NestedAsyncStepsExample.Input.class, String.class);
+        var result = runner.run(new NestedAsyncStepsExample.Input(50));
+
+        assertNotNull(result);
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var finalResult = result.getResult(String.class);
+        assertTrue(finalResult.contains("50 async steps"));
+        // 50th Fibonacci number is 12,586,269,025
+        assertTrue(finalResult.contains("12586269025"));
+    }
+
+    @Test
+    void testNestedAsyncStepsExampleFailed() {
+        var runner = CloudDurableTestRunner.create(
+                arn("nested-async-steps-example"), NestedAsyncStepsExample.Input.class, String.class);
+        var result = runner.run(new NestedAsyncStepsExample.Input(100));
+
+        assertNotNull(result);
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        var error = result.getError();
+        assertTrue(error.isPresent());
+        assertTrue(error.get().errorMessage().contains("long overflow"));
+    }
 }

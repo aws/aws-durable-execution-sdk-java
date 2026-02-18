@@ -157,9 +157,6 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     /** Waits for the operation to complete and suspends the execution if no active thread is running */
     protected Operation waitForOperationCompletion() {
-
-        validateCurrentThreadType();
-
         var threadContext = getCurrentThreadContext();
 
         // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
