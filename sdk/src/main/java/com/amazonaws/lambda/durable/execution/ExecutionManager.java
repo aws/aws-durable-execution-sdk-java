@@ -167,8 +167,6 @@ public class ExecutionManager {
     public void deregisterActiveThreadAndUnsetCurrentContext(String threadId) {
         // Skip if already suspended
         if (executionExceptionFuture.isDone()) {
-            logger.info(
-                    "Execution already terminated for thread '{}'. Active threads: {}", threadId, activeThreads.size());
             return;
         }
 
@@ -179,7 +177,7 @@ public class ExecutionManager {
 
         ThreadType type = activeThreads.remove(threadId);
         currentContext.remove();
-        logger.info("Deregistered thread '{}' ({}). Active threads: {}", threadId, type, activeThreads.size());
+        logger.trace("Deregistered thread '{}' ({}). Active threads: {}", threadId, type, activeThreads.size());
 
         if (activeThreads.isEmpty()) {
             logger.info("No active threads remaining - suspending execution");
