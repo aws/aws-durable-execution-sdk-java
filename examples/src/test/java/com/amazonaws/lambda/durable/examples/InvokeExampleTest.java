@@ -15,6 +15,7 @@ class InvokeExampleTest {
     void testSimpleInvokeExample_completeSequentially() {
         var handler = new SimpleInvokeExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
+        runner.withSkipTime(true);
 
         // First run
         var input = new GreetingRequest("world");
@@ -27,11 +28,14 @@ class InvokeExampleTest {
         var output2 = runner.run(input);
         assertEquals(ExecutionStatus.PENDING, output2.getStatus());
 
-        // Third run
         runner.completeChainedInvoke("call-greeting2", "\"world\"");
+        // Third run, suspend for wait
         var output3 = runner.run(input);
-        assertEquals(ExecutionStatus.SUCCEEDED, output3.getStatus());
-        assertEquals("helloworld", output3.getResult(String.class));
+        assertEquals(ExecutionStatus.PENDING, output3.getStatus());
+
+        var output4 = runner.runUntilComplete(input);
+        assertEquals(ExecutionStatus.SUCCEEDED, output4.getStatus());
+        assertEquals("helloworld", output4.getResult(String.class));
     }
 
     @Test
@@ -48,7 +52,7 @@ class InvokeExampleTest {
         // Second run
         runner.completeChainedInvoke("call-greeting1", "\"hello\"");
         runner.completeChainedInvoke("call-greeting2", "\"world\"");
-        var output2 = runner.run(input);
+        var output2 = runner.runUntilComplete(input);
         assertEquals(ExecutionStatus.SUCCEEDED, output2.getStatus());
         assertEquals("helloworld", output2.getResult(String.class));
     }

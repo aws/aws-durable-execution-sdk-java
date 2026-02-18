@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 class NestedStepIntegrationTest {
 
     @Test
-    void nestedStepCallingThrowsIllegalStateException() {
+    void nestedStepCalling() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             // outer-step's supplier calls context.step() which internally calls stepAsync().get()
             // The get() is called from the outer step's thread (named "1-step"), triggering the check
@@ -24,15 +24,12 @@ class NestedStepIntegrationTest {
 
         var result = runner.run("test");
 
-        assertEquals(ExecutionStatus.FAILED, result.getStatus());
-        var errorMessage = result.getError().get().errorMessage();
-        assertTrue(
-                errorMessage.contains("Nested STEP operation is not supported"),
-                "Expected error about nested step calling, got: " + errorMessage);
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("inner-result", result.getResult(String.class));
     }
 
     @Test
-    void awaitingAsyncStepInsideSyncStepThrowsIllegalStateException() {
+    void awaitingAsyncStepInsideSyncStep() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             // Start async step from handler thread
             var asyncFuture = context.stepAsync("async-step", String.class, () -> "async-result");
@@ -46,10 +43,7 @@ class NestedStepIntegrationTest {
 
         var result = runner.run("test");
 
-        assertEquals(ExecutionStatus.FAILED, result.getStatus());
-        var errorMessage = result.getError().get().errorMessage();
-        assertTrue(
-                errorMessage.contains("Nested STEP operation is not supported"),
-                "Expected error about nested step calling, got: " + errorMessage);
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("combined: async-result", result.getResult(String.class));
     }
 }

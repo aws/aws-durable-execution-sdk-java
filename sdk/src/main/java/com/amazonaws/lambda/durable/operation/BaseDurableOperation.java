@@ -10,7 +10,6 @@ import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.ThreadContext;
-import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
 import java.time.Duration;
@@ -119,22 +118,6 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return executionManager.getOperationAndUpdateReplayState(getOperationId());
     }
 
-    /**
-     * Checks if it's called from a Step.
-     *
-     * @throws IllegalDurableOperationException if it's in a step
-     */
-    private void validateCurrentThreadType() {
-        ThreadType current = getCurrentThreadContext().threadType();
-        if (current == ThreadType.STEP) {
-            var message = String.format(
-                    "Nested %s operation is not supported on %s from within a %s execution.",
-                    getType(), getName(), current);
-            // terminate execution and throw the exception
-            terminateExecutionWithIllegalDurableOperationException(message);
-        }
-    }
-
     /** Checks if this operation is completed */
     protected boolean isOperationCompleted() {
         return completionFuture.isDone();
@@ -142,9 +125,6 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     /** Waits for the operation to complete and suspends the execution if no active thread is running */
     protected Operation waitForOperationCompletion() {
-
-        validateCurrentThreadType();
-
         var threadContext = getCurrentThreadContext();
 
         // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the

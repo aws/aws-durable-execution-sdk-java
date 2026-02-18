@@ -5,6 +5,9 @@ package com.amazonaws.lambda.durable.examples;
 import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.DurableHandler;
 import com.amazonaws.lambda.durable.InvokeConfig;
+import com.amazonaws.lambda.durable.StepConfig;
+import com.amazonaws.lambda.durable.retry.RetryStrategies;
+import java.time.Duration;
 
 /**
  * Simple example demonstrating basic invoke execution with the Durable Execution SDK.
@@ -28,6 +31,15 @@ public class SimpleInvokeExample extends DurableHandler<GreetingRequest, String>
                 input,
                 String.class,
                 InvokeConfig.builder().build());
-        return future.get() + result2;
+
+        var result = context.step(
+                "get result",
+                String.class,
+                () -> future.get() + result2,
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                        .build());
+        context.wait(Duration.ofSeconds(1));
+        return result;
     }
 }
