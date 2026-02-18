@@ -52,7 +52,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private final SerDes resultSerDes;
     private final CompletableFuture<Void> completionFuture;
 
-    public BaseDurableOperation(
+    protected BaseDurableOperation(
             String operationId,
             String name,
             OperationType operationType,
@@ -89,22 +89,6 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
     public abstract void execute();
-
-    /**
-     * Blocks until the operation completes and returns the result.
-     *
-     * <p>Handles:
-     *
-     * <ul>
-     *   <li>Thread deregistration (allows suspension)
-     *   <li>Blocking (waits for operation to complete)
-     *   <li>Thread reactivation (resumes execution)
-     *   <li>Result retrieval
-     * </ul>
-     *
-     * @return the operation result
-     */
-    public abstract T get();
 
     /**
      * Gets the Operation from ExecutionManager and update the replay state from REPLAY to EXECUTE if operation is not

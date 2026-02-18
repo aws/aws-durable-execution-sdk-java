@@ -99,7 +99,7 @@ The SDK uses two separate thread pools with distinct responsibilities:
 - Default: cached daemon thread pool
 
 **Internal Executor (`InternalExecutor.INSTANCE`):**
-- Runs SDK coordination tasks: checkpoint batching, polling for wait completion, phaser management
+- Runs SDK coordination tasks: checkpoint batching, polling for wait completion
 - Dedicated cached thread pool with daemon threads named `durable-sdk-internal-*`
 - Not configurable by users
 
@@ -171,14 +171,14 @@ context.step("name", Type.class, supplier,
                                     │
                     ┌───────────────┴───────────────┐
                     ▼                               ▼
-┌──────────────────────────────┐    ┌──────────────────────────────┐
-│  DurableContext              │    │  ExecutionManager            │
-│  - User-facing API           │    │  - State (ops, token)        │
-│  - step(), stepAsync()       │    │  - Thread coordination       │
-│  - wait()                    │    │  - Phaser management         │
-│  - Operation ID counter      │    │  - Checkpoint batching       │
-└──────────────────────────────┘    │  - Polling                   │
-            │                       └──────────────────────────────┘
+┌──────────────────────────────┐    ┌─────────────────────────────────┐
+│  DurableContext              │    │  ExecutionManager               │
+│  - User-facing API           │    │  - State (ops, token)           │
+│  - step(), stepAsync(), etc  │    │  - Thread coordination          │
+│  - wait()                    │    │  - Checkpoint batching          │
+│  - Operation ID counter      │    │  - Checkpoint response handling │
+└──────────────────────────────┘    │  - Polling                      │
+            │                       └─────────────────────────────────┘
             │                                       │
             ▼                                       ▼
 ┌──────────────────────────────┐    ┌──────────────────────────────┐
@@ -213,13 +213,14 @@ com.amazonaws.lambda.durable
 │   ├── CheckpointBatcher    # Batching (package-private)
 │   ├── CheckpointCallback   # Callback interface
 │   ├── SuspendExecutionException
-│   ├── ThreadType           # CONTEXT, STEP
-│   └── ExecutionPhase       # RUNNING(0), COMPLETING(1), DONE(2)
+│   └── ThreadType           # CONTEXT, STEP
 │
 ├── operation/
-│   ├── DurableOperation<T>  # Interface
-│   ├── StepOperation<T>     # Step logic
-│   └── WaitOperation        # Wait logic
+│   ├── BaseDurableOperation<T>  # Common operation logic
+│   ├── StepOperation<T>         # Step logic
+│   ├── InvokeOperation<T>       # Invoke logic
+│   ├── CallbackOperation<T>     # Callback logic
+│   └── WaitOperation            # Wait logic
 │
 ├── logging/
 │   ├── DurableLogger        # Context-aware logger wrapper (MDC-based)
