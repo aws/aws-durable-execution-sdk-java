@@ -3,7 +3,6 @@
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.lambda.durable.validation.ParameterValidator;
 import java.time.Duration;
 
 public class InvokeConfig {
@@ -63,7 +62,6 @@ public class InvokeConfig {
         }
 
         public Builder timeout(Duration timeout) {
-            ParameterValidator.validateOptionalDuration(timeout, "Invoke timeout");
             this.timeout = timeout;
             return this;
         }

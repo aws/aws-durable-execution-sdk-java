@@ -7,7 +7,6 @@ import com.amazonaws.lambda.durable.client.LambdaDurableFunctionsClient;
 import com.amazonaws.lambda.durable.logging.LoggerConfig;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import com.amazonaws.lambda.durable.validation.ParameterValidator;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -313,7 +312,7 @@ public final class DurableConfig {
          * @return This builder
          */
         public Builder withPollingInterval(Duration duration) {
-            ParameterValidator.validateOptionalDuration(duration, "Polling interval");
+            // No validation - polling intervals can be less than 1 second (e.g., 200ms with backoff)
             this.pollingInterval = duration;
             return this;
         }

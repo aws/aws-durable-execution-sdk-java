@@ -42,48 +42,4 @@ class DurationValidationIntegrationTest {
         assertDoesNotThrow(() ->
                 CallbackConfig.builder().timeout(null).heartbeatTimeout(null).build());
     }
-
-    @Test
-    void invokeConfig_withInvalidTimeout_shouldThrow() {
-        var exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> InvokeConfig.builder().timeout(Duration.ofMillis(500)).build());
-
-        assertTrue(exception.getMessage().contains("Invoke timeout"));
-        assertTrue(exception.getMessage().contains("at least 1 second"));
-    }
-
-    @Test
-    void invokeConfig_withValidTimeout_shouldPass() {
-        assertDoesNotThrow(
-                () -> InvokeConfig.builder().timeout(Duration.ofSeconds(30)).build());
-    }
-
-    @Test
-    void invokeConfig_withNullTimeout_shouldPass() {
-        assertDoesNotThrow(() -> InvokeConfig.builder().timeout(null).build());
-    }
-
-    @Test
-    void durableConfig_withInvalidPollingInterval_shouldThrow() {
-        var exception = assertThrows(IllegalArgumentException.class, () -> DurableConfig.builder()
-                .withPollingInterval(Duration.ofMillis(500))
-                .build());
-
-        assertTrue(exception.getMessage().contains("Polling interval"));
-        assertTrue(exception.getMessage().contains("at least 1 second"));
-    }
-
-    @Test
-    void durableConfig_withValidPollingInterval_shouldPass() {
-        assertDoesNotThrow(() -> DurableConfig.builder()
-                .withPollingInterval(Duration.ofSeconds(2))
-                .build());
-    }
-
-    @Test
-    void durableConfig_withNullPollingInterval_shouldPass() {
-        assertDoesNotThrow(
-                () -> DurableConfig.builder().withPollingInterval(null).build());
-    }
 }
