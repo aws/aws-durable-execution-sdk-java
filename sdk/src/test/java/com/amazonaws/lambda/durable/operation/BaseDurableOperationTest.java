@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -23,8 +24,11 @@ import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -120,30 +124,35 @@ class BaseDurableOperationTest {
     }
 
     @Test
-    void waitForOperationCompletionWhenRunningAndReadyToComplete() throws InterruptedException {
+    void waitForOperationCompletionWhenRunningAndReadyToComplete()
+            throws InterruptedException, ExecutionException, TimeoutException {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
-                    public void execute() {
-                        waitForOperationCompletion();
-                    }
+                    public void execute() {}
 
                     @Override
                     public String get() {
+                        waitForOperationCompletion();
                         return RESULT;
                     }
                 };
 
-        // call execute in a separate thread
-        internalExecutor.execute(op::execute);
-        // wait for execute to be blocked by the completionFuture and then complete the future
-        Thread.sleep(500);
-        op.onCheckpointComplete(
-                Operation.builder().status(OperationStatus.SUCCEEDED).build());
-        verify(executionManager).deregisterActiveThreadAndUnsetCurrentContext(CONTEXT_ID);
-        verify(executionManager).registerActiveThread(CONTEXT_ID, ThreadType.CONTEXT);
-        verify(executionManager).setCurrentContext(CONTEXT_ID, ThreadType.CONTEXT);
+        // call get in a separate thread which will be blocked
+        var future = internalExecutor.submit(op::get);
+        // wait for execute to be blocked by the completionFuture and then feed the completion event
+        try {
+            future.get(500, TimeUnit.MILLISECONDS);
+            fail();
+        } catch (TimeoutException e) {
+            op.onCheckpointComplete(
+                    Operation.builder().status(OperationStatus.SUCCEEDED).build());
+            assertEquals(RESULT, future.get());
+            verify(executionManager).deregisterActiveThreadAndUnsetCurrentContext(CONTEXT_ID);
+            verify(executionManager).registerActiveThread(CONTEXT_ID, ThreadType.CONTEXT);
+            verify(executionManager).setCurrentContext(CONTEXT_ID, ThreadType.CONTEXT);
+        }
     }
 
     @Test
