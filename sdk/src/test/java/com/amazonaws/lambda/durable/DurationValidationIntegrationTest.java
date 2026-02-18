@@ -21,9 +21,9 @@ class DurationValidationIntegrationTest {
 
     @Test
     void callbackConfig_withInvalidHeartbeatTimeout_shouldThrow() {
-        var exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> CallbackConfig.builder().heartbeatTimeout(Duration.ofMillis(999)).build());
+        var exception = assertThrows(IllegalArgumentException.class, () -> CallbackConfig.builder()
+                .heartbeatTimeout(Duration.ofMillis(999))
+                .build());
 
         assertTrue(exception.getMessage().contains("Heartbeat timeout"));
         assertTrue(exception.getMessage().contains("at least 1 second"));
@@ -39,10 +39,8 @@ class DurationValidationIntegrationTest {
 
     @Test
     void callbackConfig_withNullTimeouts_shouldPass() {
-        assertDoesNotThrow(() -> CallbackConfig.builder()
-                .timeout(null)
-                .heartbeatTimeout(null)
-                .build());
+        assertDoesNotThrow(() ->
+                CallbackConfig.builder().timeout(null).heartbeatTimeout(null).build());
     }
 
     @Test
@@ -57,7 +55,8 @@ class DurationValidationIntegrationTest {
 
     @Test
     void invokeConfig_withValidTimeout_shouldPass() {
-        assertDoesNotThrow(() -> InvokeConfig.builder().timeout(Duration.ofSeconds(30)).build());
+        assertDoesNotThrow(
+                () -> InvokeConfig.builder().timeout(Duration.ofSeconds(30)).build());
     }
 
     @Test
@@ -67,9 +66,9 @@ class DurationValidationIntegrationTest {
 
     @Test
     void durableConfig_withInvalidPollingInterval_shouldThrow() {
-        var exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> DurableConfig.builder().withPollingInterval(Duration.ofMillis(500)).build());
+        var exception = assertThrows(IllegalArgumentException.class, () -> DurableConfig.builder()
+                .withPollingInterval(Duration.ofMillis(500))
+                .build());
 
         assertTrue(exception.getMessage().contains("Polling interval"));
         assertTrue(exception.getMessage().contains("at least 1 second"));
@@ -84,8 +83,7 @@ class DurationValidationIntegrationTest {
 
     @Test
     void durableConfig_withNullPollingInterval_shouldPass() {
-        assertDoesNotThrow(() -> DurableConfig.builder()
-                .withPollingInterval(null)
-                .build());
+        assertDoesNotThrow(
+                () -> DurableConfig.builder().withPollingInterval(null).build());
     }
 }

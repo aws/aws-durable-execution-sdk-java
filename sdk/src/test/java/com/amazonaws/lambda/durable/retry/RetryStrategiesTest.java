@@ -218,8 +218,7 @@ class RetryStrategiesTest {
 
     @Test
     void fixedDelay_withNullDelay_shouldThrow() {
-        var exception =
-                assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(3, null));
+        var exception = assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(3, null));
 
         assertTrue(exception.getMessage().contains("fixedDelay"));
         assertTrue(exception.getMessage().contains("cannot be null"));
