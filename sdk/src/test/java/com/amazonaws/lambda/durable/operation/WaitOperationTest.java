@@ -5,6 +5,7 @@ package com.amazonaws.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -20,6 +21,49 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 
 class WaitOperationTest {
+
+    @Test
+    void constructor_withNullDuration_shouldThrow() {
+        var executionManager = mock(ExecutionManager.class);
+
+        var exception = assertThrows(
+                IllegalArgumentException.class, () -> new WaitOperation("1", "test-wait", null, executionManager));
+
+        assertEquals("Wait duration cannot be null", exception.getMessage());
+    }
+
+    @Test
+    void constructor_withZeroDuration_shouldThrow() {
+        var executionManager = mock(ExecutionManager.class);
+
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> new WaitOperation("1", "test-wait", Duration.ofSeconds(0), executionManager));
+
+        assertTrue(exception.getMessage().contains("Wait duration"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void constructor_withSubSecondDuration_shouldThrow() {
+        var executionManager = mock(ExecutionManager.class);
+
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> new WaitOperation("1", "test-wait", Duration.ofMillis(500), executionManager));
+
+        assertTrue(exception.getMessage().contains("Wait duration"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void constructor_withValidDuration_shouldPass() {
+        var executionManager = mock(ExecutionManager.class);
+
+        var operation = new WaitOperation("1", "test-wait", Duration.ofSeconds(10), executionManager);
+
+        assertEquals("1", operation.getOperationId());
+    }
 
     @Test
     void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
