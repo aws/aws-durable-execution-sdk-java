@@ -27,19 +27,19 @@ public class DurableContext {
     private final AtomicInteger operationCounter;
     private final DurableLogger logger;
     private final ExecutionContext executionContext;
-    private final String parentId;
+    private final String contextId;
     private boolean isReplaying;
 
     /** Shared initialization — sets all fields but performs no thread registration. */
     private DurableContext(
-            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String parentId) {
+            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
-        this.parentId = parentId;
+        this.contextId = contextId;
         this.operationCounter = new AtomicInteger(0);
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
-        this.isReplaying = executionManager.hasOperationsForContext(parentId);
+        this.isReplaying = executionManager.hasOperationsForContext(contextId);
 
         var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
         this.logger = new DurableLogger(
@@ -123,7 +123,7 @@ public class DurableContext {
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
-                operationId, name, func, typeToken, config, executionManager, logger, durableConfig, parentId);
+                operationId, name, func, typeToken, config, executionManager, logger, durableConfig, contextId);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -140,7 +140,7 @@ public class DurableContext {
         var operationId = nextOperationId();
 
         // Create and start wait operation
-        var operation = new WaitOperation(operationId, waitName, duration, executionManager, parentId);
+        var operation = new WaitOperation(operationId, waitName, duration, executionManager, contextId);
 
         operation.execute(); // Checkpoint the wait
         return operation.get(); // Block (will throw SuspendExecutionException if needed)
@@ -210,7 +210,7 @@ public class DurableContext {
 
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
-                operationId, name, functionName, payload, typeToken, config, executionManager, parentId);
+                operationId, name, functionName, payload, typeToken, config, executionManager, contextId);
 
         operation.execute(); // checkpoint the invoke operation
         return operation; // Block (will throw SuspendExecutionException if needed)
@@ -236,7 +236,7 @@ public class DurableContext {
         }
         var operationId = nextOperationId();
 
-        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, parentId);
+        var operation = new CallbackOperation<>(operationId, name, typeToken, config, executionManager, contextId);
         operation.execute();
 
         return operation;
@@ -271,7 +271,7 @@ public class DurableContext {
                 executionManager,
                 durableConfig,
                 lambdaContext,
-                parentId);
+                contextId);
 
         operation.execute();
         return operation;
@@ -304,7 +304,7 @@ public class DurableContext {
 
     /** Gets the context ID for this context. Null for root context, set for child contexts. */
     String getContextId() {
-        return parentId;
+        return contextId;
     }
 
     /** Returns whether this context is currently in replay mode. */
@@ -321,11 +321,11 @@ public class DurableContext {
 
     /**
      * Get the next operationId. For root contexts, returns sequential IDs like "1", "2", "3". For child contexts,
-     * prefixes with the parentId to ensure global uniqueness, e.g. "1-1", "1-2" for operations inside child context
+     * prefixes with the contextId to ensure global uniqueness, e.g. "1-1", "1-2" for operations inside child context
      * "1". This matches the JavaScript SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
     private String nextOperationId() {
         var counter = String.valueOf(operationCounter.incrementAndGet());
-        return parentId != null ? parentId + "-" + counter : counter;
+        return contextId != null ? contextId + "-" + counter : counter;
     }
 }

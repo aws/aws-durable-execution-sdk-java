@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.operation;
 
+import static com.amazonaws.lambda.durable.model.OperationSubType.RUN_IN_CHILD_CONTEXT;
+
 import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.DurableContext;
 import com.amazonaws.lambda.durable.TypeToken;
@@ -33,7 +35,6 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
-    private static final String SUB_TYPE = "RUN_IN_CHILD_CONTEXT";
 
     private final Function<DurableContext, T> function;
     private final DurableConfig durableConfig;
@@ -87,7 +88,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         } else {
             // First execution: fire-and-forget START checkpoint, then run
             sendOperationUpdateAsync(
-                    OperationUpdate.builder().action(OperationAction.START).subType(SUB_TYPE));
+                    OperationUpdate.builder().action(OperationAction.START).subType(RUN_IN_CHILD_CONTEXT.getValue()));
             executeChildContext();
         }
     }
@@ -137,7 +138,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .subType(SUB_TYPE)
+                    .subType(RUN_IN_CHILD_CONTEXT.getValue())
                     .payload(serialized));
         } else {
             // Large result: checkpoint with empty payload + ReplayChildren flag.
@@ -145,7 +146,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             this.reconstructedResult = result;
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .subType(SUB_TYPE)
+                    .subType(RUN_IN_CHILD_CONTEXT.getValue())
                     .payload("")
                     .contextOptions(
                             ContextOptions.builder().replayChildren(true).build()));
@@ -167,7 +168,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.FAIL)
-                .subType(SUB_TYPE)
+                .subType(RUN_IN_CHILD_CONTEXT.getValue())
                 .error(errorObject));
     }
 
