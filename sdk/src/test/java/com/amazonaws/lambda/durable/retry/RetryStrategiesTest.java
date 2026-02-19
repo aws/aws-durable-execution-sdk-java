@@ -112,9 +112,9 @@ class RetryStrategiesTest {
 
     @Test
     void testMinimumDelayOfOneSecond() {
-        // Test with very small initial delay to verify 1-second minimum
+        // Test that delays are properly calculated with 1-second minimum
         var strategy = RetryStrategies.exponentialBackoff(
-                5, Duration.ofMillis(100), Duration.ofSeconds(60), 1.0, JitterStrategy.FULL);
+                5, Duration.ofSeconds(1), Duration.ofSeconds(60), 1.0, JitterStrategy.FULL);
 
         var decision = strategy.makeRetryDecision(new RuntimeException("test"), 0);
         assertTrue(decision.delay().toSeconds() >= 1, "Delay should be at least 1 second");
@@ -163,6 +163,65 @@ class RetryStrategiesTest {
         assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(0, Duration.ofSeconds(1)));
 
         assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(5, Duration.ofSeconds(-1)));
+    }
+
+    @Test
+    void exponentialBackoff_withSubSecondInitialDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(
+                        3, Duration.ofMillis(500), Duration.ofSeconds(60), 2.0, JitterStrategy.NONE));
+
+        assertTrue(exception.getMessage().contains("initialDelay"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void exponentialBackoff_withSubSecondMaxDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(
+                        3, Duration.ofSeconds(5), Duration.ofMillis(999), 2.0, JitterStrategy.NONE));
+
+        assertTrue(exception.getMessage().contains("maxDelay"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void exponentialBackoff_withNullInitialDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(3, null, Duration.ofSeconds(60), 2.0, JitterStrategy.NONE));
+
+        assertTrue(exception.getMessage().contains("initialDelay"));
+        assertTrue(exception.getMessage().contains("cannot be null"));
+    }
+
+    @Test
+    void exponentialBackoff_withNullMaxDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.exponentialBackoff(3, Duration.ofSeconds(5), null, 2.0, JitterStrategy.NONE));
+
+        assertTrue(exception.getMessage().contains("maxDelay"));
+        assertTrue(exception.getMessage().contains("cannot be null"));
+    }
+
+    @Test
+    void fixedDelay_withSubSecondDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(3, Duration.ofMillis(500)));
+
+        assertTrue(exception.getMessage().contains("fixedDelay"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void fixedDelay_withNullDelay_shouldThrow() {
+        var exception = assertThrows(IllegalArgumentException.class, () -> RetryStrategies.fixedDelay(3, null));
+
+        assertTrue(exception.getMessage().contains("fixedDelay"));
+        assertTrue(exception.getMessage().contains("cannot be null"));
     }
 
     @Test

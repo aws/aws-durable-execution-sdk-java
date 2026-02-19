@@ -312,6 +312,7 @@ public final class DurableConfig {
          * @return This builder
          */
         public Builder withPollingInterval(Duration duration) {
+            // No validation - polling intervals can be less than 1 second (e.g., 200ms with backoff)
             this.pollingInterval = duration;
             return this;
         }

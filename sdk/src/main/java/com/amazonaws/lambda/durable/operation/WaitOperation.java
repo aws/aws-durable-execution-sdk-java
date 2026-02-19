@@ -6,6 +6,7 @@ import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.serde.NoopSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
+import com.amazonaws.lambda.durable.validation.ParameterValidator;
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -25,6 +26,7 @@ public class WaitOperation extends BaseDurableOperation<Void> {
 
     public WaitOperation(String operationId, String name, Duration duration, ExecutionManager executionManager) {
         super(operationId, name, OperationType.WAIT, TypeToken.get(Void.class), NOOP_SER_DES, executionManager);
+        ParameterValidator.validateDuration(duration, "Wait duration");
         this.duration = duration;
     }
 
