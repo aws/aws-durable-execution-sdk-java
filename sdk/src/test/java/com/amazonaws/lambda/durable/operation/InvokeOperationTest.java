@@ -5,7 +5,6 @@ package com.amazonaws.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -20,22 +19,27 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
-import java.util.concurrent.Phaser;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
 class InvokeOperationTest {
+    private static final String OPERATION_ID = "2";
+
+    private ExecutionManager executionManager;
+
+    @BeforeEach
+    void setUp() {
+        executionManager = mock(ExecutionManager.class);
+        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("root", ThreadType.CONTEXT));
+    }
 
     @Test
     void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
-        var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("1-step", ThreadType.STEP));
-
         var operation = new InvokeOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-invoke",
                 "function-name",
                 "{}",
@@ -50,30 +54,25 @@ class InvokeOperationTest {
 
     @Test
     void getDoesNotThrowWhenCalledFromHandlerContext() {
-        var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
-                .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
-                        .id("1")
-                        .name("test-invoke")
-                        .status(OperationStatus.SUCCEEDED)
-                        .chainedInvokeDetails(
-                                software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
-                                        .result("\"cached-result\"")
-                                        .build())
-                        .build());
+        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-invoke")
+                .status(OperationStatus.SUCCEEDED)
+                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                        .result("\"cached-result\"")
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-invoke",
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager);
+        operation.onCheckpointComplete(op);
 
         var result = operation.get();
         assertEquals("cached-result", result);
@@ -81,34 +80,29 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeFailedExceptionWhenInvocationFailed() {
-        var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
-                .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
-                        .id("1")
-                        .name("test-invoke")
-                        .status(OperationStatus.FAILED)
-                        .chainedInvokeDetails(
-                                software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
-                                        .error(ErrorObject.builder()
-                                                .errorType("errorType")
-                                                .errorMessage("errorMessage")
-                                                .errorData("errorData")
-                                                .build())
-                                        .build())
-                        .build());
+        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-invoke")
+                .status(OperationStatus.FAILED)
+                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                        .error(ErrorObject.builder()
+                                .errorType("errorType")
+                                .errorMessage("errorMessage")
+                                .errorData("errorData")
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-invoke",
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager);
+        operation.onCheckpointComplete(op);
 
         InvokeFailedException ex = assertThrows(InvokeFailedException.class, () -> operation.get());
         assertEquals("errorData", ex.getErrorObject().errorData());
@@ -118,34 +112,29 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeTimedOutExceptionWhenInvocationTimedOut() {
-        var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
-                .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
-                        .id("1")
-                        .name("test-invoke")
-                        .status(OperationStatus.TIMED_OUT)
-                        .chainedInvokeDetails(
-                                software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
-                                        .error(ErrorObject.builder()
-                                                .errorType("errorType")
-                                                .errorMessage("errorMessage")
-                                                .errorData("errorData")
-                                                .build())
-                                        .build())
-                        .build());
+        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-invoke")
+                .status(OperationStatus.TIMED_OUT)
+                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                        .error(ErrorObject.builder()
+                                .errorType("errorType")
+                                .errorMessage("errorMessage")
+                                .errorData("errorData")
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-invoke",
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager);
+        operation.onCheckpointComplete(op);
 
         InvokeTimedOutException ex = assertThrows(InvokeTimedOutException.class, () -> operation.get());
         assertEquals("errorData", ex.getErrorObject().errorData());
@@ -155,34 +144,29 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeStoppedExceptionWhenInvocationTimedOut() {
-        var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
-                .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
-                        .id("1")
-                        .name("test-invoke")
-                        .status(OperationStatus.STOPPED)
-                        .chainedInvokeDetails(
-                                software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
-                                        .error(ErrorObject.builder()
-                                                .errorType("errorType")
-                                                .errorMessage("errorMessage")
-                                                .errorData("errorData")
-                                                .build())
-                                        .build())
-                        .build());
+        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-invoke")
+                .status(OperationStatus.STOPPED)
+                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                        .error(ErrorObject.builder()
+                                .errorType("errorType")
+                                .errorMessage("errorMessage")
+                                .errorData("errorData")
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-invoke",
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager);
+        operation.onCheckpointComplete(op);
 
         InvokeStoppedException ex = assertThrows(InvokeStoppedException.class, () -> operation.get());
         assertEquals("errorData", ex.getErrorObject().errorData());
@@ -192,34 +176,29 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeFailedExceptionWhenInvocationEndedUnexpectedly() {
-        var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister(); // Advance to phase 1 to skip blocking
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
-        when(executionManager.getOperationAndUpdateReplayState("1"))
-                .thenReturn(software.amazon.awssdk.services.lambda.model.Operation.builder()
-                        .id("1")
-                        .name("test-invoke")
-                        .status(OperationStatus.CANCELLED)
-                        .chainedInvokeDetails(
-                                software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
-                                        .error(ErrorObject.builder()
-                                                .errorType("errorType")
-                                                .errorMessage("errorMessage")
-                                                .errorData("errorData")
-                                                .build())
-                                        .build())
-                        .build());
+        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-invoke")
+                .status(OperationStatus.CANCELLED)
+                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                        .error(ErrorObject.builder()
+                                .errorType("errorType")
+                                .errorMessage("errorMessage")
+                                .errorData("errorData")
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                "1",
+                OPERATION_ID,
                 "test-invoke",
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager);
+        operation.onCheckpointComplete(op);
 
         assertThrows(InvokeException.class, () -> operation.get());
     }

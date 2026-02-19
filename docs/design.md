@@ -99,7 +99,7 @@ The SDK uses two separate thread pools with distinct responsibilities:
 - Default: cached daemon thread pool
 
 **Internal Executor (`InternalExecutor.INSTANCE`):**
-- Runs SDK coordination tasks: checkpoint batching, polling for wait completion, phaser management
+- Runs SDK coordination tasks: checkpoint batching, polling for wait completion
 - Dedicated cached thread pool with daemon threads named `durable-sdk-internal-*`
 - Not configurable by users
 
@@ -171,14 +171,14 @@ context.step("name", Type.class, supplier,
                                     │
                     ┌───────────────┴───────────────┐
                     ▼                               ▼
-┌──────────────────────────────┐    ┌──────────────────────────────┐
-│  DurableContext              │    │  ExecutionManager            │
-│  - User-facing API           │    │  - State (ops, token)        │
-│  - step(), stepAsync()       │    │  - Thread coordination       │
-│  - wait()                    │    │  - Phaser management         │
-│  - Operation ID counter      │    │  - Checkpoint batching       │
-└──────────────────────────────┘    │  - Polling                   │
-            │                       └──────────────────────────────┘
+┌──────────────────────────────┐    ┌─────────────────────────────────┐
+│  DurableContext              │    │  ExecutionManager               │
+│  - User-facing API           │    │  - State (ops, token)           │
+│  - step(), stepAsync(), etc  │    │  - Thread coordination          │
+│  - wait()                    │    │  - Checkpoint batching          │
+│  - Operation ID counter      │    │  - Checkpoint response handling │
+└──────────────────────────────┘    │  - Polling                      │
+            │                       └─────────────────────────────────┘
             │                                       │
             ▼                                       ▼
 ┌──────────────────────────────┐    ┌──────────────────────────────┐
@@ -213,13 +213,14 @@ com.amazonaws.lambda.durable
 │   ├── CheckpointBatcher    # Batching (package-private)
 │   ├── CheckpointCallback   # Callback interface
 │   ├── SuspendExecutionException
-│   ├── ThreadType           # CONTEXT, STEP
-│   └── ExecutionPhase       # RUNNING(0), COMPLETING(1), DONE(2)
+│   └── ThreadType           # CONTEXT, STEP
 │
 ├── operation/
-│   ├── DurableOperation<T>  # Interface
-│   ├── StepOperation<T>     # Step logic
-│   └── WaitOperation        # Wait logic
+│   ├── BaseDurableOperation<T>  # Common operation logic
+│   ├── StepOperation<T>         # Step logic
+│   ├── InvokeOperation<T>       # Invoke logic
+│   ├── CallbackOperation<T>     # Callback logic
+│   └── WaitOperation            # Wait logic
 │
 ├── logging/
 │   ├── DurableLogger        # Context-aware logger wrapper (MDC-based)
@@ -328,7 +329,7 @@ sequenceDiagram
     WO->>EM: deregisterActiveThread("Root")
     
     Note over EM: No active threads!
-    EM->>EM: suspendExecutionFuture.complete()
+    EM->>EM: executionExceptionFuture.completeExceptionally(SuspendExecutionException)
     EM-->>WO: throw SuspendExecutionException
     
     Note over UC: Execution suspended, returns PENDING
@@ -562,36 +563,29 @@ This approach ensures suspension happens precisely when no thread can make progr
 #### Advanced Feature: In-Process Completion
 In scenarios where waits or step retries would normally suspend execution, but other active threads prevent suspension, the SDK automatically switches to in-process completion by polling the backend until timing conditions are met. This allows complex concurrent workflows to complete efficiently without unnecessary Lambda re-invocations or extended waiting periods.
 
-### From Thread Tracking to Phaser Coordination
+### Active Thread Tracking and Operation Completion Coordination
 
-Thread counting handles simple cases, but complex scenarios require sophisticated coordination:
+Each piece of user code - main function body, step body or child context body - runs in its own thread. Execution manager tracks active running threads. When a new step or child context is created, a new thread will be created and registered in execution manager. When the user code is blocked on `get()` or synchronous durable operations, the thread will be deregistered from execution manager. When there is no active running thread, the function execution will be suspended.
 
-**Simple case - Wait operations:**
-```java
-context.wait(Duration.ofMinutes(5)); // Root deregisters → immediate suspension
-```
+These user threads and the system thread use CompletableFuture to communicate the completion of operations. When a context executes a step, the communication happens as shown below
 
-**Complex case - Blocking on retrying operations:**
-```java
-var future1 = context.stepAsync("step1", () -> failsAndRetries());
-var result = context.step("step2", () -> future1.get() + "-processed");
-```
+| Sequence  | Context thread                                                                             | Step Thread                                                         | System Thread                                                                                                                                                                   |
+|-----------|--------------------------------------------------------------------------------------------|---------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1         | create StepOperation, create CompletableFuture                                             | (not created)                                                       | (idle)                                                                                                                                                                          |
+| 2         | checkpoint START event (synchronously or asynchronously)                                   | (not created)                                                       | call checkpoint API                                                                                                                                                             |
+| 3         | create and register the Step thread                                                        | execute user code for the step                                      | (idle)                                                                                                                                                                          |
+| 4         | call `get()`, deregister the context thread and wait for the CompletableFuture to complete | (continue)                                                          | (idle)                                                                                                                                                                          |
+| 5         | (blocked)                                                                                  | checkpoint the step result and wait for checkpoint call to complete | call checkpoint API, and handle the API response. If it is a terminal response, it will complete the Step operation CompletableFuture, register and unblock the context thread. |
+| 6         | retrieve the result of the step                                                            | deregister and terminate the Step thread                            | (idle)                                                                                                                                                                          |        
 
-**Without phasers:** Simple thread counting fails because step2's thread would stay registered while blocked on `future1.get()`, preventing `activeThreads.isEmpty()` from triggering suspension → Lambda stays active during step1's retry delay instead of suspending.
+If the user code completes quickly, an alternative scenario could happen as follows
 
-**What should happen instead:** step2's root thread must deregister when blocked, allow suspension during step1's retry, then coordinate re-registration when step1 completes with checkpointed results.
+| Sequence | Context thread                                                                | Step Thread                                                         | System Thread                                                                                                                          |
+|----------|-------------------------------------------------------------------------------|---------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| 1        | create StepOperation, create CompletableFuture                                | (not created)                                                       | (idle)                                                                                                                                 |
+| 2        | checkpoint START event (synchronously or asynchronously)                      | (not created)                                                       | call checkpoint API                                                                                                                    |
+| 3        | create and register the Step thread                                           | execute user code for the step and complete quickly                 | (idle)                                                                                                                                 |
+| 5        | (do something else or just get starved)                                       | checkpoint the step result and wait for checkpoint call to complete | call checkpoint API, and handle the API response. If it is a terminal response, it will complete the Step operation CompletableFuture. |
+| 4        | call `get()`. It's not blocked because CompletableFuture is already completed | deregister and terminate the Step thread                            | (idle)                                                                                                                                 |
+| 6        | retrieve the result of the step                                               | (ended)                                                             | (idle)                                                                                                                                 |        
 
-**The problem:** When step1 retries, step2's root thread must:
-1. Deregister (to allow suspension during retry delay)
-2. Block until step1 either completes successfully or wants to suspend for another retry
-3. Re-register when step1 finishes or when resuming from suspension
-4. Ensure step1's result is checkpointed before proceeding
-
-**Additional complex scenarios:**
-- **Nested blocking:** Multiple threads blocking on each other's results
-- **Future operations:** `runInChildContext` with multiple child threads coordinating
-- **Race conditions:** Ensuring checkpoint completion before thread lifecycle changes
-
-These scenarios are why we chose **phasers** - a multi-party synchronization primitive that coordinates checkpoint-driven completion.
-
-See [ADR-002: Phaser-Based Operation Coordination](adr/002-phaser-based-coordination.md) for detailed implementation and usage patterns.

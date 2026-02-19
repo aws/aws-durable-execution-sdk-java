@@ -10,6 +10,7 @@ import com.amazonaws.lambda.durable.operation.ChildContextOperation;
 import com.amazonaws.lambda.durable.operation.InvokeOperation;
 import com.amazonaws.lambda.durable.operation.StepOperation;
 import com.amazonaws.lambda.durable.operation.WaitOperation;
+import com.amazonaws.lambda.durable.validation.ParameterValidator;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.Objects;
@@ -137,6 +138,7 @@ public class DurableContext {
     }
 
     public Void wait(String waitName, Duration duration) {
+        ParameterValidator.validateDuration(duration, "Wait duration");
         var operationId = nextOperationId();
 
         // Create and start wait operation

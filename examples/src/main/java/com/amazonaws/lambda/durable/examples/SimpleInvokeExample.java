@@ -18,13 +18,13 @@ public class SimpleInvokeExample extends DurableHandler<GreetingRequest, String>
         // invoke `simple-step-example` function
         var future = context.invokeAsync(
                 "call-greeting1",
-                "simple-step-example:$LATEST",
+                "simple-step-example" + input.getName() + ":$LATEST",
                 input,
                 String.class,
                 InvokeConfig.builder().build());
         var result2 = context.invoke(
                 "call-greeting2",
-                "simple-step-example:$LATEST",
+                "simple-step-example" + input.getName() + ":$LATEST",
                 input,
                 String.class,
                 InvokeConfig.builder().build());

@@ -1,4 +1,4 @@
-# ADR-003: Child Context Execution (`runInChildContext`)
+# ADR-004: Child Context Execution (`runInChildContext`)
 
 **Status:** Accepted  
 **Date:** 2026-02-16

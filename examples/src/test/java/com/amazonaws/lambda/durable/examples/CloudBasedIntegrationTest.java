@@ -21,6 +21,7 @@ class CloudBasedIntegrationTest {
 
     private static String account;
     private static String region;
+    private static String functionNameSuffix;
 
     static boolean isEnabled() {
         var enabled = "true".equals(System.getProperty("test.cloud.enabled"));
@@ -40,6 +41,7 @@ class CloudBasedIntegrationTest {
 
         account = System.getProperty("test.aws.account");
         region = System.getProperty("test.aws.region");
+        functionNameSuffix = System.getProperty("test.function.name.suffix", "");
 
         if (account == null || region == null) {
             var sts = StsClient.create();
@@ -52,7 +54,8 @@ class CloudBasedIntegrationTest {
     }
 
     private static String arn(String functionName) {
-        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionName + ":$LATEST";
+        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionName + functionNameSuffix
+                + ":$LATEST";
     }
 
     @Test
@@ -71,7 +74,7 @@ class CloudBasedIntegrationTest {
     @Test
     void testSimpleInvokeExample() {
         var runner = CloudDurableTestRunner.create(arn("simple-invoke-example"), Map.class, String.class);
-        var result = runner.run(Map.of("message", "test"));
+        var result = runner.run(Map.of("name", functionNameSuffix));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertNotNull(result.getResult(String.class));

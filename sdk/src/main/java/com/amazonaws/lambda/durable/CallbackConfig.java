@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.serde.SerDes;
+import com.amazonaws.lambda.durable.validation.ParameterValidator;
 import java.time.Duration;
 
 /** Configuration for callback operations. */
@@ -60,11 +61,13 @@ public class CallbackConfig {
         }
 
         public Builder timeout(Duration timeout) {
+            ParameterValidator.validateOptionalDuration(timeout, "Callback timeout");
             this.timeout = timeout;
             return this;
         }
 
         public Builder heartbeatTimeout(Duration heartbeatTimeout) {
+            ParameterValidator.validateOptionalDuration(heartbeatTimeout, "Heartbeat timeout");
             this.heartbeatTimeout = heartbeatTimeout;
             return this;
         }

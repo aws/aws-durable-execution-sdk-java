@@ -1,6 +1,6 @@
 # ADR-002: Phaser-Based Operation Coordination
 
-**Status:** Accepted  
+**Status:** Superseded by ADR-003 CompletableFuture-Based Operation Coordination
 **Date:** 2025-12-29
 
 

@@ -9,9 +9,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Shared executor for internal SDK coordination tasks.
  *
- * <p>This executor is used for SDK-internal operations such as checkpoint batching, polling for wait completion, and
- * phaser coordination. It is separate from the user-configured executor (via {@code DurableConfig}) which runs
- * user-defined operations.
+ * <p>This executor is used for SDK-internal operations such as checkpoint batching. It is separate from the
+ * user-configured executor (via {@code DurableConfig}) which runs user-defined operations.
  *
  * <p>Using a dedicated thread pool ensures SDK coordination tasks are isolated from user code.
  */

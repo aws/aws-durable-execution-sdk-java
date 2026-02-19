@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.amazonaws.lambda.durable.retry;
 
+import com.amazonaws.lambda.durable.validation.ParameterValidator;
 import java.time.Duration;
 
 /**
@@ -49,12 +50,8 @@ public class RetryStrategies {
         if (maxAttempts <= 0) {
             throw new IllegalArgumentException("maxAttempts must be positive");
         }
-        if (initialDelay.isNegative()) {
-            throw new IllegalArgumentException("initialDelay must not be negative");
-        }
-        if (maxDelay.isNegative()) {
-            throw new IllegalArgumentException("maxDelay must not be negative");
-        }
+        ParameterValidator.validateDuration(initialDelay, "initialDelay");
+        ParameterValidator.validateDuration(maxDelay, "maxDelay");
         if (backoffRate <= 0) {
             throw new IllegalArgumentException("backoffRate must be positive");
         }
@@ -98,9 +95,7 @@ public class RetryStrategies {
         if (maxAttempts <= 0) {
             throw new IllegalArgumentException("maxAttempts must be positive");
         }
-        if (fixedDelay.isNegative()) {
-            throw new IllegalArgumentException("fixedDelay must not be negative");
-        }
+        ParameterValidator.validateDuration(fixedDelay, "fixedDelay");
 
         return (error, attemptNumber) -> {
             if (attemptNumber + 1 >= maxAttempts) {

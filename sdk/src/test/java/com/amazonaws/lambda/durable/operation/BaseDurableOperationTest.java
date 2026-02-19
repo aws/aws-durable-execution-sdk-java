@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -22,30 +24,42 @@ import com.amazonaws.lambda.durable.execution.OperationContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
-import java.time.Instant;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Phaser;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 class BaseDurableOperationTest {
 
     private static final String OPERATION_ID = "1";
+    private static final String CONTEXT_ID = "1-step";
     private static final String OPERATION_NAME = "name";
+    private static final Operation OPERATION = Operation.builder().build();
     private static final OperationType OPERATION_TYPE = OperationType.STEP;
     private static final TypeToken<String> RESULT_TYPE = TypeToken.get(String.class);
     private static final SerDes SER_DES = new JacksonSerDes();
     private static final String RESULT = "name";
+    private final ExecutorService internalExecutor = Executors.newFixedThreadPool(2);
+
+    private ExecutionManager executionManager;
+
+    @BeforeEach
+    void setUp() {
+        executionManager = mock(ExecutionManager.class);
+        when(executionManager.getCurrentContext()).thenReturn(new OperationContext(CONTEXT_ID, ThreadType.CONTEXT));
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(OPERATION);
+    }
 
     @Test
     void getOperation() {
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        Operation operation = mock(Operation.class);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(operation);
-
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
@@ -62,17 +76,12 @@ class BaseDurableOperationTest {
         assertEquals(OPERATION_NAME, op.getName());
         assertEquals(OPERATION_TYPE, op.getType());
         assertEquals(RESULT, op.get());
-        assertEquals(operation, op.getOperation());
+        assertEquals(OPERATION, op.getOperation());
     }
 
     @Test
     void waitForOperationCompletionThrowsIfInStep() {
-        Phaser phaser = new Phaser();
-        ExecutionManager executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("context", ThreadType.STEP));
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder().build());
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
@@ -94,11 +103,29 @@ class BaseDurableOperationTest {
 
     @Test
     void waitForOperationCompletionThrowsIfOperationMissing() {
-        Phaser phaser = new Phaser();
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("context", ThreadType.CONTEXT));
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+        BaseDurableOperation<String> op =
+                new BaseDurableOperation<>(
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                    @Override
+                    public void execute() {
+                        markAlreadyCompleted();
+                        assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletion);
+                    }
 
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+        verify(executionManager).terminateExecution(any(IllegalDurableOperationException.class));
+    }
+
+    @Test
+    void waitForOperationCompletionWhenRunningAndReadyToComplete()
+            throws InterruptedException, ExecutionException, TimeoutException {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
@@ -107,92 +134,36 @@ class BaseDurableOperationTest {
 
                     @Override
                     public String get() {
-                        assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletion);
-                        return RESULT;
-                    }
-                };
-
-        op.get();
-        verify(executionManager).terminateExecution(any(IllegalDurableOperationException.class));
-    }
-
-    @Test
-    void waitForOperationCompletionWhenRunningAndReadyToComplete() {
-        Phaser phaser = new Phaser(0);
-        OperationContext context = new OperationContext("step", ThreadType.CONTEXT);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder().build());
-
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
-                    @Override
-                    public void execute() {
                         waitForOperationCompletion();
-                    }
-
-                    @Override
-                    public String get() {
                         return RESULT;
                     }
                 };
 
-        op.execute();
-        verify(executionManager).deregisterActiveThreadAndUnsetCurrentContext(context.contextId());
-        verify(executionManager).registerActiveThread(context.contextId(), context.threadType());
-        verify(executionManager).setCurrentContext(context.contextId(), context.threadType());
+        // call get in a separate thread which will be blocked
+        var future = internalExecutor.submit(op::get);
+        // wait for execute to be blocked by the completionFuture and then feed the completion event
+        try {
+            future.get(500, TimeUnit.MILLISECONDS);
+            fail();
+        } catch (TimeoutException e) {
+            op.onCheckpointComplete(
+                    Operation.builder().status(OperationStatus.SUCCEEDED).build());
+            assertEquals(RESULT, future.get());
+            verify(executionManager).deregisterActiveThreadAndUnsetCurrentContext(CONTEXT_ID);
+            verify(executionManager).registerActiveThread(CONTEXT_ID, ThreadType.CONTEXT);
+            verify(executionManager).setCurrentContext(CONTEXT_ID, ThreadType.CONTEXT);
+        }
     }
 
     @Test
     void waitForOperationCompletionWhenAlreadyCompleted() {
-        Phaser phaser = new Phaser(1);
-        phaser.arrive(); // completed
-        OperationContext context = new OperationContext("step", ThreadType.CONTEXT);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder().build());
-
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
-                    @Override
-                    public void execute() {
-                        waitForOperationCompletion();
-                    }
-
-                    @Override
-                    public String get() {
-                        return RESULT;
-                    }
-                };
-
-        op.execute();
-        verify(executionManager, never()).deregisterActiveThreadAndUnsetCurrentContext(context.contextId());
-        verify(executionManager, never()).registerActiveThread(context.contextId(), context.threadType());
-        verify(executionManager, never()).setCurrentContext(context.contextId(), context.threadType());
-    }
-
-    @Test
-    void markAlreadyCompleted() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder().build());
-
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
                     public void execute() {
                         markAlreadyCompleted();
+                        waitForOperationCompletion();
                     }
 
                     @Override
@@ -202,17 +173,34 @@ class BaseDurableOperationTest {
                 };
 
         op.execute();
-        // arrived and deregistered
-        assertEquals(0, phaser.getRegisteredParties());
+        verify(executionManager, never()).deregisterActiveThreadAndUnsetCurrentContext(CONTEXT_ID);
+        verify(executionManager, never()).registerActiveThread(CONTEXT_ID, ThreadType.CONTEXT);
+        verify(executionManager).setCurrentContext(CONTEXT_ID, ThreadType.CONTEXT);
+    }
+
+    @Test
+    void markAlreadyCompleted() {
+        BaseDurableOperation<String> op =
+                new BaseDurableOperation<>(
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                    @Override
+                    public void execute() {
+                        markAlreadyCompleted();
+                        // completion future should be complete
+                        assertTrue(this.isOperationCompleted());
+                    }
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
     }
 
     @Test
     void validateReplayThrowsWhenTypeMismatch() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
                 .thenReturn(
                         Operation.builder().type(OperationType.CHAINED_INVOKE).build());
@@ -221,25 +209,21 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
-                    public void execute() {}
+                    public void execute() {
+                        validateReplay(getOperation());
+                    }
 
                     @Override
                     public String get() {
-                        validateReplay(getOperation());
-                        return "";
+                        return RESULT;
                     }
                 };
 
-        assertThrows(NonDeterministicExecutionException.class, op::get);
+        assertThrows(NonDeterministicExecutionException.class, op::execute);
     }
 
     @Test
     void validateReplayThrowsWhenNameMismatch() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
                 .thenReturn(Operation.builder()
                         .name("another name")
@@ -250,48 +234,41 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
-                    public void execute() {}
+                    public void execute() {
+                        validateReplay(getOperation());
+                    }
 
                     @Override
                     public String get() {
-                        validateReplay(getOperation());
-                        return "";
+                        return RESULT;
                     }
                 };
 
-        assertThrows(NonDeterministicExecutionException.class, op::get);
+        assertThrows(NonDeterministicExecutionException.class, op::execute);
     }
 
     @Test
     void validateReplayDoesNotThrowWhenNoOperation() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
-                    public void execute() {}
+                    public void execute() {
+                        validateReplay(getOperation());
+                    }
 
                     @Override
                     public String get() {
-                        validateReplay(getOperation());
-                        return "";
+                        return RESULT;
                     }
                 };
+        op.execute();
     }
 
     @Test
     void validateReplayDoesNotThrowWhenNameAndTypeMatch() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
                 .thenReturn(Operation.builder()
                         .name(OPERATION_NAME)
@@ -302,29 +279,20 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
                     @Override
-                    public void execute() {}
+                    public void execute() {
+                        validateReplay(getOperation());
+                    }
 
                     @Override
                     public String get() {
-                        validateReplay(getOperation());
-                        return "";
+                        return RESULT;
                     }
                 };
+        op.execute();
     }
 
     @Test
     void deserializeResult() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder()
-                        .name(OPERATION_NAME)
-                        .type(OPERATION_TYPE)
-                        .build());
-
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
@@ -344,17 +312,6 @@ class BaseDurableOperationTest {
 
     @Test
     void deserializeException() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder()
-                        .name(OPERATION_NAME)
-                        .type(OPERATION_TYPE)
-                        .build());
-
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
@@ -379,19 +336,6 @@ class BaseDurableOperationTest {
 
     @Test
     void polling() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder()
-                        .name(OPERATION_NAME)
-                        .type(OPERATION_TYPE)
-                        .build());
-        Instant now = Instant.now();
-        CompletableFuture<Void> future = new CompletableFuture<>();
-
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
@@ -402,8 +346,7 @@ class BaseDurableOperationTest {
 
                     @Override
                     public String get() {
-
-                        return "";
+                        return RESULT;
                     }
                 };
 
@@ -413,16 +356,6 @@ class BaseDurableOperationTest {
 
     @Test
     void sendOperationUpdate() {
-        Phaser phaser = new Phaser(1);
-        OperationContext context = new OperationContext("step", ThreadType.STEP);
-        ExecutionManager executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(context);
-        when(executionManager.startPhaser(OPERATION_ID)).thenReturn(phaser);
-        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                .thenReturn(Operation.builder()
-                        .name(OPERATION_NAME)
-                        .type(OPERATION_TYPE)
-                        .build());
         var update = OperationUpdate.builder();
 
         BaseDurableOperation<String> op =
@@ -435,8 +368,7 @@ class BaseDurableOperationTest {
 
                     @Override
                     public String get() {
-
-                        return "";
+                        return RESULT;
                     }
                 };
 

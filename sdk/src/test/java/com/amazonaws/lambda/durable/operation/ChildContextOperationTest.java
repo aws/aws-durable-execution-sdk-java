@@ -3,7 +3,6 @@
 package com.amazonaws.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.amazonaws.lambda.durable.DurableConfig;
@@ -16,7 +15,6 @@ import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.util.List;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -32,9 +30,6 @@ class ChildContextOperationTest {
 
     private ExecutionManager createMockExecutionManager() {
         var executionManager = mock(ExecutionManager.class);
-        var phaser = new Phaser(1);
-        phaser.arriveAndDeregister();
-        when(executionManager.startPhaser(any())).thenReturn(phaser);
         when(executionManager.getCurrentContext()).thenReturn(new OperationContext("Root", ThreadType.CONTEXT));
         return executionManager;
     }
