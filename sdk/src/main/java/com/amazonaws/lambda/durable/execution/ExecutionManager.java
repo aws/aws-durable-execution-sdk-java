@@ -8,9 +8,11 @@ import com.amazonaws.lambda.durable.operation.BaseDurableOperation;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -55,8 +57,8 @@ public class ExecutionManager {
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation<?>> registeredOperations =
             Collections.synchronizedMap(new HashMap<>());
-    private final Map<String, ThreadType> activeThreads = Collections.synchronizedMap(new HashMap<>());
-    private static final ThreadLocal<OperationContext> currentContext = new ThreadLocal<>();
+    private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
+    private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
 
     // ===== Checkpoint Batching =====
@@ -143,53 +145,47 @@ public class ExecutionManager {
     }
 
     // ===== Thread Coordination =====
+    /** Sets the current thread's ThreadContext (threadId and threadType). Called when a user thread is started. */
+    public void setCurrentThreadContext(ThreadContext threadContext) {
+        currentThreadContext.set(threadContext);
+    }
+
+    /** Returns the current thread's ThreadContext (threadId and threadType), or null if not set. */
+    public ThreadContext getCurrentThreadContext() {
+        return currentThreadContext.get();
+    }
+
     /**
-     * Registers a thread as active without setting the thread local OperationContext. Use this when registration must
-     * happen on a different thread than execution. Call setCurrentContext() on the execution thread to set the local
-     * OperationContext.
+     * Registers a thread as active.
      *
-     * @see OperationContext
+     * @see ThreadContext
      */
-    public void registerActiveThread(String threadId, ThreadType threadType) {
-        if (activeThreads.containsKey(threadId)) {
-            logger.trace("Thread '{}' ({}) already registered as active", threadId, threadType);
+    public void registerActiveThread(String threadId) {
+        if (activeThreads.contains(threadId)) {
+            logger.trace("Thread '{}' already registered as active", threadId);
             return;
         }
-        activeThreads.put(threadId, threadType);
-        logger.trace(
-                "Registered thread '{}' ({}) as active (no context). Active threads: {}",
-                threadId,
-                threadType,
-                activeThreads.size());
+        activeThreads.add(threadId);
+        logger.trace("Registered thread '{}' as active. Active threads: {}", threadId, activeThreads.size());
     }
 
     /**
-     * Sets the current thread's context. Use after registerActiveThreadWithoutContext() when the execution thread is
-     * different from the registration thread.
+     * Mark a thread as inactive. If no threads remain, suspends the execution.
+     *
+     * @param threadId the thread ID to deregister
      */
-    public void setCurrentContext(String contextId, ThreadType threadType) {
-        currentContext.set(new OperationContext(contextId, threadType));
-    }
-
-    /** Returns the current thread's context, or null if not set. */
-    public OperationContext getCurrentContext() {
-        return currentContext.get();
-    }
-
-    public void deregisterActiveThreadAndUnsetCurrentContext(String threadId) {
+    public void deregisterActiveThread(String threadId) {
         // Skip if already suspended
         if (executionExceptionFuture.isDone()) {
             return;
         }
 
-        if (!activeThreads.containsKey(threadId)) {
+        boolean removed = activeThreads.remove(threadId);
+        if (removed) {
+            logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
+        } else {
             logger.warn("Thread '{}' not active, cannot deregister", threadId);
-            return;
         }
-
-        ThreadType type = activeThreads.remove(threadId);
-        currentContext.remove();
-        logger.trace("Deregistered thread '{}' ({}). Active threads: {}", threadId, type, activeThreads.size());
 
         if (activeThreads.isEmpty()) {
             logger.info("No active threads remaining - suspending execution");
@@ -225,7 +221,7 @@ public class ExecutionManager {
         checkpointBatcher.shutdown();
     }
 
-    private boolean isTerminalStatus(OperationStatus status) {
+    public static boolean isTerminalStatus(OperationStatus status) {
         return status == OperationStatus.SUCCEEDED
                 || status == OperationStatus.FAILED
                 || status == OperationStatus.CANCELLED

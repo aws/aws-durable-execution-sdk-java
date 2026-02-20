@@ -3,4 +3,4 @@
 package com.amazonaws.lambda.durable.execution;
 
 /** Holds the current thread's execution context. */
-public record OperationContext(String contextId, ThreadType threadType) {}
+public record ThreadContext(String threadId, ThreadType threadType) {}

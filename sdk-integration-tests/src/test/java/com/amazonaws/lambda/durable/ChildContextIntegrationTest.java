@@ -221,7 +221,7 @@ class ChildContextIntegrationTest {
         runner.advanceTime();
 
         // Second run - should complete
-        var result2 = runner.run("test");
+        var result2 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals("done", result2.getResult(String.class));
     }

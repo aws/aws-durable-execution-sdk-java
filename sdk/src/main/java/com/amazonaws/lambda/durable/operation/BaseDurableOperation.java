@@ -9,6 +9,7 @@ import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
@@ -19,7 +20,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
@@ -51,7 +51,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private final ExecutionManager executionManager;
     private final TypeToken<T> resultTypeToken;
     private final SerDes resultSerDes;
-    private final CompletableFuture<Void> completionFuture;
+    protected final CompletableFuture<Void> completionFuture;
 
     protected BaseDurableOperation(
             String operationId,
@@ -125,7 +125,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
      * @throws IllegalDurableOperationException if it's in a step
      */
     private void validateCurrentThreadType() {
-        ThreadType current = executionManager.getCurrentContext().threadType();
+        ThreadType current = getCurrentThreadContext().threadType();
         if (current == ThreadType.STEP) {
             var message = String.format(
                     "Nested %s operation is not supported on %s from within a %s execution.",
@@ -145,32 +145,33 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
         validateCurrentThreadType();
 
-        var context = executionManager.getCurrentContext();
+        var threadContext = getCurrentThreadContext();
 
-        // Use a synchronized block here to prevent the completionFuture from being completed by the execution thread
-        // (a step or child context thread) when it's inside the `if` block where the completion check is done (not
-        // completed) while the callback isn't added to the completionFuture or the current thread isn't deregistered.
+        // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
+        // completionFuture is completed by a user thread (a step or child context thread) when the execution here
+        // is between `isOperationCompleted` and `thenRun`.
         synchronized (completionFuture) {
             if (!isOperationCompleted()) {
                 // Operation not done yet
-                logger.debug("get() on {} attempting to deregister context: {}", getType(), context.contextId());
+                logger.trace(
+                        "deregistering thread {} when waiting for operation {} ({}) to complete ({})",
+                        threadContext.threadId(),
+                        getOperation(),
+                        getType(),
+                        completionFuture);
 
-                // Add a callback to completionFuture so that when the completionFuture is completed,
+                // Add a completion stage to completionFuture so that when the completionFuture is completed,
                 // it will register the current Context thread synchronously to make sure it is always registered
-                // before the execution thread (Step or child context) is deregistered.
-                completionFuture.thenRun(() -> registerActiveThread(context.contextId(), context.threadType()));
+                // strictly before the execution thread (Step or child context) is deregistered.
+                completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
 
                 // Deregister the current thread to allow suspension
-                deregisterActiveThreadAndUnsetCurrentContext(context.contextId());
+                deregisterActiveThread(threadContext.threadId());
             }
         }
 
         // Block until operation completes. No-op if the future is already completed.
-        logger.trace("Waiting for operation to finish {} ({})", getOperationId(), completionFuture);
         completionFuture.join();
-
-        // Reactivate current context. No-op if this is called twice.
-        setCurrentContext(context.contextId(), context.threadType());
 
         // Get result based on status
         var op = getOperation();
@@ -183,9 +184,17 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     /** Receives operation updates from ExecutionManager and updates the internal state of the operation */
     public void onCheckpointComplete(Operation operation) {
-        if (isTerminalStatus(operation.status())) {
+        if (ExecutionManager.isTerminalStatus(operation.status())) {
+            // This method handles only terminal status updates. Override this method if a DurableOperation needs to
+            // handle other updates.
+            logger.trace("In onCheckpointComplete, completing operation {} ({})", operationId, completionFuture);
+            // It's important that we synchronize access to the future, otherwise the processing could happen
+            // on someone else's thread and cause a race condition.
             synchronized (completionFuture) {
-                logger.trace("In onCheckpointComplete, completing operation {} ({})", operationId, completionFuture);
+                // Completing the future here will also run any other completion stages that have been attached
+                // to the future. In our case, other contexts may have attached a function to reactivate themselves,
+                // so they will definitely have a chance to reactivate before we finish completing and deactivating
+                // whatever operations were just checkpointed.
                 completionFuture.complete(null);
             }
         }
@@ -196,6 +205,9 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         // When the operation is already completed in a replay, we complete completionFuture immediately
         // so that the `get` method will be unblocked and the context thread will be registered
         logger.trace("In markAlreadyCompleted, completing operation: {} ({}).", operationId, completionFuture);
+
+        // It's important that we synchronize access to the future, otherwise the processing could happen
+        // on someone else's thread and cause a race condition.
         synchronized (completionFuture) {
             completionFuture.complete(null);
         }
@@ -213,16 +225,20 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     // advanced thread and context control
-    protected void deregisterActiveThreadAndUnsetCurrentContext(String threadId) {
-        executionManager.deregisterActiveThreadAndUnsetCurrentContext(threadId);
+    protected void deregisterActiveThread(String threadId) {
+        executionManager.deregisterActiveThread(threadId);
     }
 
-    protected void registerActiveThread(String threadId, ThreadType threadType) {
-        executionManager.registerActiveThread(threadId, threadType);
+    protected void registerActiveThread(String threadId) {
+        executionManager.registerActiveThread(threadId);
     }
 
-    protected void setCurrentContext(String stepThreadId, ThreadType step) {
-        executionManager.setCurrentContext(stepThreadId, step);
+    protected ThreadContext getCurrentThreadContext() {
+        return executionManager.getCurrentThreadContext();
+    }
+
+    protected void setCurrentThreadContext(ThreadContext threadContext) {
+        executionManager.setCurrentThreadContext(threadContext);
     }
 
     // polling and checkpointing
@@ -314,13 +330,5 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
                     "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     operationId, checkpointed.name(), getName())));
         }
-    }
-
-    private boolean isTerminalStatus(OperationStatus status) {
-        return status == OperationStatus.SUCCEEDED
-                || status == OperationStatus.FAILED
-                || status == OperationStatus.CANCELLED
-                || status == OperationStatus.TIMED_OUT
-                || status == OperationStatus.STOPPED;
     }
 }

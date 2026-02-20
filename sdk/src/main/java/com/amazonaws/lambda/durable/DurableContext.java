@@ -3,6 +3,7 @@
 package com.amazonaws.lambda.durable;
 
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.operation.CallbackOperation;
@@ -64,8 +65,8 @@ public class DurableContext {
     static DurableContext createRootContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
         var ctx = new DurableContext(executionManager, durableConfig, lambdaContext, null);
-        executionManager.registerActiveThread(ROOT_CONTEXT, ThreadType.CONTEXT);
-        executionManager.setCurrentContext(ROOT_CONTEXT, ThreadType.CONTEXT);
+        executionManager.registerActiveThread(ROOT_CONTEXT);
+        executionManager.setCurrentThreadContext(new ThreadContext(ROOT_CONTEXT, ThreadType.CONTEXT));
         return ctx;
     }
 

@@ -10,7 +10,7 @@ import com.amazonaws.lambda.durable.TypeToken;
 import com.amazonaws.lambda.durable.exception.ChildContextFailedException;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.execution.OperationContext;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import java.util.List;
@@ -30,7 +30,7 @@ class ChildContextOperationTest {
 
     private ExecutionManager createMockExecutionManager() {
         var executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("Root", ThreadType.CONTEXT));
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         return executionManager;
     }
 
