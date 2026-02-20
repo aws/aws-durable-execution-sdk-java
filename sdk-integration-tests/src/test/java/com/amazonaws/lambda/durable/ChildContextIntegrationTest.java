@@ -250,9 +250,7 @@ class ChildContextIntegrationTest {
 
         // First run - both child contexts should suspend at their waits
         // TODO: Using run() + runUntilComplete() instead of manual run/advanceTime/run due to a
-        //  thread coordination race condition that causes flakiness on slow CI workers. The race is
-        //  between child context thread deregistration and parent thread re-registration in
-        //  ChildContextOperation — should be further analyzed and fixed in the SDK.
+        //  thread coordination race condition that causes flakiness on slow CI workers.
         var result = runner.run("test");
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
