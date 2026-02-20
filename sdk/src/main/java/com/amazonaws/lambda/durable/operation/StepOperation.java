@@ -12,6 +12,7 @@ import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
@@ -124,13 +125,13 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
         var stepThreadId = getOperationId() + "-step";
 
         // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
-        // thread local OperationContext is set inside the executor since that's where the step actually runs
-        registerActiveThread(stepThreadId, ThreadType.STEP);
+        // thread local ThreadContext is set inside the executor since that's where the step actually runs
+        registerActiveThread(stepThreadId);
 
         // Execute user code in customer-configured executor
         userExecutor.execute(() -> {
-            // Set thread local OperationContext on the executor thread
-            setCurrentContext(stepThreadId, ThreadType.STEP);
+            // Set thread local ThreadContext on the executor thread
+            setCurrentThreadContext(new ThreadContext(stepThreadId, ThreadType.STEP));
             // Set operation context for logging in this thread
             durableLogger.setOperationContext(getOperationId(), getName(), attempt);
             try {
@@ -163,7 +164,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 handleStepFailure(e, attempt);
             } finally {
                 try {
-                    deregisterActiveThreadAndUnsetCurrentContext(stepThreadId);
+                    deregisterActiveThread(stepThreadId);
                 } catch (SuspendExecutionException e) {
                     // Expected when this is the last active thread. Must catch here because:
                     // 1/ This runs in a worker thread detached from handlerFuture

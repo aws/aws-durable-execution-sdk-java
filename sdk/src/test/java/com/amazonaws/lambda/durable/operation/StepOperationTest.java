@@ -8,11 +8,10 @@ import static org.mockito.Mockito.*;
 import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.StepConfig;
 import com.amazonaws.lambda.durable.TypeToken;
-import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import com.amazonaws.lambda.durable.exception.StepFailedException;
 import com.amazonaws.lambda.durable.exception.StepInterruptedException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.execution.OperationContext;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.logging.DurableLogger;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
@@ -27,10 +26,12 @@ import software.amazon.awssdk.services.lambda.model.StepDetails;
 class StepOperationTest {
 
     private static final String OPERATION_ID = "1";
+    private static final String OPERATION_NAME = "test-step";
+    private static final String RESULT = "result";
 
     private ExecutionManager createMockExecutionManager() {
         var executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("handler", ThreadType.CONTEXT));
         return executionManager;
     }
 
@@ -42,7 +43,7 @@ class StepOperationTest {
             List<String> stackTrace) {
         var operation = Operation.builder()
                 .id(OPERATION_ID)
-                .name("test-step")
+                .name(OPERATION_NAME)
                 .status(OperationStatus.FAILED)
                 .stepDetails(StepDetails.builder()
                         .error(ErrorObject.builder()
@@ -58,43 +59,21 @@ class StepOperationTest {
     }
 
     @Test
-    void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
-        var executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("1-step", ThreadType.STEP));
-
-        var operation = new StepOperation<>(
-                OPERATION_ID,
-                "test-step",
-                () -> "result",
-                TypeToken.get(String.class),
-                StepConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
-
-        var ex = assertThrows(IllegalDurableOperationException.class, operation::get);
-        assertTrue(ex.getMessage().contains("Nested STEP operation is not supported"));
-        assertTrue(ex.getMessage().contains("test-step"));
-    }
-
-    @Test
     void getDoesNotThrowWhenCalledFromHandlerContext() {
         var op = Operation.builder()
                 .id(OPERATION_ID)
-                .name("test-step")
+                .name(OPERATION_NAME)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"cached-result\"").build())
                 .build();
         var executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("handler", ThreadType.CONTEXT));
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("handler", ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
-                "test-step",
-                () -> "result",
+                OPERATION_NAME,
+                () -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
@@ -124,8 +103,8 @@ class StepOperationTest {
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
-                "test-step",
-                () -> "result",
+                OPERATION_NAME,
+                () -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(serDes).build(),
                 executionManager,
@@ -159,8 +138,8 @@ class StepOperationTest {
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
-                "test-step",
-                () -> "result",
+                OPERATION_NAME,
+                () -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(serDes).build(),
                 executionManager,
@@ -185,8 +164,8 @@ class StepOperationTest {
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
-                "test-step",
-                () -> "result",
+                OPERATION_NAME,
+                () -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
@@ -217,8 +196,8 @@ class StepOperationTest {
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
-                "test-step",
-                () -> "result",
+                OPERATION_NAME,
+                () -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
@@ -244,8 +223,8 @@ class StepOperationTest {
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
-                "test-step",
-                () -> "result",
+                OPERATION_NAME,
+                () -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
@@ -271,8 +250,8 @@ class StepOperationTest {
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
-                "test-step",
-                () -> "result",
+                OPERATION_NAME,
+                () -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
                 executionManager,
@@ -285,7 +264,7 @@ class StepOperationTest {
 
         var thrown = assertThrows(StepInterruptedException.class, operation::get);
         assertEquals(OPERATION_ID, thrown.getOperation().id());
-        assertEquals("test-step", thrown.getOperation().name());
+        assertEquals(OPERATION_NAME, thrown.getOperation().name());
     }
 
     // Custom exception for testing

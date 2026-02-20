@@ -26,6 +26,7 @@ public class HistoryEventProcessor {
         var operationEvents = new HashMap<String, List<Event>>();
         var status = ExecutionStatus.PENDING;
         String result = null;
+        ErrorObject error = null;
 
         for (var event : events) {
             var eventType = event.eventType();
@@ -51,9 +52,34 @@ public class HistoryEventProcessor {
                         result = details.result().payload();
                     }
                 }
-                case EXECUTION_FAILED -> status = ExecutionStatus.FAILED;
-                case EXECUTION_TIMED_OUT -> status = ExecutionStatus.FAILED;
-                case EXECUTION_STOPPED -> status = ExecutionStatus.FAILED;
+                case EXECUTION_FAILED -> {
+                    status = ExecutionStatus.FAILED;
+                    var details = event.executionFailedDetails();
+                    if (details != null
+                            && details.error() != null
+                            && details.error().payload() != null) {
+                        error = details.error().payload();
+                    }
+                }
+                case EXECUTION_TIMED_OUT -> {
+                    status = ExecutionStatus.FAILED;
+                    var details = event.executionTimedOutDetails();
+                    if (details != null
+                            && details.error() != null
+                            && details.error().payload() != null) {
+                        error = details.error().payload();
+                    }
+                }
+                case EXECUTION_STOPPED -> {
+                    status = ExecutionStatus.FAILED;
+
+                    var details = event.executionStoppedDetails();
+                    if (details != null
+                            && details.error() != null
+                            && details.error().payload() != null) {
+                        error = details.error().payload();
+                    }
+                }
                 case STEP_STARTED -> {
                     if (operationId != null) {
                         operations.putIfAbsent(
@@ -186,7 +212,7 @@ public class HistoryEventProcessor {
             testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));
         }
 
-        return new TestResult<>(status, result, null, testOperations, events, serDes);
+        return new TestResult<>(status, result, error, testOperations, events, serDes);
     }
 
     private Operation createStepOperation(

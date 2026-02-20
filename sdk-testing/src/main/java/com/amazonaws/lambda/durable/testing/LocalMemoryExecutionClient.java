@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import software.amazon.awssdk.services.lambda.model.*;
 
@@ -63,10 +64,16 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         return allEvents.stream().filter(e -> operationId.equals(e.id())).toList();
     }
 
-    /** Advance all operations (simulates time passing for retries/waits). */
-    public void advanceReadyOperations() {
+    /**
+     * Advance all operations (simulates time passing for retries/waits).
+     *
+     * @return true if any operations were advanced, false otherwise
+     */
+    public boolean advanceReadyOperations() {
+        var replaced = new AtomicBoolean(false);
         operations.replaceAll((key, op) -> {
             if (op.status() == OperationStatus.PENDING) {
+                replaced.set(true);
                 return op.toBuilder().status(OperationStatus.READY).build();
             }
             if (op.status() == OperationStatus.STARTED && op.type() == OperationType.WAIT) {
@@ -81,10 +88,12 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                         .build();
                 var event = eventProcessor.processUpdate(update, succeededOp);
                 allEvents.add(event);
+                replaced.set(true);
                 return succeededOp;
             }
             return op;
         });
+        return replaced.get();
     }
 
     public void completeChainedInvoke(String name, OperationResult result) {

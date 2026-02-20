@@ -4,24 +4,24 @@ package com.amazonaws.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.lambda.durable.InvokeConfig;
 import com.amazonaws.lambda.durable.TypeToken;
-import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import com.amazonaws.lambda.durable.exception.InvokeException;
 import com.amazonaws.lambda.durable.exception.InvokeFailedException;
 import com.amazonaws.lambda.durable.exception.InvokeStoppedException;
 import com.amazonaws.lambda.durable.exception.InvokeTimedOutException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.execution.OperationContext;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
 class InvokeOperationTest {
@@ -32,33 +32,16 @@ class InvokeOperationTest {
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("root", ThreadType.CONTEXT));
-    }
-
-    @Test
-    void getThrowsIllegalStateExceptionWhenCalledFromStepContext() {
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("1-step", ThreadType.STEP));
-        var operation = new InvokeOperation<>(
-                OPERATION_ID,
-                "test-invoke",
-                "function-name",
-                "{}",
-                TypeToken.get(String.class),
-                InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager);
-
-        var ex = assertThrows(IllegalDurableOperationException.class, operation::get);
-        assertTrue(ex.getMessage().contains("Nested CHAINED_INVOKE operation is not supported"));
-        assertTrue(ex.getMessage().contains("test-invoke"));
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("root", ThreadType.CONTEXT));
     }
 
     @Test
     void getDoesNotThrowWhenCalledFromHandlerContext() {
-        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+        var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name("test-invoke")
                 .status(OperationStatus.SUCCEEDED)
-                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .result("\"cached-result\"")
                         .build())
                 .build();
@@ -80,11 +63,11 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeFailedExceptionWhenInvocationFailed() {
-        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+        var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name("test-invoke")
                 .status(OperationStatus.FAILED)
-                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
                                 .errorType("errorType")
                                 .errorMessage("errorMessage")
@@ -112,11 +95,11 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeTimedOutExceptionWhenInvocationTimedOut() {
-        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+        var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name("test-invoke")
                 .status(OperationStatus.TIMED_OUT)
-                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
                                 .errorType("errorType")
                                 .errorMessage("errorMessage")
@@ -144,11 +127,11 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeStoppedExceptionWhenInvocationTimedOut() {
-        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+        var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name("test-invoke")
                 .status(OperationStatus.STOPPED)
-                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
                                 .errorType("errorType")
                                 .errorMessage("errorMessage")
@@ -176,11 +159,11 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeFailedExceptionWhenInvocationEndedUnexpectedly() {
-        var op = software.amazon.awssdk.services.lambda.model.Operation.builder()
+        var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name("test-invoke")
                 .status(OperationStatus.CANCELLED)
-                .chainedInvokeDetails(software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails.builder()
+                .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
                                 .errorType("errorType")
                                 .errorMessage("errorMessage")

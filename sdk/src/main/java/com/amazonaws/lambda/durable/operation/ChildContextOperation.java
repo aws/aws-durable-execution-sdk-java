@@ -12,6 +12,7 @@ import com.amazonaws.lambda.durable.exception.DurableOperationException;
 import com.amazonaws.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import com.amazonaws.lambda.durable.util.ExceptionHelper;
@@ -105,10 +106,10 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
         //    the child context know which context they belong to.
         // registerActiveThread is idempotent (no-op if already registered).
-        registerActiveThread(contextId, ThreadType.CONTEXT);
+        registerActiveThread(contextId);
 
         userExecutor.execute(() -> {
-            setCurrentContext(contextId, ThreadType.CONTEXT);
+            setCurrentThreadContext(new ThreadContext(contextId, ThreadType.CONTEXT));
             try {
                 var childContext =
                         DurableContext.createChildContext(executionManager, durableConfig, lambdaContext, contextId);
@@ -128,7 +129,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                 handleChildContextFailure(e);
             } finally {
                 try {
-                    deregisterActiveThreadAndUnsetCurrentContext(contextId);
+                    deregisterActiveThread(contextId);
                 } catch (SuspendExecutionException e) {
                     // Expected when this is the last active thread — suspension already signaled
                 }
@@ -160,6 +161,10 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
     private void handleChildContextFailure(Throwable exception) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
+        if (exception instanceof SuspendExecutionException) {
+            // Rethrow Error immediately — do not checkpoint
+            ExceptionHelper.sneakyThrow(exception);
+        }
         if (exception instanceof UnrecoverableDurableExecutionException) {
             terminateExecution((UnrecoverableDurableExecutionException) exception);
         }

@@ -20,7 +20,7 @@ import com.amazonaws.lambda.durable.exception.IllegalDurableOperationException;
 import com.amazonaws.lambda.durable.exception.NonDeterministicExecutionException;
 import com.amazonaws.lambda.durable.exception.SerDesException;
 import com.amazonaws.lambda.durable.execution.ExecutionManager;
-import com.amazonaws.lambda.durable.execution.OperationContext;
+import com.amazonaws.lambda.durable.execution.ThreadContext;
 import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
@@ -54,7 +54,7 @@ class BaseDurableOperationTest {
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext(CONTEXT_ID, ThreadType.CONTEXT));
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(OPERATION);
     }
 
@@ -77,28 +77,6 @@ class BaseDurableOperationTest {
         assertEquals(OPERATION_TYPE, op.getType());
         assertEquals(RESULT, op.get());
         assertEquals(OPERATION, op.getOperation());
-    }
-
-    @Test
-    void waitForOperationCompletionThrowsIfInStep() {
-        when(executionManager.getCurrentContext()).thenReturn(new OperationContext("context", ThreadType.STEP));
-
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
-                    @Override
-                    public void execute() {
-                        assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletion);
-                    }
-
-                    @Override
-                    public String get() {
-                        return RESULT;
-                    }
-                };
-
-        op.execute();
-        verify(executionManager).terminateExecution(any(IllegalDurableOperationException.class));
     }
 
     @Test
@@ -149,9 +127,8 @@ class BaseDurableOperationTest {
             op.onCheckpointComplete(
                     Operation.builder().status(OperationStatus.SUCCEEDED).build());
             assertEquals(RESULT, future.get());
-            verify(executionManager).deregisterActiveThreadAndUnsetCurrentContext(CONTEXT_ID);
-            verify(executionManager).registerActiveThread(CONTEXT_ID, ThreadType.CONTEXT);
-            verify(executionManager).setCurrentContext(CONTEXT_ID, ThreadType.CONTEXT);
+            verify(executionManager).deregisterActiveThread(CONTEXT_ID);
+            verify(executionManager).registerActiveThread(CONTEXT_ID);
         }
     }
 
@@ -173,9 +150,8 @@ class BaseDurableOperationTest {
                 };
 
         op.execute();
-        verify(executionManager, never()).deregisterActiveThreadAndUnsetCurrentContext(CONTEXT_ID);
-        verify(executionManager, never()).registerActiveThread(CONTEXT_ID, ThreadType.CONTEXT);
-        verify(executionManager).setCurrentContext(CONTEXT_ID, ThreadType.CONTEXT);
+        verify(executionManager, never()).deregisterActiveThread(CONTEXT_ID);
+        verify(executionManager, never()).registerActiveThread(CONTEXT_ID);
     }
 
     @Test
@@ -304,7 +280,7 @@ class BaseDurableOperationTest {
                         assertEquals("abc", deserializeResult(serializeResult("abc")));
                         assertEquals("", deserializeResult("\"\""));
                         assertThrows(SerDesException.class, () -> deserializeResult("x"));
-                        return "";
+                        return RESULT;
                     }
                 };
         op.get();
@@ -327,7 +303,7 @@ class BaseDurableOperationTest {
                         Throwable ex = deserializeException(serializeException(new RuntimeException("test exception")));
                         assertInstanceOf(RuntimeException.class, ex);
                         assertEquals("test exception", ex.getMessage());
-                        return "";
+                        return RESULT;
                     }
                 };
 

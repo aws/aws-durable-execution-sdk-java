@@ -172,20 +172,26 @@ public class LocalDurableTestRunner<I, O> {
         return storage.toTestResult(output);
     }
 
-    /** Run until completion (SUCCEEDED or FAILED), simulating Lambda re-invocations. */
+    /**
+     * Run until completion (SUCCEEDED or FAILED) or pending manual intervention, simulating Lambda re-invocations.
+     * Operations that don't require manual intervention (like WAIT in STARTED or STEP in PENDING) will be automatically
+     * advanced.
+     *
+     * @param input The input to process
+     * @return Final test result (SUCCEEDED or FAILED) or PENDING if operations pending manual intervention
+     */
     public TestResult<O> runUntilComplete(I input) {
         TestResult<O> result = null;
         for (int i = 0; i < MAX_INVOCATIONS; i++) {
             result = run(input);
 
-            if (result.getStatus() != ExecutionStatus.PENDING) {
-                return result; // SUCCEEDED or FAILED - we're done
-            }
-
-            if (skipTime) {
-                storage.advanceReadyOperations(); // Auto-advance and continue loop
-            } else {
-                return result; // Return PENDING - let test manually advance time
+            if (result.getStatus() != ExecutionStatus.PENDING || !skipTime || !storage.advanceReadyOperations()) {
+                // break the loop if
+                // - Return SUCCEEDED or FAILED - we're done
+                // - Return PENDING and let test manually advance operations if
+                //    - auto advance is disabled, or
+                //    - no operations can be auto advanced
+                break;
             }
         }
         return result;
