@@ -249,13 +249,16 @@ class ChildContextIntegrationTest {
 
         // First run - both child contexts should suspend at their waits
         var result = runner.run("test");
+        runner.dumpOperations("After first run (status=" + result.getStatus() + ")");
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
         // Advance time so both waits complete
         runner.advanceTime();
+        runner.dumpOperations("After advanceTime");
 
         // Second run - both child contexts resume and complete
         var result2 = runner.run("test");
+        runner.dumpOperations("After second run (status=" + result2.getStatus() + ")");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals("a-done+b-done", result2.getResult(String.class));
     }
