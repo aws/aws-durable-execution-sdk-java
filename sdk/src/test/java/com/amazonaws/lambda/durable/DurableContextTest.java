@@ -8,26 +8,28 @@ import com.amazonaws.lambda.durable.execution.ExecutionManager;
 import com.amazonaws.lambda.durable.execution.SuspendExecutionException;
 import com.amazonaws.lambda.durable.retry.RetryStrategies;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
 
 class DurableContextTest {
+    private static final Operation EXECUTION_OP = Operation.builder()
+            .id("0")
+            .type(OperationType.EXECUTION)
+            .status(OperationStatus.STARTED)
+            .build();
 
     private DurableContext createTestContext() {
-        var executionOp = Operation.builder()
-                .id("0")
-                .type(OperationType.EXECUTION)
-                .status(OperationStatus.STARTED)
-                .build();
-        return createTestContext(List.of(executionOp));
+        return createTestContext(List.of());
     }
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
-        var initialExecutionState = CheckpointUpdatedExecutionState.builder()
-                .operations(initialOperations)
-                .build();
+        var operations = new ArrayList<>(List.of(EXECUTION_OP));
+        operations.addAll(initialOperations);
+        var initialExecutionState =
+                CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
                         + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",

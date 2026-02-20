@@ -77,7 +77,7 @@ public class ExecutionManager {
         this.executionMode =
                 new AtomicReference<>(operationStorage.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
 
-        executionOp = findExecutionOp();
+        executionOp = findExecutionOp(initialExecutionState);
 
         // Validate initial operation is an EXECUTION operation
         if (executionOp == null) {
@@ -87,15 +87,6 @@ public class ExecutionManager {
         logger.debug("DurableExecutionArn: {}", durableExecutionArn);
         logger.debug("Initial operations count: {}", operationStorage.size());
         logger.debug("EXECUTION operation found: {}", executionOp.id());
-    }
-
-    private Operation findExecutionOp() {
-        for (Operation op : operationStorage.values()) {
-            if (op.type() == OperationType.EXECUTION) {
-                return op;
-            }
-        }
-        return null;
     }
 
     // ===== State Management =====
@@ -147,6 +138,26 @@ public class ExecutionManager {
 
     public Operation getExecutionOperation() {
         return executionOp;
+    }
+
+    private Operation findExecutionOp(CheckpointUpdatedExecutionState initialExecutionState) {
+        // find execution OP in the input
+        if (initialExecutionState != null
+                && initialExecutionState.operations() != null
+                && !initialExecutionState.operations().isEmpty()) {
+            var op = initialExecutionState.operations().get(0);
+            if (op.type() != OperationType.EXECUTION) {
+                throw new IllegalStateException("First operation must be EXECUTION");
+            }
+            return op;
+        }
+        // find execution OP in the checkpoint result
+        for (Operation op : operationStorage.values()) {
+            if (op.type() == OperationType.EXECUTION) {
+                return op;
+            }
+        }
+        return null;
     }
 
     // ===== Thread Coordination =====

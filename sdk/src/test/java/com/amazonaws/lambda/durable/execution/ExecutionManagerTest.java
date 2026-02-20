@@ -3,20 +3,26 @@
 package com.amazonaws.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.amazonaws.lambda.durable.DurableConfig;
 import com.amazonaws.lambda.durable.TestUtils;
+import com.amazonaws.lambda.durable.client.DurableExecutionClient;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 class ExecutionManagerTest {
+    private DurableExecutionClient client;
 
     private ExecutionManager createManager(List<Operation> operations) {
-        var client = TestUtils.createMockClient();
+        client = TestUtils.createMockClient();
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         return new ExecutionManager(
@@ -108,5 +114,27 @@ class ExecutionManagerTest {
 
         assertNotNull(op);
         assertTrue(manager.isReplaying());
+    }
+
+    @Test
+    void emptyInitialState() {
+        client = mock(DurableExecutionClient.class);
+        when(client.getExecutionState(any(), any(), any()))
+                .thenReturn(GetDurableExecutionStateResponse.builder()
+                        .operations(List.of(executionOp()))
+                        .nextMarker(null)
+                        .build());
+        var initialState = CheckpointUpdatedExecutionState.builder()
+                .operations(List.of())
+                .nextMarker("marker")
+                .build();
+        var executionManager = new ExecutionManager(
+                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                "test-token",
+                initialState,
+                DurableConfig.builder().withDurableExecutionClient(client).build());
+
+        assertNotNull(executionManager.getExecutionOperation());
+        assertEquals("0", executionManager.getExecutionOperation().id());
     }
 }
