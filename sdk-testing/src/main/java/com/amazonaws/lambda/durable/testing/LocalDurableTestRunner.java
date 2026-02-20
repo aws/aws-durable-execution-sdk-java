@@ -229,15 +229,6 @@ public class LocalDurableTestRunner<I, O> {
         storage.advanceReadyOperations();
     }
 
-    /** Debug helper: dump all operations to stdout. */
-    public void dumpOperations(String label) {
-        System.out.println("=== " + label + " ===");
-        for (var op : storage.getAllOperations()) {
-            System.out.println("  id=" + op.id() + " name=" + op.name() + " type=" + op.type() + " status="
-                    + op.status() + " parentId=" + op.parentId());
-        }
-    }
-
     // Manual complete a chained invoke call
     public void completeChainedInvoke(String name, String result) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.SUCCEEDED, result, null));
