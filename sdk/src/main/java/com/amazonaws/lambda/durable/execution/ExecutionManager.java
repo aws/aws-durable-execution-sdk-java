@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 /**
@@ -44,7 +45,7 @@ public class ExecutionManager {
 
     // ===== Execution State =====
     private final Map<String, Operation> operationStorage;
-    private final String executionOperationId;
+    private final Operation executionOp;
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
 
@@ -64,7 +65,6 @@ public class ExecutionManager {
             CheckpointUpdatedExecutionState initialExecutionState,
             DurableConfig config) {
         this.durableExecutionArn = durableExecutionArn;
-        this.executionOperationId = initialExecutionState.operations().get(0).id();
 
         // Create checkpoint batcher for internal coordination
         this.checkpointBatcher =
@@ -76,6 +76,26 @@ public class ExecutionManager {
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
         this.executionMode =
                 new AtomicReference<>(operationStorage.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
+
+        executionOp = findExecutionOp();
+
+        // Validate initial operation is an EXECUTION operation
+        if (executionOp == null) {
+            throw new IllegalStateException("First operation must be EXECUTION");
+        }
+        logger.debug("DurableExecution.execute() called");
+        logger.debug("DurableExecutionArn: {}", durableExecutionArn);
+        logger.debug("Initial operations count: {}", operationStorage.size());
+        logger.debug("EXECUTION operation found: {}", executionOp.id());
+    }
+
+    private Operation findExecutionOp() {
+        for (Operation op : operationStorage.values()) {
+            if (op.type() == OperationType.EXECUTION) {
+                return op;
+            }
+        }
+        return null;
     }
 
     // ===== State Management =====
@@ -126,7 +146,7 @@ public class ExecutionManager {
     }
 
     public Operation getExecutionOperation() {
-        return operationStorage.get(executionOperationId);
+        return executionOp;
     }
 
     // ===== Thread Coordination =====
