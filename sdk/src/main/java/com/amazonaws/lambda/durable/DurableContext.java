@@ -50,19 +50,23 @@ public class DurableContext {
                 durableConfig.getLoggerConfig().suppressReplayLogs());
     }
 
-    /** Creates a root context with the given contextId and registers the current thread. */
-    static DurableContext createRootContext(
-            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
-        var ctx = new DurableContext(executionManager, durableConfig, lambdaContext, null);
-        executionManager.registerActiveThread(contextId, ThreadType.CONTEXT);
-        executionManager.setCurrentContext(contextId, ThreadType.CONTEXT);
-        return ctx;
-    }
-
-    /** Creates a root context with the default "Root" contextId and registers the current thread. */
+    /**
+     * Creates a root context and registers the current thread for execution coordination.
+     *
+     * <p>The context itself always has a null contextId (making it a root context). The thread is registered with the
+     * ExecutionManager using the default {@link #ROOT_CONTEXT} identifier.
+     *
+     * @param executionManager the execution manager
+     * @param durableConfig the durable configuration
+     * @param lambdaContext the Lambda context
+     * @return a new root DurableContext
+     */
     static DurableContext createRootContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
-        return createRootContext(executionManager, durableConfig, lambdaContext, ROOT_CONTEXT);
+        var ctx = new DurableContext(executionManager, durableConfig, lambdaContext, null);
+        executionManager.registerActiveThread(ROOT_CONTEXT, ThreadType.CONTEXT);
+        executionManager.setCurrentContext(ROOT_CONTEXT, ThreadType.CONTEXT);
+        return ctx;
     }
 
     /**

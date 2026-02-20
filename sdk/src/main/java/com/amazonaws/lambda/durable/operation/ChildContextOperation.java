@@ -99,7 +99,12 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         // E.g., root child context "1", nested child context "1-2", deeply nested "1-2-1".
         var contextId = getOperationId();
 
-        // Register child context thread before executor runs (prevents suspension)
+        // Thread registration is intentionally split across two threads:
+        // 1. registerActiveThread on the PARENT thread — ensures the child is tracked before the
+        //    parent can deregister and trigger suspension (race prevention).
+        // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
+        //    the child context know which context they belong to.
+        // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(contextId, ThreadType.CONTEXT);
 
         userExecutor.execute(() -> {
