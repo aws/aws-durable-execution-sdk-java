@@ -28,6 +28,25 @@ class SimpleStepExampleTest {
     }
 
     @Test
+    void testWithLargePayload() {
+        // Create handler
+        var handler = new SimpleStepExample();
+
+        // Create test runner
+        var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
+        // 6MB large input
+        var largeInput = "A".repeat(1024).repeat(1024).repeat(6);
+
+        // Run with input
+        var input = new GreetingRequest(largeInput);
+        var result = runner.run(input);
+
+        // Verify result
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("HELLO, " + largeInput + "!", result.getResult(String.class));
+    }
+
+    @Test
     void testWithDefaultName() {
         var handler = new SimpleStepExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);

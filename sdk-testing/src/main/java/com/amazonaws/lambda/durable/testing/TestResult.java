@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
 public class TestResult<O> {
@@ -50,7 +51,12 @@ public class TestResult<O> {
         if (status != ExecutionStatus.SUCCEEDED) {
             throw new IllegalStateException("Execution did not succeed: " + status);
         }
-        if (resultPayload == null) {
+        if (resultPayload == null || resultPayload.isEmpty()) {
+            var lastEvent = allEvents.get(allEvents.size() - 1);
+            if (lastEvent.eventType() == EventType.EXECUTION_SUCCEEDED) {
+                return serDes.deserialize(
+                        lastEvent.executionSucceededDetails().result().payload(), TypeToken.get(resultType));
+            }
             return null;
         }
         return serDes.deserialize(resultPayload, TypeToken.get(resultType));
