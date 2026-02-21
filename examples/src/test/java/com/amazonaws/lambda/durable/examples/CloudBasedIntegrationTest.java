@@ -72,6 +72,17 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
+    void testNoopExampleWithLargeInput() {
+        var runner = CloudDurableTestRunner.create(arn("noop-example"), Map.class, String.class);
+        // 6MB large input
+        var largeInput = "A".repeat(1024 * 1024 * 6 - 12);
+        var result = runner.run(Map.of("name", largeInput));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("HELLO, " + largeInput + "!", result.getResult(String.class));
+    }
+
+    @Test
     void testSimpleInvokeExample() {
         var runner = CloudDurableTestRunner.create(arn("simple-invoke-example"), Map.class, String.class);
         var result = runner.run(Map.of("name", functionNameSuffix));
