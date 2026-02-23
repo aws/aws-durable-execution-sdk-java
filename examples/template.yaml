@@ -27,6 +27,24 @@ Globals:
       - !Ref Architecture
 
 Resources:
+  NoopExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - noop-example
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: [ "com.amazonaws.lambda.durable.examples.NoopExample::handleRequest" ]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
   SimpleStepExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -376,6 +394,14 @@ Resources:
       DockerTag: durable-examples
 
 Outputs:
+  NoopExampleFunction:
+    Description: Noop Example Function ARN
+    Value: !GetAtt NoopExampleFunction.Arn
+
+  NoopExampleFunctionName:
+    Description: Noop Example Function Name
+    Value: !Ref NoopExampleFunction
+
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
     Value: !GetAtt SimpleStepExampleFunction.Arn

@@ -36,29 +36,8 @@ public class DurableExecutor {
             Class<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
-        logger.debug("DurableExecution.execute() called");
-        logger.debug("DurableExecutionArn: {}", input.durableExecutionArn());
-        logger.debug(
-                "Initial operations count: {}",
-                input.initialExecutionState() != null
-                                && input.initialExecutionState().operations() != null
-                        ? input.initialExecutionState().operations().size()
-                        : 0);
-
-        // Validate initial operation is an EXECUTION operation
-        if (input.initialExecutionState() == null
-                || input.initialExecutionState().operations() == null
-                || input.initialExecutionState().operations().isEmpty()
-                || input.initialExecutionState().operations().get(0).type() != OperationType.EXECUTION) {
-            throw new IllegalStateException("First operation must be EXECUTION");
-        }
-
         var executionManager = new ExecutionManager(
                 input.durableExecutionArn(), input.checkpointToken(), input.initialExecutionState(), config);
-
-        logger.debug(
-                "EXECUTION operation found: {}",
-                executionManager.getExecutionOperation().id());
 
         var handlerFuture = CompletableFuture.supplyAsync(
                 () -> {

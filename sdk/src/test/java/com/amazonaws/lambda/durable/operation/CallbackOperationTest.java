@@ -17,6 +17,7 @@ import com.amazonaws.lambda.durable.execution.ThreadType;
 import com.amazonaws.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.lambda.durable.serde.SerDes;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -64,9 +65,15 @@ class CallbackOperationTest {
 
     private ExecutionManager createExecutionManager(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
-        var initialState = CheckpointUpdatedExecutionState.builder()
-                .operations(initialOperations)
-                .build();
+        var operations = new ArrayList<Operation>();
+        operations.add(Operation.builder()
+                .id("0")
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .build());
+        operations.addAll(initialOperations);
+        var initialState =
+                CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
                 "arn:aws:lambda:us-east-1:123456789012:function:test",
                 "test-token",
@@ -78,12 +85,7 @@ class CallbackOperationTest {
 
     @Test
     void executeCreatesCheckpointAndGetsCallbackId() {
-        var executionOp = Operation.builder()
-                .id(EXECUTION_OPERATION_ID)
-                .type(OperationType.EXECUTION)
-                .status(OperationStatus.STARTED)
-                .build();
-        var executionManager = createExecutionManager(List.of(executionOp));
+        var executionManager = createExecutionManager(List.of());
         var serDes = new JacksonSerDes();
 
         var operation = new CallbackOperation<>(
@@ -99,12 +101,7 @@ class CallbackOperationTest {
 
     @Test
     void executeWithConfigSetsOptions() {
-        var executionOp = Operation.builder()
-                .id(EXECUTION_OPERATION_ID)
-                .type(OperationType.EXECUTION)
-                .status(OperationStatus.STARTED)
-                .build();
-        var executionManager = createExecutionManager(List.of(executionOp));
+        var executionManager = createExecutionManager(List.of());
         var serDes = new JacksonSerDes();
         var config = CallbackConfig.builder()
                 .timeout(Duration.ofMinutes(5))
