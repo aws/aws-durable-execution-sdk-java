@@ -199,7 +199,7 @@ context.step("name", Type.class, supplier,
 ### Package Structure
 
 ```
-com.amazonaws.lambda.durable
+software.amazon.lambda.durable
 ├── DurableHandler<I,O>      # Entry point
 ├── DurableExecutor          # Lifecycle orchestration
 ├── DurableContext           # User API

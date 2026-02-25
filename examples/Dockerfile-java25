@@ -26,4 +26,4 @@ FROM public.ecr.aws/lambda/java:25
 COPY --from=builder /build/examples/target/*.jar ${LAMBDA_TASK_ROOT}/lib/
 
 # Default CMD (will be overridden by ImageConfig.Command in SAM template)
-CMD ["com.amazonaws.lambda.durable.examples.SimpleStepExample::handleRequest"]
+CMD ["software.amazon.lambda.durable.examples.SimpleStepExample::handleRequest"]

@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.amazonaws.lambda</groupId>
+        <groupId>software.amazon.lambda.durable</groupId>
         <artifactId>aws-durable-execution-sdk-java-parent</artifactId>
         <version>0.5.0-SNAPSHOT</version>
     </parent>
@@ -18,13 +18,13 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.amazonaws.lambda</groupId>
+            <groupId>software.amazon.lambda.durable</groupId>
             <artifactId>aws-durable-execution-sdk-java</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.amazonaws.lambda</groupId>
+            <groupId>software.amazon.lambda.durable</groupId>
             <artifactId>aws-durable-execution-sdk-java-testing</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>

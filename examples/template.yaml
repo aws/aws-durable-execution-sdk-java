@@ -36,7 +36,7 @@ Resources:
         - - noop-example
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: [ "com.amazonaws.lambda.durable.examples.NoopExample::handleRequest" ]
+        Command: [ "software.amazon.lambda.durable.examples.NoopExample::handleRequest" ]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -54,7 +54,7 @@ Resources:
         - - simple-step-example
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.SimpleStepExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.SimpleStepExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -72,7 +72,7 @@ Resources:
         - - 'simple-invoke-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.SimpleInvokeExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.SimpleInvokeExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -102,7 +102,7 @@ Resources:
         - - 'wait-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.WaitExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.WaitExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -127,7 +127,7 @@ Resources:
         - - 'retry-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.RetryExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.RetryExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -152,7 +152,7 @@ Resources:
         - - 'wait-at-least-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.WaitAtLeastExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -177,7 +177,7 @@ Resources:
         - - 'wait-at-least-in-process-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.WaitAtLeastInProcessExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.WaitAtLeastInProcessExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -202,7 +202,7 @@ Resources:
         - - 'retry-in-process-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.RetryInProcessExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.RetryInProcessExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -227,7 +227,7 @@ Resources:
         - - 'generic-types-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.GenericTypesExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.GenericTypesExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -252,7 +252,7 @@ Resources:
         - - 'custom-config-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.CustomConfigExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.CustomConfigExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -277,7 +277,7 @@ Resources:
         - - 'logging-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.LoggingExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.LoggingExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -302,7 +302,7 @@ Resources:
         - - 'error-handling-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.ErrorHandlingExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.ErrorHandlingExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -327,7 +327,7 @@ Resources:
         - - 'callback-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.CallbackExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.CallbackExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -352,7 +352,7 @@ Resources:
         - - 'many-async-steps-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.ManyAsyncStepsExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.ManyAsyncStepsExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -377,7 +377,7 @@ Resources:
         - - 'child-context-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["com.amazonaws.lambda.durable.examples.ChildContextExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.ChildContextExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7

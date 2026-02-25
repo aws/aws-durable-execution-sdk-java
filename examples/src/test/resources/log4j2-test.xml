@@ -8,7 +8,7 @@
     
     <Loggers>
         <!-- SDK internal logs at DEBUG for testing -->
-        <Logger name="com.amazonaws.lambda.durable" level="DEBUG"/>
+        <Logger name="software.amazon.lambda.durable" level="DEBUG"/>
         
         <!-- AWS SDK logs at WARN -->
         <Logger name="software.amazon.awssdk" level="WARN"/>

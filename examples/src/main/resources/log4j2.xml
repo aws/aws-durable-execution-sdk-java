@@ -7,7 +7,7 @@
     </Appenders>
 
     <Loggers>
-        <Logger name="com.amazonaws.lambda.durable" level="INFO"/>
+        <Logger name="software.amazon.lambda.durable" level="INFO"/>
 
         <!-- AWS SDK logs at WARN -->
         <Logger name="software.amazon.awssdk" level="WARN" />

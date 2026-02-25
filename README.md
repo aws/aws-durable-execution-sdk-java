@@ -32,7 +32,7 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 
 ```xml
 <dependency>
-    <groupId>com.amazonaws.lambda</groupId>
+    <groupId>software.amazon.lambda.durable</groupId>
     <artifactId>aws-durable-execution-sdk-java</artifactId>
     <version>VERSION</version>
 </dependency>
@@ -453,7 +453,7 @@ The SDK includes testing utilities for both local development and cloud-based in
 
 ```xml
 <dependency>
-    <groupId>com.amazonaws.lambda</groupId>
+    <groupId>software.amazon.lambda.durable</groupId>
     <artifactId>aws-durable-execution-sdk-java-testing</artifactId>
     <version>VERSION</version>
     <scope>test</scope>
