@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-import software.amazon.lambda.durable.util.ExceptionHelper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class DurableExecutionExceptionTest {
 

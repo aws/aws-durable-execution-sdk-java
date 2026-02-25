@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.serde.SerDes;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -14,6 +11,9 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.serde.SerDes;
 
 public class TestResult<O> {
     private static final Set<OperationStatus> FAIL_OPERATION_STATUS = Set.of(

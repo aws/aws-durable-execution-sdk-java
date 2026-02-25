@@ -5,11 +5,6 @@ package software.amazon.lambda.durable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import software.amazon.lambda.durable.client.DurableExecutionClient;
-import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.model.DurableExecutionOutput;
-import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -18,6 +13,11 @@ import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class DurableExecutionWrapperTest {
 

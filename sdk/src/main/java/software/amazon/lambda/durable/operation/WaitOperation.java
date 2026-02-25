@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.serde.NoopSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.validation.ParameterValidator;
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -16,6 +11,11 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.serde.NoopSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.validation.ParameterValidator;
 
 public class WaitOperation extends BaseDurableOperation<Void> {
 

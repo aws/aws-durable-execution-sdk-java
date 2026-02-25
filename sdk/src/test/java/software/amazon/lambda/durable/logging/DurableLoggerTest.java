@@ -4,12 +4,12 @@ package software.amazon.lambda.durable.logging;
 
 import static org.mockito.Mockito.*;
 
-import software.amazon.lambda.durable.execution.ExecutionManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 
 class DurableLoggerTest {
 

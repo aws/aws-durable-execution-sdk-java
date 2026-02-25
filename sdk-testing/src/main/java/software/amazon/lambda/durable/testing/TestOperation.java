@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.serde.SerDes;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -13,6 +11,8 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.serde.SerDes;
 
 /** Wrapper for AWS SDK Operation providing convenient access methods. */
 public class TestOperation {

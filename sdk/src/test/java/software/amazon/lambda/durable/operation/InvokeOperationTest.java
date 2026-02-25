@@ -7,6 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.InvokeException;
@@ -17,12 +23,6 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.Operation;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
 class InvokeOperationTest {
     private static final String OPERATION_ID = "2";

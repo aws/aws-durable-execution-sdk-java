@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import software.amazon.lambda.durable.client.DurableExecutionClient;
-import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
-import software.amazon.lambda.durable.logging.LoggerConfig;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -18,6 +13,11 @@ import software.amazon.awssdk.core.SdkSystemSetting;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequest;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.logging.LoggerConfig;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 
 /**
  * Configuration for DurableHandler initialization. This class provides a builder pattern for configuring SDK components

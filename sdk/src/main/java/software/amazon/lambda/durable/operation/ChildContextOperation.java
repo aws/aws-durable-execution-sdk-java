@@ -4,6 +4,16 @@ package software.amazon.lambda.durable.operation;
 
 import static software.amazon.lambda.durable.model.OperationSubType.RUN_IN_CHILD_CONTEXT;
 
+import com.amazonaws.services.lambda.runtime.Context;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.function.Function;
+import software.amazon.awssdk.services.lambda.model.ContextOptions;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
@@ -16,16 +26,6 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
-import com.amazonaws.services.lambda.runtime.Context;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.ExecutorService;
-import java.util.function.Function;
-import software.amazon.awssdk.services.lambda.model.ContextOptions;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
 /**
  * Manages the lifecycle of a child execution context.

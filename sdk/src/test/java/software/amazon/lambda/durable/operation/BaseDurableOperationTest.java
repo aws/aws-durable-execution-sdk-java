@@ -15,15 +15,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
-import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
-import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.execution.ThreadContext;
-import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +27,15 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 
 class BaseDurableOperationTest {
 

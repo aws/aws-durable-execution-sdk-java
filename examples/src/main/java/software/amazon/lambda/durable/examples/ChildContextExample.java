@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
+import java.time.Duration;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
-import java.time.Duration;
 
 /**
  * Example demonstrating child context workflows with the Durable Execution SDK.

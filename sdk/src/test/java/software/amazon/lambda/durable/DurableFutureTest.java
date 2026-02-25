@@ -5,9 +5,9 @@ package software.amazon.lambda.durable;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 class DurableFutureTest {
 

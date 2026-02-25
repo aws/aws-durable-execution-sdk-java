@@ -6,8 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
-import software.amazon.lambda.durable.execution.ExecutionManager;
 import java.time.Duration;
 import java.util.List;
 import java.util.stream.Stream;
@@ -17,6 +15,8 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 
 class ReplayValidationTest {
 

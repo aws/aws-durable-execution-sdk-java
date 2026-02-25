@@ -5,10 +5,6 @@ package software.amazon.lambda.durable.serde;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.model.DurableExecutionOutput;
-import software.amazon.lambda.durable.model.ExecutionStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
@@ -17,6 +13,10 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
 
 class AwsSdkV2ModuleTest {
 

@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
-import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.StepConfig;
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.retry.RetryStrategies;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 
 /**
  * Example demonstrating TypeToken support for complex generic types.

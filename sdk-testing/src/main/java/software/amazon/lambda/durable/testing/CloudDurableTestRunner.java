@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
-import software.amazon.lambda.durable.serde.JacksonSerDes;
 import java.time.Duration;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 public class CloudDurableTestRunner<I, O> {
     private final String functionArn;

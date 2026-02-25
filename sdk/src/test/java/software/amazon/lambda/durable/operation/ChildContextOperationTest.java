@@ -5,14 +5,6 @@ package software.amazon.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.exception.ChildContextFailedException;
-import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
-import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.execution.ThreadContext;
-import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -22,6 +14,14 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.ChildContextFailedException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 /** Unit tests for ChildContextOperation. */
 class ChildContextOperationTest {

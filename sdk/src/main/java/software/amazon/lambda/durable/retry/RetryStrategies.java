@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.retry;
 
-import software.amazon.lambda.durable.validation.ParameterValidator;
 import java.time.Duration;
+import software.amazon.lambda.durable.validation.ParameterValidator;
 
 /**
  * Factory class for creating common retry strategies.

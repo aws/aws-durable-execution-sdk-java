@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import software.amazon.lambda.durable.serde.SerDes;
 import java.time.Duration;
+import software.amazon.lambda.durable.serde.SerDes;
 
 public class InvokeConfig {
     private final Duration timeout;

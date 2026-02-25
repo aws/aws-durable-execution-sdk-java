@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
-import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableExecutor;
-import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +12,14 @@ import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableExecutor;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 
 public class LocalDurableTestRunner<I, O> {
     private static final int MAX_INVOCATIONS = 100;

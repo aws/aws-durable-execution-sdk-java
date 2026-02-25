@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
+import java.time.Duration;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import java.time.Duration;
 
 /**
  * Example demonstrating step execution with wait operations.

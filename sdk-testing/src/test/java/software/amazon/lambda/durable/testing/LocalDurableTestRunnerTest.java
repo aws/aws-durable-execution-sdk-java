@@ -4,8 +4,8 @@ package software.amazon.lambda.durable.testing;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import software.amazon.lambda.durable.model.ExecutionStatus;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.model.ExecutionStatus;
 
 class LocalDurableTestRunnerTest {
 

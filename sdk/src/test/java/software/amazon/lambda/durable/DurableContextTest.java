@@ -4,14 +4,14 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.retry.RetryStrategies;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class DurableContextTest {
     private static final Operation EXECUTION_OP = Operation.builder()

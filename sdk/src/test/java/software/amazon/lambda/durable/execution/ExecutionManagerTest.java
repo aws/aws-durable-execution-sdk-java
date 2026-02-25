@@ -7,9 +7,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.TestUtils;
-import software.amazon.lambda.durable.client.DurableExecutionClient;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
@@ -17,6 +14,9 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResp
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
 
 class ExecutionManagerTest {
     private DurableExecutionClient client;

@@ -9,8 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.model.ExecutionStatus;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.Test;
@@ -20,6 +18,8 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
 
 class DurableExecutionTest {
 

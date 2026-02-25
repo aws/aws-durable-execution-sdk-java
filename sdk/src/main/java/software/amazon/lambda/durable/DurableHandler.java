@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.serde.AwsSdkV2Module;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 import com.fasterxml.jackson.core.JsonGenerator;
@@ -31,6 +29,8 @@ import java.time.format.DateTimeFormatterBuilder;
 import java.util.Date;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.serde.AwsSdkV2Module;
 
 public abstract class DurableHandler<I, O> implements RequestStreamHandler {
 

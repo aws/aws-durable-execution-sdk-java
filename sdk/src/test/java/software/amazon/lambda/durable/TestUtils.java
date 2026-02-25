@@ -5,11 +5,11 @@ package software.amazon.lambda.durable;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import software.amazon.lambda.durable.client.DurableExecutionClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
 
 public class TestUtils {
 

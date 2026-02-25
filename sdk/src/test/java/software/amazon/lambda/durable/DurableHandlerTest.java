@@ -6,10 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import software.amazon.lambda.durable.client.DurableExecutionClient;
-import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.model.DurableExecutionOutput;
-import software.amazon.lambda.durable.model.ExecutionStatus;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -19,6 +15,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
 
 class DurableHandlerTest {
 

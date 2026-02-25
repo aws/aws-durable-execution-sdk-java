@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.util;
 
-import software.amazon.lambda.durable.serde.SerDes;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.serde.SerDes;
 
 /** Utility class for handling exceptions */
 public class ExceptionHelper {

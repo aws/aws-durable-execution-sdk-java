@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
-import software.amazon.lambda.durable.model.ExecutionStatus;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -12,6 +11,7 @@ import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
+import software.amazon.lambda.durable.model.ExecutionStatus;
 
 /**
  * Handle for an asynchronously executing durable function. Allows incremental polling and inspection of execution

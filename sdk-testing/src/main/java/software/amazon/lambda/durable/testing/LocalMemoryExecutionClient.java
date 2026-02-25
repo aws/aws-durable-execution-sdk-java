@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
-import software.amazon.lambda.durable.client.DurableExecutionClient;
-import software.amazon.lambda.durable.model.DurableExecutionOutput;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +12,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();

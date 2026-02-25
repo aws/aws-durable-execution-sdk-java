@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.logging;
 
-import software.amazon.lambda.durable.execution.ExecutionManager;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 
 /**
  * Logger wrapper that adds durable execution context to log entries via MDC and optionally suppresses logs during

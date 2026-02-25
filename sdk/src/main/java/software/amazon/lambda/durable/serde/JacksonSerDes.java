@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.serde;
 
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.exception.SerDesException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +11,8 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.lang.reflect.Type;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.SerDesException;
 
 /**
  * Jackson-based implementation of {@link SerDes}.

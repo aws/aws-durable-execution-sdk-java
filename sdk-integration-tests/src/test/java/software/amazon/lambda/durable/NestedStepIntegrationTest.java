@@ -4,9 +4,9 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
-import org.junit.jupiter.api.Test;
 
 /** Tests that nested step calling is properly rejected. */
 class NestedStepIntegrationTest {

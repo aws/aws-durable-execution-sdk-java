@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import software.amazon.lambda.durable.CallbackConfig;
-import software.amazon.lambda.durable.DurableCallbackFuture;
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.exception.CallbackFailedException;
-import software.amazon.lambda.durable.exception.CallbackTimeoutException;
-import software.amazon.lambda.durable.execution.ExecutionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.CallbackConfig;
+import software.amazon.lambda.durable.DurableCallbackFuture;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {

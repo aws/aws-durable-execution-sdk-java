@@ -4,8 +4,6 @@ package software.amazon.lambda.durable.examples;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -15,6 +13,8 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
 @EnabledIf("isEnabled")
 class CloudBasedIntegrationTest {

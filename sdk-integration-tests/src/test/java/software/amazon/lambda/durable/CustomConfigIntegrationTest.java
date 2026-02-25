@@ -6,14 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class CustomConfigIntegrationTest {
 
@@ -149,7 +149,8 @@ class CustomConfigIntegrationTest {
                                     },
                                     StepConfig.builder()
                                             .retryStrategy(
-                                                    software.amazon.lambda.durable.retry.RetryStrategies.Presets.DEFAULT)
+                                                    software.amazon.lambda.durable.retry.RetryStrategies.Presets
+                                                            .DEFAULT)
                                             .build());
                         },
                         customConfig)

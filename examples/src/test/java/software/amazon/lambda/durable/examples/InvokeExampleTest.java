@@ -4,10 +4,10 @@ package software.amazon.lambda.durable.examples;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class InvokeExampleTest {
 

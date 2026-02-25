@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
-import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
-import software.amazon.lambda.durable.serde.SerDes;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -18,6 +12,12 @@ import software.amazon.awssdk.core.SdkSystemSetting;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.serde.SerDes;
 
 /**
  * Example demonstrating custom configuration with both custom HTTP client and custom SerDes. Shows how to configure a

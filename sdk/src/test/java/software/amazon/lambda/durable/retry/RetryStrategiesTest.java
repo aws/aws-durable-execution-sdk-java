@@ -4,9 +4,9 @@ package software.amazon.lambda.durable.retry;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import software.amazon.lambda.durable.StepConfig;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.StepConfig;
 
 class RetryStrategiesTest {
 

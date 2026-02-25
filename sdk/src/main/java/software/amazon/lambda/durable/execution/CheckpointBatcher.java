@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.execution;
 
-import software.amazon.lambda.durable.DurableConfig;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableConfig;
 
 /**
  * Package-private checkpoint manager for batching and queueing checkpoint API calls.

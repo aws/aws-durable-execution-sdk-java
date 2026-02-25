@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.exception;
 
-import software.amazon.lambda.durable.util.ExceptionHelper;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 public class DurableOperationException extends DurableExecutionException {
     private final Operation operation;

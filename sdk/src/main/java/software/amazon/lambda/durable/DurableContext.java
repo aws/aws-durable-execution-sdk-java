@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
+import com.amazonaws.services.lambda.runtime.Context;
+import java.time.Duration;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -12,13 +19,6 @@ import software.amazon.lambda.durable.operation.InvokeOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.validation.ParameterValidator;
-import com.amazonaws.services.lambda.runtime.Context;
-import java.time.Duration;
-import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
-import java.util.function.Supplier;
-import org.slf4j.LoggerFactory;
 
 public class DurableContext {
     private static final String ROOT_CONTEXT = "Root";

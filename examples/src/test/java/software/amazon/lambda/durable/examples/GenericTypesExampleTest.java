@@ -4,8 +4,8 @@ package software.amazon.lambda.durable.examples;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class GenericTypesExampleTest {
 

@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.execution;
 
-import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
-import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
@@ -23,6 +20,9 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
  * Central manager for durable execution coordination.

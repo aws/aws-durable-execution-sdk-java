@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
-import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.StepConfig;
-import software.amazon.lambda.durable.retry.RetryStrategies;
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 
 /**
  * Simple example demonstrating retry strategies with a flaky API.

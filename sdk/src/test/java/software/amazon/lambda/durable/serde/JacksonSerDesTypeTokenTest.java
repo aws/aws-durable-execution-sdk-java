@@ -4,12 +4,12 @@ package software.amazon.lambda.durable.serde;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.exception.SerDesException;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.SerDesException;
 
 class JacksonSerDesTypeTokenTest {
 
