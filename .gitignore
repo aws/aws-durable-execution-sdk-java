@@ -41,3 +41,6 @@ Thumbs.db
 .aws-sam/
 samconfig.toml
 samconfig.toml.bak
+
+# OSS
+.flattened-pom.xml
