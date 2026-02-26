@@ -15,6 +15,13 @@
 
     <name>AWS Lambda Durable Execution SDK for Java</name>
     <description>Java SDK for AWS Lambda Durable Functions</description>
+    <url>https://github.com/aws/aws-durable-execution-sdk-java</url>
+
+    <scm>
+        <connection>scm:git:https://github.com/aws/aws-durable-execution-sdk-java.git</connection>
+        <developerConnection>scm:git:https://github.com/aws/aws-durable-execution-sdk-java.git</developerConnection>
+        <url>https://github.com/aws/aws-durable-execution-sdk-java</url>
+    </scm>
 
     <dependencies>
         <!-- AWS Lambda Java Core -->

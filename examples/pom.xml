@@ -15,6 +15,13 @@
 
     <name>AWS Lambda Durable Execution SDK Examples</name>
     <description>Example applications using the AWS Lambda Durable Execution SDK</description>
+    <url>https://github.com/aws/aws-durable-execution-sdk-java</url>
+
+    <scm>
+        <connection>scm:git:https://github.com/aws/aws-durable-execution-sdk-java.git</connection>
+        <developerConnection>scm:git:https://github.com/aws/aws-durable-execution-sdk-java.git</developerConnection>
+        <url>https://github.com/aws/aws-durable-execution-sdk-java</url>
+    </scm>
 
     <dependencies>
         <!-- Local SDK dependency -->

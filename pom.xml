@@ -11,7 +11,7 @@
 
     <name>AWS Lambda Durable Execution SDK Parent</name>
     <description>Parent POM for AWS Lambda Durable Execution SDK and Examples</description>
-    <url>https://github.com/aws/aws-lambda-java-durable-execution-sdk</url>
+    <url>https://github.com/aws/aws-durable-execution-sdk-java</url>
 
     <licenses>
         <license>
@@ -33,7 +33,9 @@
     </developers>
 
     <scm>
-        <url>https://github.com/aws/aws-lambda-java-durable-execution-sdk.git</url>
+        <connection>scm:git:https://github.com/aws/aws-durable-execution-sdk-java.git</connection>
+        <developerConnection>scm:git:https://github.com/aws/aws-durable-execution-sdk-java.git</developerConnection>
+        <url>https://github.com/aws/aws-durable-execution-sdk-java</url>
     </scm>
 
     <modules>
