@@ -11,8 +11,8 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.serde.NoopSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.validation.ParameterValidator;
@@ -24,23 +24,10 @@ public class WaitOperation extends BaseDurableOperation<Void> {
 
     private final Duration duration;
 
-    public WaitOperation(
-            String operationId, String name, Duration duration, ExecutionManager executionManager, String parentId) {
-        super(
-                operationId,
-                name,
-                OperationType.WAIT,
-                TypeToken.get(Void.class),
-                NOOP_SER_DES,
-                executionManager,
-                parentId);
+    public WaitOperation(String operationId, String name, Duration duration, DurableContext durableContext) {
+        super(operationId, name, OperationType.WAIT, TypeToken.get(Void.class), NOOP_SER_DES, durableContext);
         ParameterValidator.validateDuration(duration, "Wait duration");
         this.duration = duration;
-    }
-
-    /** Convenience constructor for root-context operations where parentId is null. */
-    public WaitOperation(String operationId, String name, Duration duration, ExecutionManager executionManager) {
-        this(operationId, name, duration, executionManager, null);
     }
 
     @Override

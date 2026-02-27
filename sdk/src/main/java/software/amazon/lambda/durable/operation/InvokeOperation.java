@@ -6,13 +6,13 @@ import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
-import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.serde.SerDes;
 
 public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
@@ -28,33 +28,13 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
             U payload,
             TypeToken<T> resultTypeToken,
             InvokeConfig config,
-            ExecutionManager executionManager,
-            String parentId) {
-        super(
-                operationId,
-                name,
-                OperationType.CHAINED_INVOKE,
-                resultTypeToken,
-                config.serDes(),
-                executionManager,
-                parentId);
+            DurableContext durableContext) {
+        super(operationId, name, OperationType.CHAINED_INVOKE, resultTypeToken, config.serDes(), durableContext);
 
         this.functionName = functionName;
         this.payload = payload;
         this.invokeConfig = config;
         this.payloadSerDes = config.payloadSerDes() != null ? config.payloadSerDes() : config.serDes();
-    }
-
-    /** Convenience constructor for root-context operations where parentId is null. */
-    public InvokeOperation(
-            String operationId,
-            String name,
-            String functionName,
-            U payload,
-            TypeToken<T> resultTypeToken,
-            InvokeConfig config,
-            ExecutionManager executionManager) {
-        this(operationId, name, functionName, payload, resultTypeToken, config, executionManager, null);
     }
 
     /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */

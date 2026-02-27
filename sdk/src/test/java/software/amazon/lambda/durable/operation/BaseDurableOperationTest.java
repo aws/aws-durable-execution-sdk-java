@@ -27,6 +27,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
@@ -50,10 +51,13 @@ class BaseDurableOperationTest {
     private final ExecutorService internalExecutor = Executors.newFixedThreadPool(2);
 
     private ExecutionManager executionManager;
+    private DurableContext durableContext;
 
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
+        durableContext = mock(DurableContext.class);
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(OPERATION);
     }
@@ -62,7 +66,7 @@ class BaseDurableOperationTest {
     void getOperation() {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {}
 
@@ -84,7 +88,7 @@ class BaseDurableOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         markAlreadyCompleted();
@@ -106,7 +110,7 @@ class BaseDurableOperationTest {
             throws InterruptedException, ExecutionException, TimeoutException {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {}
 
@@ -136,7 +140,7 @@ class BaseDurableOperationTest {
     void waitForOperationCompletionWhenAlreadyCompleted() {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         markAlreadyCompleted();
@@ -158,7 +162,7 @@ class BaseDurableOperationTest {
     void markAlreadyCompleted() {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         markAlreadyCompleted();
@@ -183,7 +187,7 @@ class BaseDurableOperationTest {
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         validateReplay(getOperation());
@@ -208,7 +212,7 @@ class BaseDurableOperationTest {
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         validateReplay(getOperation());
@@ -229,7 +233,7 @@ class BaseDurableOperationTest {
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         validateReplay(getOperation());
@@ -253,7 +257,7 @@ class BaseDurableOperationTest {
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         validateReplay(getOperation());
@@ -271,7 +275,7 @@ class BaseDurableOperationTest {
     void deserializeResult() {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {}
 
@@ -290,7 +294,7 @@ class BaseDurableOperationTest {
     void deserializeException() {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {}
 
@@ -314,7 +318,7 @@ class BaseDurableOperationTest {
     void polling() {
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         pollForOperationUpdates();
@@ -336,7 +340,7 @@ class BaseDurableOperationTest {
 
         BaseDurableOperation<String> op =
                 new BaseDurableOperation<>(
-                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, executionManager) {
+                        OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     public void execute() {
                         sendOperationUpdate(update);

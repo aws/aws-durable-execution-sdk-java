@@ -7,12 +7,14 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.concurrent.Executors;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.StepConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.StepFailedException;
@@ -20,7 +22,6 @@ import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class StepOperationTest {
@@ -28,11 +29,19 @@ class StepOperationTest {
     private static final String OPERATION_ID = "1";
     private static final String OPERATION_NAME = "test-step";
     private static final String RESULT = "result";
+    private ExecutionManager executionManager;
+    private DurableContext durableContext;
 
-    private ExecutionManager createMockExecutionManager() {
-        var executionManager = mock(ExecutionManager.class);
+    @BeforeEach
+    void setUp() {
+        executionManager = mock(ExecutionManager.class);
+        durableContext = mock(DurableContext.class);
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("handler", ThreadType.CONTEXT));
-        return executionManager;
+        when(durableContext.getDurableConfig())
+                .thenReturn(DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
     }
 
     private void mockFailedOperation(
@@ -66,21 +75,16 @@ class StepOperationTest {
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"cached-result\"").build())
                 .build();
-        var executionManager = mock(ExecutionManager.class);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("handler", ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new StepOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
-                () -> RESULT,
+                (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
+                durableContext);
         operation.onCheckpointComplete(op);
 
         var result = operation.get();
@@ -89,7 +93,6 @@ class StepOperationTest {
 
     @Test
     void getThrowsOriginalExceptionWhenClassIsAvailable() {
-        var executionManager = createMockExecutionManager();
         var serDes = new JacksonSerDes();
         var originalException = new IllegalArgumentException("Invalid input");
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
@@ -104,14 +107,10 @@ class StepOperationTest {
         var operation = new StepOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
-                () -> RESULT,
+                (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(serDes).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
+                durableContext);
 
         operation.execute();
 
@@ -124,7 +123,6 @@ class StepOperationTest {
 
     @Test
     void getThrowsOriginalCustomExceptionWhenClassIsAvailable() {
-        var executionManager = createMockExecutionManager();
         var serDes = new JacksonSerDes();
         var originalException = new CustomTestException("Custom error");
         var stackTrace = List.of("com.example.Handler|process|Handler.java|100");
@@ -139,14 +137,10 @@ class StepOperationTest {
         var operation = new StepOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
-                () -> RESULT,
+                (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(serDes).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
+                durableContext);
 
         operation.execute();
 
@@ -157,7 +151,6 @@ class StepOperationTest {
 
     @Test
     void getFallsBackToStepFailedExceptionWhenClassNotFound() {
-        var executionManager = createMockExecutionManager();
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
 
         mockFailedOperation(executionManager, "NonExistentException", "This class doesn't exist", "{}", stackTrace);
@@ -165,14 +158,10 @@ class StepOperationTest {
         var operation = new StepOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
-                () -> RESULT,
+                (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
+                durableContext);
 
         operation.execute();
 
@@ -184,7 +173,6 @@ class StepOperationTest {
 
     @Test
     void getFallsBackToStepFailedExceptionWhenDeserializationFails() {
-        var executionManager = createMockExecutionManager();
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
 
         mockFailedOperation(
@@ -197,14 +185,10 @@ class StepOperationTest {
         var operation = new StepOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
-                () -> RESULT,
+                (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
+                durableContext);
 
         operation.execute();
 
@@ -215,7 +199,6 @@ class StepOperationTest {
 
     @Test
     void getFallsBackToStepFailedExceptionWhenErrorDataIsNull() {
-        var executionManager = createMockExecutionManager();
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
 
         mockFailedOperation(
@@ -224,14 +207,10 @@ class StepOperationTest {
         var operation = new StepOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
-                () -> RESULT,
+                (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
+                durableContext);
 
         operation.execute();
 
@@ -242,7 +221,6 @@ class StepOperationTest {
 
     @Test
     void getThrowsStepInterruptedExceptionDirectly() {
-        var executionManager = createMockExecutionManager();
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
 
         mockFailedOperation(
@@ -251,14 +229,10 @@ class StepOperationTest {
         var operation = new StepOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
-                () -> RESULT,
+                (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager,
-                mock(DurableLogger.class),
-                DurableConfig.builder()
-                        .withExecutorService(Executors.newCachedThreadPool())
-                        .build());
+                durableContext);
 
         operation.execute();
 

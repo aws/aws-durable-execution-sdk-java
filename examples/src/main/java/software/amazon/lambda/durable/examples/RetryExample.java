@@ -31,7 +31,7 @@ public class RetryExample extends DurableHandler<Object, String> {
     @Override
     public String handleRequest(Object input, DurableContext context) {
         // Step 1: Record start time
-        startTime = context.step("record-start-time", Instant.class, Instant::now);
+        startTime = context.step("record-start-time", Instant.class, () -> Instant.now());
         logger.info("Recorded start time: {}", startTime);
 
         // Step 2: Call that never retries (fails immediately)

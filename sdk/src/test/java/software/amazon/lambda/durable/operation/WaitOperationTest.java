@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -24,10 +25,13 @@ class WaitOperationTest {
     private static final String CONTEXT_ID = "handler";
     private static final String OPERATION_NAME = "test-wait";
     private ExecutionManager executionManager;
+    private DurableContext durableContext;
 
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
+        durableContext = mock(DurableContext.class);
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
     }
 
     @Test
@@ -36,7 +40,7 @@ class WaitOperationTest {
 
         var exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, null, executionManager));
+                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, null, durableContext));
 
         assertEquals("Wait duration cannot be null", exception.getMessage());
     }
@@ -47,7 +51,7 @@ class WaitOperationTest {
 
         var exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(0), executionManager));
+                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(0), durableContext));
 
         assertTrue(exception.getMessage().contains("Wait duration"));
         assertTrue(exception.getMessage().contains("at least 1 second"));
@@ -59,7 +63,7 @@ class WaitOperationTest {
 
         var exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofMillis(500), executionManager));
+                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofMillis(500), durableContext));
 
         assertTrue(exception.getMessage().contains("Wait duration"));
         assertTrue(exception.getMessage().contains("at least 1 second"));
@@ -69,7 +73,7 @@ class WaitOperationTest {
     void constructor_withValidDuration_shouldPass() {
         var executionManager = mock(ExecutionManager.class);
 
-        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), executionManager);
+        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), durableContext);
 
         assertEquals(OPERATION_ID, operation.getOperationId());
     }
@@ -85,7 +89,7 @@ class WaitOperationTest {
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
-        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), executionManager);
+        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), durableContext);
         operation.onCheckpointComplete(op);
 
         var result = operation.get();
@@ -102,7 +106,7 @@ class WaitOperationTest {
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
-        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), executionManager);
+        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), durableContext);
         operation.onCheckpointComplete(op);
 
         // we currently don't check the operation status at all, so it's not blocked or failed

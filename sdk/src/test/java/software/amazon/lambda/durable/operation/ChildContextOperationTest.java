@@ -8,6 +8,7 @@ import static org.mockito.Mockito.*;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -15,6 +16,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
@@ -28,10 +30,16 @@ class ChildContextOperationTest {
 
     private static final JacksonSerDes SERDES = new JacksonSerDes();
 
-    private ExecutionManager createMockExecutionManager() {
-        var executionManager = mock(ExecutionManager.class);
+    private DurableContext durableContext;
+    private ExecutionManager executionManager;
+
+    @BeforeEach
+    void setUp() {
+        durableContext = mock(DurableContext.class);
+        executionManager = mock(ExecutionManager.class);
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
-        return executionManager;
+        when(durableContext.getDurableConfig()).thenReturn(createConfig());
     }
 
     private DurableConfig createConfig() {
@@ -44,15 +52,7 @@ class ChildContextOperationTest {
             ExecutionManager executionManager,
             java.util.function.Function<software.amazon.lambda.durable.DurableContext, String> func) {
         return new ChildContextOperation<>(
-                "1",
-                "test-context",
-                func,
-                TypeToken.get(String.class),
-                SERDES,
-                executionManager,
-                createConfig(),
-                null,
-                null);
+                "1", "test-context", func, TypeToken.get(String.class), SERDES, durableContext);
     }
 
     // ===== SUCCEEDED replay =====
@@ -60,7 +60,6 @@ class ChildContextOperationTest {
     /** SUCCEEDED replay returns cached result without re-executing the function. */
     @Test
     void replaySucceededReturnsCachedResult() {
-        var executionManager = createMockExecutionManager();
         when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
@@ -90,7 +89,6 @@ class ChildContextOperationTest {
     /** FAILED replay throws the original exception without re-executing. */
     @Test
     void replayFailedThrowsOriginalException() {
-        var executionManager = createMockExecutionManager();
         var originalException = new IllegalArgumentException("bad input");
         var stackTrace = List.of("com.example.Test|method|Test.java|42");
 
@@ -126,8 +124,6 @@ class ChildContextOperationTest {
     /** FAILED replay falls back to ChildContextFailedException when original cannot be reconstructed. */
     @Test
     void replayFailedFallsBackToChildContextFailedException() {
-        var executionManager = createMockExecutionManager();
-
         when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
@@ -156,7 +152,6 @@ class ChildContextOperationTest {
     /** STARTED replay re-executes the child context (interrupted mid-execution). */
     @Test
     void replayStartedReExecutesChildContext() throws Exception {
-        var executionManager = createMockExecutionManager();
         when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
@@ -185,7 +180,6 @@ class ChildContextOperationTest {
     /** SUCCEEDED with replayChildren=true re-executes to reconstruct the result. */
     @Test
     void replayChildrenReExecutesToReconstructResult() throws Exception {
-        var executionManager = createMockExecutionManager();
         when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
@@ -215,7 +209,6 @@ class ChildContextOperationTest {
     /** Type mismatch during replay terminates execution. */
     @Test
     void replayWithTypeMismatchTerminatesExecution() {
-        var executionManager = createMockExecutionManager();
         when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
@@ -232,7 +225,6 @@ class ChildContextOperationTest {
     /** Name mismatch during replay terminates execution. */
     @Test
     void replayWithNameMismatchTerminatesExecution() {
-        var executionManager = createMockExecutionManager();
         when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")

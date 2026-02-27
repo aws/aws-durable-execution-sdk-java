@@ -4,77 +4,45 @@ package software.amazon.lambda.durable.operation;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
-import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.StepSemantics;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
-import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 public class StepOperation<T> extends BaseDurableOperation<T> {
 
-    private static final Logger logger = LoggerFactory.getLogger(StepOperation.class);
-
-    private final Supplier<T> function;
+    private final Function<StepContext, T> function;
     private final StepConfig config;
-    private final DurableLogger durableLogger;
     private final ExecutorService userExecutor;
 
     public StepOperation(
             String operationId,
             String name,
-            Supplier<T> function,
+            Function<StepContext, T> function,
             TypeToken<T> resultTypeToken,
             StepConfig config,
-            ExecutionManager executionManager,
-            DurableLogger durableLogger,
-            DurableConfig durableConfig,
-            String parentId) {
-        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), executionManager, parentId);
+            DurableContext durableContext) {
+        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), durableContext);
 
         this.function = function;
         this.config = config;
-        this.durableLogger = durableLogger;
-        this.userExecutor = durableConfig.getExecutorService();
-    }
-
-    /** Convenience constructor for root-context operations where parentId is null. */
-    public StepOperation(
-            String operationId,
-            String name,
-            Supplier<T> function,
-            TypeToken<T> resultTypeToken,
-            StepConfig config,
-            ExecutionManager executionManager,
-            DurableLogger durableLogger,
-            DurableConfig durableConfig) {
-        this(
-                operationId,
-                name,
-                function,
-                resultTypeToken,
-                config,
-                executionManager,
-                durableLogger,
-                durableConfig,
-                null);
+        this.userExecutor = durableContext.getDurableConfig().getExecutorService();
     }
 
     @Override
@@ -122,7 +90,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void executeStepLogic(int attempt) {
-        var stepThreadId = getOperationId() + "-step";
+        var stepThreadId = getThreadId();
 
         // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
         // thread local ThreadContext is set inside the executor since that's where the step actually runs
@@ -130,10 +98,11 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
 
         // Execute user code in customer-configured executor
         userExecutor.execute(() -> {
+            StepContext stepContext = getContext().createStepContext(getOperationId());
             // Set thread local ThreadContext on the executor thread
             setCurrentThreadContext(new ThreadContext(stepThreadId, ThreadType.STEP));
             // Set operation context for logging in this thread
-            durableLogger.setOperationContext(getOperationId(), getName(), attempt);
+            stepContext.getLogger().setOperationContext(getOperationId(), getName(), attempt);
             try {
                 // Check if we need to send START
                 var existing = getOperation();
@@ -150,7 +119,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 }
 
                 // Execute the function
-                T result = function.get();
+                T result = function.apply(stepContext);
 
                 // Send SUCCEED
                 var successUpdate = OperationUpdate.builder()
@@ -172,7 +141,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                     // Suspension/Termination is already signaled via suspendExecutionFuture/terminateExecutionFuture
                     // before the throw.
                 }
-                durableLogger.clearOperationContext();
+                stepContext.getLogger().clearOperationContext();
             }
         });
     }

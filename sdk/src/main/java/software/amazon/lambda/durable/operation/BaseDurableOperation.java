@@ -11,6 +11,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
@@ -46,12 +47,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     private final String operationId;
     private final String name;
-    private final String parentId;
     private final OperationType operationType;
     private final ExecutionManager executionManager;
     private final TypeToken<T> resultTypeToken;
     private final SerDes resultSerDes;
     protected final CompletableFuture<Void> completionFuture;
+    private final DurableContext durableContext;
 
     protected BaseDurableOperation(
             String operationId,
@@ -59,13 +60,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             OperationType operationType,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            ExecutionManager executionManager,
-            String parentId) {
+            DurableContext durableContext) {
         this.operationId = operationId;
         this.name = name;
-        this.parentId = parentId;
+        this.durableContext = durableContext;
         this.operationType = operationType;
-        this.executionManager = executionManager;
+        this.executionManager = durableContext.getExecutionManager();
         this.resultTypeToken = resultTypeToken;
         this.resultSerDes = resultSerDes;
 
@@ -75,20 +75,14 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         executionManager.registerOperation(this);
     }
 
-    /** Convenience constructor for root-context operations where parentId is null. */
-    public BaseDurableOperation(
-            String operationId,
-            String name,
-            OperationType operationType,
-            TypeToken<T> resultTypeToken,
-            SerDes resultSerDes,
-            ExecutionManager executionManager) {
-        this(operationId, name, operationType, resultTypeToken, resultSerDes, executionManager, null);
-    }
-
     /** Gets the unique identifier for this operation. */
     public String getOperationId() {
         return operationId;
+    }
+
+    /** Gets the unique thread id */
+    protected String getThreadId() {
+        return getOperationId() + "-" + getType().name().toLowerCase();
     }
 
     /** Gets the operation name (maybe null). */
@@ -96,9 +90,9 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return name;
     }
 
-    /** Gets the parent context ID. Null for root-context operations, set for child context operations. */
-    protected String getParentId() {
-        return parentId;
+    /** Gets the parent context. */
+    protected DurableContext getContext() {
+        return durableContext;
     }
 
     /** Gets the operation type */
@@ -258,7 +252,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return executionManager.sendOperationUpdate(builder.id(operationId)
                 .name(name)
                 .type(operationType)
-                .parentId(parentId)
+                .parentId(durableContext.getParentContextId())
                 .build());
     }
 

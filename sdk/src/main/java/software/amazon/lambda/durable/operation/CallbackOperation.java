@@ -10,10 +10,10 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableCallbackFuture;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
-import software.amazon.lambda.durable.execution.ExecutionManager;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
@@ -29,20 +29,9 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             String name,
             TypeToken<T> resultTypeToken,
             CallbackConfig config,
-            ExecutionManager executionManager,
-            String parentId) {
-        super(operationId, name, OperationType.CALLBACK, resultTypeToken, config.serDes(), executionManager, parentId);
+            DurableContext parentContext) {
+        super(operationId, name, OperationType.CALLBACK, resultTypeToken, config.serDes(), parentContext);
         this.config = config;
-    }
-
-    /** Convenience constructor for root-context operations where parentId is null. */
-    public CallbackOperation(
-            String operationId,
-            String name,
-            TypeToken<T> resultTypeToken,
-            CallbackConfig config,
-            ExecutionManager executionManager) {
-        this(operationId, name, resultTypeToken, config, executionManager, null);
     }
 
     public String callbackId() {

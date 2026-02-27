@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.InvokeException;
@@ -28,10 +29,13 @@ class InvokeOperationTest {
     private static final String OPERATION_ID = "2";
 
     private ExecutionManager executionManager;
+    private DurableContext durableContext;
 
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
+        durableContext = mock(DurableContext.class);
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("root", ThreadType.CONTEXT));
     }
 
@@ -54,7 +58,7 @@ class InvokeOperationTest {
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager);
+                durableContext);
         operation.onCheckpointComplete(op);
 
         var result = operation.get();
@@ -84,7 +88,7 @@ class InvokeOperationTest {
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager);
+                durableContext);
         operation.onCheckpointComplete(op);
 
         InvokeFailedException ex = assertThrows(InvokeFailedException.class, () -> operation.get());
@@ -116,7 +120,7 @@ class InvokeOperationTest {
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager);
+                durableContext);
         operation.onCheckpointComplete(op);
 
         InvokeTimedOutException ex = assertThrows(InvokeTimedOutException.class, () -> operation.get());
@@ -148,7 +152,7 @@ class InvokeOperationTest {
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager);
+                durableContext);
         operation.onCheckpointComplete(op);
 
         InvokeStoppedException ex = assertThrows(InvokeStoppedException.class, () -> operation.get());
@@ -180,7 +184,7 @@ class InvokeOperationTest {
                 "{}",
                 TypeToken.get(String.class),
                 InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
-                executionManager);
+                durableContext);
         operation.onCheckpointComplete(op);
 
         assertThrows(InvokeException.class, () -> operation.get());
