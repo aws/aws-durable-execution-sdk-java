@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class DurableContextTest {
@@ -36,8 +38,11 @@ class DurableContextTest {
                 "test-token",
                 initialExecutionState,
                 DurableConfig.builder().withDurableExecutionClient(client).build());
-        return DurableContext.createRootContext(
+        var root = DurableContext.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
+        executionManager.registerActiveThread(null);
+        executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
+        return root;
     }
 
     @Test
