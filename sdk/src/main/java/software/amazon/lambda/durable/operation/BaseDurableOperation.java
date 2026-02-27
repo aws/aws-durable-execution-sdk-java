@@ -100,8 +100,23 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return operationType;
     }
 
-    /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
-    public abstract void execute();
+    /** Starts the operation, processes the operation updates from backend. Does not block. */
+    public void execute() {
+        var existing = getOperation();
+
+        if (existing != null) {
+            validateReplay(existing);
+            replay(existing);
+        } else {
+            start();
+        }
+    }
+
+    /** Starts the operation. */
+    protected abstract void start();
+
+    /** Replays the operation. */
+    protected abstract void replay(Operation existing);
 
     /**
      * Gets the Operation from ExecutionManager and update the replay state from REPLAY to EXECUTE if operation is not

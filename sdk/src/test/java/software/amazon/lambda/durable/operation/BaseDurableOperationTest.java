@@ -68,7 +68,10 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {}
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -90,10 +93,13 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {
                         markAlreadyCompleted();
                         assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletion);
                     }
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -112,7 +118,10 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {}
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -142,10 +151,13 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {
                         markAlreadyCompleted();
                         waitForOperationCompletion();
                     }
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -164,11 +176,14 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {
                         markAlreadyCompleted();
                         // completion future should be complete
                         assertTrue(this.isOperationCompleted());
                     }
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -189,9 +204,12 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {
                         validateReplay(getOperation());
                     }
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -214,9 +232,12 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {
                         validateReplay(getOperation());
                     }
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -235,9 +256,12 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {
                         validateReplay(getOperation());
                     }
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -259,9 +283,12 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {
                         validateReplay(getOperation());
                     }
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -277,7 +304,10 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {}
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -296,7 +326,10 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {}
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
 
                     @Override
                     public String get() {
@@ -320,7 +353,10 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {
                         pollForOperationUpdates();
                     }
 
@@ -342,7 +378,10 @@ class BaseDurableOperationTest {
                 new BaseDurableOperation<>(
                         OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
-                    public void execute() {
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {
                         sendOperationUpdate(update);
                     }
 
