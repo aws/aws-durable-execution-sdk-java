@@ -10,8 +10,6 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.execution.ThreadContext;
-import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
@@ -24,7 +22,7 @@ public class DurableContext extends BaseContext {
     private final AtomicInteger operationCounter;
     private final DurableLogger logger;
 
-    /** Shared initialization — sets all fields but performs no thread registration. */
+    /** Shared initialization — sets all fields. */
     private DurableContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
         super(executionManager, durableConfig, lambdaContext, contextId);
@@ -39,7 +37,7 @@ public class DurableContext extends BaseContext {
     }
 
     /**
-     * Creates a root context and registers the current thread for execution coordination.
+     * Creates a root context (contextId = null)
      *
      * <p>The context itself always has a null contextId (making it a root context).
      *
@@ -50,16 +48,11 @@ public class DurableContext extends BaseContext {
      */
     public static DurableContext createRootContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
-        var ctx = new DurableContext(executionManager, durableConfig, lambdaContext, null);
-        executionManager.registerActiveThread(null);
-        executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
-        return ctx;
+        return new DurableContext(executionManager, durableConfig, lambdaContext, null);
     }
 
     /**
-     * Creates a child context without registering the current thread. Thread registration is handled by
-     * ChildContextOperation, which registers on the parent thread before the executor runs and sets the context on the
-     * child thread inside the executor.
+     * Creates a child context.
      *
      * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
      * @return a new DurableContext for the child context

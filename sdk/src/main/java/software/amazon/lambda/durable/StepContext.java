@@ -11,12 +11,12 @@ public class StepContext extends BaseContext {
     private final DurableLogger logger;
 
     /**
-     * Shared initialization — sets all fields but performs no thread registration.
+     * Creates a new StepContext instance for use in step operations.
      *
      * @param executionManager Manages durable execution state and operations
      * @param durableConfig Configuration for durable execution behavior
      * @param lambdaContext AWS Lambda runtime context
-     * @param stepOperationId Unique identifier for this context instance
+     * @param stepOperationId Unique identifier for this context instance that equals to step operation id
      */
     protected StepContext(
             ExecutionManager executionManager,

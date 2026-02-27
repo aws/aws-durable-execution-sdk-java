@@ -19,6 +19,8 @@ import software.amazon.lambda.durable.exception.IllegalDurableOperationException
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -45,6 +47,8 @@ public class DurableExecutor {
                             extractUserInput(executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                     // Create context in the executor thread so it detects the correct thread name
                     var context = DurableContext.createRootContext(executionManager, config, lambdaContext);
+                    executionManager.registerActiveThread(null);
+                    executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
                     return handler.apply(userInput, context);
                 },
                 config.getExecutorService()); // Get executor from config for running user code

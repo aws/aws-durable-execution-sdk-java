@@ -14,7 +14,7 @@ public abstract class BaseContext {
     private final String contextId;
     private boolean isReplaying;
 
-    /** Shared initialization — sets all fields but performs no thread registration. */
+    /** Creates a new BaseContext instance. */
     protected BaseContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
         this.executionManager = executionManager;
