@@ -24,7 +24,7 @@ public class StepContext extends BaseContext {
 
         var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
         this.logger = new DurableLogger(
-                LoggerFactory.getLogger(DurableContext.class),
+                LoggerFactory.getLogger(StepContext.class),
                 executionManager,
                 requestId,
                 durableConfig.getLoggerConfig().suppressReplayLogs());
