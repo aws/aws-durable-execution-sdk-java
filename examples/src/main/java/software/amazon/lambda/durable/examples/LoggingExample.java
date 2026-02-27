@@ -15,24 +15,22 @@ public class LoggingExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
-        var logger = context.getLogger();
-
         // Log at execution level (outside any step)
-        logger.info("Processing greeting for: {}", input.getName());
+        context.getLogger().info("Processing greeting for: {}", input.getName());
 
         // Step 1: Create greeting - logs inside step include operation context
-        var greeting = context.step("create-greeting", String.class, () -> {
-            logger.info("Creating greeting message");
+        var greeting = context.step("create-greeting", String.class, ctx -> {
+            ctx.getLogger().info("Creating greeting message");
             return "Hello, " + input.getName();
         });
 
         // Step 2: Transform
-        var result = context.step("transform", String.class, () -> {
-            logger.info("Transforming greeting to uppercase");
+        var result = context.step("transform", String.class, ctx -> {
+            ctx.getLogger().info("Transforming greeting to uppercase");
             return greeting.toUpperCase() + "!";
         });
 
-        logger.info("Completed processing, result: {}", result);
+        context.getLogger().info("Completed processing, result: {}", result);
         return result;
     }
 }
