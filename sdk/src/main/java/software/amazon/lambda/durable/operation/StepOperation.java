@@ -6,6 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -45,39 +46,35 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
         this.userExecutor = durableContext.getDurableConfig().getExecutorService();
     }
 
+    /** Starts the operation. */
     @Override
-    public void execute() {
-        var existing = getOperation();
+    protected void start() {
+        executeStepLogic(0);
+    }
 
-        if (existing != null) {
-            validateReplay(existing);
-            // This means we are in a replay scenario
-            switch (existing.status()) {
-                case SUCCEEDED, FAILED -> markAlreadyCompleted();
-                case STARTED -> {
-                    var attempt = existing.stepDetails().attempt() != null
-                            ? existing.stepDetails().attempt()
-                            : 0;
-                    if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
-                        // AT_MOST_ONCE: treat as interrupted, go through retry logic
-                        handleStepFailure(new StepInterruptedException(existing), attempt + 1);
-                    } else {
-                        // AT_LEAST_ONCE: re-execute the step
-                        executeStepLogic(attempt);
-                    }
+    /** Replays the operation. */
+    @Override
+    protected void replay(Operation existing) {
+        switch (existing.status()) {
+            case SUCCEEDED, FAILED -> markAlreadyCompleted();
+            case STARTED -> {
+                var attempt = existing.stepDetails().attempt() != null
+                        ? existing.stepDetails().attempt()
+                        : 0;
+                if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                    // AT_MOST_ONCE: treat as interrupted, go through retry logic
+                    handleStepFailure(new StepInterruptedException(existing), attempt + 1);
+                } else {
+                    // AT_LEAST_ONCE: re-execute the step
+                    executeStepLogic(attempt);
                 }
-                // Step is pending retry - Start polling for PENDING -> READY transition
-                case PENDING ->
-                    pollReadyAndExecuteStepLogic(existing.stepDetails().attempt());
-                // Execute with current attempt
-                case READY -> executeStepLogic(existing.stepDetails().attempt());
-                default ->
-                    terminateExecutionWithIllegalDurableOperationException(
-                            "Unexpected step status: " + existing.status());
             }
-        } else {
-            // First execution
-            executeStepLogic(0);
+            // Step is pending retry - Start polling for PENDING -> READY transition
+            case PENDING -> pollReadyAndExecuteStepLogic(existing.stepDetails().attempt());
+            // Execute with current attempt
+            case READY -> executeStepLogic(existing.stepDetails().attempt());
+            default ->
+                terminateExecutionWithIllegalDurableOperationException("Unexpected step status: " + existing.status());
         }
     }
 

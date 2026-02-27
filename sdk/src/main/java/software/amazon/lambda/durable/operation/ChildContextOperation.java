@@ -9,6 +9,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -51,34 +52,34 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         this.userExecutor = getContext().getDurableConfig().getExecutorService();
     }
 
+    /** Starts the operation. */
     @Override
-    public void execute() {
-        var existing = getOperation();
+    protected void start() {
+        // First execution: fire-and-forget START checkpoint, then run
+        sendOperationUpdateAsync(
+                OperationUpdate.builder().action(OperationAction.START).subType(RUN_IN_CHILD_CONTEXT.getValue()));
+        executeChildContext();
+    }
 
-        if (existing != null) {
-            validateReplay(existing);
-            switch (existing.status()) {
-                case SUCCEEDED -> {
-                    if (existing.contextDetails() != null
-                            && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
-                        // Large result: re-execute child context to reconstruct result
-                        replayChildContext = true;
-                        executeChildContext();
-                    } else {
-                        markAlreadyCompleted();
-                    }
+    /** Replays the operation. */
+    @Override
+    protected void replay(Operation existing) {
+        switch (existing.status()) {
+            case SUCCEEDED -> {
+                if (existing.contextDetails() != null
+                        && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
+                    // Large result: re-execute child context to reconstruct result
+                    replayChildContext = true;
+                    executeChildContext();
+                } else {
+                    markAlreadyCompleted();
                 }
-                case FAILED -> markAlreadyCompleted();
-                case STARTED -> executeChildContext();
-                default ->
-                    terminateExecutionWithIllegalDurableOperationException(
-                            "Unexpected child context status: " + existing.status());
             }
-        } else {
-            // First execution: fire-and-forget START checkpoint, then run
-            sendOperationUpdateAsync(
-                    OperationUpdate.builder().action(OperationAction.START).subType(RUN_IN_CHILD_CONTEXT.getValue()));
-            executeChildContext();
+            case FAILED -> markAlreadyCompleted();
+            case STARTED -> executeChildContext();
+            default ->
+                terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected child context status: " + existing.status());
         }
     }
 

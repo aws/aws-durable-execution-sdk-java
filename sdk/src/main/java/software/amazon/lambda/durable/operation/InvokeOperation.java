@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.operation;
 
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
@@ -37,25 +38,23 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
         this.payloadSerDes = config.payloadSerDes() != null ? config.payloadSerDes() : config.serDes();
     }
 
-    /** Starts the operation. Returns immediately after starting background work or checkpointing. Does not block. */
+    /** Starts the operation. */
     @Override
-    public void execute() {
-        var existing = getOperation();
-        if (existing == null) {
-            // first execution
-            startInvocation();
-            pollForOperationUpdates();
-        } else {
-            validateReplay(existing);
-            // replay
-            switch (existing.status()) {
-                // The result isn't ready. Need to wait more
-                case STARTED -> pollForOperationUpdates();
-                case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
-                default ->
-                    terminateExecutionWithIllegalDurableOperationException(
-                            "Unexpected invoke status: " + existing.statusAsString());
-            }
+    protected void start() {
+        startInvocation();
+        pollForOperationUpdates();
+    }
+
+    /** Replays the operation. */
+    @Override
+    protected void replay(Operation existing) {
+        switch (existing.status()) {
+            // The result isn't ready. Need to wait more
+            case STARTED -> pollForOperationUpdates();
+            case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
+            default ->
+                terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected invoke status: " + existing.statusAsString());
         }
     }
 

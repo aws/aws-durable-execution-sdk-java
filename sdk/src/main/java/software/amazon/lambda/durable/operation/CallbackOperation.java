@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.operation;
 
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
@@ -34,44 +35,40 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
         return callbackId;
     }
 
+    /** Starts the operation. */
     @Override
-    public void execute() {
-        var existing = getOperation();
+    protected void start() {
+        // First execution: checkpoint and get callback ID
+        var update = OperationUpdate.builder().action(OperationAction.START).callbackOptions(buildCallbackOptions());
 
-        if (existing != null) {
-            validateReplay(existing);
-        }
+        sendOperationUpdate(update);
 
-        if (existing != null && existing.callbackDetails() != null) {
-            // Replay: use existing callback ID
-            callbackId = existing.callbackDetails().callbackId();
+        // Get the callback ID from the updated operation
+        var op = getOperation();
+        callbackId = op.callbackDetails().callbackId();
 
-            switch (existing.status()) {
-                case SUCCEEDED, FAILED, TIMED_OUT -> {
-                    // Terminal state - complete the operation immediately
-                    markAlreadyCompleted();
-                    return;
-                }
-                case STARTED -> {
-                    // Still waiting - continue to polling
-                }
-                default ->
-                    terminateExecutionWithIllegalDurableOperationException(
-                            "Unexpected callback status: " + existing.status());
+        pollForOperationUpdates();
+    }
+
+    /** Replays the operation. */
+    @Override
+    protected void replay(Operation existing) {
+        // Replay: use existing callback ID
+        callbackId = existing.callbackDetails().callbackId();
+
+        switch (existing.status()) {
+            case SUCCEEDED, FAILED, TIMED_OUT -> {
+                // Terminal state - complete the operation immediately
+                markAlreadyCompleted();
+                return;
             }
-        } else {
-            // First execution: checkpoint and get callback ID
-            var update =
-                    OperationUpdate.builder().action(OperationAction.START).callbackOptions(buildCallbackOptions());
-
-            sendOperationUpdate(update);
-
-            // Get the callback ID from the updated operation
-            var op = getOperation();
-            callbackId = op.callbackDetails().callbackId();
+            case STARTED -> {
+                // Still waiting - continue to polling
+            }
+            default ->
+                terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected callback status: " + existing.status());
         }
-
-        // Start polling for callback completion (delay first poll to allow suspension)
         pollForOperationUpdates();
     }
 
