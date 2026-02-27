@@ -47,13 +47,13 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
         var callback = context.createCallback("approval", String.class, config);
 
         // Step 2.5: Log AWS CLI command to complete the callback
-        context.step("log-callback-command", Void.class, () -> {
+        context.step("log-callback-command", Void.class, ctx -> {
             var callbackId = callback.callbackId();
             // The result must be base64-encoded JSON
             var command = String.format(
                     "aws lambda send-durable-execution-callback-success --callback-id %s --result $(echo -n '\"approved\"' | base64)",
                     callbackId);
-            context.getLogger().info("To complete this callback, run: {}", command);
+            ctx.getLogger().info("To complete this callback, run: {}", command);
             return null;
         });
 

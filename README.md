@@ -354,8 +354,8 @@ The SDK provides a `DurableLogger` via `ctx.getLogger()` that automatically incl
 protected OrderResult handleRequest(Order order, DurableContext ctx) {
     ctx.getLogger().info("Processing order: {}", order.getId());
     
-    var result = ctx.step("validate", String.class, () -> {
-        ctx.getLogger().debug("Validating order details");
+    var result = ctx.step("validate", String.class, stepCtx -> {
+        stepCtx.getLogger().debug("Validating order details");
         return validate(order);
     });
     

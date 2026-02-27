@@ -31,7 +31,7 @@ public class ChildContextExample extends DurableHandler<GreetingRequest, String>
         // Child context 1: Order validation — step + wait + step
         var orderFuture = context.runInChildContextAsync("order-validation", String.class, child -> {
             var prepared = child.step("prepare-order", String.class, () -> "Order for " + name);
-            context.getLogger().info("Order prepared, waiting for validation");
+            child.getLogger().info("Order prepared, waiting for validation");
 
             child.wait("validation-delay", Duration.ofSeconds(5));
 
@@ -41,7 +41,7 @@ public class ChildContextExample extends DurableHandler<GreetingRequest, String>
         // Child context 2: Inventory check — step + wait + step
         var inventoryFuture = context.runInChildContextAsync("inventory-check", String.class, child -> {
             var stock = child.step("check-stock", String.class, () -> "Stock available for " + name);
-            context.getLogger().info("Stock checked, waiting for confirmation");
+            child.getLogger().info("Stock checked, waiting for confirmation");
 
             child.wait("confirmation-delay", Duration.ofSeconds(3));
 
