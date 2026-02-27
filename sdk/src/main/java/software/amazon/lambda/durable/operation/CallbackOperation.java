@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -17,8 +15,6 @@ import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
-
-    private static final Logger logger = LoggerFactory.getLogger(CallbackOperation.class);
 
     private final CallbackConfig config;
 

@@ -26,8 +26,18 @@ public abstract class BaseContext {
     }
 
     // =============== accessors ================
+    /**
+     * Gets a logger with additional information of the current execution context.
+     *
+     * @return a DurableLogger instance
+     */
     public abstract DurableLogger getLogger();
 
+    /**
+     * Returns the AWS Lambda runtime context.
+     *
+     * @return the Lambda context
+     */
     public Context getLambdaContext() {
         return lambdaContext;
     }

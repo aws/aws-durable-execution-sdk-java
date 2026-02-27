@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.model.OperationSubType.RUN_IN_CHILD_CONTEXT;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -34,6 +35,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private final Function<DurableContext, T> function;
+    private final ExecutorService userExecutor;
     private boolean replayChildContext;
     private T reconstructedResult;
 
@@ -46,6 +48,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             DurableContext durableContext) {
         super(operationId, name, OperationType.CONTEXT, resultTypeToken, resultSerDes, durableContext);
         this.function = function;
+        this.userExecutor = getContext().getDurableConfig().getExecutorService();
     }
 
     @Override
@@ -93,7 +96,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(contextId);
 
-        getContext().getDurableConfig().getExecutorService().execute(() -> {
+        userExecutor.execute(() -> {
             setCurrentThreadContext(new ThreadContext(contextId, ThreadType.CONTEXT));
             try {
                 var childContext = getContext().createChildContext(contextId);

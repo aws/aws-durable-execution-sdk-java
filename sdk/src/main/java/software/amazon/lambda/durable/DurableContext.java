@@ -23,14 +23,12 @@ import software.amazon.lambda.durable.validation.ParameterValidator;
 public class DurableContext extends BaseContext {
     private final AtomicInteger operationCounter;
     private final DurableLogger logger;
-    private final ExecutionContext executionContext;
 
     /** Shared initialization — sets all fields but performs no thread registration. */
     private DurableContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
         super(executionManager, durableConfig, lambdaContext, contextId);
         this.operationCounter = new AtomicInteger(0);
-        this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
 
         var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
         this.logger = new DurableLogger(
@@ -73,6 +71,7 @@ public class DurableContext extends BaseContext {
     /**
      * Creates a step context for executing step operations.
      *
+     * @param stepOperationId the ID of the step operation (used for thread registration)
      * @return a new StepContext instance
      */
     public StepContext createStepContext(String stepOperationId) {
@@ -307,11 +306,10 @@ public class DurableContext extends BaseContext {
     }
 
     // =============== accessors ================
-
     /**
-     * Gets a logger with additional information of the current execution context.
+     * Returns a logger with execution context information for replay-aware logging.
      *
-     * @return a DurableLogger instance
+     * @return the durable logger
      */
     public DurableLogger getLogger() {
         return logger;
@@ -319,9 +317,8 @@ public class DurableContext extends BaseContext {
 
     /**
      * Get the next operationId. For root contexts, returns sequential IDs like "1", "2", "3". For child contexts,
-     * prefixes with the getContextId() to ensure global uniqueness, e.g. "1-1", "1-2" for operations inside child
-     * context "1". This matches the JavaScript SDK's stepPrefix convention and prevents ID collisions in checkpoint
-     * batches.
+     * prefixes with the contextId to ensure global uniqueness, e.g. "1-1", "1-2" for operations inside child context
+     * "1". This matches the JavaScript SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
     private String nextOperationId() {
         var counter = String.valueOf(operationCounter.incrementAndGet());

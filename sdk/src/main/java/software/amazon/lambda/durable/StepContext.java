@@ -16,11 +16,14 @@ public class StepContext extends BaseContext {
      * @param executionManager Manages durable execution state and operations
      * @param durableConfig Configuration for durable execution behavior
      * @param lambdaContext AWS Lambda runtime context
-     * @param contextId Unique identifier for this context instance
+     * @param stepOperationId Unique identifier for this context instance
      */
     protected StepContext(
-            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
-        super(executionManager, durableConfig, lambdaContext, contextId);
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String stepOperationId) {
+        super(executionManager, durableConfig, lambdaContext, stepOperationId);
 
         var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
         this.logger = new DurableLogger(
