@@ -29,8 +29,8 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             String name,
             TypeToken<T> resultTypeToken,
             CallbackConfig config,
-            DurableContext parentContext) {
-        super(operationId, name, OperationType.CALLBACK, resultTypeToken, config.serDes(), parentContext);
+            DurableContext durableContext) {
+        super(operationId, name, OperationType.CALLBACK, resultTypeToken, config.serDes(), durableContext);
         this.config = config;
     }
 
