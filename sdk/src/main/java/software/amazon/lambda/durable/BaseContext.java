@@ -11,7 +11,7 @@ public abstract class BaseContext {
     private final DurableConfig durableConfig;
     private final Context lambdaContext;
     private final ExecutionContext executionContext;
-    private final String parentContextId;
+    private final String contextId;
     private boolean isReplaying;
 
     /** Shared initialization — sets all fields but performs no thread registration. */
@@ -20,7 +20,7 @@ public abstract class BaseContext {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
-        this.parentContextId = contextId;
+        this.contextId = contextId;
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
         this.isReplaying = executionManager.hasOperationsForContext(contextId);
     }
@@ -57,8 +57,8 @@ public abstract class BaseContext {
     // ============= internal utilities ===============
 
     /** Gets the context ID for this context. Null for root context, set for child contexts. */
-    public String getParentContextId() {
-        return parentContextId;
+    public String getContextId() {
+        return contextId;
     }
 
     public ExecutionManager getExecutionManager() {

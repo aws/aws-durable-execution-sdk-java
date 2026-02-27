@@ -252,7 +252,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return executionManager.sendOperationUpdate(builder.id(operationId)
                 .name(name)
                 .type(operationType)
-                .parentId(durableContext.getParentContextId())
+                .parentId(durableContext.getContextId())
                 .build());
     }
 

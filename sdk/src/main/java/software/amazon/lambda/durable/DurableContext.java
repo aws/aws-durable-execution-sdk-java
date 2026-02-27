@@ -319,6 +319,6 @@ public class DurableContext extends BaseContext {
      */
     private String nextOperationId() {
         var counter = String.valueOf(operationCounter.incrementAndGet());
-        return getParentContextId() != null ? getParentContextId() + "-" + counter : counter;
+        return getContextId() != null ? getContextId() + "-" + counter : counter;
     }
 }
