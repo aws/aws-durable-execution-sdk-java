@@ -307,6 +307,12 @@ public class DurableContext extends BaseContext {
     }
 
     // =============== accessors ================
+
+    /**
+     * Gets a logger with additional information of the current execution context.
+     *
+     * @return a DurableLogger instance
+     */
     public DurableLogger getLogger() {
         return logger;
     }
