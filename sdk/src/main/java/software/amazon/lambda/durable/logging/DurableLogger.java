@@ -59,7 +59,7 @@ public class DurableLogger {
         }
     }
 
-    public void clearThreadProperties() {
+    public void close() {
         MDC.clear();
     }
 

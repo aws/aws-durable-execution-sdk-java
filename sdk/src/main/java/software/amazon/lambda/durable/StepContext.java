@@ -52,7 +52,7 @@ public class StepContext extends BaseContext {
     @Override
     public void close() {
         if (logger != null) {
-            logger.clearThreadProperties();
+            logger.close();
         }
     }
 }

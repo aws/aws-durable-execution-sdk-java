@@ -308,7 +308,7 @@ public class DurableContext extends BaseContext {
         if (logger == null) {
             synchronized (this) {
                 if (logger == null) {
-                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);
+                    logger = new DurableLogger(LoggerFactory.getLogger(DurableContext.class), this);
                 }
             }
         }
@@ -321,7 +321,7 @@ public class DurableContext extends BaseContext {
      */
     public void close() {
         if (logger != null) {
-            logger.clearThreadProperties();
+            logger.close();
         }
     }
 

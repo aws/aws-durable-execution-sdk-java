@@ -120,7 +120,7 @@ class DurableLoggerTest {
             var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
             mdcMock.clearInvocations();
 
-            logger.clearThreadProperties();
+            logger.close();
 
             mdcMock.verify(() -> MDC.clear());
         }
