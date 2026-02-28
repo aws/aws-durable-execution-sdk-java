@@ -4,7 +4,9 @@ package software.amazon.lambda.durable.logging;
 
 import org.slf4j.Logger;
 import org.slf4j.MDC;
-import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.BaseContext;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.StepContext;
 
 /**
  * Logger wrapper that adds durable execution context to log entries via MDC and optionally suppresses logs during
@@ -14,51 +16,51 @@ public class DurableLogger {
     static final String MDC_EXECUTION_ARN = "durableExecutionArn";
     static final String MDC_REQUEST_ID = "requestId";
     static final String MDC_OPERATION_ID = "operationId";
+    static final String MDC_CONTEXT_ID = "contextId";
     static final String MDC_OPERATION_NAME = "operationName";
+    static final String MDC_CONTEXT_NAME = "contextName";
     static final String MDC_ATTEMPT = "attempt";
 
     private final Logger delegate;
-    private final ExecutionManager executionManager;
-    private final String requestId;
-    private final boolean suppressReplayLogs;
+    private final BaseContext context;
 
-    public DurableLogger(
-            Logger delegate, ExecutionManager executionManager, String requestId, boolean suppressReplayLogs) {
+    public DurableLogger(Logger delegate, BaseContext context) {
         this.delegate = delegate;
-        this.executionManager = executionManager;
-        this.requestId = requestId;
-        this.suppressReplayLogs = suppressReplayLogs;
+        this.context = context;
 
-        // Set execution-level MDC for main thread
-        setExecutionContext();
-    }
+        // execution arn
+        MDC.put(MDC_EXECUTION_ARN, context.getExecutionContext().getDurableExecutionArn());
 
-    private void setExecutionContext() {
-        MDC.put(MDC_EXECUTION_ARN, executionManager.getDurableExecutionArn());
+        // lambda request id
+        var requestId =
+                context.getLambdaContext() != null ? context.getLambdaContext().getAwsRequestId() : null;
         if (requestId != null) {
             MDC.put(MDC_REQUEST_ID, requestId);
         }
-    }
 
-    public void setOperationContext(String operationId, String operationName, Integer attempt) {
-        // Set execution-level MDC (needed for executor threads)
-        setExecutionContext();
-        // Set operation-level MDC
-        if (operationId != null) {
+        if (context instanceof DurableContext) {
+            // context thread - context id
+            if (context.getContextId() != null) {
+                MDC.put(MDC_CONTEXT_ID, context.getContextId());
+            }
+            if (context.getContextName() != null) {
+                MDC.put(MDC_CONTEXT_NAME, context.getContextName());
+            }
+        } else {
+            // step context
+            var operationId = context.getContextId();
+            // step context - step operation id
             MDC.put(MDC_OPERATION_ID, operationId);
-        }
-        if (operationName != null) {
-            MDC.put(MDC_OPERATION_NAME, operationName);
-        }
-        if (attempt != null) {
-            MDC.put(MDC_ATTEMPT, String.valueOf(attempt));
+            // step context - step operation name
+            if (context.getContextName() != null) {
+                MDC.put(MDC_OPERATION_NAME, context.getContextName());
+            }
+            MDC.put(MDC_ATTEMPT, String.valueOf(((StepContext) context).getAttempt()));
         }
     }
 
-    public void clearOperationContext() {
-        MDC.remove(MDC_OPERATION_ID);
-        MDC.remove(MDC_OPERATION_NAME);
-        MDC.remove(MDC_ATTEMPT);
+    public void clearThreadProperties() {
+        MDC.clear();
     }
 
     public void trace(String format, Object... args) {
@@ -86,7 +88,8 @@ public class DurableLogger {
     }
 
     private boolean shouldSuppress() {
-        return suppressReplayLogs && executionManager.isReplaying();
+        return context.getDurableConfig().getLoggerConfig().suppressReplayLogs()
+                && context.getExecutionManager().isReplaying();
     }
 
     private void log(Runnable logAction) {

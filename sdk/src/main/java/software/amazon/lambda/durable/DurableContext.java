@@ -20,20 +20,17 @@ import software.amazon.lambda.durable.validation.ParameterValidator;
 
 public class DurableContext extends BaseContext {
     private final AtomicInteger operationCounter;
-    private final DurableLogger logger;
+    private volatile DurableLogger logger;
 
     /** Shared initialization — sets all fields. */
     private DurableContext(
-            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
-        super(executionManager, durableConfig, lambdaContext, contextId);
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String contextId,
+            String contextName) {
+        super(executionManager, durableConfig, lambdaContext, contextId, contextName);
         this.operationCounter = new AtomicInteger(0);
-
-        var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
-        this.logger = new DurableLogger(
-                LoggerFactory.getLogger(DurableContext.class),
-                executionManager,
-                requestId,
-                durableConfig.getLoggerConfig().suppressReplayLogs());
     }
 
     /**
@@ -48,7 +45,7 @@ public class DurableContext extends BaseContext {
      */
     public static DurableContext createRootContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
-        return new DurableContext(executionManager, durableConfig, lambdaContext, null);
+        return new DurableContext(executionManager, durableConfig, lambdaContext, null, null);
     }
 
     /**
@@ -57,8 +54,9 @@ public class DurableContext extends BaseContext {
      * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
      * @return a new DurableContext for the child context
      */
-    public DurableContext createChildContext(String childContextId) {
-        return new DurableContext(executionManager, getDurableConfig(), getLambdaContext(), childContextId);
+    public DurableContext createChildContext(String childContextId, String childContextName) {
+        return new DurableContext(
+                executionManager, getDurableConfig(), getLambdaContext(), childContextId, childContextName);
     }
 
     /**
@@ -67,8 +65,9 @@ public class DurableContext extends BaseContext {
      * @param stepOperationId the ID of the step operation (used for thread registration)
      * @return a new StepContext instance
      */
-    public StepContext createStepContext(String stepOperationId) {
-        return new StepContext(executionManager, getDurableConfig(), getLambdaContext(), stepOperationId);
+    public StepContext createStepContext(String stepOperationId, String stepOperationName, int attempt) {
+        return new StepContext(
+                executionManager, getDurableConfig(), getLambdaContext(), stepOperationId, stepOperationName, attempt);
     }
 
     // ========== step methods ==========
@@ -305,7 +304,25 @@ public class DurableContext extends BaseContext {
      * @return the durable logger
      */
     public DurableLogger getLogger() {
+        // lazy initialize logger
+        if (logger == null) {
+            synchronized (this) {
+                if (logger == null) {
+                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);
+                }
+            }
+        }
         return logger;
+    }
+
+    /**
+     * Clears the logger's thread properties. Called during context destruction to prevent memory leaks and ensure clean
+     * state for subsequent executions.
+     */
+    public void close() {
+        if (logger != null) {
+            logger.clearThreadProperties();
+        }
     }
 
     /**

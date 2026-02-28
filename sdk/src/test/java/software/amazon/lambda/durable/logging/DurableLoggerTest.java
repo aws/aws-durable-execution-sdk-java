@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.TestContext;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 
 class DurableLoggerTest {
@@ -38,7 +41,16 @@ class DurableLoggerTest {
 
     private DurableLogger createLogger(Mode mode, Suppression suppression) {
         when(mockExecutionManager.isReplaying()).thenReturn(mode == Mode.REPLAYING);
-        return new DurableLogger(mockLogger, mockExecutionManager, REQUEST_ID, suppression == Suppression.ENABLED);
+        return new DurableLogger(mockLogger, createDurableContext(REQUEST_ID, suppression));
+    }
+
+    private DurableContext createDurableContext(String requestId, Suppression suppression) {
+        return DurableContext.createRootContext(
+                mockExecutionManager,
+                DurableConfig.builder()
+                        .withLoggerConfig(new LoggerConfig(suppression == Suppression.ENABLED))
+                        .build(),
+                new TestContext(requestId));
     }
 
     @Test
@@ -87,12 +99,14 @@ class DurableLoggerTest {
     }
 
     @Test
-    void setOperationContextSetsMdc() {
+    void setStepThreadPropertiesSetsMdc() {
         try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
             mdcMock.clearInvocations();
-
-            logger.setOperationContext("op-1", "validateOrder", 2);
+            when(mockExecutionManager.isReplaying()).thenReturn(false);
+            var logger = new DurableLogger(
+                    mockLogger,
+                    createDurableContext(REQUEST_ID, Suppression.ENABLED)
+                            .createStepContext("op-1", "validateOrder", 2));
 
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_OPERATION_ID, "op-1"));
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_OPERATION_NAME, "validateOrder"));
@@ -101,23 +115,21 @@ class DurableLoggerTest {
     }
 
     @Test
-    void clearOperationContextRemovesMdc() {
+    void clearThreadPropertiesRemovesMdc() {
         try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
             var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
             mdcMock.clearInvocations();
 
-            logger.clearOperationContext();
+            logger.clearThreadProperties();
 
-            mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_OPERATION_ID));
-            mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_OPERATION_NAME));
-            mdcMock.verify(() -> MDC.remove(DurableLogger.MDC_ATTEMPT));
+            mdcMock.verify(() -> MDC.clear());
         }
     }
 
     @Test
     void replayModeTransitionAllowsSubsequentLogs() {
         when(mockExecutionManager.isReplaying()).thenReturn(true, false);
-        var logger = new DurableLogger(mockLogger, mockExecutionManager, REQUEST_ID, true);
+        var logger = new DurableLogger(mockLogger, createDurableContext(REQUEST_ID, Suppression.ENABLED));
 
         // During replay - suppressed
         logger.info("suppressed");
@@ -153,7 +165,7 @@ class DurableLoggerTest {
     void handlesNullRequestId() {
         try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
             when(mockExecutionManager.isReplaying()).thenReturn(false);
-            new DurableLogger(mockLogger, mockExecutionManager, null, true);
+            new DurableLogger(mockLogger, createDurableContext(null, Suppression.DISABLED));
 
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_EXECUTION_ARN, EXECUTION_ARN));
             mdcMock.verify(() -> MDC.put(eq(DurableLogger.MDC_REQUEST_ID), anyString()), never());

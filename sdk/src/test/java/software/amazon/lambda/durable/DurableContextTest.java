@@ -13,14 +13,20 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class DurableContextTest {
+    private static final String EXECUTION_NAME = "349beff4-a89d-4bc8-a56f-af7a8af67a5f";
+    private static final String INVOCATION_ID = "20dae574-53da-37a1-bfd5-b0e2e6ec715d";
     private static final Operation EXECUTION_OP = Operation.builder()
-            .id("0")
+            .id(INVOCATION_ID)
             .type(OperationType.EXECUTION)
             .status(OperationStatus.STARTED)
             .build();
+    private static final String OPERATION_ID1 = "1";
+    private static final String OPERATION_ID2 = "2";
+    private static final String OPERATION_ID3 = "3";
 
     private DurableContext createTestContext() {
         return createTestContext(List.of());
@@ -33,10 +39,11 @@ class DurableContextTest {
         var initialExecutionState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
-                        + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",
-                "test-token",
-                initialExecutionState,
+                new DurableExecutionInput(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
+                                + EXECUTION_NAME + "/" + INVOCATION_ID,
+                        "test-token",
+                        initialExecutionState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
         var root = DurableContext.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
@@ -62,8 +69,8 @@ class DurableContextTest {
         assertNotNull(executionContext);
         assertNotNull(executionContext.getDurableExecutionArn());
         assertEquals(
-                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
-                        + "349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d",
+                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/" + EXECUTION_NAME + "/"
+                        + INVOCATION_ID,
                 executionContext.getDurableExecutionArn());
     }
 
@@ -80,7 +87,7 @@ class DurableContextTest {
     void testStepReplay() {
         // Create context with existing operation
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"Cached Result\"").build())
                 .build();
@@ -106,7 +113,7 @@ class DurableContextTest {
     void testStepAsyncReplay() throws Exception {
         // Create context with existing operation
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(
                         StepDetails.builder().result("\"Cached Async Result\"").build())
@@ -131,8 +138,10 @@ class DurableContextTest {
     @Test
     void testWaitReplay() {
         // Create context with completed wait operation
-        var existingOp =
-                Operation.builder().id("1").status(OperationStatus.SUCCEEDED).build();
+        var existingOp = Operation.builder()
+                .id(OPERATION_ID1)
+                .status(OperationStatus.SUCCEEDED)
+                .build();
         var context = createTestContext(List.of(existingOp));
 
         // Wait should complete immediately (no exception)
@@ -168,17 +177,19 @@ class DurableContextTest {
     void testCombinedReplay() throws Exception {
         // Create context with all operations completed
         var syncOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"Replayed Sync\"").build())
                 .build();
         var asyncOp = Operation.builder()
-                .id("2")
+                .id(OPERATION_ID2)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("100").build())
                 .build();
-        var waitOp =
-                Operation.builder().id("3").status(OperationStatus.SUCCEEDED).build();
+        var waitOp = Operation.builder()
+                .id(OPERATION_ID3)
+                .status(OperationStatus.SUCCEEDED)
+                .build();
         var context = createTestContext(List.of(syncOp, asyncOp, waitOp));
 
         // All operations should replay from cache
@@ -229,7 +240,7 @@ class DurableContextTest {
     void testStepWithTypeTokenReplay() {
         // Create context with existing operation
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder()
                         .result("[\"cached1\",\"cached2\"]")
@@ -280,7 +291,7 @@ class DurableContextTest {
     void testStepAsyncWithTypeTokenReplay() throws Exception {
         // Create context with existing operation
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder()
                         .result("[\"async-cached1\",\"async-cached2\"]")

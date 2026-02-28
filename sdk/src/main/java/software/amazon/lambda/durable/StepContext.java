@@ -8,7 +8,8 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
 public class StepContext extends BaseContext {
-    private final DurableLogger logger;
+    private volatile DurableLogger logger;
+    private final int attempt;
 
     /**
      * Creates a new StepContext instance for use in step operations.
@@ -22,19 +23,36 @@ public class StepContext extends BaseContext {
             ExecutionManager executionManager,
             DurableConfig durableConfig,
             Context lambdaContext,
-            String stepOperationId) {
-        super(executionManager, durableConfig, lambdaContext, stepOperationId);
+            String stepOperationId,
+            String stepOperationName,
+            int attempt) {
+        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName);
+        this.attempt = attempt;
+    }
 
-        var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
-        this.logger = new DurableLogger(
-                LoggerFactory.getLogger(StepContext.class),
-                executionManager,
-                requestId,
-                durableConfig.getLoggerConfig().suppressReplayLogs());
+    /** @return the current attempt */
+    public int getAttempt() {
+        return attempt;
     }
 
     @Override
     public DurableLogger getLogger() {
+        // lazy initialize logger
+        if (logger == null) {
+            synchronized (this) {
+                if (logger == null) {
+                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);
+                }
+            }
+        }
         return logger;
+    }
+
+    /** Closes the logger for this context. */
+    @Override
+    public void close() {
+        if (logger != null) {
+            logger.clearThreadProperties();
+        }
     }
 }

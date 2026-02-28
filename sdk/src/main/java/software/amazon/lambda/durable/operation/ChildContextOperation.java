@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.model.OperationSubType.RUN_IN_CHILD_CONTEXT;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
@@ -97,32 +98,35 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(contextId);
 
-        userExecutor.execute(() -> {
-            setCurrentThreadContext(new ThreadContext(contextId, ThreadType.CONTEXT));
-            try {
-                var childContext = getContext().createChildContext(contextId);
+        CompletableFuture.runAsync(
+                () -> {
+                    setCurrentThreadContext(new ThreadContext(contextId, ThreadType.CONTEXT));
+                    // use a try-with-resources to clear logger properties
+                    try (var childContext = getContext().createChildContext(contextId, getName())) {
+                        try {
+                            T result = function.apply(childContext);
 
-                T result = function.apply(childContext);
+                            if (replayChildContext) {
+                                // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
+                                // Advance the phaser so get() doesn't block waiting for a checkpoint response.
+                                this.reconstructedResult = result;
+                                markAlreadyCompleted();
+                                return;
+                            }
 
-                if (replayChildContext) {
-                    // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
-                    // Advance the phaser so get() doesn't block waiting for a checkpoint response.
-                    this.reconstructedResult = result;
-                    markAlreadyCompleted();
-                    return;
-                }
-
-                checkpointSuccess(result);
-            } catch (Throwable e) {
-                handleChildContextFailure(e);
-            } finally {
-                try {
-                    deregisterActiveThread(contextId);
-                } catch (SuspendExecutionException e) {
-                    // Expected when this is the last active thread — suspension already signaled
-                }
-            }
-        });
+                            checkpointSuccess(result);
+                        } catch (Throwable e) {
+                            handleChildContextFailure(e);
+                        } finally {
+                            try {
+                                deregisterActiveThread(contextId);
+                            } catch (SuspendExecutionException e) {
+                                // Expected when this is the last active thread — suspension already signaled
+                            }
+                        }
+                    }
+                },
+                userExecutor);
     }
 
     private void checkpointSuccess(T result) {

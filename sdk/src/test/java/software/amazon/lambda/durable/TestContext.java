@@ -11,9 +11,15 @@ import java.nio.charset.StandardCharsets;
 // A concrete implementation of Context. We aren't actually going to use most of this so it doesn't matter that it's
 // mostly hardcoded.
 public class TestContext implements Context {
+    private final String requestId;
+
+    public TestContext(String requestId) {
+        this.requestId = requestId;
+    }
+
     @Override
     public String getAwsRequestId() {
-        return "dcc80a71-efe9-4820-a289-1205adbdfd64";
+        return requestId;
     }
 
     @Override

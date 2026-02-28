@@ -38,52 +38,45 @@ public class DurableExecutor {
             Class<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
-        var executionManager = new ExecutionManager(
-                input.durableExecutionArn(), input.checkpointToken(), input.initialExecutionState(), config);
-
-        var handlerFuture = CompletableFuture.supplyAsync(
-                () -> {
-                    var userInput =
-                            extractUserInput(executionManager.getExecutionOperation(), config.getSerDes(), inputType);
-                    // Create context in the executor thread so it detects the correct thread name
-                    var context = DurableContext.createRootContext(executionManager, config, lambdaContext);
-                    executionManager.registerActiveThread(null);
-                    executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
-                    return handler.apply(userInput, context);
-                },
-                config.getExecutorService()); // Get executor from config for running user code
-
-        // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
-        // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a failure.
-        return executionManager
-                .runUntilCompleteOrSuspend(handlerFuture)
-                .handle((result, ex) -> {
-                    if (ex != null) {
-                        // an exception thrown from handlerFuture or suspension/termination occurred
-                        Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
-                        if (cause instanceof SuspendExecutionException) {
-                            return DurableExecutionOutput.pending();
+        try (var executionManager = new ExecutionManager(input, config)) {
+            executionManager.registerActiveThread(null);
+            var handlerFuture = CompletableFuture.supplyAsync(
+                    () -> {
+                        var userInput = extractUserInput(
+                                executionManager.getExecutionOperation(), config.getSerDes(), inputType);
+                        // use try-with-resources to clear logger properties
+                        try (var context = DurableContext.createRootContext(executionManager, config, lambdaContext)) {
+                            // Create context in the executor thread so it detects the correct thread name
+                            executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
+                            return handler.apply(userInput, context);
                         }
+                    },
+                    config.getExecutorService()); // Get executor from config for running user code
 
-                        logger.debug("Execution failed: {}", cause.getMessage());
-                        return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
-                    }
-                    // user handler complete successfully
-                    var outputPayload = config.getSerDes().serialize(result);
+            // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
+            // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
+            // failure.
+            return executionManager
+                    .runUntilCompleteOrSuspend(handlerFuture)
+                    .handle((result, ex) -> {
+                        if (ex != null) {
+                            // an exception thrown from handlerFuture or suspension/termination occurred
+                            Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
+                            if (cause instanceof SuspendExecutionException) {
+                                return DurableExecutionOutput.pending();
+                            }
 
-                    logger.debug("Execution completed");
-                    return DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
-                })
-                .whenComplete((v, ex) -> {
-                    // We shutdown the execution to make sure remaining checkpoint calls in the queue are drained
-                    // We DO NOT shutdown the executor since it should stay warm for re-invokes against a warm Lambda
-                    // runtime.
-                    // For example, a re-invoke after a wait should re-use the same executor instance from
-                    // DurableConfig.
-                    // userExecutor.shutdown();
-                    executionManager.shutdown();
-                })
-                .join();
+                            logger.debug("Execution failed: {}", cause.getMessage());
+                            return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+                        }
+                        // user handler complete successfully
+                        var outputPayload = config.getSerDes().serialize(result);
+
+                        logger.debug("Execution completed");
+                        return DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
+                    })
+                    .join();
+        }
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {

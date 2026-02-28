@@ -6,21 +6,27 @@ import com.amazonaws.services.lambda.runtime.Context;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
-public abstract class BaseContext {
+public abstract class BaseContext implements AutoCloseable {
     protected final ExecutionManager executionManager;
     private final DurableConfig durableConfig;
     private final Context lambdaContext;
     private final ExecutionContext executionContext;
     private final String contextId;
+    private final String contextName;
     private boolean isReplaying;
 
     /** Creates a new BaseContext instance. */
     protected BaseContext(
-            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext, String contextId) {
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String contextId,
+            String contextName) {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
         this.contextId = contextId;
+        this.contextName = contextName;
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
         this.isReplaying = executionManager.hasOperationsForContext(contextId);
     }
@@ -69,6 +75,10 @@ public abstract class BaseContext {
     /** Gets the context ID for this context. Null for root context, set for child contexts. */
     public String getContextId() {
         return contextId;
+    }
+
+    public String getContextName() {
+        return contextName;
     }
 
     public ExecutionManager getExecutionManager() {

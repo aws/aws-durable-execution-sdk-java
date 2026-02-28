@@ -17,6 +17,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
 
 class ExecutionManagerTest {
     private DurableExecutionClient client;
@@ -26,9 +27,8 @@ class ExecutionManagerTest {
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         return new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
-                "test-token",
-                initialState,
+                new DurableExecutionInput(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
     }
 
@@ -129,9 +129,8 @@ class ExecutionManagerTest {
                 .nextMarker("marker")
                 .build();
         var executionManager = new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
-                "test-token",
-                initialState,
+                new DurableExecutionInput(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
 
         assertNotNull(executionManager.getExecutionOperation());

@@ -94,57 +94,66 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
         registerActiveThread(stepThreadId);
 
         // Execute user code in customer-configured executor
-        userExecutor.execute(() -> {
-            StepContext stepContext = getContext().createStepContext(getOperationId());
-            // Set thread local ThreadContext on the executor thread
-            setCurrentThreadContext(new ThreadContext(stepThreadId, ThreadType.STEP));
-            // Set operation context for logging in this thread
-            stepContext.getLogger().setOperationContext(getOperationId(), getName(), attempt);
-            try {
-                // Check if we need to send START
-                var existing = getOperation();
-                if (existing == null || existing.status() != OperationStatus.STARTED) {
-                    var startUpdate = OperationUpdate.builder().action(OperationAction.START);
+        CompletableFuture.runAsync(
+                () -> {
+                    // Set thread local ThreadContext on the executor thread
+                    setCurrentThreadContext(new ThreadContext(stepThreadId, ThreadType.STEP));
 
-                    if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
-                        // AT_MOST_ONCE: await START checkpoint before executing user code
-                        sendOperationUpdate(startUpdate);
-                    } else {
-                        // AT_LEAST_ONCE: fire-and-forget START checkpoint
-                        sendOperationUpdateAsync(startUpdate);
+                    // use a try-with-resources to clear logger properties
+                    try (StepContext stepContext =
+                            getContext().createStepContext(getOperationId(), getName(), attempt)) {
+                        try {
+                            // Check if we need to send START
+                            var existing = getOperation();
+                            if (existing == null || existing.status() != OperationStatus.STARTED) {
+                                var startUpdate = OperationUpdate.builder().action(OperationAction.START);
+
+                                if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                                    // AT_MOST_ONCE: await START checkpoint before executing user code
+                                    sendOperationUpdate(startUpdate);
+                                } else {
+                                    // AT_LEAST_ONCE: fire-and-forget START checkpoint
+                                    sendOperationUpdateAsync(startUpdate);
+                                }
+                            }
+
+                            // Execute the function
+                            T result = function.apply(stepContext);
+
+                            // Send SUCCEED
+                            var successUpdate = OperationUpdate.builder()
+                                    .action(OperationAction.SUCCEED)
+                                    .payload(serializeResult(result));
+
+                            // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
+                            // the
+                            // context
+                            // threads waiting for the result of this step operation will be wakened up and registered.
+                            sendOperationUpdate(successUpdate);
+                        } catch (Throwable e) {
+                            handleStepFailure(e, attempt);
+                        } finally {
+                            try {
+                                deregisterActiveThread(stepThreadId);
+                            } catch (SuspendExecutionException e) {
+                                // Expected when this is the last active thread. Must catch here because:
+                                // 1/ This runs in a worker thread detached from handlerFuture
+                                // 2/ Uncaught exception would prevent stepAsync().get() from resume
+                                // Suspension/Termination is already signaled via
+                                // suspendExecutionFuture/terminateExecutionFuture
+                                // before the throw.
+                            }
+                        }
                     }
-                }
-
-                // Execute the function
-                T result = function.apply(stepContext);
-
-                // Send SUCCEED
-                var successUpdate = OperationUpdate.builder()
-                        .action(OperationAction.SUCCEED)
-                        .payload(serializeResult(result));
-
-                // sendOperationUpdate must be synchronous here. When waiting for the return of this call, the context
-                // threads waiting for the result of this step operation will be wakened up and registered.
-                sendOperationUpdate(successUpdate);
-            } catch (Throwable e) {
-                handleStepFailure(e, attempt);
-            } finally {
-                try {
-                    deregisterActiveThread(stepThreadId);
-                } catch (SuspendExecutionException e) {
-                    // Expected when this is the last active thread. Must catch here because:
-                    // 1/ This runs in a worker thread detached from handlerFuture
-                    // 2/ Uncaught exception would prevent stepAsync().get() from resume
-                    // Suspension/Termination is already signaled via suspendExecutionFuture/terminateExecutionFuture
-                    // before the throw.
-                }
-                stepContext.getLogger().clearOperationContext();
-            }
-        });
+                },
+                userExecutor);
     }
 
     private void handleStepFailure(Throwable exception, int attempt) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
+        if (exception instanceof SuspendExecutionException) {
+            ExceptionHelper.sneakyThrow(exception);
+        }
         if (exception instanceof UnrecoverableDurableExecutionException) {
             // terminate the execution and throw the exception if it's not recoverable
             terminateExecution((UnrecoverableDurableExecutionException) exception);

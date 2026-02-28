@@ -17,13 +17,20 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
 
 class ReplayValidationTest {
+    public static final String EXECUTION_NAME = "exec-name";
+    public static final String INVOCATION_ID = "invocation-id";
+    public static final String OPERATION_ID1 = "1";
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
         var executionOp = Operation.builder()
-                .id("0")
+                .id(INVOCATION_ID)
+                .name(EXECUTION_NAME)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build();
@@ -32,12 +39,14 @@ class ReplayValidationTest {
         var initialExecutionState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
-                "test-token",
-                initialExecutionState,
+                new DurableExecutionInput(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialExecutionState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
-        return DurableContext.createRootContext(
+        var context = DurableContext.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
+        executionManager.setCurrentThreadContext(new ThreadContext(INVOCATION_ID + "-execution", ThreadType.CONTEXT));
+
+        return context;
     }
 
     @Test
@@ -53,7 +62,7 @@ class ReplayValidationTest {
     void shouldPassValidationWhenStepTypeAndNameMatch() {
         // Given: Existing STEP operation with matching name
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name("test")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
@@ -70,7 +79,7 @@ class ReplayValidationTest {
     void shouldPassValidationWhenWaitTypeMatches() {
         // Given: Existing WAIT operation
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .type(OperationType.WAIT)
                 .status(OperationStatus.SUCCEEDED)
                 .build();
@@ -85,7 +94,7 @@ class ReplayValidationTest {
     void shouldThrowWhenOperationTypeMismatches() {
         // Given: Existing WAIT operation but current is STEP
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name("test")
                 .type(OperationType.WAIT)
                 .status(OperationStatus.SUCCEEDED)
@@ -106,7 +115,7 @@ class ReplayValidationTest {
     void shouldThrowWhenOperationNameMismatches() {
         // Given: Existing STEP operation with different name
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name("original")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
@@ -128,7 +137,7 @@ class ReplayValidationTest {
     void shouldHandleNullNamesCorrectly() {
         // Given: Existing STEP operation with null name
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name(null)
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
@@ -145,7 +154,7 @@ class ReplayValidationTest {
     void shouldThrowWhenNameChangesFromNullToValue() {
         // Given: Existing STEP operation with null name
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name(null)
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
@@ -167,7 +176,7 @@ class ReplayValidationTest {
     void shouldThrowWhenNameChangesFromValueToNull() {
         // Given: Existing STEP operation with a name
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name("existingName")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
@@ -189,7 +198,7 @@ class ReplayValidationTest {
     void shouldValidateStepAsyncOperations() {
         // Given: Existing WAIT operation but current is STEP (async)
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name("test")
                 .type(OperationType.WAIT)
                 .status(OperationStatus.SUCCEEDED)
@@ -211,7 +220,7 @@ class ReplayValidationTest {
     void shouldSkipValidationWhenOperationTypeIsNull() {
         // Given: Existing operation with null type (edge case)
         var existingOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name("test")
                 .type((OperationType) null)
                 .status(OperationStatus.SUCCEEDED)

@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -86,9 +87,8 @@ class CallbackOperationTest {
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
-                "test-token",
-                initialState,
+                new DurableExecutionInput(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
         executionManager.setCurrentThreadContext(new ThreadContext("Root", ThreadType.CONTEXT));
         return executionManager;

@@ -22,6 +22,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
@@ -45,7 +46,7 @@ import software.amazon.lambda.durable.operation.BaseDurableOperation;
  *
  * @see InternalExecutor
  */
-public class ExecutionManager {
+public class ExecutionManager implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
 
@@ -65,25 +66,21 @@ public class ExecutionManager {
     // ===== Checkpoint Batching =====
     private final CheckpointBatcher checkpointBatcher;
 
-    public ExecutionManager(
-            String durableExecutionArn,
-            String checkpointToken,
-            CheckpointUpdatedExecutionState initialExecutionState,
-            DurableConfig config) {
-        this.durableExecutionArn = durableExecutionArn;
+    public ExecutionManager(DurableExecutionInput input, DurableConfig config) {
+        this.durableExecutionArn = input.durableExecutionArn();
 
         // Create checkpoint batcher for internal coordination
         this.checkpointBatcher =
-                new CheckpointBatcher(config, durableExecutionArn, checkpointToken, this::onCheckpointComplete);
+                new CheckpointBatcher(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);
 
-        this.operationStorage = checkpointBatcher.fetchAllPages(initialExecutionState).stream()
+        this.operationStorage = checkpointBatcher.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
         this.executionMode =
                 new AtomicReference<>(operationStorage.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
 
-        executionOp = findExecutionOp(initialExecutionState);
+        executionOp = findExecutionOp(input.initialExecutionState());
 
         // Validate initial operation is an EXECUTION operation
         if (executionOp == null) {
@@ -248,7 +245,9 @@ public class ExecutionManager {
     }
 
     // ===== Utilities =====
-    public void shutdown() {
+    /** Shutdown the checkpoint batcher. */
+    @Override
+    public void close() {
         checkpointBatcher.shutdown();
     }
 
