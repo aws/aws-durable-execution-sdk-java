@@ -2,9 +2,9 @@ name: Slack Notifications
 
 on:
   issues:
-    types: [opened, reopened, edited]
+    types: [opened, reopened]
   pull_request_target:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened]
 
 permissions: {}
 
