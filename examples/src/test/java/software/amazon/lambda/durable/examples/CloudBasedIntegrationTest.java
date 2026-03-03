@@ -389,6 +389,7 @@ class CloudBasedIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
         var finalResult = result.getResult(String.class);
+        System.out.println("ManyAsyncStepsExample result: " + finalResult);
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("500 async steps"));
         assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2

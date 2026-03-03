@@ -36,8 +36,6 @@ class WaitOperationTest {
 
     @Test
     void constructor_withNullDuration_shouldThrow() {
-        var executionManager = mock(ExecutionManager.class);
-
         var exception = assertThrows(
                 IllegalArgumentException.class,
                 () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, null, durableContext));
@@ -47,8 +45,6 @@ class WaitOperationTest {
 
     @Test
     void constructor_withZeroDuration_shouldThrow() {
-        var executionManager = mock(ExecutionManager.class);
-
         var exception = assertThrows(
                 IllegalArgumentException.class,
                 () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(0), durableContext));
@@ -59,8 +55,6 @@ class WaitOperationTest {
 
     @Test
     void constructor_withSubSecondDuration_shouldThrow() {
-        var executionManager = mock(ExecutionManager.class);
-
         var exception = assertThrows(
                 IllegalArgumentException.class,
                 () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofMillis(500), durableContext));
@@ -71,8 +65,6 @@ class WaitOperationTest {
 
     @Test
     void constructor_withValidDuration_shouldPass() {
-        var executionManager = mock(ExecutionManager.class);
-
         var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), durableContext);
 
         assertEquals(OPERATION_ID, operation.getOperationId());

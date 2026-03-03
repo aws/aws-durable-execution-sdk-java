@@ -319,6 +319,7 @@ public class DurableContext extends BaseContext {
      * Clears the logger's thread properties. Called during context destruction to prevent memory leaks and ensure clean
      * state for subsequent executions.
      */
+    @Override
     public void close() {
         if (logger != null) {
             logger.close();
