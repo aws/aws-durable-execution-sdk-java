@@ -70,13 +70,17 @@ class CheckpointBatcher {
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
         }
-        checkpointApiRequestBatcher.submit(null, delay).thenCompose(v -> {
+        pollForUpdateInternal(future, delay);
+        return future;
+    }
+
+    private CompletableFuture<Void> pollForUpdateInternal(CompletableFuture<Operation> future, Duration delay) {
+        return checkpointApiRequestBatcher.submit(null, delay).thenCompose(v -> {
             if (future.isDone()) {
                 return CompletableFuture.completedFuture(null);
             }
-            return checkpointApiRequestBatcher.submit(null, delay);
+            return pollForUpdateInternal(future, delay);
         });
-        return future;
     }
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
