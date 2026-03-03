@@ -24,9 +24,9 @@ class DurableContextTest {
             .type(OperationType.EXECUTION)
             .status(OperationStatus.STARTED)
             .build();
-    private static final String OPERATION_ID1 = "1";
-    private static final String OPERATION_ID2 = "2";
-    private static final String OPERATION_ID3 = "3";
+    private static final String OPERATION_ID1 = TestUtils.hashOperationId("1");
+    private static final String OPERATION_ID2 = TestUtils.hashOperationId("2");
+    private static final String OPERATION_ID3 = TestUtils.hashOperationId("3");
 
     private DurableContext createTestContext() {
         return createTestContext(List.of());

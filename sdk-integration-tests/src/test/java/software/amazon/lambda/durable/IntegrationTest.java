@@ -110,12 +110,12 @@ class IntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(3, result.getSucceededOperations().size());
-        assertEquals("Step 1 done", result.getSucceededOperations().get(0).getStepResult(String.class));
+        assertEquals("Step 1 done", result.getOperation("step1").getStepResult(String.class));
         assertEquals(OperationType.WAIT, result.getSucceededOperations().get(1).getType());
         assertEquals(
                 OperationStatus.SUCCEEDED,
                 result.getSucceededOperations().get(1).getStatus());
-        assertEquals("Step 2 done", result.getSucceededOperations().get(2).getStepResult(String.class));
+        assertEquals("Step 2 done", result.getOperation("step2").getStepResult(String.class));
         assertEquals("Step 1 done + Step 2 done", result.getResult(TestOutput.class).result);
     }
 

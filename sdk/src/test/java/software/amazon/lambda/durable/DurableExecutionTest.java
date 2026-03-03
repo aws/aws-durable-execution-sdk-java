@@ -23,6 +23,9 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 
 class DurableExecutionTest {
 
+    private static final String OPERATION_ID0 = TestUtils.hashOperationId("0");
+    private static final String OPERATION_ID1 = TestUtils.hashOperationId("1");
+
     private DurableConfig configWithMockClient() {
         return DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
@@ -32,7 +35,7 @@ class DurableExecutionTest {
     @Test
     void testExecuteSuccess() {
         var executionOp = Operation.builder()
-                .id("0")
+                .id(OPERATION_ID0)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -62,7 +65,7 @@ class DurableExecutionTest {
     @Test
     void testExecutePending() {
         var executionOp = Operation.builder()
-                .id("0")
+                .id(OPERATION_ID0)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -95,7 +98,7 @@ class DurableExecutionTest {
     @Test
     void testExecuteFailure() {
         var executionOp = Operation.builder()
-                .id("0")
+                .id(OPERATION_ID0)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -128,7 +131,7 @@ class DurableExecutionTest {
     @Test
     void testExecuteReplay() {
         var executionOp = Operation.builder()
-                .id("0")
+                .id(OPERATION_ID0)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -137,7 +140,7 @@ class DurableExecutionTest {
                 .build();
 
         var completedStep = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .name("step1")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
@@ -180,7 +183,7 @@ class DurableExecutionTest {
     @Test
     void testValidationWrongFirstOperation() {
         var stepOp = Operation.builder()
-                .id("1")
+                .id(OPERATION_ID1)
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"result\"").build())
@@ -204,7 +207,7 @@ class DurableExecutionTest {
     @Test
     void testValidationMissingExecutionDetails() {
         var executionOp = Operation.builder()
-                .id("0")
+                .id(OPERATION_ID0)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build();
@@ -234,7 +237,7 @@ class DurableExecutionTest {
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown initially");
 
         var executionOp = Operation.builder()
-                .id("0")
+                .id(OPERATION_ID0)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -262,7 +265,7 @@ class DurableExecutionTest {
 
         // Create second input with different execution operation
         var executionOp2 = Operation.builder()
-                .id("0")
+                .id(OPERATION_ID0)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
