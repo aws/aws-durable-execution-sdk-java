@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.examples;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
@@ -53,6 +54,13 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
         // Wait 10 seconds to test replay
         context.wait("post-compute-wait", Duration.ofSeconds(10));
 
-        return String.format("Completed %d async steps. Sum: %d, Time: %dms", STEP_COUNT, totalSum, executionTimeMs);
+        return String.format(
+                "Completed %d async steps. Sum: %d, Replay Time: %dms", STEP_COUNT, totalSum, executionTimeMs);
+    }
+
+    @Override
+    protected DurableConfig createConfiguration() {
+        // add a small checkpoint delay to allow checkpoint batching
+        return DurableConfig.builder().withCheckpointDelay(Duration.ofMillis(1)).build();
     }
 }
