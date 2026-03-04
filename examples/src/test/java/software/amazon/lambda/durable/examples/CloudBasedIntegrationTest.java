@@ -273,13 +273,15 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
-    void testCallbackExample() throws Exception {
+    void testCallbackExample() {
+        // happy case covering both createCallback (approval) and waitForCallback (preapproval-callback)
         var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
         var lambda = LambdaClient.create();
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
 
+        // Complete the preapproval callback
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
         lambda.sendDurableExecutionCallbackSuccess(
@@ -316,9 +318,15 @@ class CloudBasedIntegrationTest {
     @Test
     void testCallbackExampleWithFailure() {
         var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
+        var lambda = LambdaClient.create();
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
+
+        execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
+        var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
+        lambda.sendDurableExecutionCallbackSuccess(
+                req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
 
         // Wait for callback to appear
         execution.pollUntil(exec -> exec.hasCallback("approval"));
@@ -328,7 +336,6 @@ class CloudBasedIntegrationTest {
         assertNotNull(callbackId);
 
         // Fail the callback using AWS SDK
-        var lambda = LambdaClient.create();
         lambda.sendDurableExecutionCallbackFailure(req -> req.callbackId(callbackId)
                 .error(err -> err.errorType("ApprovalRejected").errorMessage("Approval rejected by manager")));
 
@@ -349,9 +356,15 @@ class CloudBasedIntegrationTest {
     @Test
     void testCallbackExampleWithTimeout() {
         var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
+        var lambda = LambdaClient.create();
 
         // Start async execution with 10 second timeout
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0, 10));
+
+        execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
+        var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
+        lambda.sendDurableExecutionCallbackSuccess(
+                req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
 
         // Wait for callback to appear
         execution.pollUntil(exec -> exec.hasCallback("approval"));
@@ -368,6 +381,37 @@ class CloudBasedIntegrationTest {
         var approvalOp = execution.getOperation("approval");
         assertNotNull(approvalOp);
         assertEquals(OperationStatus.TIMED_OUT, approvalOp.getStatus());
+    }
+
+    @Test
+    void testCallbackExampleWithWaitForCallbackFailure() {
+        // fail the waitForCallback (preapproval-callback) callback
+        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
+        var lambda = LambdaClient.create();
+
+        // Start async execution with 10 second timeout
+        var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0, 10));
+
+        execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
+        var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
+        lambda.sendDurableExecutionCallbackFailure(
+                req -> req.callbackId(preapprovalCallbackId).error(err -> err.errorMessage("preapproval denied")));
+
+        // Wait for callback to appear
+        execution.pollUntil(exec -> exec.hasCallback("approval"));
+
+        // Get callback ID but don't complete it - let it timeout
+        var callbackId = execution.getCallbackId("approval");
+        assertNotNull(callbackId);
+
+        // Wait for execution to complete (should timeout after 10 seconds)
+        var result = execution.pollUntilComplete();
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // Verify the callback operation shows timeout status
+        var approvalOp = execution.getOperation("preapproval-callback");
+        assertNotNull(approvalOp);
+        assertEquals(OperationStatus.FAILED, approvalOp.getStatus());
     }
 
     @Test
