@@ -1,0 +1,46 @@
+name: Publish to Maven Central
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: "${{ secrets.ACTIONS_SYNC_ROLE_NAME }}"
+          role-session-name: mavenreleasesession
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Env variables
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+            secret-ids: |
+                mvn_gpg_keys
+                mvn_account_keys
+            parse-json-secrets: true
+
+      - name: Sign and publish
+        run: bash .github/scripts/publish-maven.sh
+        env:
+          GPG_PRIVATE_KEY: ${{ env.MVN_GPG_KEYS_GPGPrivateKey }}
+          GPG_PASSPHRASE: ${{ env.MVN_GPG_KEYS_PASSPHRASE }}
+          MAVEN_USERNAME: ${{ env.MVN_ACCOUNT_KEYS_USERNAME }}
+          MAVEN_PASSWORD: ${{ env.MVN_ACCOUNT_KEYS_PASSWORD }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
