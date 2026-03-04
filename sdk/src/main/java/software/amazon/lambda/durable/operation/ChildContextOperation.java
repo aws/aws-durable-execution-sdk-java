@@ -15,8 +15,13 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackSubmitterException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.StepFailedException;
+import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
@@ -196,8 +201,39 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             if (original != null) {
                 ExceptionHelper.sneakyThrow(original);
             }
-            // Fallback: wrap in ChildContextFailedException
-            throw new ChildContextFailedException(op);
+
+            // throw a general failed exception if a user exception is not reconstructed
+            switch (subType) {
+                case WAIT_FOR_CALLBACK: {
+                    var childrenOps = getChildOperations(op.id());
+                    var callbackOp = childrenOps.stream()
+                            .filter(o -> o.type() == OperationType.CALLBACK)
+                            .findFirst()
+                            .orElse(null);
+                    var stepOp = childrenOps.stream()
+                            .filter(o -> o.type() == OperationType.STEP)
+                            .findFirst()
+                            .orElse(null);
+                    if (callbackOp != null) {
+                        switch (callbackOp.status()) {
+                            case FAILED -> throw new CallbackFailedException(callbackOp);
+                            case TIMED_OUT -> throw new CallbackTimeoutException(callbackOp);
+                            default -> throw new ChildContextFailedException(op);
+                        }
+                    }
+                    if (stepOp != null) {
+                        var stepError = stepOp.stepDetails().error();
+                        if (StepInterruptedException.isStepInterruptedException(stepError)) {
+                            throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(stepOp));
+                        } else {
+                            throw new CallbackSubmitterException(callbackOp, new StepFailedException(stepOp));
+                        }
+                    }
+                }
+                // todo: add cases for MAP/PARALLEL
+                default:
+                    throw new ChildContextFailedException(op);
+            }
         }
     }
 }

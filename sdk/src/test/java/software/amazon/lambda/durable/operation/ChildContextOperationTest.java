@@ -50,7 +50,6 @@ class ChildContextOperationTest {
     }
 
     private ChildContextOperation<String> createOperation(
-            ExecutionManager executionManager,
             java.util.function.Function<software.amazon.lambda.durable.DurableContext, String> func) {
         return new ChildContextOperation<>(
                 "1",
@@ -79,7 +78,7 @@ class ChildContextOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "should-not-execute";
         });
@@ -116,7 +115,7 @@ class ChildContextOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "should-not-execute";
         });
@@ -146,7 +145,7 @@ class ChildContextOperationTest {
                                 .build())
                         .build());
 
-        var operation = createOperation(executionManager, ctx -> "unused");
+        var operation = createOperation(ctx -> "unused");
         operation.execute();
 
         var thrown = assertThrows(ChildContextFailedException.class, operation::get);
@@ -170,7 +169,7 @@ class ChildContextOperationTest {
         when(executionManager.hasOperationsForContext("1")).thenReturn(false);
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "re-executed";
         });
@@ -199,7 +198,7 @@ class ChildContextOperationTest {
         when(executionManager.hasOperationsForContext("1")).thenReturn(false);
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "reconstructed-value";
         });
@@ -224,7 +223,7 @@ class ChildContextOperationTest {
                         .status(OperationStatus.SUCCEEDED)
                         .build());
 
-        var operation = createOperation(executionManager, ctx -> "unused");
+        var operation = createOperation(ctx -> "unused");
 
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }
@@ -242,7 +241,7 @@ class ChildContextOperationTest {
                                 ContextDetails.builder().result("\"value\"").build())
                         .build());
 
-        var operation = createOperation(executionManager, ctx -> "unused");
+        var operation = createOperation(ctx -> "unused");
 
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }

@@ -16,16 +16,26 @@ public class DurableOperationException extends DurableExecutionException {
     }
 
     public DurableOperationException(Operation operation, ErrorObject errorObject, String errorMessage) {
+        this(operation, errorObject, errorMessage, null);
+    }
+
+    public DurableOperationException(
+            Operation operation, ErrorObject errorObject, String errorMessage, Throwable cause) {
         this(
                 operation,
                 errorObject,
                 errorMessage,
-                errorObject != null ? ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()) : null);
+                errorObject != null ? ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()) : null,
+                cause);
     }
 
     public DurableOperationException(
-            Operation operation, ErrorObject errorObject, String errorMessage, StackTraceElement[] stackTrace) {
-        super(errorMessage, null, stackTrace);
+            Operation operation,
+            ErrorObject errorObject,
+            String errorMessage,
+            StackTraceElement[] stackTrace,
+            Throwable cause) {
+        super(errorMessage, cause, stackTrace);
         this.operation = operation;
         this.errorObject = errorObject;
     }
