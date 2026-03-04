@@ -199,4 +199,60 @@ class IntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals(2, result2.getSucceededOperations().size());
     }
+
+    @Test
+    void testWaitAsyncReturnsNonBlockingFuture() {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
+            var step1 = context.step("step1", String.class, () -> "Step 1 done");
+
+            // waitAsync should return immediately without blocking
+            var waitFuture = context.waitAsync("async-wait", Duration.ofMinutes(5));
+
+            // This step should execute before the wait completes
+            var step2 = context.step("step2", String.class, () -> "Step 2 done");
+
+            // Now block on the wait
+            waitFuture.get();
+
+            return new TestOutput(step1 + " + " + step2);
+        });
+        runner.withSkipTime(true);
+
+        var result = runner.runUntilComplete(new TestInput("test"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("Step 1 done + Step 2 done", result.getResult(TestOutput.class).result);
+    }
+
+    @Test
+    void testWaitAsyncSuspendsOnGet() {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
+            var waitFuture = context.waitAsync(Duration.ofMinutes(5));
+
+            // Calling get() should suspend execution
+            waitFuture.get();
+
+            var step = context.step("after-wait", String.class, () -> "done");
+            return new TestOutput(step);
+        });
+
+        // First run should suspend at waitFuture.get()
+        var result = runner.run(new TestInput("test"));
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+    }
+
+    @Test
+    void testWaitAsyncWithoutName() {
+        var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
+            var waitFuture = context.waitAsync(Duration.ofSeconds(10));
+            waitFuture.get();
+            return new TestOutput("done");
+        });
+        runner.withSkipTime(true);
+
+        var result = runner.runUntilComplete(new TestInput("test"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("done", result.getResult(TestOutput.class).result);
+    }
 }
