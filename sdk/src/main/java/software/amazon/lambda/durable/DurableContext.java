@@ -384,7 +384,7 @@ public class DurableContext extends BaseContext {
                     var callback = childCtx.createCallback(
                             name + "-callback", typeToken, finalWaitForCallbackConfig.callbackConfig());
                     childCtx.step(
-                            name + "-step",
+                            name + "-submitter",
                             Void.class,
                             stepCtx -> {
                                 func.accept(callback.callbackId(), stepCtx);
