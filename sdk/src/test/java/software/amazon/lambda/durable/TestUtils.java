@@ -35,8 +35,6 @@ public class TestUtils {
                                     .callbackId(UUID.randomUUID().toString())
                                     .build());
                         }
-
-                        responseOperations.add(opBuilder.build());
                     } else if (update.action() == OperationAction.SUCCEED) {
                         opBuilder.status(OperationStatus.SUCCEEDED);
                         if (update.type() == OperationType.STEP) {

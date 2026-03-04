@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
+
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -203,37 +205,48 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             }
 
             // throw a general failed exception if a user exception is not reconstructed
-            switch (subType) {
-                case WAIT_FOR_CALLBACK: {
-                    var childrenOps = getChildOperations(op.id());
-                    var callbackOp = childrenOps.stream()
-                            .filter(o -> o.type() == OperationType.CALLBACK)
-                            .findFirst()
-                            .orElse(null);
-                    var stepOp = childrenOps.stream()
-                            .filter(o -> o.type() == OperationType.STEP)
-                            .findFirst()
-                            .orElse(null);
-                    if (callbackOp != null) {
-                        switch (callbackOp.status()) {
-                            case FAILED -> throw new CallbackFailedException(callbackOp);
-                            case TIMED_OUT -> throw new CallbackTimeoutException(callbackOp);
-                            default -> throw new ChildContextFailedException(op);
-                        }
-                    }
-                    if (stepOp != null) {
-                        var stepError = stepOp.stepDetails().error();
-                        if (StepInterruptedException.isStepInterruptedException(stepError)) {
-                            throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(stepOp));
-                        } else {
-                            throw new CallbackSubmitterException(callbackOp, new StepFailedException(stepOp));
-                        }
-                    }
+            return switch (subType) {
+                case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure(op);
+                // todo: handle MAP/PARALLEL
+                case MAP -> throw new ChildContextFailedException(op);
+                case PARALLEL -> throw new ChildContextFailedException(op);
+                case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
+            };
+        }
+    }
+
+    private T handleWaitForCallbackFailure(Operation op) {
+        var childrenOps = getChildOperations(op.id());
+        var callbackOp = childrenOps.stream()
+                .filter(o -> o.type() == OperationType.CALLBACK)
+                .findFirst()
+                .orElse(null);
+        var submitterOp = childrenOps.stream()
+                .filter(o -> o.type() == OperationType.STEP)
+                .findFirst()
+                .orElse(null);
+        if (callbackOp != null) {
+            // if callback failed
+            if (isTerminalStatus(callbackOp.status())) {
+                switch (callbackOp.status()) {
+                    case FAILED -> throw new CallbackFailedException(callbackOp);
+                    case TIMED_OUT -> throw new CallbackTimeoutException(callbackOp);
                 }
-                // todo: add cases for MAP/PARALLEL
-                default:
-                    throw new ChildContextFailedException(op);
+            }
+
+            // if submitter failed
+            if (submitterOp != null
+                    && isTerminalStatus(submitterOp.status())
+                    && submitterOp.status() != OperationStatus.SUCCEEDED) {
+                var stepError = submitterOp.stepDetails().error();
+                if (StepInterruptedException.isStepInterruptedException(stepError)) {
+                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));
+                } else {
+                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));
+                }
             }
         }
+
+        throw new IllegalStateException("Unknown waitForCallback status");
     }
 }

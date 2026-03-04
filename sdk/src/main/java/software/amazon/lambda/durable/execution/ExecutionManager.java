@@ -128,6 +128,7 @@ public class ExecutionManager implements AutoCloseable {
      * @return List of child operations for the given operationId
      */
     public List<Operation> getChildOperations(String operationId) {
+        // todo: this is O(n) - consider an improvement if performance becomes an issue
         var children = new ArrayList<Operation>();
         for (Operation op : operationStorage.values()) {
             if (Objects.equals(op.parentId(), operationId)) {
