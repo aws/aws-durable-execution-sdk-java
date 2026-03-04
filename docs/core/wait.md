@@ -9,3 +9,18 @@ ctx.wait(Duration.ofMinutes(30));
 // Named wait (useful for debugging)
 ctx.wait("cooling-off-period", Duration.ofDays(7));
 ```
+
+## waitAsync() – Non-Blocking Wait
+
+`waitAsync()` starts the wait timer but returns a `DurableFuture<Void>` immediately, allowing other operations to run concurrently. The execution only suspends when you call `.get()` on the future (if the wait hasn't completed yet).
+
+```java
+// Start a 5-second timer (non-blocking)
+DurableFuture<Void> timer = ctx.waitAsync("min-delay", Duration.ofSeconds(5));
+
+// Do work while the timer runs
+var result = ctx.step("process", String.class, () -> doWork());
+
+// Block until the wait elapses
+timer.get();
+```

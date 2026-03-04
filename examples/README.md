@@ -85,6 +85,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [GenericTypesExample](src/main/java/com/amazonaws/lambda/durable/examples/GenericTypesExample.java) | Working with `List<T>` and `Map<K,V>` |
 | [CustomConfigExample](src/main/java/com/amazonaws/lambda/durable/examples/CustomConfigExample.java) | Custom Lambda client and SerDes |
 | [WaitAtLeastExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastExample.java) | Concurrent `stepAsync()` with `wait()` |
+| [WaitAsyncExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAsyncExample.java) | Non-blocking `waitAsync()` with concurrent step |
 | [RetryInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/RetryInProcessExample.java) | In-process retry with concurrent operations |
 | [WaitAtLeastInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
 | [ManyAsyncStepsExample](src/main/java/com/amazonaws/lambda/durable/examples/ManyAsyncStepsExample.java) | Performance test with 500 concurrent async steps |

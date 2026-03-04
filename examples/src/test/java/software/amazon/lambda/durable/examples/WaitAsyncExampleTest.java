@@ -14,7 +14,6 @@ class WaitAsyncExampleTest {
     void testWaitAsyncExampleCompletesSuccessfully() {
         var handler = new WaitAsyncExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
-        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete(new GreetingRequest("Alice"));
 

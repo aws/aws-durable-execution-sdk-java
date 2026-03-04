@@ -216,7 +216,6 @@ class IntegrationTest {
 
             return new TestOutput(step1 + " + " + step2);
         });
-        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete(new TestInput("test"));
 
@@ -248,7 +247,6 @@ class IntegrationTest {
             waitFuture.get();
             return new TestOutput("done");
         });
-        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete(new TestInput("test"));
 

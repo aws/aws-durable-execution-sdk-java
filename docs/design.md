@@ -45,6 +45,10 @@ DurableFuture<T> stepAsync(String name, TypeToken<T> type, Supplier<T> func, Ste
 // Wait
 void wait(Duration duration)
 void wait(String name, Duration duration)
+
+// Asynchronous wait
+DurableFuture<Void> waitAsync(Duration duration)
+DurableFuture<Void> waitAsync(String name, Duration duration)
     
 // Invoke
 T invoke(String name, String functionName, U payload, Class<T> resultType)
@@ -175,7 +179,7 @@ context.step("name", Type.class, supplier,
 │  DurableContext              │    │  ExecutionManager               │
 │  - User-facing API           │    │  - State (ops, token)           │
 │  - step(), stepAsync(), etc  │    │  - Thread coordination          │
-│  - wait()                    │    │  - Checkpoint batching          │
+│  - wait(), waitAsync()       │    │  - Checkpoint batching          │
 │  - Operation ID counter      │    │  - Checkpoint response handling │
 └──────────────────────────────┘    │  - Polling                      │
             │                       └─────────────────────────────────┘
@@ -554,7 +558,7 @@ synchronized (this) {
 
 | Thread Type | Purpose | Deregisters When |
 |-------------|---------|------------------|
-| **Root thread** | Main execution thread running the handler function | • Calling `future.get()` to allow suspension while blocked<br>• Calling `context.wait()` to trigger immediate suspension |
+| **Root thread** | Main execution thread running the handler function | • Calling `future.get()` to allow suspension while blocked<br>• Calling `context.wait()` or `context.waitAsync().get()` to trigger suspension |
 | **Step threads** | Background threads executing individual step operations | • Completing work: After checkpointing result (success or failure) |
 
 **Why root thread deregistration matters:** Critical for allowing suspension when steps are retrying or when multiple operations depend on each other.
