@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.exception.NonDeterministicExecutionExcepti
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 /** Unit tests for ChildContextOperation. */
@@ -52,7 +53,13 @@ class ChildContextOperationTest {
             ExecutionManager executionManager,
             java.util.function.Function<software.amazon.lambda.durable.DurableContext, String> func) {
         return new ChildContextOperation<>(
-                "1", "test-context", func, TypeToken.get(String.class), SERDES, durableContext);
+                "1",
+                "test-context",
+                func,
+                OperationSubType.RUN_IN_CHILD_CONTEXT,
+                TypeToken.get(String.class),
+                SERDES,
+                durableContext);
     }
 
     // ===== SUCCEEDED replay =====

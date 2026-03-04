@@ -46,11 +46,19 @@ class CallbackExampleTest {
         var callbackId = runner.getCallbackId("approval");
         runner.completeCallback(callbackId, "\"Approved by manager\"");
 
-        // Second run - callback complete, finishes processing
+        result = runner.run(input);
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        // second run - pending preapproval
+        var preapprovalCallbackId = runner.getCallbackId("preapproval-callback");
+        runner.completeCallback(preapprovalCallbackId, "\"Sent to preapprover\"");
+
+        // third run - callback complete, finishes processing
         result = runner.run(input);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(
-                "Approval request for: New laptop ($1500.0) - Approved by manager", result.getResult(String.class));
+                "Approval request for: New laptop ($1500.0) - Sent to preapprover - Approved by manager",
+                result.getResult(String.class));
     }
 }

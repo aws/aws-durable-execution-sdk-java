@@ -143,7 +143,6 @@ class StepSemanticsIntegrationTest {
                             .semantics(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
                             .build());
         });
-        runner.withSkipTime(true);
 
         runner.run("test");
         assertEquals(1, executionCount.get());

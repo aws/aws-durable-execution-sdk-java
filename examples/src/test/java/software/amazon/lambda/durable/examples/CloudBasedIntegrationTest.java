@@ -275,9 +275,15 @@ class CloudBasedIntegrationTest {
     @Test
     void testCallbackExample() throws Exception {
         var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
+        var lambda = LambdaClient.create();
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
+
+        execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
+        var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
+        lambda.sendDurableExecutionCallbackSuccess(
+                req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
 
         // Wait for callback to appear
         execution.pollUntil(exec -> exec.hasCallback("approval"));
@@ -287,7 +293,6 @@ class CloudBasedIntegrationTest {
         assertNotNull(callbackId);
 
         // Complete the callback using AWS SDK
-        var lambda = LambdaClient.create();
         lambda.sendDurableExecutionCallbackSuccess(
                 req -> req.callbackId(callbackId).result(SdkBytes.fromUtf8String("\"approved\"")));
 
@@ -297,6 +302,7 @@ class CloudBasedIntegrationTest {
 
         var finalResult = result.getResult(String.class);
         assertNotNull(finalResult);
+        assertTrue(finalResult.contains("preapproved"));
         assertTrue(finalResult.contains("Approval request for: Purchase order"));
         assertTrue(finalResult.contains("5000"));
         assertTrue(finalResult.contains("approved"));

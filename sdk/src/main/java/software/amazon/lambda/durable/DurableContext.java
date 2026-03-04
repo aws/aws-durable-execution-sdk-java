@@ -6,11 +6,13 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
@@ -287,14 +289,111 @@ public class DurableContext extends BaseContext {
 
     public <T> DurableFuture<T> runInChildContextAsync(
             String name, TypeToken<T> typeToken, Function<DurableContext, T> func) {
+        return runInChildContextAsync(name, typeToken, func, OperationSubType.RUN_IN_CHILD_CONTEXT);
+    }
+
+    private <T> DurableFuture<T> runInChildContextAsync(
+            String name, TypeToken<T> typeToken, Function<DurableContext, T> func, OperationSubType subType) {
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
         var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
-                operationId, name, func, typeToken, getDurableConfig().getSerDes(), this);
+                operationId, name, func, subType, typeToken, getDurableConfig().getSerDes(), this);
 
         operation.execute();
         return operation;
+    }
+
+    // ========= waitForCallback methods =============
+    public <T> T waitForCallback(String name, Class<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        func,
+                        WaitForCallbackConfig.builder().build())
+                .get();
+    }
+
+    public <T> T waitForCallback(String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                        name, typeToken, func, WaitForCallbackConfig.builder().build())
+                .get();
+    }
+
+    public <T> T waitForCallback(
+            String name,
+            Class<T> resultType,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)
+                .get();
+    }
+
+    public <T> T waitForCallback(
+            String name,
+            TypeToken<T> typeToken,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, typeToken, func, waitForCallbackConfig)
+                .get();
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name, Class<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                name,
+                TypeToken.get(resultType),
+                func,
+                WaitForCallbackConfig.builder().build());
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                name, typeToken, func, WaitForCallbackConfig.builder().build());
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name,
+            Class<T> resultType,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name,
+            TypeToken<T> typeToken,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        Objects.requireNonNull(waitForCallbackConfig, "waitForCallbackConfig cannot be null");
+
+        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null
+                ? waitForCallbackConfig.toBuilder()
+                        .stepConfig(waitForCallbackConfig.stepConfig().toBuilder()
+                                .serDes(getDurableConfig().getSerDes())
+                                .build())
+                        .build()
+                : waitForCallbackConfig;
+
+        return runInChildContextAsync(
+                name,
+                typeToken,
+                childCtx -> {
+                    var callback = childCtx.createCallback(
+                            name + "-callback", typeToken, finalWaitForCallbackConfig.callbackConfig());
+                    childCtx.step(
+                            name + "-step",
+                            Void.class,
+                            stepCtx -> {
+                                func.accept(callback.callbackId(), stepCtx);
+                                return null;
+                            },
+                            finalWaitForCallbackConfig.stepConfig());
+                    return callback.get();
+                },
+                OperationSubType.WAIT_FOR_CALLBACK);
     }
 
     // =============== accessors ================
