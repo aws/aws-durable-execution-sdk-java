@@ -120,4 +120,174 @@ class ParameterValidatorTest {
 
         assertEquals("testParam must be positive, got: 0", exception.getMessage());
     }
+
+    @Test
+    void validateOperationName_withNull_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName(null));
+    }
+
+    @Test
+    void validateOperationName_withValidName_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("test"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("my-operation"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation_123"));
+    }
+
+    @Test
+    void validateOperationName_withEmptyString_shouldThrow() {
+        var exception =
+                assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOperationName(""));
+
+        assertEquals("Operation name cannot be empty", exception.getMessage());
+    }
+
+    @Test
+    void validateOperationName_withMaxLength_shouldPass() {
+        var name = "a".repeat(ParameterValidator.MAX_OPERATION_NAME_LENGTH);
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName(name));
+    }
+
+    @Test
+    void validateOperationName_exceedingMaxLength_shouldThrow() {
+        var name = "a".repeat(ParameterValidator.MAX_OPERATION_NAME_LENGTH + 1);
+        var exception =
+                assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOperationName(name));
+
+        assertEquals(
+                "Operation name must be less than " + ParameterValidator.MAX_OPERATION_NAME_LENGTH
+                        + " characters, got: " + name,
+                exception.getMessage());
+    }
+
+    @Test
+    void validateOperationName_withCustomMaxLength_withNull_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName(null, 100));
+    }
+
+    @Test
+    void validateOperationName_withCustomMaxLength_withValidName_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("test", 100));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("a".repeat(100), 100));
+    }
+
+    @Test
+    void validateOperationName_withCustomMaxLength_withEmptyString_shouldThrow() {
+        var exception =
+                assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("", 100));
+
+        assertEquals("Operation name cannot be empty", exception.getMessage());
+    }
+
+    @Test
+    void validateOperationName_withCustomMaxLength_exceedingLimit_shouldThrow() {
+        var customMaxLength = 50;
+        var name = "a".repeat(customMaxLength + 1);
+        var exception = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName(name, customMaxLength));
+
+        assertEquals(
+                "Operation name must be less than " + customMaxLength + " characters, got: " + name,
+                exception.getMessage());
+    }
+
+    @Test
+    void validateOperationName_withCustomMaxLength_atExactLimit_shouldPass() {
+        var customMaxLength = 50;
+        var name = "a".repeat(customMaxLength);
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName(name, customMaxLength));
+    }
+
+    @Test
+    void validateOperationName_withSpecialCharacters_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation-name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation_name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation.name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation:name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation/name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation@name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation#name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation$name"));
+    }
+
+    @Test
+    void validateOperationName_withUnicodeCharacters_shouldThrow() {
+        var exception1 =
+                assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("操作名称"));
+        assertEquals("Operation name must contain only printable ASCII characters, got: 操作名称", exception1.getMessage());
+
+        var exception2 = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("opération"));
+        assertEquals(
+                "Operation name must contain only printable ASCII characters, got: opération", exception2.getMessage());
+
+        var exception3 = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("операция"));
+        assertEquals(
+                "Operation name must contain only printable ASCII characters, got: операция", exception3.getMessage());
+    }
+
+    @Test
+    void validateOperationName_withWhitespace_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation name"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName(" operation"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("operation "));
+    }
+
+    @Test
+    void validateOperationName_withControlCharacters_shouldThrow() {
+        var exception1 = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("operation\nname"));
+        assertEquals(
+                "Operation name must contain only printable ASCII characters, got: operation\nname",
+                exception1.getMessage());
+
+        var exception2 = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("operation\tname"));
+        assertEquals(
+                "Operation name must contain only printable ASCII characters, got: operation\tname",
+                exception2.getMessage());
+
+        var exception3 = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("operation\rname"));
+        assertEquals(
+                "Operation name must contain only printable ASCII characters, got: operation\rname",
+                exception3.getMessage());
+    }
+
+    @Test
+    void validateOperationName_withNonPrintableASCII_shouldThrow() {
+        // Test character below printable range (0x1F)
+        var exception1 = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("test\u001Fname"));
+        assertEquals(
+                "Operation name must contain only printable ASCII characters, got: test\u001Fname",
+                exception1.getMessage());
+
+        // Test character above printable range (0x7F - DEL)
+        var exception2 = assertThrows(
+                IllegalArgumentException.class, () -> ParameterValidator.validateOperationName("test\u007Fname"));
+        assertEquals(
+                "Operation name must contain only printable ASCII characters, got: test\u007Fname",
+                exception2.getMessage());
+    }
+
+    @Test
+    void validateOperationName_withPrintableASCIIBoundaries_shouldPass() {
+        // Test lower boundary (0x20 - space)
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName(" "));
+
+        // Test upper boundary (0x7E - tilde)
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("~"));
+
+        // Test all printable ASCII characters
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName(
+                "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"));
+    }
+
+    @Test
+    void validateOperationName_withSingleCharacter_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("a"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("1"));
+        assertDoesNotThrow(() -> ParameterValidator.validateOperationName("-"));
+    }
 }
