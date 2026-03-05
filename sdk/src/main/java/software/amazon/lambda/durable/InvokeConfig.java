@@ -2,24 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import java.time.Duration;
 import software.amazon.lambda.durable.serde.SerDes;
 
 public class InvokeConfig {
-    private final Duration timeout;
     private final SerDes payloadSerDes;
     private final SerDes resultSerDes;
     private final String tenantId;
 
     public InvokeConfig(Builder builder) {
-        this.timeout = builder.timeout;
         this.payloadSerDes = builder.payloadSerDes;
         this.resultSerDes = builder.resultSerDes;
         this.tenantId = builder.tenantId;
-    }
-
-    public Duration timeout() {
-        return this.timeout;
     }
 
     public SerDes payloadSerDes() {
@@ -35,22 +28,20 @@ public class InvokeConfig {
     }
 
     public static Builder builder() {
-        return new Builder(null, null, null, null);
+        return new Builder(null, null, null);
     }
 
     public Builder toBuilder() {
-        return new Builder(timeout, payloadSerDes, resultSerDes, tenantId);
+        return new Builder(payloadSerDes, resultSerDes, tenantId);
     }
 
     /** Builder for creating InvokeConfig instances. */
     public static class Builder {
-        private Duration timeout;
         private SerDes payloadSerDes;
         private SerDes resultSerDes;
         private String tenantId;
 
-        private Builder(Duration timeout, SerDes payloadSerDes, SerDes resultSerDes, String tenantId) {
-            this.timeout = timeout;
+        private Builder(SerDes payloadSerDes, SerDes resultSerDes, String tenantId) {
             this.payloadSerDes = payloadSerDes;
             this.resultSerDes = resultSerDes;
             this.tenantId = tenantId;
@@ -58,11 +49,6 @@ public class InvokeConfig {
 
         public Builder tenantId(String tenantId) {
             this.tenantId = tenantId;
-            return this;
-        }
-
-        public Builder timeout(Duration timeout) {
-            this.timeout = timeout;
             return this;
         }
 
