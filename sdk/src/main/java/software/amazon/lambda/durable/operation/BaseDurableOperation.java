@@ -81,11 +81,6 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return operationId;
     }
 
-    /** Gets the unique thread id */
-    protected String getThreadId() {
-        return getOperationId() + "-" + getType().name().toLowerCase();
-    }
-
     /** Gets the operation name (maybe null). */
     public String getName() {
         return name;
@@ -186,7 +181,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
                 completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
 
                 // Deregister the current thread to allow suspension
-                deregisterActiveThread(threadContext.threadId());
+                executionManager.deregisterActiveThread(threadContext.threadId());
             }
         }
 
@@ -245,20 +240,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     // advanced thread and context control
-    protected void deregisterActiveThread(String threadId) {
-        executionManager.deregisterActiveThread(threadId);
-    }
-
     protected void registerActiveThread(String threadId) {
         executionManager.registerActiveThread(threadId);
     }
 
     protected ThreadContext getCurrentThreadContext() {
         return executionManager.getCurrentThreadContext();
-    }
-
-    protected void setCurrentThreadContext(ThreadContext threadContext) {
-        executionManager.setCurrentThreadContext(threadContext);
     }
 
     // polling and checkpointing

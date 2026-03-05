@@ -22,8 +22,6 @@ import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.execution.ThreadContext;
-import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 public class StepOperation<T> extends BaseDurableOperation<T> {
@@ -87,66 +85,58 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void executeStepLogic(int attempt) {
-        var stepThreadId = getThreadId();
+        // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters).
+        // The thread local ThreadContext is set inside the executor since that's where the step actually runs
+        registerActiveThread(getOperationId());
 
-        // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters)
-        // thread local ThreadContext is set inside the executor since that's where the step actually runs
-        registerActiveThread(stepThreadId);
+        Runnable userHandler = () -> {
+            // use a try-with-resources to
+            // - add thread id/type to thread local when the step starts
+            // - clear logger properties when the step finishes
+            try (StepContext stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {
+                try {
+                    checkpointStarted();
 
-        // Execute user code in customer-configured executor
-        CompletableFuture.runAsync(
-                () -> {
-                    // Set thread local ThreadContext on the executor thread
-                    setCurrentThreadContext(new ThreadContext(stepThreadId, ThreadType.STEP));
+                    // Execute the function
+                    T result = function.apply(stepContext);
 
-                    // use a try-with-resources to clear logger properties
-                    try (StepContext stepContext =
-                            getContext().createStepContext(getOperationId(), getName(), attempt)) {
-                        try {
-                            // Check if we need to send START
-                            var existing = getOperation();
-                            if (existing == null || existing.status() != OperationStatus.STARTED) {
-                                var startUpdate = OperationUpdate.builder().action(OperationAction.START);
+                    handleStepSucceeded(result);
+                } catch (Throwable e) {
+                    handleStepFailure(e, attempt);
+                }
+            }
+        };
 
-                                if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
-                                    // AT_MOST_ONCE: await START checkpoint before executing user code
-                                    sendOperationUpdate(startUpdate);
-                                } else {
-                                    // AT_LEAST_ONCE: fire-and-forget START checkpoint
-                                    sendOperationUpdateAsync(startUpdate);
-                                }
-                            }
+        // Execute user provided step code in user-configured executor
+        CompletableFuture.runAsync(userHandler, userExecutor);
+    }
 
-                            // Execute the function
-                            T result = function.apply(stepContext);
+    private void checkpointStarted() {
+        // Check if we need to send START
+        var existing = getOperation();
+        if (existing == null || existing.status() != OperationStatus.STARTED) {
+            var startUpdate = OperationUpdate.builder().action(OperationAction.START);
 
-                            // Send SUCCEED
-                            var successUpdate = OperationUpdate.builder()
-                                    .action(OperationAction.SUCCEED)
-                                    .payload(serializeResult(result));
+            if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                // AT_MOST_ONCE: await START checkpoint before executing user code
+                sendOperationUpdate(startUpdate);
+            } else {
+                // AT_LEAST_ONCE: fire-and-forget START checkpoint
+                sendOperationUpdateAsync(startUpdate);
+            }
+        }
+    }
 
-                            // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
-                            // the
-                            // context
-                            // threads waiting for the result of this step operation will be wakened up and registered.
-                            sendOperationUpdate(successUpdate);
-                        } catch (Throwable e) {
-                            handleStepFailure(e, attempt);
-                        } finally {
-                            try {
-                                deregisterActiveThread(stepThreadId);
-                            } catch (SuspendExecutionException e) {
-                                // Expected when this is the last active thread. Must catch here because:
-                                // 1/ This runs in a worker thread detached from handlerFuture
-                                // 2/ Uncaught exception would prevent stepAsync().get() from resume
-                                // Suspension/Termination is already signaled via
-                                // suspendExecutionFuture/terminateExecutionFuture
-                                // before the throw.
-                            }
-                        }
-                    }
-                },
-                userExecutor);
+    private void handleStepSucceeded(T result) {
+        // Send SUCCEED
+        var successUpdate =
+                OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializeResult(result));
+
+        // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
+        // the
+        // context
+        // threads waiting for the result of this step operation will be wakened up and registered.
+        sendOperationUpdate(successUpdate);
     }
 
     private void handleStepFailure(Throwable exception, int attempt) {

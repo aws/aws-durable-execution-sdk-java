@@ -16,7 +16,6 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.serde.NoopSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.validation.ParameterValidator;
 
 public class WaitOperation extends BaseDurableOperation<Void> {
 
@@ -27,7 +26,6 @@ public class WaitOperation extends BaseDurableOperation<Void> {
 
     public WaitOperation(String operationId, String name, Duration duration, DurableContext durableContext) {
         super(operationId, name, OperationType.WAIT, TypeToken.get(Void.class), NOOP_SER_DES, durableContext);
-        ParameterValidator.validateDuration(duration, "Wait duration");
         this.duration = duration;
     }
 

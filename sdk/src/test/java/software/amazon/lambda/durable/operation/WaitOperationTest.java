@@ -4,8 +4,6 @@ package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -32,35 +30,6 @@ class WaitOperationTest {
         executionManager = mock(ExecutionManager.class);
         durableContext = mock(DurableContext.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
-    }
-
-    @Test
-    void constructor_withNullDuration_shouldThrow() {
-        var exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, null, durableContext));
-
-        assertEquals("Wait duration cannot be null", exception.getMessage());
-    }
-
-    @Test
-    void constructor_withZeroDuration_shouldThrow() {
-        var exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(0), durableContext));
-
-        assertTrue(exception.getMessage().contains("Wait duration"));
-        assertTrue(exception.getMessage().contains("at least 1 second"));
-    }
-
-    @Test
-    void constructor_withSubSecondDuration_shouldThrow() {
-        var exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofMillis(500), durableContext));
-
-        assertTrue(exception.getMessage().contains("Wait duration"));
-        assertTrue(exception.getMessage().contains("at least 1 second"));
     }
 
     @Test

@@ -19,8 +19,6 @@ import software.amazon.lambda.durable.exception.IllegalDurableOperationException
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.execution.ThreadContext;
-import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -46,8 +44,6 @@ public class DurableExecutor {
                                 executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                         // use try-with-resources to clear logger properties
                         try (var context = DurableContext.createRootContext(executionManager, config, lambdaContext)) {
-                            // Create context in the executor thread so it detects the correct thread name
-                            executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
                             return handler.apply(userInput, context);
                         }
                     },

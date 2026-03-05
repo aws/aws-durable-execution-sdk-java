@@ -4,15 +4,20 @@ package software.amazon.lambda.durable;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
 public abstract class BaseContext implements AutoCloseable {
-    protected final ExecutionManager executionManager;
+    private final ExecutionManager executionManager;
     private final DurableConfig durableConfig;
     private final Context lambdaContext;
     private final ExecutionContext executionContext;
     private final String contextId;
     private final String contextName;
+    private final ThreadType threadType;
+
     private boolean isReplaying;
 
     /** Creates a new BaseContext instance. */
@@ -21,7 +26,8 @@ public abstract class BaseContext implements AutoCloseable {
             DurableConfig durableConfig,
             Context lambdaContext,
             String contextId,
-            String contextName) {
+            String contextName,
+            ThreadType threadType) {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
@@ -29,6 +35,10 @@ public abstract class BaseContext implements AutoCloseable {
         this.contextName = contextName;
         this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());
         this.isReplaying = executionManager.hasOperationsForContext(contextId);
+        this.threadType = threadType;
+
+        // write the thread id and type to thread local
+        executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));
     }
 
     // =============== accessors ================
@@ -95,5 +105,23 @@ public abstract class BaseContext implements AutoCloseable {
      */
     void setExecutionMode() {
         this.isReplaying = false;
+    }
+
+    public void close() {
+        // this is called in the user thread, after the context's user code has completed
+        if (getContextId() != null) {
+            // if this is a child context or a step context, we need to
+            // deregister the context's thread from the execution manager
+            try {
+                executionManager.deregisterActiveThread(getContextId());
+            } catch (SuspendExecutionException e) {
+                // Expected when this is the last active thread. Must catch here because:
+                // 1/ This runs in a worker thread detached from handlerFuture
+                // 2/ Uncaught exception would prevent stepAsync().get() from resume
+                // Suspension/Termination is already signaled via
+                // suspendExecutionFuture/terminateExecutionFuture
+                // before the throw.
+            }
+        }
     }
 }

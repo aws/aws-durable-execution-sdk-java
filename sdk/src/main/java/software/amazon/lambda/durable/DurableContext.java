@@ -15,6 +15,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.CallbackOperation;
@@ -39,7 +40,7 @@ public class DurableContext extends BaseContext {
             Context lambdaContext,
             String contextId,
             String contextName) {
-        super(executionManager, durableConfig, lambdaContext, contextId, contextName);
+        super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);
         this.operationCounter = new AtomicInteger(0);
     }
 
@@ -66,7 +67,7 @@ public class DurableContext extends BaseContext {
      */
     public DurableContext createChildContext(String childContextId, String childContextName) {
         return new DurableContext(
-                executionManager, getDurableConfig(), getLambdaContext(), childContextId, childContextName);
+                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName);
     }
 
     /**
@@ -77,7 +78,12 @@ public class DurableContext extends BaseContext {
      */
     public StepContext createStepContext(String stepOperationId, String stepOperationName, int attempt) {
         return new StepContext(
-                executionManager, getDurableConfig(), getLambdaContext(), stepOperationId, stepOperationName, attempt);
+                getExecutionManager(),
+                getDurableConfig(),
+                getLambdaContext(),
+                stepOperationId,
+                stepOperationName,
+                attempt);
     }
 
     // ========== step methods ==========
@@ -170,18 +176,19 @@ public class DurableContext extends BaseContext {
 
     // ========== wait methods ==========
 
-    public Void wait(String waitName, Duration duration) {
-        return waitAsync(waitName, duration).get(); // Block (will throw SuspendExecutionException if needed)
+    public Void wait(String name, Duration duration) {
+        // Block (will throw SuspendExecutionException if there is no active thread)
+        return waitAsync(name, duration).get();
     }
 
-    public DurableFuture<Void> waitAsync(String waitName, Duration duration) {
+    public DurableFuture<Void> waitAsync(String name, Duration duration) {
         ParameterValidator.validateDuration(duration, "Wait duration");
-        ParameterValidator.validateOperationName(waitName);
+        ParameterValidator.validateOperationName(name);
 
         var operationId = nextOperationId();
 
         // Create and start wait operation
-        var operation = new WaitOperation(operationId, waitName, duration, this);
+        var operation = new WaitOperation(operationId, name, duration, this);
 
         operation.execute(); // Checkpoint the wait
         return operation;
@@ -444,6 +451,7 @@ public class DurableContext extends BaseContext {
         if (logger != null) {
             logger.close();
         }
+        super.close();
     }
 
     /**

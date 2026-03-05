@@ -26,8 +26,6 @@ import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.execution.ThreadContext;
-import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -96,7 +94,9 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     private void executeChildContext() {
         // The operationId is already globally unique (prefixed by parent context path via
         // DurableContext.nextOperationId), so we use it directly as the contextId.
-        // E.g., root child context "1", nested child context "1-2", deeply nested "1-2-1".
+        // E.g., first level child context "hash(1)",
+        //       second level child context "hash(hash(1)-2)",
+        //       third level child context "hash(hash(hash(1)-2)-1)".
         var contextId = getOperationId();
 
         // Thread registration is intentionally split across two threads:
@@ -107,35 +107,34 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(contextId);
 
-        CompletableFuture.runAsync(
-                () -> {
-                    setCurrentThreadContext(new ThreadContext(contextId, ThreadType.CONTEXT));
-                    // use a try-with-resources to clear logger properties
-                    try (var childContext = getContext().createChildContext(contextId, getName())) {
-                        try {
-                            T result = function.apply(childContext);
+        Runnable userHandler = () -> {
+            // use a try-with-resources to
+            // - add thread id/type to thread local when the step starts
+            // - clear logger properties when the step finishes
+            try (var childContext = getContext().createChildContext(contextId, getName())) {
+                try {
+                    T result = function.apply(childContext);
 
-                            if (replayChildContext) {
-                                // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
-                                // Advance the phaser so get() doesn't block waiting for a checkpoint response.
-                                this.reconstructedResult = result;
-                                markAlreadyCompleted();
-                                return;
-                            }
+                    handleChildContextSuccess(result);
+                } catch (Throwable e) {
+                    handleChildContextFailure(e);
+                }
+            }
+        };
 
-                            checkpointSuccess(result);
-                        } catch (Throwable e) {
-                            handleChildContextFailure(e);
-                        } finally {
-                            try {
-                                deregisterActiveThread(contextId);
-                            } catch (SuspendExecutionException e) {
-                                // Expected when this is the last active thread — suspension already signaled
-                            }
-                        }
-                    }
-                },
-                userExecutor);
+        // Execute user provided child context code in user-configured executor
+        CompletableFuture.runAsync(userHandler, userExecutor);
+    }
+
+    private void handleChildContextSuccess(T result) {
+        if (replayChildContext) {
+            // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
+            // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
+            this.reconstructedResult = result;
+            markAlreadyCompleted();
+        } else {
+            checkpointSuccess(result);
+        }
     }
 
     private void checkpointSuccess(T result) {

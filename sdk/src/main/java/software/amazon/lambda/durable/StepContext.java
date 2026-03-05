@@ -5,6 +5,7 @@ package software.amazon.lambda.durable;
 import com.amazonaws.services.lambda.runtime.Context;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
 public class StepContext extends BaseContext {
@@ -26,7 +27,7 @@ public class StepContext extends BaseContext {
             String stepOperationId,
             String stepOperationName,
             int attempt) {
-        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName);
+        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName, ThreadType.STEP);
         this.attempt = attempt;
     }
 
@@ -54,5 +55,6 @@ public class StepContext extends BaseContext {
         if (logger != null) {
             logger.close();
         }
+        super.close();
     }
 }
