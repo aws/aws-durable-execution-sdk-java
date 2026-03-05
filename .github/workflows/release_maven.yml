@@ -59,12 +59,18 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build artifacts
+        run: mvn clean install -q -Dlog4j2.level=WARN -Dlog4j.configurationFile=log4j2-quiet.xml --no-transfer-progress
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.release_version }}
           name: Release v${{ github.event.inputs.release_version }}
           generate_release_notes: true
+          files: |
+            sdk/target/aws-durable-execution-sdk-java-${{ github.event.inputs.release_version }}.jar
+            sdk-testing/target/aws-durable-execution-sdk-java-testing-${{ github.event.inputs.release_version }}.jar
       
       - name: Get Env variables
         uses: aws-actions/aws-secretsmanager-get-secrets@v2

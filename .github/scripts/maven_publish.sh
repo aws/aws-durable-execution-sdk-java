@@ -40,10 +40,7 @@ EOF
 
 echo "settings.xml written."
 
-echo "=== Step 3: Build artifacts ==="
-mvn clean install -q -Dlog4j2.level=WARN -Dlog4j.configurationFile=log4j2-quiet.xml --no-transfer-progress
-
-echo "=== Step 4: Deploy to Maven Central ==="
+echo "=== Step 3: Deploy to Maven Central ==="
 
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk -P publishing -DskipTests --no-transfer-progress
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk-testing -P publishing -DskipTests --no-transfer-progress
