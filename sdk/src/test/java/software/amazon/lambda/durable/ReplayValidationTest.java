@@ -24,7 +24,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 class ReplayValidationTest {
     public static final String EXECUTION_NAME = "exec-name";
     public static final String INVOCATION_ID = "invocation-id";
-    public static final String OPERATION_ID1 = "1";
+    public static final String OPERATION_ID1 = TestUtils.hashOperationId("1");
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
