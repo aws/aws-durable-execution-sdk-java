@@ -4,6 +4,9 @@ package software.amazon.lambda.durable;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * Framework-agnostic type token for capturing generic type information at runtime.
@@ -26,6 +29,9 @@ import java.lang.reflect.Type;
  * @param <T> the type being captured
  */
 public abstract class TypeToken<T> {
+    // cache for types
+    private static final Map<Type, Type> TYPE_CACHE = Collections.synchronizedMap(new WeakHashMap<>());
+
     private final Type type;
 
     /**
@@ -35,9 +41,13 @@ public abstract class TypeToken<T> {
      * @throws IllegalStateException if created without a type parameter
      */
     protected TypeToken() {
-        Type superClass = getClass().getGenericSuperclass();
+        this.type = TYPE_CACHE.computeIfAbsent(getClass(), k -> resolveType(getClass()));
+    }
+
+    private static Type resolveType(Class<?> aClass) {
+        Type superClass = aClass.getGenericSuperclass();
         if (superClass instanceof ParameterizedType) {
-            this.type = ((ParameterizedType) superClass).getActualTypeArguments()[0];
+            return ((ParameterizedType) superClass).getActualTypeArguments()[0];
         } else {
             throw new IllegalStateException("TypeToken must be created as an anonymous subclass with a type parameter. "
                     + "Example: new TypeToken<List<String>>() {}");
