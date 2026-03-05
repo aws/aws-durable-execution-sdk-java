@@ -9,11 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
+import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -230,5 +233,65 @@ class DurableConfigTest {
         assertNotNull(config.getDurableExecutionClient());
         assertInstanceOf(LambdaDurableFunctionsClient.class, config.getDurableExecutionClient());
         assertNotNull(config.getExecutorService());
+    }
+
+    @Test
+    void testBuilder_WithLambdaClientBuilder_CreatesLambdaDurableFunctionsClient() {
+        var lambdaClientBuilder = LambdaClient.builder()
+                .region(software.amazon.awssdk.regions.Region.US_WEST_2)
+                .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                        software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create("test", "test")));
+
+        var config = DurableConfig.builder()
+                .withLambdaClientBuilder(lambdaClientBuilder)
+                .build();
+
+        assertNotNull(config.getDurableExecutionClient());
+        assertInstanceOf(LambdaDurableFunctionsClient.class, config.getDurableExecutionClient());
+    }
+
+    @Test
+    void testBuilder_WithLambdaClientBuilder_NullThrowsException() {
+        var builder = DurableConfig.builder();
+
+        var exception = assertThrows(NullPointerException.class, () -> builder.withLambdaClientBuilder(null));
+
+        assertEquals("LambdaClient cannot be null", exception.getMessage());
+    }
+
+    @Test
+    void testAddUserAgentSuffix_SetsUserAgentOnBuilder() {
+        var lambdaClientBuilder = LambdaClient.builder();
+
+        var result = DurableConfig.addUserAgentSuffix(lambdaClientBuilder);
+
+        var overrideConfig = result.overrideConfiguration();
+        var userAgentSuffix = overrideConfig.advancedOption(SdkAdvancedClientOption.USER_AGENT_SUFFIX);
+        assertTrue(userAgentSuffix.isPresent(), "USER_AGENT_SUFFIX should be set");
+        assertTrue(
+                userAgentSuffix.get().contains("@aws/durable-execution-sdk-java/"),
+                "User agent suffix should contain SDK identifier, got: " + userAgentSuffix.get());
+    }
+
+    @Test
+    void testAddUserAgentSuffix_PreservesExistingConfiguration() {
+        var lambdaClientBuilder =
+                LambdaClient.builder().overrideConfiguration(c -> c.putHeader("X-Custom-Header", "test-value"));
+
+        var result = DurableConfig.addUserAgentSuffix(lambdaClientBuilder);
+
+        var overrideConfig = result.overrideConfiguration();
+        var userAgentSuffix = overrideConfig.advancedOption(SdkAdvancedClientOption.USER_AGENT_SUFFIX);
+        assertTrue(userAgentSuffix.isPresent());
+        assertTrue(userAgentSuffix.get().contains("@aws/durable-execution-sdk-java/"));
+    }
+
+    @Test
+    void testAddUserAgentSuffix_ReturnsSameBuilderInstance() {
+        var lambdaClientBuilder = LambdaClient.builder();
+
+        var result = DurableConfig.addUserAgentSuffix(lambdaClientBuilder);
+
+        assertSame(lambdaClientBuilder, result);
     }
 }
