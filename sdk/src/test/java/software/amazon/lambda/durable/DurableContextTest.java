@@ -24,9 +24,9 @@ class DurableContextTest {
             .type(OperationType.EXECUTION)
             .status(OperationStatus.STARTED)
             .build();
-    private static final String OPERATION_ID1 = "1";
-    private static final String OPERATION_ID2 = "2";
-    private static final String OPERATION_ID3 = "3";
+    private static final String OPERATION_ID1 = TestUtils.hashOperationId("1");
+    private static final String OPERATION_ID2 = TestUtils.hashOperationId("2");
+    private static final String OPERATION_ID3 = TestUtils.hashOperationId("3");
 
     private DurableContext createTestContext() {
         return createTestContext(List.of());
@@ -325,5 +325,86 @@ class DurableContextTest {
         List<Integer> result = future.get();
         assertEquals(3, result.size());
         assertEquals(10, result.get(0));
+    }
+
+    @Test
+    void testWaitForCallback_allCompleted() {
+        var contextOp = Operation.builder()
+                .id(OPERATION_ID1)
+                .status(OperationStatus.SUCCEEDED)
+                .contextDetails(ContextDetails.builder().replayChildren(true).build())
+                .build();
+        var callbackOp = Operation.builder()
+                .id("1-1")
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .result("\"result\"")
+                        .callbackId("callback-id")
+                        .build())
+                .build();
+        var stepOp = Operation.builder()
+                .id("1-2")
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder().build())
+                .build();
+        var context = createTestContext(List.of(contextOp, callbackOp, stepOp));
+
+        // waitForCallback should throw SuspendExecutionException on first execution
+        var result = context.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {
+            // step already completed so this should not be called
+            fail();
+        });
+        assertEquals("result", result);
+    }
+
+    @Test
+    void testWaitForCallback_contextCompleted() {
+        var contextOp = Operation.builder()
+                .id(OPERATION_ID1)
+                .status(OperationStatus.SUCCEEDED)
+                .contextDetails(ContextDetails.builder()
+                        .result("\"result\"")
+                        .replayChildren(false)
+                        .build())
+                .build();
+        var context = createTestContext(List.of(contextOp));
+
+        // waitForCallback should throw SuspendExecutionException on first execution
+        var result = context.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {
+            // step already completed so this should not be called
+            fail();
+        });
+        assertEquals("result", result);
+    }
+
+    @Test
+    void testWaitForCallback_callbackAndStepCompleted() {
+        var contextOp = Operation.builder()
+                .id(OPERATION_ID1)
+                .name("approval")
+                .status(OperationStatus.STARTED)
+                .type(OperationType.CONTEXT)
+                .build();
+        var callbackOp = Operation.builder()
+                .id("1-1")
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .result("\"result\"")
+                        .callbackId("callback-id")
+                        .build())
+                .build();
+        var stepOp = Operation.builder()
+                .id("1-2")
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder().build())
+                .build();
+        var context = createTestContext(List.of(contextOp, callbackOp, stepOp));
+
+        // waitForCallback should throw SuspendExecutionException on first execution
+        var result = context.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {
+            // step already completed so this should not be called
+            fail();
+        });
+        assertEquals("result", result);
     }
 }

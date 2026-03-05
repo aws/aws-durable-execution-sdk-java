@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.exception.NonDeterministicExecutionExcepti
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 /** Unit tests for ChildContextOperation. */
@@ -49,10 +50,15 @@ class ChildContextOperationTest {
     }
 
     private ChildContextOperation<String> createOperation(
-            ExecutionManager executionManager,
             java.util.function.Function<software.amazon.lambda.durable.DurableContext, String> func) {
         return new ChildContextOperation<>(
-                "1", "test-context", func, TypeToken.get(String.class), SERDES, durableContext);
+                "1",
+                "test-context",
+                func,
+                OperationSubType.RUN_IN_CHILD_CONTEXT,
+                TypeToken.get(String.class),
+                SERDES,
+                durableContext);
     }
 
     // ===== SUCCEEDED replay =====
@@ -72,7 +78,7 @@ class ChildContextOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "should-not-execute";
         });
@@ -109,7 +115,7 @@ class ChildContextOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "should-not-execute";
         });
@@ -139,7 +145,7 @@ class ChildContextOperationTest {
                                 .build())
                         .build());
 
-        var operation = createOperation(executionManager, ctx -> "unused");
+        var operation = createOperation(ctx -> "unused");
         operation.execute();
 
         var thrown = assertThrows(ChildContextFailedException.class, operation::get);
@@ -163,7 +169,7 @@ class ChildContextOperationTest {
         when(executionManager.hasOperationsForContext("1")).thenReturn(false);
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "re-executed";
         });
@@ -192,7 +198,7 @@ class ChildContextOperationTest {
         when(executionManager.hasOperationsForContext("1")).thenReturn(false);
 
         var functionCalled = new AtomicBoolean(false);
-        var operation = createOperation(executionManager, ctx -> {
+        var operation = createOperation(ctx -> {
             functionCalled.set(true);
             return "reconstructed-value";
         });
@@ -217,7 +223,7 @@ class ChildContextOperationTest {
                         .status(OperationStatus.SUCCEEDED)
                         .build());
 
-        var operation = createOperation(executionManager, ctx -> "unused");
+        var operation = createOperation(ctx -> "unused");
 
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }
@@ -235,7 +241,7 @@ class ChildContextOperationTest {
                                 ContextDetails.builder().result("\"value\"").build())
                         .build());
 
-        var operation = createOperation(executionManager, ctx -> "unused");
+        var operation = createOperation(ctx -> "unused");
 
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }

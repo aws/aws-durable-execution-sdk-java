@@ -3,14 +3,20 @@
 package software.amazon.lambda.durable;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
@@ -19,6 +25,10 @@ import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.validation.ParameterValidator;
 
 public class DurableContext extends BaseContext {
+    private static final String WAIT_FOR_CALLBACK_CALLBACK_SUFFIX = "-callback";
+    private static final String WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX = "-submitter";
+    private static final int MAX_WAIT_FOR_CALLBACK_NAME_LENGTH = ParameterValidator.MAX_OPERATION_NAME_LENGTH
+            - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());
     private final AtomicInteger operationCounter;
     private volatile DurableLogger logger;
 
@@ -108,6 +118,8 @@ public class DurableContext extends BaseContext {
             String name, TypeToken<T> typeToken, Function<StepContext, T> func, StepConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        ParameterValidator.validateOperationName(name);
+
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
@@ -172,6 +184,8 @@ public class DurableContext extends BaseContext {
 
     public DurableFuture<Void> waitAsync(String waitName, Duration duration) {
         ParameterValidator.validateDuration(duration, "Wait duration");
+        ParameterValidator.validateOperationName(waitName);
+
         var operationId = nextOperationId();
 
         // Create and start wait operation
@@ -235,6 +249,8 @@ public class DurableContext extends BaseContext {
             String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        ParameterValidator.validateOperationName(name);
+
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
@@ -267,6 +283,7 @@ public class DurableContext extends BaseContext {
     }
 
     public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken, CallbackConfig config) {
+        ParameterValidator.validateOperationName(name);
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
@@ -295,14 +312,117 @@ public class DurableContext extends BaseContext {
 
     public <T> DurableFuture<T> runInChildContextAsync(
             String name, TypeToken<T> typeToken, Function<DurableContext, T> func) {
+        return runInChildContextAsync(name, typeToken, func, OperationSubType.RUN_IN_CHILD_CONTEXT);
+    }
+
+    private <T> DurableFuture<T> runInChildContextAsync(
+            String name, TypeToken<T> typeToken, Function<DurableContext, T> func, OperationSubType subType) {
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        ParameterValidator.validateOperationName(name);
         var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
-                operationId, name, func, typeToken, getDurableConfig().getSerDes(), this);
+                operationId, name, func, subType, typeToken, getDurableConfig().getSerDes(), this);
 
         operation.execute();
         return operation;
+    }
+
+    // ========= waitForCallback methods =============
+    public <T> T waitForCallback(String name, Class<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        func,
+                        WaitForCallbackConfig.builder().build())
+                .get();
+    }
+
+    public <T> T waitForCallback(String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                        name, typeToken, func, WaitForCallbackConfig.builder().build())
+                .get();
+    }
+
+    public <T> T waitForCallback(
+            String name,
+            Class<T> resultType,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)
+                .get();
+    }
+
+    public <T> T waitForCallback(
+            String name,
+            TypeToken<T> typeToken,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, typeToken, func, waitForCallbackConfig)
+                .get();
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name, Class<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                name,
+                TypeToken.get(resultType),
+                func,
+                WaitForCallbackConfig.builder().build());
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                name, typeToken, func, WaitForCallbackConfig.builder().build());
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name,
+            Class<T> resultType,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);
+    }
+
+    public <T> DurableFuture<T> waitForCallbackAsync(
+            String name,
+            TypeToken<T> typeToken,
+            BiConsumer<String, StepContext> func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        Objects.requireNonNull(waitForCallbackConfig, "waitForCallbackConfig cannot be null");
+        // waitForCallback adds a suffix for the callback operation name and the submitter operation name so
+        // the length restriction of waitForCallback name is different from the other operations.
+        ParameterValidator.validateOperationName(name, MAX_WAIT_FOR_CALLBACK_NAME_LENGTH);
+
+        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null
+                ? waitForCallbackConfig.toBuilder()
+                        .stepConfig(waitForCallbackConfig.stepConfig().toBuilder()
+                                .serDes(getDurableConfig().getSerDes())
+                                .build())
+                        .build()
+                : waitForCallbackConfig;
+
+        return runInChildContextAsync(
+                name,
+                typeToken,
+                childCtx -> {
+                    var callback = childCtx.createCallback(
+                            name + WAIT_FOR_CALLBACK_CALLBACK_SUFFIX,
+                            typeToken,
+                            finalWaitForCallbackConfig.callbackConfig());
+                    childCtx.step(
+                            name + WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX,
+                            Void.class,
+                            stepCtx -> {
+                                func.accept(callback.callbackId(), stepCtx);
+                                return null;
+                            },
+                            finalWaitForCallbackConfig.stepConfig());
+                    return callback.get();
+                },
+                OperationSubType.WAIT_FOR_CALLBACK);
     }
 
     // =============== accessors ================
@@ -335,12 +455,20 @@ public class DurableContext extends BaseContext {
     }
 
     /**
-     * Get the next operationId. For root contexts, returns sequential IDs like "1", "2", "3". For child contexts,
-     * prefixes with the contextId to ensure global uniqueness, e.g. "1-1", "1-2" for operations inside child context
-     * "1". This matches the JavaScript SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
+     * Get the next operationId. Returns a globally unique operation ID by hashing a sequential operation counter. For
+     * root contexts, the counter value is hashed directly (e.g. "1", "2", "3"). For child contexts, the values are
+     * prefixed with the parent hashed contextId (e.g. "<hash>-1", "<hash>-2" inside parent context <hash>). This
+     * matches the Python SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
     private String nextOperationId() {
         var counter = String.valueOf(operationCounter.incrementAndGet());
-        return getContextId() != null ? getContextId() + "-" + counter : counter;
+        var rawId = getContextId() != null ? getContextId() + "-" + counter : counter;
+        try {
+            var messageDigest = MessageDigest.getInstance("SHA-256");
+            var hash = messageDigest.digest(rawId.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("failed to get next operation id, SHA-256 not available", e);
+        }
     }
 }

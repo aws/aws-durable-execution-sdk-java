@@ -23,7 +23,7 @@ class ChildContextIntegrationTest {
         var childExecutionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            return ctx.runInChildContext("compute", String.class, child -> {
+            return ctx.runInChildContext("compute", TypeToken.get(String.class), child -> {
                 childExecutionCount.incrementAndGet();
                 return child.step("work", String.class, () -> "result-" + input);
             });
@@ -191,7 +191,6 @@ class ChildContextIntegrationTest {
                 return child.step("after-wait", String.class, () -> "done");
             });
         });
-        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -211,8 +210,6 @@ class ChildContextIntegrationTest {
                 return child.step("after-wait", String.class, () -> "done");
             });
         });
-        runner.withSkipTime(false);
-
         // First run - should suspend at the wait
         var result = runner.run("test");
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
@@ -246,8 +243,6 @@ class ChildContextIntegrationTest {
             return f1.get() + "+" + f2.get();
         });
 
-        runner.withSkipTime(false);
-
         // First run - both child contexts should suspend at their waits
         // TODO: Using run() + runUntilComplete() instead of manual run/advanceTime/run due to a
         //  thread coordination race condition that causes flakiness on slow CI workers.
@@ -255,7 +250,6 @@ class ChildContextIntegrationTest {
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
         // Now let runUntilComplete handle the rest (with skipTime so waits auto-advance)
-        runner.withSkipTime(true);
         var finalResult = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, finalResult.getStatus());
         assertEquals("a-done+b-done", finalResult.getResult(String.class));
@@ -285,7 +279,6 @@ class ChildContextIntegrationTest {
             });
             return busy.get() + "|" + waiting.get();
         });
-        runner.withSkipTime(false);
 
         // First run: busy child completes its work, but waiter's wait is still outstanding → PENDING
         var result = runner.run("test");

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import static software.amazon.lambda.durable.model.OperationSubType.RUN_IN_CHILD_CONTEXT;
+import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
@@ -17,12 +17,18 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackSubmitterException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.StepFailedException;
+import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -40,17 +46,20 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     private final ExecutorService userExecutor;
     private boolean replayChildContext;
     private T reconstructedResult;
+    private final OperationSubType subType;
 
     public ChildContextOperation(
             String operationId,
             String name,
             Function<DurableContext, T> function,
+            OperationSubType subType,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContext durableContext) {
         super(operationId, name, OperationType.CONTEXT, resultTypeToken, resultSerDes, durableContext);
         this.function = function;
         this.userExecutor = getContext().getDurableConfig().getExecutorService();
+        this.subType = subType;
     }
 
     /** Starts the operation. */
@@ -58,7 +67,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     protected void start() {
         // First execution: fire-and-forget START checkpoint, then run
         sendOperationUpdateAsync(
-                OperationUpdate.builder().action(OperationAction.START).subType(RUN_IN_CHILD_CONTEXT.getValue()));
+                OperationUpdate.builder().action(OperationAction.START).subType(subType.getValue()));
         executeChildContext();
     }
 
@@ -136,7 +145,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .subType(RUN_IN_CHILD_CONTEXT.getValue())
+                    .subType(subType.getValue())
                     .payload(serialized));
         } else {
             // Large result: checkpoint with empty payload + ReplayChildren flag.
@@ -144,7 +153,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             this.reconstructedResult = result;
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .subType(RUN_IN_CHILD_CONTEXT.getValue())
+                    .subType(subType.getValue())
                     .payload("")
                     .contextOptions(
                             ContextOptions.builder().replayChildren(true).build()));
@@ -170,7 +179,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.FAIL)
-                .subType(RUN_IN_CHILD_CONTEXT.getValue())
+                .subType(subType.getValue())
                 .error(errorObject));
     }
 
@@ -194,8 +203,50 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             if (original != null) {
                 ExceptionHelper.sneakyThrow(original);
             }
-            // Fallback: wrap in ChildContextFailedException
-            throw new ChildContextFailedException(op);
+
+            // throw a general failed exception if a user exception is not reconstructed
+            return switch (subType) {
+                case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure(op);
+                // todo: handle MAP/PARALLEL
+                case MAP -> throw new ChildContextFailedException(op);
+                case PARALLEL -> throw new ChildContextFailedException(op);
+                case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
+            };
         }
+    }
+
+    private T handleWaitForCallbackFailure(Operation op) {
+        var childrenOps = getChildOperations(op.id());
+        var callbackOp = childrenOps.stream()
+                .filter(o -> o.type() == OperationType.CALLBACK)
+                .findFirst()
+                .orElse(null);
+        var submitterOp = childrenOps.stream()
+                .filter(o -> o.type() == OperationType.STEP)
+                .findFirst()
+                .orElse(null);
+        if (callbackOp != null) {
+            // if callback failed
+            if (isTerminalStatus(callbackOp.status())) {
+                switch (callbackOp.status()) {
+                    case FAILED -> throw new CallbackFailedException(callbackOp);
+                    case TIMED_OUT -> throw new CallbackTimeoutException(callbackOp);
+                }
+            }
+
+            // if submitter failed
+            if (submitterOp != null
+                    && isTerminalStatus(submitterOp.status())
+                    && submitterOp.status() != OperationStatus.SUCCEEDED) {
+                var stepError = submitterOp.stepDetails().error();
+                if (StepInterruptedException.isStepInterruptedException(stepError)) {
+                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));
+                } else {
+                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));
+                }
+            }
+        }
+
+        throw new IllegalStateException("Unknown waitForCallback status");
     }
 }

@@ -44,6 +44,10 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
 
         var config = CallbackConfig.builder().timeout(timeout).build();
 
+        var preapprovalCallback = context.waitForCallbackAsync("preapproval", String.class, (callbackId, ctx) -> {
+            ctx.getLogger().info("Sending callback {} to preapproval system", callbackId);
+        });
+
         var callback = context.createCallback("approval", String.class, config);
 
         // Step 2.5: Log AWS CLI command to complete the callback
@@ -57,15 +61,14 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
             return null;
         });
 
+        var preapprovalResult = preapprovalCallback.get();
+
         // Step 3: Wait for external approval (suspends execution)
         var approvalResult = callback.get();
 
         // Step 4: Process the approval
-        var result = context.step("process-approval", String.class, () -> {
-            return prepared + " - " + approvalResult;
-        });
-
-        return result;
+        return context.step(
+                "process-approval", String.class, () -> prepared + " - " + preapprovalResult + " - " + approvalResult);
     }
 }
 

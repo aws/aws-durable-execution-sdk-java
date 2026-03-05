@@ -5,7 +5,11 @@ package software.amazon.lambda.durable;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -21,12 +25,13 @@ public class TestUtils {
 
             if (updates != null) {
                 for (var update : updates) {
+                    var opBuilder = Operation.builder()
+                            .id(update.id())
+                            .name(update.name())
+                            .subType(update.subType())
+                            .type(update.type());
                     if (update.action() == OperationAction.START) {
-                        var opBuilder = Operation.builder()
-                                .id(update.id())
-                                .name(update.name())
-                                .type(update.type())
-                                .status(OperationStatus.STARTED);
+                        opBuilder.status(OperationStatus.STARTED);
 
                         // Add callback details for CALLBACK operations
                         if (update.type() == OperationType.CALLBACK) {
@@ -34,21 +39,23 @@ public class TestUtils {
                                     .callbackId(UUID.randomUUID().toString())
                                     .build());
                         }
-
-                        responseOperations.add(opBuilder.build());
                     } else if (update.action() == OperationAction.SUCCEED) {
-                        var stepDetails = StepDetails.builder();
-                        if (update.payload() != null) {
-                            stepDetails.result(update.payload());
+                        opBuilder.status(OperationStatus.SUCCEEDED);
+                        if (update.type() == OperationType.STEP) {
+                            var stepDetails = StepDetails.builder();
+                            if (update.payload() != null) {
+                                stepDetails.result(update.payload());
+                            }
+                            opBuilder.stepDetails(stepDetails.build());
+                        } else if (update.type() == OperationType.CONTEXT) {
+                            var contexDetail = ContextDetails.builder();
+                            if (update.payload() != null) {
+                                contexDetail.result(update.payload());
+                            }
+                            opBuilder.contextDetails(contexDetail.build());
                         }
-                        responseOperations.add(Operation.builder()
-                                .id(update.id())
-                                .name(update.name())
-                                .type(update.type())
-                                .status(OperationStatus.SUCCEEDED)
-                                .stepDetails(stepDetails.build())
-                                .build());
                     }
+                    responseOperations.add(opBuilder.build());
                 }
             }
 
@@ -60,5 +67,15 @@ public class TestUtils {
                     .build();
         });
         return client;
+    }
+
+    public static String hashOperationId(String rawId) {
+        try {
+            var messageDigest = MessageDigest.getInstance("SHA-256");
+            var hash = messageDigest.digest(rawId.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError("SHA-256 not available", e);
+        }
     }
 }

@@ -23,6 +23,10 @@ on:
       - 'examples/**'
       - 'pom.xml'
 
+concurrency:
+  group: e2e-tests
+  cancel-in-progress: false
+
 # permission can be added at job level or workflow level
 permissions:
   id-token: write # This is required for requesting the JWT

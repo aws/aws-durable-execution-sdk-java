@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.execution;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -118,6 +119,23 @@ public class ExecutionManager implements AutoCloseable {
                 return operation;
             });
         });
+    }
+
+    /**
+     * Gets all child operations for a given operationId.
+     *
+     * @param operationId the operationId to get children for
+     * @return List of child operations for the given operationId
+     */
+    public List<Operation> getChildOperations(String operationId) {
+        // todo: this is O(n) - consider an improvement if performance becomes an issue
+        var children = new ArrayList<Operation>();
+        for (Operation op : operationStorage.values()) {
+            if (Objects.equals(op.parentId(), operationId)) {
+                children.add(op);
+            }
+        }
+        return children;
     }
 
     /**

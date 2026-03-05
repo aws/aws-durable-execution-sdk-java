@@ -7,7 +7,7 @@ Callbacks suspend execution until an external system sends a result. Use this fo
 DurableCallbackFuture<String> callback = ctx.createCallback("approval", String.class);
 
 // Send the callback ID to an external system within a step
-ctx.step("send-notification", String.class, () -> {
+ctx.step("send-notification", String.class, stepCtx -> {
     notificationService.sendApprovalRequest(callback.callbackId(), requestDetails);
     return "notification-sent";
 });
@@ -17,6 +17,16 @@ String approvalResult = callback.get();
 ```
 
 The external system completes the callback by calling the Lambda Durable Functions API with the callback ID and result payload.
+
+#### waitForCallback() #### 
+
+`waitForCallback` simplifies callback handling by combining callback creation and submission in one operation. The SDK creates the callback, executes your submitter function with the callback ID, and waits for the result.
+
+```java
+ctx.waitForCallback("send-notification", String.class, (callbackId, stepCtx) -> {
+    notificationService.sendApprovalRequest(callbackId, requestDetails);
+})
+```
 
 #### Callback Configuration
 
@@ -30,6 +40,12 @@ var config = CallbackConfig.builder()
     .build();
 
 var callback = ctx.createCallback("approval", String.class, config);
+
+var waitForCallbackConfig = WaitForCallbackConfig.builder()
+    .callbackConfig(config)
+    .stepConfig(StepConfig.builder().retryStrategy(...).build())
+    .build();
+ctx.waitForCallback("approval", String.class, callbackId -> sendApprovalRequest(callbackId), waitForCallbackConfig);
 ```
 
 | Option | Description |

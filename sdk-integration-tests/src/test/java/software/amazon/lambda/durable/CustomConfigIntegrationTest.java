@@ -98,19 +98,18 @@ class CustomConfigIntegrationTest {
         var customConfig = DurableConfig.builder().withSerDes(customSerDes).build();
 
         var runner = LocalDurableTestRunner.create(
-                        String.class,
-                        (input, context) -> {
-                            var step1 = context.step("step1", String.class, () -> "Step1: " + input);
+                String.class,
+                (input, context) -> {
+                    var step1 = context.step("step1", String.class, () -> "Step1: " + input);
 
-                            // Remove wait operation to avoid complexity in this test
-                            var step2 = context.step("step2", String.class, () -> "Step2: " + input);
+                    // Remove wait operation to avoid complexity in this test
+                    var step2 = context.step("step2", String.class, () -> "Step2: " + input);
 
-                            var step3 = context.step("step3", String.class, () -> "Step3: " + input);
+                    var step3 = context.step("step3", String.class, () -> "Step3: " + input);
 
-                            return step1 + " | " + step2 + " | " + step3;
-                        },
-                        customConfig)
-                .withSkipTime(true);
+                    return step1 + " | " + step2 + " | " + step3;
+                },
+                customConfig);
 
         var result = runner.run("test");
 
@@ -137,24 +136,21 @@ class CustomConfigIntegrationTest {
         var customConfig = DurableConfig.builder().withSerDes(customSerDes).build();
 
         var runner = LocalDurableTestRunner.create(
-                        String.class,
-                        (input, context) -> {
-                            return context.step(
-                                    "retry-step",
-                                    String.class,
-                                    () -> {
-                                        int currentAttempt = attemptCount.incrementAndGet();
-                                        // Always fail to test retry behavior (like existing RetryIntegrationTest)
-                                        throw new RuntimeException("Simulated failure attempt " + currentAttempt);
-                                    },
-                                    StepConfig.builder()
-                                            .retryStrategy(
-                                                    software.amazon.lambda.durable.retry.RetryStrategies.Presets
-                                                            .DEFAULT)
-                                            .build());
-                        },
-                        customConfig)
-                .withSkipTime(true);
+                String.class,
+                (input, context) -> {
+                    return context.step(
+                            "retry-step",
+                            String.class,
+                            () -> {
+                                int currentAttempt = attemptCount.incrementAndGet();
+                                // Always fail to test retry behavior (like existing RetryIntegrationTest)
+                                throw new RuntimeException("Simulated failure attempt " + currentAttempt);
+                            },
+                            StepConfig.builder()
+                                    .retryStrategy(software.amazon.lambda.durable.retry.RetryStrategies.Presets.DEFAULT)
+                                    .build());
+                },
+                customConfig);
 
         // First run should return PENDING (retry scheduled) - matching existing RetryIntegrationTest pattern
         var result = runner.run("test");
