@@ -2,6 +2,10 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Java](https://img.shields.io/badge/java-%3E%3D17-brightgreen)](https://openjdk.org/)
+[![Build](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/build.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/build.yml)
+[![E2E Tests](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/e2e-tests.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/e2e-tests.yml)
+[![CodeQL](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/github-code-scanning/codeql)
+[![Spotless](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/check-spotless.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/check-spotless.yml)
 
 Build resilient, long-running AWS Lambda functions that automatically checkpoint progress and resume after failures. Durable functions can run for up to one year while you pay only for active compute time.
 
