@@ -4,8 +4,8 @@ package software.amazon.lambda.durable;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.Collections;
 import java.util.Map;
+import java.util.Objects;
 import java.util.WeakHashMap;
 
 /**
@@ -30,7 +30,7 @@ import java.util.WeakHashMap;
  */
 public abstract class TypeToken<T> {
     // cache for types
-    private static final Map<Type, Type> TYPE_CACHE = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Type, Type> TYPE_CACHE = new WeakHashMap<>();
 
     private final Type type;
 
@@ -38,10 +38,25 @@ public abstract class TypeToken<T> {
      * Constructs a new TypeToken. This constructor must be called from an anonymous subclass to capture the type
      * parameter.
      *
+     * @param caching whether to enable caching of resolved types
+     * @throws IllegalStateException if created without a type parameter
+     */
+    protected TypeToken(boolean caching) {
+        if (caching) {
+            this.type = TYPE_CACHE.computeIfAbsent(getClass(), k -> resolveType(getClass()));
+        } else {
+            this.type = resolveType(getClass());
+        }
+    }
+
+    /**
+     * Constructs a new TypeToken. This constructor must be called from an anonymous subclass to capture the type
+     * parameter. This constructor enables caching of resolved types to improve performance.
+     *
      * @throws IllegalStateException if created without a type parameter
      */
     protected TypeToken() {
-        this.type = TYPE_CACHE.computeIfAbsent(getClass(), k -> resolveType(getClass()));
+        this(true);
     }
 
     private static Type resolveType(Class<?> aClass) {
@@ -55,6 +70,7 @@ public abstract class TypeToken<T> {
     }
 
     private TypeToken(Type type) {
+        Objects.requireNonNull(type, "Type cannot be null");
         this.type = type;
     }
 
