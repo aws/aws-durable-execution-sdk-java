@@ -1,0 +1,93 @@
+
+name: Maven Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version (e.g. 1.2.0)'
+        required: true
+        type: string
+      next_version:
+        description: 'Next development version (e.g. 1.3.0-SNAPSHOT)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AWS_REGION: us-west-2
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+  
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: "${{ secrets.ACTIONS_MVN_ROLE_NAME }}"
+          role-session-name: mavenreleasesession
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set release version
+        run: mvn -q versions:set -DnewVersion=${{ github.event.inputs.release_version }} -DgenerateBackupPoms=false
+
+      - name: Commit release version
+        run: |
+          git config user.email "${{ github.actor }}+github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ github.actor }}+github-actions[bot]"
+          git add .
+          git commit -m "chore: release version ${{ github.event.inputs.release_version }}"
+      
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.release_version }}
+          name: Release v${{ github.event.inputs.release_version }}
+          generate_release_notes: true
+      
+      - name: Get Env variables
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+            secret-ids: |
+                mvn_gpg_keys
+                mvn_account_keys
+            parse-json-secrets: true
+          
+      - name: Sign and publish
+        run: bash .github/scripts/maven_publish.sh
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+
+      - name: Set next development version
+        run: mvn -q versions:set -DnewVersion=${{ github.event.inputs.next_version }} -DgenerateBackupPoms=false
+
+      - name: Commit release version
+        run: |
+          git add .
+          git commit -m "chore: bump version to ${{ github.event.inputs.next_version }}"
+      
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}

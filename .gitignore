@@ -26,6 +26,7 @@ buildNumber.properties
 # Local testing
 
 .durable-executions-local
+.env
 
 # OS
 .DS_Store
