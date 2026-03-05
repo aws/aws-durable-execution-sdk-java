@@ -335,7 +335,7 @@ class DurableContextTest {
                 .contextDetails(ContextDetails.builder().replayChildren(true).build())
                 .build();
         var callbackOp = Operation.builder()
-                .id("1-1")
+                .id(TestUtils.hashOperationId(OPERATION_ID1 + "-1"))
                 .status(OperationStatus.SUCCEEDED)
                 .callbackDetails(CallbackDetails.builder()
                         .result("\"result\"")
@@ -343,7 +343,7 @@ class DurableContextTest {
                         .build())
                 .build();
         var stepOp = Operation.builder()
-                .id("1-2")
+                .id(TestUtils.hashOperationId(OPERATION_ID1 + "-2"))
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().build())
                 .build();
@@ -386,7 +386,7 @@ class DurableContextTest {
                 .type(OperationType.CONTEXT)
                 .build();
         var callbackOp = Operation.builder()
-                .id("1-1")
+                .id(TestUtils.hashOperationId(OPERATION_ID1 + "-1"))
                 .status(OperationStatus.SUCCEEDED)
                 .callbackDetails(CallbackDetails.builder()
                         .result("\"result\"")
@@ -394,7 +394,7 @@ class DurableContextTest {
                         .build())
                 .build();
         var stepOp = Operation.builder()
-                .id("1-2")
+                .id(TestUtils.hashOperationId(OPERATION_ID1 + "-2"))
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().build())
                 .build();
