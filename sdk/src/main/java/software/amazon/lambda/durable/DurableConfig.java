@@ -2,16 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
 import software.amazon.awssdk.core.SdkSystemSetting;
+import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.LambdaClientBuilder;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequest;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
@@ -63,6 +68,10 @@ public final class DurableConfig {
      * is always set by the Lambda runtime.
      */
     private static final String DEFAULT_REGION = "us-east-1";
+
+    private static final String VERSION_FILE = "/version.prop";
+    private static final String PROJECT_VERSION = getProjectVersion(VERSION_FILE);
+    private static final String USER_AGENT_SUFFIX = "@aws/durable-execution-sdk-java/" + PROJECT_VERSION;
 
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
@@ -169,9 +178,9 @@ public final class DurableConfig {
             logger.debug("AWS_REGION not set, defaulting to: {}", region);
         }
 
-        var lambdaClient = LambdaClient.builder()
-                .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
-                .region(Region.of(region))
+        var lambdaClient = addUserAgentSuffix(LambdaClient.builder()
+                        .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
+                        .region(Region.of(region)))
                 .build();
 
         try {
@@ -192,6 +201,27 @@ public final class DurableConfig {
 
         logger.debug("Default DurableExecutionClient created for region: {}", region);
         return new LambdaDurableFunctionsClient(lambdaClient);
+    }
+
+    static LambdaClientBuilder addUserAgentSuffix(LambdaClientBuilder builder) {
+        return builder.overrideConfiguration(builder.overrideConfiguration().toBuilder()
+                .putAdvancedOption(SdkAdvancedClientOption.USER_AGENT_SUFFIX, USER_AGENT_SUFFIX)
+                .build());
+    }
+
+    private static String getProjectVersion(String versionFile) {
+        InputStream stream = DurableConfig.class.getResourceAsStream(versionFile);
+        if (stream == null) {
+            return "UNKNOWN";
+        }
+        Properties props = new Properties();
+        try {
+            props.load(stream);
+            stream.close();
+            return (String) props.get("version");
+        } catch (IOException e) {
+            return "UNKNOWN";
+        }
     }
 
     /**
@@ -230,23 +260,23 @@ public final class DurableConfig {
          * <p>Example:
          *
          * <pre>{@code
-         * LambdaClient lambdaClient = LambdaClient.builder()
+         * LambdaClientBuilder lambdaClientBuilder = LambdaClient.builder()
          *     .region(Region.US_WEST_2)
-         *     .credentialsProvider(ProfileCredentialsProvider.create("my-profile"))
-         *     .build();
+         *     .credentialsProvider(ProfileCredentialsProvider.create("my-profile"));
          *
          * DurableConfig.builder()
-         *     .withLambdaClient(lambdaClient)
+         *     .withLambdaClientBuilder(lambdaClientBuilder)
          *     .build();
          * }</pre>
          *
-         * @param lambdaClient Custom LambdaClient instance
+         * @param lambdaClientBuilder Custom LambdaClientBuilder instance
          * @return This builder
          * @throws NullPointerException if lambdaClient is null
          */
-        public Builder withLambdaClient(LambdaClient lambdaClient) {
-            Objects.requireNonNull(lambdaClient, "LambdaClient cannot be null");
-            this.durableExecutionClient = new LambdaDurableFunctionsClient(lambdaClient);
+        public Builder withLambdaClientBuilder(LambdaClientBuilder lambdaClientBuilder) {
+            Objects.requireNonNull(lambdaClientBuilder, "LambdaClient cannot be null");
+            this.durableExecutionClient = new LambdaDurableFunctionsClient(
+                    addUserAgentSuffix(lambdaClientBuilder).build());
             return this;
         }
 
@@ -255,7 +285,7 @@ public final class DurableConfig {
          *
          * <p><b>Note:</b> This method is primarily intended for testing with mock clients (e.g.,
          * {@code LocalMemoryExecutionClient}). For production use with a custom AWS SDK client, prefer
-         * {@link #withLambdaClient(LambdaClient)}.
+         * {@link #withLambdaClientBuilder(LambdaClientBuilder)}.
          *
          * @param durableExecutionClient Custom DurableExecutionClient instance
          * @return This builder
