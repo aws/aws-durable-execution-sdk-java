@@ -104,7 +104,6 @@ class IntegrationTest {
             var step2 = context.step("step2", String.class, () -> "Step 2 done");
             return new TestOutput(step1 + " + " + step2);
         });
-        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete(new TestInput("test"));
 
@@ -167,7 +166,6 @@ class IntegrationTest {
             context.step("good-step", String.class, () -> "ok");
             return "done";
         });
-        runner.withSkipTime(true);
 
         var result = runner.runUntilComplete(new TestInput("test"));
 
@@ -184,9 +182,8 @@ class IntegrationTest {
             context.wait(Duration.ofSeconds(5));
             return "done";
         });
-        runner.withSkipTime(false);
 
-        var result = runner.runUntilComplete(new TestInput("test"));
+        var result = runner.run(new TestInput("test"));
 
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
         assertEquals(1, result.getSucceededOperations().size());

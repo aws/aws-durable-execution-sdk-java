@@ -29,7 +29,6 @@ public class LocalDurableTestRunner<I, O> {
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
-    private boolean skipTime = true;
 
     private LocalDurableTestRunner(Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
         this.inputType = inputType;
@@ -144,11 +143,6 @@ public class LocalDurableTestRunner<I, O> {
         return new LocalDurableTestRunner<>(inputType, handler::handleRequest, handler.getConfiguration());
     }
 
-    public LocalDurableTestRunner<I, O> withSkipTime(boolean skipTime) {
-        this.skipTime = skipTime;
-        return this;
-    }
-
     /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
         var durableInput = createDurableInput(input);
@@ -185,12 +179,10 @@ public class LocalDurableTestRunner<I, O> {
         for (int i = 0; i < MAX_INVOCATIONS; i++) {
             result = run(input);
 
-            if (result.getStatus() != ExecutionStatus.PENDING || !skipTime || !storage.advanceReadyOperations()) {
+            if (result.getStatus() != ExecutionStatus.PENDING || !storage.advanceReadyOperations()) {
                 // break the loop if
                 // - Return SUCCEEDED or FAILED - we're done
-                // - Return PENDING and let test manually advance operations if
-                //    - auto advance is disabled, or
-                //    - no operations can be auto advanced
+                // - Return PENDING and let test manually advance operations if no operations can be auto advanced
                 break;
             }
         }

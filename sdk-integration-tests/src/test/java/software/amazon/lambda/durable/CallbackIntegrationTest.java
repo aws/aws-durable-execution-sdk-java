@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -258,5 +260,93 @@ class CallbackIntegrationTest {
         assertEquals("Invalid input data", result.getError().get().errorMessage());
         assertNotNull(result.getError().get().stackTrace());
         assertEquals(1, result.getError().get().stackTrace().size());
+    }
+
+    @Test
+    void waitForCallbackCallbackFailed() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            try {
+                ctx.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {});
+                fail();
+                return "should not reach here";
+            } catch (Exception e) {
+                assertInstanceOf(CallbackFailedException.class, e);
+                throw e;
+            }
+        });
+
+        // First run - creates callback
+        runner.run("test");
+
+        // Fail callback with errorType, errorMessage, and stack trace
+        var callbackId = runner.getCallbackId("approval-callback");
+        var error = ErrorObject.builder()
+                .errorType("ValidationError")
+                .errorMessage("Invalid input data")
+                .stackTrace(java.util.List.of("com.example.Service|validate|Service.java|42"))
+                .build();
+        runner.failCallback(callbackId, error);
+
+        // Second run - should fail with formatted message and preserved stack trace
+        var result = runner.run("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertTrue(result.getError().isPresent());
+        assertEquals("ValidationError", result.getError().get().errorType());
+        assertEquals("Invalid input data", result.getError().get().errorMessage());
+        assertNotNull(result.getError().get().stackTrace());
+        assertEquals(1, result.getError().get().stackTrace().size());
+    }
+
+    @Test
+    void waitForCallbackCallbackTimeout() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            try {
+                ctx.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {});
+                fail();
+                return "should not reach here";
+            } catch (Exception e) {
+                assertInstanceOf(CallbackTimeoutException.class, e);
+                throw e;
+            }
+        });
+
+        // First run - creates callback
+        runner.run("test");
+
+        // Fail callback with errorType, errorMessage, and stack trace
+        var callbackId = runner.getCallbackId("approval-callback");
+        runner.timeoutCallback(callbackId);
+
+        // Second run - should fail with formatted message and preserved stack trace
+        var result = runner.run("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+    }
+
+    @Test
+    void waitForCallbackCallbackFailedWithUserException() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            var errorMessage = "user exception";
+            try {
+                return ctx.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {
+                    // original exception
+                    throw new IllegalArgumentException(errorMessage);
+                });
+            } catch (Exception e) {
+                assertInstanceOf(IllegalArgumentException.class, e);
+                assertEquals(errorMessage, e.getMessage());
+                throw e;
+            }
+        });
+
+        // First run - creates callback
+        runner.run("test");
+
+        // Fail callback with errorType, errorMessage, and stack trace
+        var callbackId = runner.getCallbackId("approval-callback");
+        runner.timeoutCallback(callbackId);
+
+        // Second run - should fail with formatted message and preserved stack trace
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
     }
 }

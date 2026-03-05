@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.operation;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
@@ -126,6 +127,16 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
      */
     protected Operation getOperation() {
         return executionManager.getOperationAndUpdateReplayState(getOperationId());
+    }
+
+    /**
+     * Gets the direct child Operations of a give context operation.
+     *
+     * @param operationId the operation id of the context
+     * @return list of the child Operations
+     */
+    protected List<Operation> getChildOperations(String operationId) {
+        return executionManager.getChildOperations(operationId);
     }
 
     /**

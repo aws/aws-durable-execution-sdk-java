@@ -12,6 +12,7 @@ import java.time.Duration;
 public final class ParameterValidator {
 
     private static final long MIN_DURATION_SECONDS = 1;
+    public static final int MAX_OPERATION_NAME_LENGTH = 256;
 
     private ParameterValidator() {
         // Utility class - prevent instantiation
@@ -74,6 +75,32 @@ public final class ParameterValidator {
     public static void validateOptionalPositiveInteger(Integer value, String parameterName) {
         if (value != null && value <= 0) {
             throw new IllegalArgumentException(parameterName + " must be positive, got: " + value);
+        }
+    }
+
+    public static void validateOperationName(String name) {
+        validateOperationName(name, MAX_OPERATION_NAME_LENGTH);
+    }
+
+    public static void validateOperationName(String name, int maxLength) {
+        if (name == null) {
+            // operation name is optional
+            return;
+        }
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("Operation name cannot be empty");
+        }
+        if (name.length() > maxLength) {
+            throw new IllegalArgumentException(
+                    "Operation name must be less than " + maxLength + " characters, got: " + name);
+        }
+
+        // validate each character is printable ASCII
+        for (char c : name.toCharArray()) {
+            if (c < 0x20 || c > 0x7e) {
+                throw new IllegalArgumentException(
+                        "Operation name must contain only printable ASCII characters, got: " + name);
+            }
         }
     }
 }

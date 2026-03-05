@@ -21,12 +21,13 @@ public class TestUtils {
 
             if (updates != null) {
                 for (var update : updates) {
+                    var opBuilder = Operation.builder()
+                            .id(update.id())
+                            .name(update.name())
+                            .subType(update.subType())
+                            .type(update.type());
                     if (update.action() == OperationAction.START) {
-                        var opBuilder = Operation.builder()
-                                .id(update.id())
-                                .name(update.name())
-                                .type(update.type())
-                                .status(OperationStatus.STARTED);
+                        opBuilder.status(OperationStatus.STARTED);
 
                         // Add callback details for CALLBACK operations
                         if (update.type() == OperationType.CALLBACK) {
@@ -34,21 +35,23 @@ public class TestUtils {
                                     .callbackId(UUID.randomUUID().toString())
                                     .build());
                         }
-
-                        responseOperations.add(opBuilder.build());
                     } else if (update.action() == OperationAction.SUCCEED) {
-                        var stepDetails = StepDetails.builder();
-                        if (update.payload() != null) {
-                            stepDetails.result(update.payload());
+                        opBuilder.status(OperationStatus.SUCCEEDED);
+                        if (update.type() == OperationType.STEP) {
+                            var stepDetails = StepDetails.builder();
+                            if (update.payload() != null) {
+                                stepDetails.result(update.payload());
+                            }
+                            opBuilder.stepDetails(stepDetails.build());
+                        } else if (update.type() == OperationType.CONTEXT) {
+                            var contexDetail = ContextDetails.builder();
+                            if (update.payload() != null) {
+                                contexDetail.result(update.payload());
+                            }
+                            opBuilder.contextDetails(contexDetail.build());
                         }
-                        responseOperations.add(Operation.builder()
-                                .id(update.id())
-                                .name(update.name())
-                                .type(update.type())
-                                .status(OperationStatus.SUCCEEDED)
-                                .stepDetails(stepDetails.build())
-                                .build());
                     }
+                    responseOperations.add(opBuilder.build());
                 }
             }
 

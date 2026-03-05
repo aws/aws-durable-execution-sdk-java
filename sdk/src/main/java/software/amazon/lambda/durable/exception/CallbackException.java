@@ -8,7 +8,11 @@ public class CallbackException extends DurableOperationException {
     private final String callbackId;
 
     public CallbackException(Operation operation, String message) {
-        super(operation, operation.callbackDetails().error(), message);
+        this(operation, message, null);
+    }
+
+    public CallbackException(Operation operation, String message, Throwable cause) {
+        super(operation, operation.callbackDetails().error(), message, cause);
         this.callbackId = operation.callbackDetails().callbackId();
     }
 

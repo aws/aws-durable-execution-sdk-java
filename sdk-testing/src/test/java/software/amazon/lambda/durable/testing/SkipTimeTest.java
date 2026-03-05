@@ -33,7 +33,6 @@ class SkipTimeTest {
         });
 
         // Should automatically advance all operations
-        runner.withSkipTime(true);
         var result = runner.runUntilComplete(new TestInput("test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -50,10 +49,8 @@ class SkipTimeTest {
             return step1 + "+" + step2;
         });
 
-        runner.withSkipTime(false);
-
         // First run - should execute until wait and return PENDING
-        var result1 = runner.runUntilComplete(new TestInput("test"));
+        var result1 = runner.run(new TestInput("test"));
         assertEquals(ExecutionStatus.PENDING, result1.getStatus());
 
         // Manually advance time
@@ -84,10 +81,8 @@ class SkipTimeTest {
                             .build());
         });
 
-        runner.withSkipTime(false);
-
         // First run - should fail and return PENDING (waiting for retry)
-        var result1 = runner.runUntilComplete(new TestInput("test"));
+        var result1 = runner.run(new TestInput("test"));
         System.out.println("First run status: " + result1.getStatus());
         assertEquals(ExecutionStatus.PENDING, result1.getStatus());
         assertEquals(1, result1.getOperations().get(0).getStepDetails().attempt());
@@ -96,7 +91,7 @@ class SkipTimeTest {
         runner.advanceTime();
 
         // Second run - should retry and fail again, return PENDING for next retry
-        var result2 = runner.runUntilComplete(new TestInput("test"));
+        var result2 = runner.run(new TestInput("test"));
         assertEquals(ExecutionStatus.PENDING, result2.getStatus());
         assertEquals(2, result2.getOperations().get(0).getStepDetails().attempt());
 
