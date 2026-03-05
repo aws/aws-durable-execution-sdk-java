@@ -86,7 +86,7 @@ class DurableExecutionTest {
                 String.class,
                 (userInput, ctx) -> {
                     ctx.step("step1", String.class, () -> "Done");
-                    ctx.wait(java.time.Duration.ofSeconds(60));
+                    ctx.wait(null, java.time.Duration.ofSeconds(60));
                     return "Should not reach here";
                 },
                 configWithMockClient());

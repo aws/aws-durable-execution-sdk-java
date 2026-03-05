@@ -52,7 +52,7 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
             () -> paymentService.charge(order.getPaymentMethod(), order.getTotal()));
 
         // Wait for warehouse processing (no compute charges)
-        ctx.wait(Duration.ofHours(2));
+        ctx.wait(null, Duration.ofHours(2));
 
         // Step 3: Confirm shipment
         var shipment = ctx.step("confirm-shipment", Shipment.class,

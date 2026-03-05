@@ -10,7 +10,7 @@ The TypeScript and Python durable execution SDKs support child contexts via `Ope
 ```java
 var futureA = ctx.runInChildContextAsync("branch-a", String.class, child -> {
     child.step("validate", Void.class, () -> validate(order));
-    child.wait(Duration.ofMinutes(5));
+    child.wait(null, Duration.ofMinutes(5));
     return child.step("charge", String.class, () -> charge(order));
 });
 var futureB = ctx.runInChildContextAsync("branch-b", String.class, child -> { ... });

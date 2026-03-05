@@ -79,7 +79,7 @@ public class RetryExample extends DurableHandler<Object, String> {
         logger.info("Flaky API result: {}", result);
 
         // Step 4: Wait a bit before finishing
-        context.wait(Duration.ofSeconds(2));
+        context.wait(null, Duration.ofSeconds(2));
 
         logger.info("Retry example completed successfully");
         return "Retry example completed: " + result;

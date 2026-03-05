@@ -4,7 +4,7 @@ Waits suspend the function and resume after the specified duration. You're not c
 
 ```java
 // Wait 30 minutes
-ctx.wait(Duration.ofMinutes(30));
+ctx.wait(null, Duration.ofMinutes(30));
 
 // Named wait (useful for debugging)
 ctx.wait("cooling-off-period", Duration.ofDays(7));

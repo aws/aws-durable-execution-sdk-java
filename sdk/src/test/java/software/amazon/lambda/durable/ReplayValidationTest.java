@@ -87,7 +87,7 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should not throw
-        assertDoesNotThrow(() -> context.wait(Duration.ofSeconds(1)));
+        assertDoesNotThrow(() -> context.wait(null, Duration.ofSeconds(1)));
     }
 
     @Test

@@ -10,7 +10,7 @@ The SDK uses a unified suspension mechanism: when `activeThreads.isEmpty()`, exe
 
 ### Simple Case: Direct Suspension
 ```java
-context.wait(Duration.ofMinutes(5)); // Root deregisters → immediate suspension
+context.wait(null, Duration.ofMinutes(5)); // Root deregisters → immediate suspension
 ```
 
 ### Complex Case: Blocking on Retrying Operations

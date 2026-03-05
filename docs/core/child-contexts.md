@@ -6,7 +6,7 @@ Child contexts run an isolated stream of work with their own operation counter a
 // Sync: blocks until the child context completes
 var result = ctx.runInChildContext("validate-order", String.class, child -> {
     var data = child.step("fetch", String.class, () -> fetchData());
-    child.wait(Duration.ofMinutes(5));
+    child.wait(null, Duration.ofMinutes(5));
     return child.step("validate", String.class, () -> validate(data));
 });
 

@@ -131,7 +131,7 @@ class DurableContextTest {
 
         // Wait should throw SuspendExecutionException
         assertThrows(SuspendExecutionException.class, () -> {
-            context.wait(Duration.ofMinutes(5));
+            context.wait(null, Duration.ofMinutes(5));
         });
     }
 
@@ -146,7 +146,7 @@ class DurableContextTest {
 
         // Wait should complete immediately (no exception)
         assertDoesNotThrow(() -> {
-            context.wait(Duration.ofMinutes(5));
+            context.wait(null, Duration.ofMinutes(5));
         });
     }
 
@@ -169,7 +169,7 @@ class DurableContextTest {
 
         // Wait should suspend (throw exception)
         assertThrows(SuspendExecutionException.class, () -> {
-            context.wait(Duration.ofSeconds(30));
+            context.wait(null, Duration.ofSeconds(30));
         });
     }
 
@@ -201,7 +201,7 @@ class DurableContextTest {
 
         // Wait should complete immediately (no exception)
         assertDoesNotThrow(() -> {
-            context.wait(Duration.ofSeconds(30));
+            context.wait(null, Duration.ofSeconds(30));
         });
     }
 

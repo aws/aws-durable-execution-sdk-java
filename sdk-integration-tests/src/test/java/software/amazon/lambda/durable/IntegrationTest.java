@@ -74,7 +74,7 @@ class IntegrationTest {
             var step1 = context.step("step1", String.class, () -> "Step 1 done");
 
             // This should throw SuspendExecutionException
-            context.wait(Duration.ofMinutes(5));
+            context.wait(null, Duration.ofMinutes(5));
 
             // This should never execute in first run
             var step2 = context.step("step2", String.class, () -> "Step 2 done");
@@ -98,7 +98,7 @@ class IntegrationTest {
             var step1 = context.step("step1", String.class, () -> "Step 1 done");
 
             // This should throw SuspendExecutionException
-            context.wait(Duration.ofMinutes(5));
+            context.wait(null, Duration.ofMinutes(5));
 
             // This should never execute in first run
             var step2 = context.step("step2", String.class, () -> "Step 2 done");
@@ -179,7 +179,7 @@ class IntegrationTest {
     void testWaitOperationWithManualAdvance() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
             context.step("good-step", String.class, () -> "ok");
-            context.wait(Duration.ofSeconds(5));
+            context.wait(null, Duration.ofSeconds(5));
             return "done";
         });
 
@@ -214,16 +214,22 @@ class IntegrationTest {
             return new TestOutput(step1 + " + " + step2);
         });
 
-        var result = runner.runUntilComplete(new TestInput("test"));
+        // First run should suspend at waitFuture.get() since the wait hasn't elapsed
+        var result = runner.run(new TestInput("test"));
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
 
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("Step 1 done + Step 2 done", result.getResult(TestOutput.class).result);
+        // Advance time so the wait completes, then re-run to finish
+        runner.advanceTime();
+
+        var result2 = runner.runUntilComplete(new TestInput("test"));
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals("Step 1 done + Step 2 done", result2.getResult(TestOutput.class).result);
     }
 
     @Test
     void testWaitAsyncSuspendsOnGet() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var waitFuture = context.waitAsync(Duration.ofMinutes(5));
+            var waitFuture = context.waitAsync(null, Duration.ofMinutes(5));
 
             // Calling get() should suspend execution
             waitFuture.get();
@@ -235,12 +241,19 @@ class IntegrationTest {
         // First run should suspend at waitFuture.get()
         var result = runner.run(new TestInput("test"));
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        // Advance time so the wait completes, then re-run to finish
+        runner.advanceTime();
+
+        var result2 = runner.runUntilComplete(new TestInput("test"));
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals("done", result2.getResult(TestOutput.class).result);
     }
 
     @Test
     void testWaitAsyncWithoutName() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var waitFuture = context.waitAsync(Duration.ofSeconds(10));
+            var waitFuture = context.waitAsync(null, Duration.ofSeconds(10));
             waitFuture.get();
             return new TestOutput("done");
         });

@@ -170,16 +170,8 @@ public class DurableContext extends BaseContext {
 
     // ========== wait methods ==========
 
-    public Void wait(Duration duration) {
-        return wait(null, duration);
-    }
-
     public Void wait(String waitName, Duration duration) {
         return waitAsync(waitName, duration).get(); // Block (will throw SuspendExecutionException if needed)
-    }
-
-    public DurableFuture<Void> waitAsync(Duration duration) {
-        return waitAsync(null, duration);
     }
 
     public DurableFuture<Void> waitAsync(String waitName, Duration duration) {

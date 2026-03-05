@@ -10,7 +10,7 @@ Durable functions need to suspend execution immediately at suspension points (wa
 ```java
 public String handleRequest(MyInput input, DurableContext context) {
     var result1 = context.step("step1", () -> "first");
-    context.wait(Duration.ofHours(1)); // Should suspend HERE
+    context.wait(null, Duration.ofHours(1)); // Should suspend HERE
     var result2 = context.step("step2", () -> "second"); // Don't wait for this
     return result1 + result2;
 }

@@ -26,9 +26,15 @@ class WaitAsyncExampleTest {
         var handler = new WaitAsyncExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 
-        var result = runner.run(new GreetingRequest("Bob"));
-
         // First run suspends because the wait hasn't elapsed yet
+        var result = runner.run(new GreetingRequest("Bob"));
         assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        // Advance time so the wait completes, then re-run to finish
+        runner.advanceTime();
+
+        var result2 = runner.runUntilComplete(new GreetingRequest("Bob"));
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals("Processed: Bob", result2.getResult(String.class));
     }
 }

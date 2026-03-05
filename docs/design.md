@@ -43,11 +43,9 @@ DurableFuture<T> stepAsync(String name, TypeToken<T> type, Supplier<T> func)
 DurableFuture<T> stepAsync(String name, TypeToken<T> type, Supplier<T> func, StepConfig config)
 
 // Wait
-void wait(Duration duration)
 void wait(String name, Duration duration)
 
 // Asynchronous wait
-DurableFuture<Void> waitAsync(Duration duration)
 DurableFuture<Void> waitAsync(String name, Duration duration)
     
 // Invoke
@@ -324,7 +322,7 @@ sequenceDiagram
     participant EM as ExecutionManager
     participant Backend
 
-    UC->>DC: wait(Duration.ofMinutes(5))
+    UC->>DC: wait(null, Duration.ofMinutes(5))
     DC->>WO: execute()
     WO->>EM: sendOperationUpdate(WAIT, duration)
     EM->>Backend: checkpoint

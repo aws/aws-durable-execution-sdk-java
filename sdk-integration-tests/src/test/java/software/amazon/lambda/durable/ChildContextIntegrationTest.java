@@ -187,7 +187,7 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("workflow", String.class, child -> {
                 child.step("before-wait", Void.class, () -> null);
-                child.wait(Duration.ofSeconds(10));
+                child.wait(null, Duration.ofSeconds(10));
                 return child.step("after-wait", String.class, () -> "done");
             });
         });
@@ -206,7 +206,7 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("workflow", String.class, child -> {
                 child.step("before-wait", Void.class, () -> null);
-                child.wait(Duration.ofSeconds(10));
+                child.wait(null, Duration.ofSeconds(10));
                 return child.step("after-wait", String.class, () -> "done");
             });
         });
@@ -232,12 +232,12 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var f1 = ctx.runInChildContextAsync("child-a", String.class, child -> {
                 child.step("a-before", Void.class, () -> null);
-                child.wait(Duration.ofSeconds(5));
+                child.wait(null, Duration.ofSeconds(5));
                 return child.step("a-after", String.class, () -> "a-done");
             });
             var f2 = ctx.runInChildContextAsync("child-b", String.class, child -> {
                 child.step("b-before", Void.class, () -> null);
-                child.wait(Duration.ofSeconds(10));
+                child.wait(null, Duration.ofSeconds(10));
                 return child.step("b-after", String.class, () -> "b-done");
             });
             return f1.get() + "+" + f2.get();
@@ -264,7 +264,7 @@ class ChildContextIntegrationTest {
     void oneChildWaitsWhileOtherKeepsProcessingSuspendsAfterWorkDone() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var waiting = ctx.runInChildContextAsync("waiter", String.class, child -> {
-                child.wait(Duration.ofSeconds(30));
+                child.wait(null, Duration.ofSeconds(30));
                 return child.step("w-after", String.class, () -> "waited");
             });
             var busy = ctx.runInChildContextAsync("busy", String.class, child -> {
