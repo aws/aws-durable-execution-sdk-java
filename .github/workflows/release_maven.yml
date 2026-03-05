@@ -12,6 +12,11 @@ on:
         description: 'Next development version (e.g. 1.3.0-SNAPSHOT)'
         required: true
         type: string
+      is_pre_release:
+        description: 'Is pre-release?'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -68,6 +73,7 @@ jobs:
           tag_name: v${{ github.event.inputs.release_version }}
           name: Release v${{ github.event.inputs.release_version }}
           generate_release_notes: true
+          prerelease: ${{ github.event.inputs.is_pre_release }}
           files: |
             sdk/target/aws-durable-execution-sdk-java-${{ github.event.inputs.release_version }}.jar
             sdk-testing/target/aws-durable-execution-sdk-java-testing-${{ github.event.inputs.release_version }}.jar
