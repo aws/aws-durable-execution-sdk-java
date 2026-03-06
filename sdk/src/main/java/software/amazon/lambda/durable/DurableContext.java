@@ -139,37 +139,50 @@ public class DurableContext extends BaseContext {
         return operation;
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> T step(String name, Class<T> resultType, Supplier<T> func) {
-        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());
+        return stepAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        func,
+                        StepConfig.builder().build())
+                .get();
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> T step(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
         // Simply delegate to stepAsync and block on the result
-        return stepAsync(name, resultType, func, config).get();
+        return stepAsync(name, TypeToken.get(resultType), func, config).get();
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func) {
-        return step(name, typeToken, func, StepConfig.builder().build());
+        return stepAsync(name, typeToken, func, StepConfig.builder().build()).get();
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config) {
         // Simply delegate to stepAsync and block on the result
         return stepAsync(name, typeToken, func, config).get();
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func) {
         return stepAsync(
                 name, TypeToken.get(resultType), func, StepConfig.builder().build());
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
         return stepAsync(name, TypeToken.get(resultType), func, config);
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func) {
         return stepAsync(name, typeToken, func, StepConfig.builder().build());
     }
 
+    /** @deprecated use the variants accepting StepContext instead */
     public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config) {
         return stepAsync(name, typeToken, stepContext -> func.get(), config);
     }
@@ -201,7 +214,7 @@ public class DurableContext extends BaseContext {
                         name,
                         functionName,
                         payload,
-                        resultType,
+                        TypeToken.get(resultType),
                         InvokeConfig.builder().build())
                 .get();
     }
@@ -278,7 +291,8 @@ public class DurableContext extends BaseContext {
     }
 
     public <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType) {
-        return createCallback(name, resultType, CallbackConfig.builder().build());
+        return createCallback(
+                name, TypeToken.get(resultType), CallbackConfig.builder().build());
     }
 
     public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken, CallbackConfig config) {
