@@ -4,6 +4,7 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static software.amazon.lambda.durable.TypeToken.get;
 
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.util.List;
@@ -50,7 +51,7 @@ class DurableExecutionWrapperTest {
         var config =
                 DurableConfig.builder().withDurableExecutionClient(mockClient()).build();
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler = DurableExecutor.wrap(
-                TestInput.class,
+                get(TestInput.class),
                 (input, context) -> {
                     var result = context.step("process", String.class, stepCtx -> "Wrapped: " + input.value);
                     return new TestOutput(result);
@@ -83,7 +84,7 @@ class DurableExecutionWrapperTest {
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertNotNull(output.result());
 
-        var result = serDes.deserialize(output.result(), TypeToken.get(TestOutput.class));
+        var result = serDes.deserialize(output.result(), get(TestOutput.class));
         assertEquals("Wrapped: test", result.result);
     }
 
@@ -92,7 +93,7 @@ class DurableExecutionWrapperTest {
         var config =
                 DurableConfig.builder().withDurableExecutionClient(mockClient()).build();
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler =
-                DurableExecutor.wrap(TestInput.class, DurableExecutionWrapperTest::handleRequest, config);
+                DurableExecutor.wrap(get(TestInput.class), DurableExecutionWrapperTest::handleRequest, config);
 
         var serDes = new JacksonSerDes();
 
@@ -115,7 +116,7 @@ class DurableExecutionWrapperTest {
         var output = handler.handleRequest(input, null);
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
-        var result = serDes.deserialize(output.result(), TypeToken.get(TestOutput.class));
+        var result = serDes.deserialize(output.result(), get(TestOutput.class));
         assertEquals("Method: method-ref", result.result);
     }
 

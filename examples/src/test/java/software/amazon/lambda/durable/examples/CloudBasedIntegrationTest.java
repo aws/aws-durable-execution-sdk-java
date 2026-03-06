@@ -3,7 +3,10 @@
 package software.amazon.lambda.durable.examples;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -13,6 +16,7 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
@@ -60,7 +64,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testSimpleStepExample() {
-        var runner = CloudDurableTestRunner.create(arn("simple-step-example"), Map.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("simple-step-example"), new TypeToken<Map<String, String>>() {}, get(String.class));
         var result = runner.run(Map.of("message", "test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -73,7 +78,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testNoopExampleWithLargeInput() {
-        var runner = CloudDurableTestRunner.create(arn("noop-example"), Map.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("noop-example"), new TypeToken<Map<String, String>>() {}, get(String.class));
         // 6MB large input
         var largeInput = "A".repeat(1024 * 1024 * 6 - 12);
         var result = runner.run(Map.of("name", largeInput));
@@ -84,7 +90,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testSimpleInvokeExample() {
-        var runner = CloudDurableTestRunner.create(arn("simple-invoke-example"), Map.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("simple-invoke-example"), new TypeToken<Map<String, String>>() {}, get(String.class));
         var result = runner.run(Map.of("name", functionNameSuffix));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -226,6 +233,31 @@ class CloudBasedIntegrationTest {
         // Verify operations were executed
         assertNotNull(runner.getOperation("fetch-items"));
         assertNotNull(runner.getOperation("count-by-category"));
+        assertNotNull(runner.getOperation("fetch-categories"));
+    }
+
+    @Test
+    void testGenericInputOutputExample() {
+        final TypeToken<Map<String, Map<String, List<String>>>> resultType = new TypeToken<>() {};
+        final TypeToken<Map<String, String>> inputType = new TypeToken<>() {};
+
+        var runner = CloudDurableTestRunner.create(arn("generic-input-output-example"), inputType, resultType);
+        var result = runner.run(new HashMap<>(Map.of("userId", "user123")));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var output = result.getResult(resultType);
+        assertNotNull(output);
+
+        // Verify categories nested map
+        var categories = output.get("categories");
+        assertNotNull(categories);
+        assertEquals(3, categories.size());
+        assertEquals(2, categories.get("electronics").size());
+        assertTrue(categories.get("electronics").contains("laptop"));
+        assertTrue(categories.get("electronics").contains("phone"));
+
+        // Verify operations were executed
         assertNotNull(runner.getOperation("fetch-categories"));
     }
 

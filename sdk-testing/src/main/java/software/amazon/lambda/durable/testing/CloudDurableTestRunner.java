@@ -8,12 +8,13 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 public class CloudDurableTestRunner<I, O> {
     private final String functionArn;
-    private final Class<I> inputType;
-    private final Class<O> outputType;
+    private final TypeToken<I> inputType;
+    private final TypeToken<O> outputType;
     private final LambdaClient lambdaClient;
     private final Duration pollInterval;
     private final Duration timeout;
@@ -23,8 +24,8 @@ public class CloudDurableTestRunner<I, O> {
 
     private CloudDurableTestRunner(
             String functionArn,
-            Class<I> inputType,
-            Class<O> outputType,
+            TypeToken<I> inputType,
+            TypeToken<O> outputType,
             LambdaClient lambdaClient,
             Duration pollInterval,
             Duration timeout,
@@ -40,6 +41,11 @@ public class CloudDurableTestRunner<I, O> {
 
     public static <I, O> CloudDurableTestRunner<I, O> create(
             String functionArn, Class<I> inputType, Class<O> outputType) {
+        return create(functionArn, TypeToken.get(inputType), TypeToken.get(outputType));
+    }
+
+    public static <I, O> CloudDurableTestRunner<I, O> create(
+            String functionArn, TypeToken<I> inputType, TypeToken<O> outputType) {
         return new CloudDurableTestRunner<>(
                 functionArn,
                 inputType,
@@ -55,6 +61,11 @@ public class CloudDurableTestRunner<I, O> {
 
     public static <I, O> CloudDurableTestRunner<I, O> create(
             String functionArn, Class<I> inputType, Class<O> outputType, LambdaClient lambdaClient) {
+        return create(functionArn, TypeToken.get(inputType), TypeToken.get(outputType), lambdaClient);
+    }
+
+    public static <I, O> CloudDurableTestRunner<I, O> create(
+            String functionArn, TypeToken<I> inputType, TypeToken<O> outputType, LambdaClient lambdaClient) {
         return new CloudDurableTestRunner<>(
                 functionArn,
                 inputType,

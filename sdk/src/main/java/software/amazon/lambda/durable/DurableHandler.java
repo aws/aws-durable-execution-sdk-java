@@ -34,17 +34,16 @@ import software.amazon.lambda.durable.serde.AwsSdkV2Module;
 
 public abstract class DurableHandler<I, O> implements RequestStreamHandler {
 
-    private final Class<I> inputType;
+    private final TypeToken<I> inputType;
     private final DurableConfig config;
     private final ObjectMapper objectMapper = createObjectMapper(); // Internal ObjectMapper
     private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);
 
-    @SuppressWarnings("unchecked")
     protected DurableHandler() {
         // Extract input type from generic superclass
         var superClass = getClass().getGenericSuperclass();
         if (superClass instanceof ParameterizedType paramType) {
-            this.inputType = (Class<I>) paramType.getActualTypeArguments()[0];
+            this.inputType = TypeToken.get(paramType.getActualTypeArguments()[0]);
         } else {
             throw new IllegalArgumentException("Cannot determine input type parameter");
         }

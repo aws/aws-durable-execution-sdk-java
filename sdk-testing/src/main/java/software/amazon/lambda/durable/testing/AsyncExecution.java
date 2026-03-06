@@ -11,6 +11,7 @@ import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 
 /**
@@ -20,7 +21,7 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 public class AsyncExecution<O> {
     private final String executionArn;
     private final LambdaClient lambdaClient;
-    private final Class<O> outputType;
+    private final TypeToken<O> outputType;
     private final Duration pollInterval;
     private final Duration timeout;
     private final HistoryEventProcessor processor;
@@ -30,7 +31,7 @@ public class AsyncExecution<O> {
     public AsyncExecution(
             String executionArn,
             LambdaClient lambdaClient,
-            Class<O> outputType,
+            TypeToken<O> outputType,
             Duration pollInterval,
             Duration timeout) {
         this.executionArn = executionArn;

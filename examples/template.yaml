@@ -243,6 +243,31 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  GenericInputOutputExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'generic-input-output-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["software.amazon.lambda.durable.examples.GenericInputOutputExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-input-output-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
   CustomConfigExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -490,6 +515,14 @@ Outputs:
   GenericTypesExampleFunctionName:
     Description: Generic Types Example Function Name
     Value: !Ref GenericTypesExampleFunction
+
+  GenericInputOutputExampleFunction:
+    Description: Generic Input Output Example Function ARN
+    Value: !GetAtt GenericInputOutputExampleFunction.Arn
+
+  GenericInputOutputExampleFunctionName:
+    Description: Generic Input Output Example Function Name
+    Value: !Ref GenericInputOutputExampleFunction
 
   CustomConfigExampleFunction:
     Description: Custom Config Example Function ARN
