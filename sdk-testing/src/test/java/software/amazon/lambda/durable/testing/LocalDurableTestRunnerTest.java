@@ -3,8 +3,13 @@
 package software.amazon.lambda.durable.testing;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 
 class LocalDurableTestRunnerTest {
@@ -55,6 +60,23 @@ class LocalDurableTestRunnerTest {
         var op2 = runner.getOperation("step-2");
         assertNotNull(op2);
         assertEquals("step-2", op2.getName());
-        assertEquals("result2", op2.getStepResult(String.class));
+        assertEquals("result2", op2.getStepResult(get(String.class)));
+    }
+
+    @Test
+    void testGenericTypeInput() {
+        var resultType = new TypeToken<ArrayList<String>>() {};
+        var runner = LocalDurableTestRunner.create(resultType, (input, ctx) -> {
+            return ctx.step("process", resultType, stepCtx -> {
+                var reversed = new ArrayList<>(input);
+                Collections.reverse(reversed);
+                return reversed;
+            });
+        });
+
+        var testResult = runner.run(new ArrayList<>(List.of("item1", "item2")));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, testResult.getStatus());
+        assertEquals(List.of("item2", "item1"), testResult.getResult(resultType));
     }
 }

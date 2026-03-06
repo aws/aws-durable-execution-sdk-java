@@ -16,6 +16,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableExecutor;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -24,13 +25,13 @@ import software.amazon.lambda.durable.serde.SerDes;
 public class LocalDurableTestRunner<I, O> {
     private static final int MAX_INVOCATIONS = 100;
 
-    private final Class<I> inputType;
+    private final TypeToken<I> inputType;
     private final BiFunction<I, DurableContext, O> handler;
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
 
-    private LocalDurableTestRunner(Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
+    private LocalDurableTestRunner(TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
         this.inputType = inputType;
         this.handler = handlerFn;
         this.storage = new LocalMemoryExecutionClient();
@@ -39,7 +40,7 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     private LocalDurableTestRunner(
-            Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig customerConfig) {
+            TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig customerConfig) {
         this.inputType = inputType;
         this.handler = handlerFn;
         this.storage = new LocalMemoryExecutionClient();
@@ -50,12 +51,21 @@ public class LocalDurableTestRunner<I, O> {
     /**
      * Creates a LocalDurableTestRunner with default configuration. Use this method when your handler uses the default
      * DurableConfig.
+     */
+    public static <I, O> LocalDurableTestRunner<I, O> create(
+            Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), handlerFn);
+    }
+
+    /**
+     * Creates a LocalDurableTestRunner with default configuration. Use this method when your handler uses the default
+     * DurableConfig.
      *
-     * <p>If your handler has custom configuration (custom SerDes, ExecutorService, etc.), use {@link #create(Class,
+     * <p>If your handler has custom configuration (custom SerDes, ExecutorService, etc.), use {@link #create(TypeToken,
      * DurableHandler)} instead to ensure the test runner uses the same configuration as your handler.
      *
-     * <p>Optionally, you can also use {@link #create(Class, BiFunction, DurableConfig)} to pass in any DurableConfig
-     * directly.
+     * <p>Optionally, you can also use {@link #create(TypeToken, BiFunction, DurableConfig)} to pass in any
+     * DurableConfig directly.
      *
      * @param inputType The input type class
      * @param handlerFn The handler function
@@ -64,10 +74,18 @@ public class LocalDurableTestRunner<I, O> {
      * @return LocalDurableTestRunner with default configuration
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
-            Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
+            TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
         return new LocalDurableTestRunner<>(inputType, handlerFn);
     }
 
+    /**
+     * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
+     * SerDes and other configuration, while overriding the DurableExecutionClient with the in-memory implementation.
+     */
+    public static <I, O> LocalDurableTestRunner<I, O> create(
+            Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), handlerFn, config);
+    }
     /**
      * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
      * SerDes and other configuration, while overriding the DurableExecutionClient with the in-memory implementation.
@@ -103,8 +121,18 @@ public class LocalDurableTestRunner<I, O> {
      * @return LocalDurableTestRunner configured with the provided settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
-            Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
+            TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
         return new LocalDurableTestRunner<>(inputType, handlerFn, config);
+    }
+
+    /**
+     * Creates a LocalDurableTestRunner from a DurableHandler instance, automatically extracting the configuration. This
+     * is a convenient method when you have a handler instance and want to test it with the same configuration it uses
+     * in production.
+     */
+    public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, DurableHandler<I, O> handler) {
+        return new LocalDurableTestRunner<>(
+                TypeToken.get(inputType), handler::handleRequest, handler.getConfiguration());
     }
 
     /**
@@ -139,7 +167,7 @@ public class LocalDurableTestRunner<I, O> {
      * @param <O> Output type
      * @return LocalDurableTestRunner configured with the handler's settings
      */
-    public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, DurableHandler<I, O> handler) {
+    public static <I, O> LocalDurableTestRunner<I, O> create(TypeToken<I> inputType, DurableHandler<I, O> handler) {
         return new LocalDurableTestRunner<>(inputType, handler::handleRequest, handler.getConfiguration());
     }
 

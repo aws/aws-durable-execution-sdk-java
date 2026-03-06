@@ -15,13 +15,14 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 public class HistoryEventProcessor {
     private final JacksonSerDes serDes = new JacksonSerDes();
 
-    public <O> TestResult<O> processEvents(List<Event> events, Class<O> outputType) {
+    public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType) {
         var operations = new HashMap<String, Operation>();
         var operationEvents = new HashMap<String, List<Event>>();
         var status = ExecutionStatus.PENDING;

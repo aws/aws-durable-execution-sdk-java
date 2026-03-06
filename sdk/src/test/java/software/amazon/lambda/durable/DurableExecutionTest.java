@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -53,7 +54,7 @@ class DurableExecutionTest {
         var output = DurableExecutor.execute(
                 input,
                 null,
-                String.class,
+                get(String.class),
                 (userInput, ctx) -> ctx.step("test", String.class, stepCtx -> "Hello " + userInput),
                 configWithMockClient());
 
@@ -83,7 +84,7 @@ class DurableExecutionTest {
         var output = DurableExecutor.execute(
                 input,
                 null,
-                String.class,
+                get(String.class),
                 (userInput, ctx) -> {
                     ctx.step("step1", String.class, stepCtx -> "Done");
                     ctx.wait(null, java.time.Duration.ofSeconds(60));
@@ -116,7 +117,7 @@ class DurableExecutionTest {
         var output = DurableExecutor.execute(
                 input,
                 null,
-                String.class,
+                get(String.class),
                 (userInput, ctx) -> {
                     throw new RuntimeException("Test error");
                 },
@@ -157,7 +158,7 @@ class DurableExecutionTest {
         var output = DurableExecutor.execute(
                 input,
                 null,
-                String.class,
+                get(String.class),
                 (userInput, ctx) -> ctx.step("step1", String.class, stepCtx -> "Second"),
                 configWithMockClient());
 
@@ -175,7 +176,7 @@ class DurableExecutionTest {
         var exception = assertThrows(
                 IllegalStateException.class,
                 () -> DurableExecutor.execute(
-                        input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
+                        input, null, get(String.class), (userInput, ctx) -> "result", configWithMockClient()));
 
         assertEquals("First operation must be EXECUTION", exception.getMessage());
     }
@@ -199,7 +200,7 @@ class DurableExecutionTest {
         var exception = assertThrows(
                 IllegalStateException.class,
                 () -> DurableExecutor.execute(
-                        input, null, String.class, (userInput, ctx) -> "result", configWithMockClient()));
+                        input, null, get(String.class), (userInput, ctx) -> "result", configWithMockClient()));
 
         assertEquals("First operation must be EXECUTION", exception.getMessage());
     }
@@ -220,7 +221,7 @@ class DurableExecutionTest {
                         .build());
 
         var result = DurableExecutor.execute(
-                input, null, String.class, (userInput, ctx) -> "result", configWithMockClient());
+                input, null, get(String.class), (userInput, ctx) -> "result", configWithMockClient());
 
         assertEquals(ExecutionStatus.FAILED, result.status());
         assertEquals(
@@ -256,7 +257,7 @@ class DurableExecutionTest {
         var output1 = DurableExecutor.execute(
                 input1,
                 null,
-                String.class,
+                get(String.class),
                 (userInput, ctx) -> ctx.step("test1", String.class, stepCtx -> "Result 1: " + userInput),
                 config);
 
@@ -284,7 +285,7 @@ class DurableExecutionTest {
         var output2 = DurableExecutor.execute(
                 input2,
                 null,
-                String.class,
+                get(String.class),
                 (userInput, ctx) -> ctx.step("test2", String.class, stepCtx -> "Result 2: " + userInput),
                 config);
 

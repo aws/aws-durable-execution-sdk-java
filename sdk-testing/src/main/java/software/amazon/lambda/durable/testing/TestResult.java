@@ -48,6 +48,10 @@ public class TestResult<O> {
     }
 
     public <T> T getResult(Class<T> resultType) {
+        return getResult(TypeToken.get(resultType));
+    }
+
+    public <T> T getResult(TypeToken<T> resultType) {
         if (status != ExecutionStatus.SUCCEEDED) {
             throw new IllegalStateException("Execution did not succeed: " + status);
         }
@@ -55,11 +59,11 @@ public class TestResult<O> {
             var lastEvent = allEvents.get(allEvents.size() - 1);
             if (lastEvent.eventType() == EventType.EXECUTION_SUCCEEDED) {
                 return serDes.deserialize(
-                        lastEvent.executionSucceededDetails().result().payload(), TypeToken.get(resultType));
+                        lastEvent.executionSucceededDetails().result().payload(), resultType);
             }
             return null;
         }
-        return serDes.deserialize(resultPayload, TypeToken.get(resultType));
+        return serDes.deserialize(resultPayload, resultType);
     }
 
     public Optional<ErrorObject> getError() {

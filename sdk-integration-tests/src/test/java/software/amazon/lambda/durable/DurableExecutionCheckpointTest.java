@@ -40,7 +40,11 @@ class DurableExecutionCheckpointTest {
         var largeString = "x".repeat(7 * 1024 * 1024); // 7MB string
 
         var output = DurableExecutor.execute(
-                input, null, String.class, (userInput, ctx) -> largeString, configWithMockClient(client));
+                input,
+                null,
+                TypeToken.get(String.class),
+                (userInput, ctx) -> largeString,
+                configWithMockClient(client));
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertEquals("", output.result());
@@ -76,7 +80,11 @@ class DurableExecutionCheckpointTest {
         var smallResult = "Small result";
 
         var output = DurableExecutor.execute(
-                input, null, String.class, (userInput, ctx) -> smallResult, configWithMockClient(client));
+                input,
+                null,
+                TypeToken.get(String.class),
+                (userInput, ctx) -> smallResult,
+                configWithMockClient(client));
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertNotNull(output.result());
