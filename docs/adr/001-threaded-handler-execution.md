@@ -9,9 +9,9 @@ Durable functions need to suspend execution immediately at suspension points (wa
 
 ```java
 public String handleRequest(MyInput input, DurableContext context) {
-    var result1 = context.step("step1", () -> "first");
+    var result1 = context.step("step1", stepCtx -> "first");
     context.wait(null, Duration.ofHours(1)); // Should suspend HERE
-    var result2 = context.step("step2", () -> "second"); // Don't wait for this
+    var result2 = context.step("step2", stepCtx -> "second"); // Don't wait for this
     return result1 + result2;
 }
 ```
@@ -21,7 +21,7 @@ public String handleRequest(MyInput input, DurableContext context) {
 Run the handler in a background thread and race two futures:
 
 ```java
-var handlerFuture = CompletableFuture.supplyAsync(() -> handler.apply(input, context), executor);
+var handlerFuture = CompletableFuture.supplyAsync(stepCtx -> handler.apply(input, context), executor);
 var suspendFuture = executionManager.getSuspendExecutionFuture();
 
 CompletableFuture.anyOf(handlerFuture, suspendFuture).join();

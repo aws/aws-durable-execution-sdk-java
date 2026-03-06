@@ -54,7 +54,7 @@ class DurableExecutionTest {
                 input,
                 null,
                 String.class,
-                (userInput, ctx) -> ctx.step("test", String.class, () -> "Hello " + userInput),
+                (userInput, ctx) -> ctx.step("test", String.class, stepCtx -> "Hello " + userInput),
                 configWithMockClient());
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
@@ -85,7 +85,7 @@ class DurableExecutionTest {
                 null,
                 String.class,
                 (userInput, ctx) -> {
-                    ctx.step("step1", String.class, () -> "Done");
+                    ctx.step("step1", String.class, stepCtx -> "Done");
                     ctx.wait(null, java.time.Duration.ofSeconds(60));
                     return "Should not reach here";
                 },
@@ -158,7 +158,7 @@ class DurableExecutionTest {
                 input,
                 null,
                 String.class,
-                (userInput, ctx) -> ctx.step("step1", String.class, () -> "Second"),
+                (userInput, ctx) -> ctx.step("step1", String.class, stepCtx -> "Second"),
                 configWithMockClient());
 
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
@@ -257,7 +257,7 @@ class DurableExecutionTest {
                 input1,
                 null,
                 String.class,
-                (userInput, ctx) -> ctx.step("test1", String.class, () -> "Result 1: " + userInput),
+                (userInput, ctx) -> ctx.step("test1", String.class, stepCtx -> "Result 1: " + userInput),
                 config);
 
         assertEquals(ExecutionStatus.SUCCEEDED, output1.status());
@@ -285,7 +285,7 @@ class DurableExecutionTest {
                 input2,
                 null,
                 String.class,
-                (userInput, ctx) -> ctx.step("test2", String.class, () -> "Result 2: " + userInput),
+                (userInput, ctx) -> ctx.step("test2", String.class, stepCtx -> "Result 2: " + userInput),
                 config);
 
         assertEquals(ExecutionStatus.SUCCEEDED, output2.status());

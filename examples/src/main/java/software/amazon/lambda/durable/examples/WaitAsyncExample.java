@@ -31,7 +31,7 @@ public class WaitAsyncExample extends DurableHandler<GreetingRequest, String> {
 
         // Run a step concurrently while the wait timer is ticking
         DurableFuture<String> stepFuture =
-                context.stepAsync("process", String.class, () -> "Processed: " + input.getName());
+                context.stepAsync("process", String.class, stepCtx -> "Processed: " + input.getName());
 
         // Block until both complete — guarantees at least 5 seconds elapsed
         waitFuture.get();

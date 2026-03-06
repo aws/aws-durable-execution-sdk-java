@@ -31,7 +31,7 @@ public class RetryExample extends DurableHandler<Object, String> {
     @Override
     public String handleRequest(Object input, DurableContext context) {
         // Step 1: Record start time
-        startTime = context.step("record-start-time", Instant.class, () -> Instant.now());
+        startTime = context.step("record-start-time", Instant.class, stepCtx -> Instant.now());
         logger.info("Recorded start time: {}", startTime);
 
         // Step 2: Call that never retries (fails immediately)
@@ -39,7 +39,7 @@ public class RetryExample extends DurableHandler<Object, String> {
             context.step(
                     "no-retry-call",
                     Void.class,
-                    () -> {
+                    stepCtx -> {
                         throw new RuntimeException("This operation never retries");
                     },
                     StepConfig.builder()
@@ -53,7 +53,7 @@ public class RetryExample extends DurableHandler<Object, String> {
         var result = context.step(
                 "flaky-api-call",
                 String.class,
-                () -> {
+                stepCtx -> {
                     // Fail for first 8 seconds, then succeed
                     var failForMillis = 8000;
                     var elapsed = Duration.between(startTime, Instant.now());

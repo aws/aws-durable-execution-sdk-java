@@ -24,19 +24,22 @@ public class WaitExample extends DurableHandler<GreetingRequest, String> {
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
         // Step 1: Start processing
-        var started = context.step("start-processing", String.class, () -> "Started processing for " + input.getName());
+        var started =
+                context.step("start-processing", String.class, stepCtx -> "Started processing for " + input.getName());
 
         // Wait 10 seconds
         context.wait(null, Duration.ofSeconds(10));
 
         // Step 2: Continue processing
-        var continued = context.step("continue-processing", String.class, () -> started + " - continued after 10s");
+        var continued =
+                context.step("continue-processing", String.class, stepCtx -> started + " - continued after 10s");
 
         // Wait 5 seconds
         context.wait(null, Duration.ofSeconds(5));
 
         // Step 3: Complete
-        var result = context.step("complete-processing", String.class, () -> continued + " - completed after 5s more");
+        var result =
+                context.step("complete-processing", String.class, stepCtx -> continued + " - completed after 5s more");
 
         return result;
     }

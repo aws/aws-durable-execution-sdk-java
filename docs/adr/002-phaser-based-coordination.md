@@ -15,8 +15,8 @@ context.wait(null, Duration.ofMinutes(5)); // Root deregisters → immediate sus
 
 ### Complex Case: Blocking on Retrying Operations
 ```java
-var future1 = context.stepAsync("step1", () -> failsAndRetries());
-var result = context.step("step2", () -> future1.get() + "-processed");
+var future1 = context.stepAsync("step1", stepCtx -> failsAndRetries());
+var result = context.step("step2", stepCtx -> future1.get() + "-processed");
 ```
 
 **Problem:** Simple thread counting fails because step2's thread would stay registered while blocked on `future1.get()`, preventing suspension during step1's retry delay.

@@ -35,7 +35,7 @@ public class WaitAtLeastExample extends DurableHandler<GreetingRequest, String> 
         DurableFuture<String> asyncStep = context.stepAsync(
                 "async-operation",
                 String.class,
-                () -> {
+                stepCtx -> {
                     logger.info(
                             "Async operation starting in thread: {}",
                             Thread.currentThread().getName());

@@ -30,35 +30,36 @@ public class ChildContextExample extends DurableHandler<GreetingRequest, String>
 
         // Child context 1: Order validation — step + wait + step
         var orderFuture = context.runInChildContextAsync("order-validation", String.class, child -> {
-            var prepared = child.step("prepare-order", String.class, () -> "Order for " + name);
+            var prepared = child.step("prepare-order", String.class, stepCtx -> "Order for " + name);
             child.getLogger().info("Order prepared, waiting for validation");
 
             child.wait("validation-delay", Duration.ofSeconds(5));
 
-            return child.step("validate-order", String.class, () -> prepared + " [validated]");
+            return child.step("validate-order", String.class, stepCtx -> prepared + " [validated]");
         });
 
         // Child context 2: Inventory check — step + wait + step
         var inventoryFuture = context.runInChildContextAsync("inventory-check", String.class, child -> {
-            var stock = child.step("check-stock", String.class, () -> "Stock available for " + name);
+            var stock = child.step("check-stock", String.class, stepCtx -> "Stock available for " + name);
             child.getLogger().info("Stock checked, waiting for confirmation");
 
             child.wait("confirmation-delay", Duration.ofSeconds(3));
 
-            return child.step("confirm-inventory", String.class, () -> stock + " [confirmed]");
+            return child.step("confirm-inventory", String.class, stepCtx -> stock + " [confirmed]");
         });
 
         // Child context 3: Shipping estimate — nests a child context inside it
         var shippingFuture = context.runInChildContextAsync("shipping-estimate", String.class, child -> {
-            var baseRate = child.step("calculate-base-rate", String.class, () -> "Base rate for " + name);
+            var baseRate = child.step("calculate-base-rate", String.class, stepCtx -> "Base rate for " + name);
 
             // Nested child context: calculate regional adjustment
             var adjustment = child.runInChildContext(
                     "regional-adjustment",
                     String.class,
-                    nested -> nested.step("lookup-region", String.class, () -> baseRate + " + regional adjustment"));
+                    nested ->
+                            nested.step("lookup-region", String.class, stepCtx -> baseRate + " + regional adjustment"));
 
-            return child.step("finalize-shipping", String.class, () -> adjustment + " [shipping ready]");
+            return child.step("finalize-shipping", String.class, stepCtx -> adjustment + " [shipping ready]");
         });
 
         // Collect all results using allOf

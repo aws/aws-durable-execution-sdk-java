@@ -26,9 +26,9 @@ class SkipTimeTest {
     @Test
     void testSkipTime() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var step1 = context.step("step-1", String.class, () -> "step1-done");
+            var step1 = context.step("step-1", String.class, stepCtx -> "step1-done");
             context.wait(null, Duration.ofMinutes(5));
-            var step2 = context.step("step-2", String.class, () -> "step2-done");
+            var step2 = context.step("step-2", String.class, stepCtx -> "step2-done");
             return step1 + "+" + step2;
         });
 
@@ -43,9 +43,9 @@ class SkipTimeTest {
     @Test
     void testManualTimeControl() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var step1 = context.step("step-1", String.class, () -> "step1-done");
+            var step1 = context.step("step-1", String.class, stepCtx -> "step1-done");
             context.wait(null, Duration.ofMinutes(5));
-            var step2 = context.step("step-2", String.class, () -> "step2-done");
+            var step2 = context.step("step-2", String.class, stepCtx -> "step2-done");
             return step1 + "+" + step2;
         });
 
@@ -70,7 +70,7 @@ class SkipTimeTest {
             return context.step(
                     "flaky-step",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         if (attempts.incrementAndGet() < 3) {
                             throw new RuntimeException("Transient failure");
                         }

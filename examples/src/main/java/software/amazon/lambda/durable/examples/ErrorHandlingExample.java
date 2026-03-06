@@ -59,7 +59,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
             primaryResult = context.step(
                     "call-primary-service",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         throw new ServiceUnavailableException("primary-api", "Primary service unavailable");
                     },
                     StepConfig.builder()
@@ -68,7 +68,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
         } catch (ServiceUnavailableException e) {
             // Catch the specific custom exception type - the SDK reconstructs the original exception
             logger.warn("Service '{}' unavailable, using fallback: {}", e.getServiceName(), e.getMessage());
-            primaryResult = context.step("call-fallback-service", String.class, () -> "fallback-result");
+            primaryResult = context.step("call-fallback-service", String.class, stepCtx -> "fallback-result");
         }
 
         // Example 2: Handling StepInterruptedException for AT_MOST_ONCE operations
@@ -81,7 +81,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
             paymentResult = context.step(
                     "charge-payment",
                     String.class,
-                    () -> "payment-" + input,
+                    stepCtx -> "payment-" + input,
                     StepConfig.builder()
                             .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                             .build());
@@ -91,7 +91,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
                     e.getOperation().id());
             // In real code: check payment provider for transaction status
             // If payment went through, return success; otherwise, handle appropriately
-            paymentResult = context.step("verify-payment-status", String.class, () -> "verified-payment");
+            paymentResult = context.step("verify-payment-status", String.class, stepCtx -> "verified-payment");
         }
 
         return "Completed: " + primaryResult + ", " + paymentResult;

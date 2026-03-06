@@ -37,7 +37,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
         var futures = new ArrayList<DurableFuture<Integer>>(STEP_COUNT);
         for (var i = 0; i < STEP_COUNT; i++) {
             var index = i;
-            var future = context.stepAsync("compute-" + i, Integer.class, () -> index * multiplier);
+            var future = context.stepAsync("compute-" + i, Integer.class, stepCtx -> index * multiplier);
             futures.add(future);
         }
 

@@ -52,7 +52,7 @@ class DurableExecutionWrapperTest {
         RequestHandler<DurableExecutionInput, DurableExecutionOutput> handler = DurableExecutor.wrap(
                 TestInput.class,
                 (input, context) -> {
-                    var result = context.step("process", String.class, () -> "Wrapped: " + input.value);
+                    var result = context.step("process", String.class, stepCtx -> "Wrapped: " + input.value);
                     return new TestOutput(result);
                 },
                 config);
@@ -120,7 +120,7 @@ class DurableExecutionWrapperTest {
     }
 
     private static TestOutput handleRequest(TestInput input, DurableContext context) {
-        var result = context.step("process", String.class, () -> "Method: " + input.value);
+        var result = context.step("process", String.class, stepCtx -> "Method: " + input.value);
         return new TestOutput(result);
     }
 }

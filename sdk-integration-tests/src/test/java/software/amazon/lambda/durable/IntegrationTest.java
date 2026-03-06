@@ -39,7 +39,7 @@ class IntegrationTest {
     @Test
     void testActualSyncExecution() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var result = context.step("process", String.class, () -> "Processed: " + input.value);
+            var result = context.step("process", String.class, stepCtx -> "Processed: " + input.value);
             return new TestOutput(result);
         });
 
@@ -53,7 +53,7 @@ class IntegrationTest {
     @Test
     void testActualAsyncExecution() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var future = context.stepAsync("async-process", String.class, () -> "Async: " + input.value);
+            var future = context.stepAsync("async-process", String.class, stepCtx -> "Async: " + input.value);
             try {
                 var result = future.get();
                 return new TestOutput(result);
@@ -71,13 +71,13 @@ class IntegrationTest {
     @Test
     void testWaitSuspension() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var step1 = context.step("step1", String.class, () -> "Step 1 done");
+            var step1 = context.step("step1", String.class, stepCtx -> "Step 1 done");
 
             // This should throw SuspendExecutionException
             context.wait(null, Duration.ofMinutes(5));
 
             // This should never execute in first run
-            var step2 = context.step("step2", String.class, () -> "Step 2 done");
+            var step2 = context.step("step2", String.class, stepCtx -> "Step 2 done");
             return new TestOutput(step1 + " + " + step2);
         });
 
@@ -95,13 +95,13 @@ class IntegrationTest {
     @Test
     void testFullWaitOperation() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var step1 = context.step("step1", String.class, () -> "Step 1 done");
+            var step1 = context.step("step1", String.class, stepCtx -> "Step 1 done");
 
             // This should throw SuspendExecutionException
             context.wait(null, Duration.ofMinutes(5));
 
             // This should never execute in first run
-            var step2 = context.step("step2", String.class, () -> "Step 2 done");
+            var step2 = context.step("step2", String.class, stepCtx -> "Step 2 done");
             return new TestOutput(step1 + " + " + step2);
         });
 
@@ -123,7 +123,7 @@ class IntegrationTest {
         var executionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var result = context.step("process", String.class, () -> {
+            var result = context.step("process", String.class, stepCtx -> {
                 return "Execution #" + executionCount.incrementAndGet() + ": " + input.value;
             });
             return new TestOutput(result);
@@ -146,8 +146,8 @@ class IntegrationTest {
     @Test
     void testMultiStepWorkflowWithOperationInspection() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var step1 = context.step("validate", String.class, () -> "validated");
-            var step2 = context.step("process", String.class, () -> step1 + "-processed");
+            var step1 = context.step("validate", String.class, stepCtx -> "validated");
+            var step2 = context.step("process", String.class, stepCtx -> step1 + "-processed");
             return new TestOutput(step2);
         });
 
@@ -163,7 +163,7 @@ class IntegrationTest {
     @Test
     void testOperationFiltering() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            context.step("good-step", String.class, () -> "ok");
+            context.step("good-step", String.class, stepCtx -> "ok");
             return "done";
         });
 
@@ -178,7 +178,7 @@ class IntegrationTest {
     @Test
     void testWaitOperationWithManualAdvance() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            context.step("good-step", String.class, () -> "ok");
+            context.step("good-step", String.class, stepCtx -> "ok");
             context.wait(null, Duration.ofSeconds(5));
             return "done";
         });
@@ -200,13 +200,13 @@ class IntegrationTest {
     @Test
     void testWaitAsyncReturnsNonBlockingFuture() {
         var runner = LocalDurableTestRunner.create(TestInput.class, (input, context) -> {
-            var step1 = context.step("step1", String.class, () -> "Step 1 done");
+            var step1 = context.step("step1", String.class, stepCtx -> "Step 1 done");
 
             // waitAsync should return immediately without blocking
             var waitFuture = context.waitAsync("async-wait", Duration.ofMinutes(5));
 
             // This step should execute before the wait completes
-            var step2 = context.step("step2", String.class, () -> "Step 2 done");
+            var step2 = context.step("step2", String.class, stepCtx -> "Step 2 done");
 
             // Now block on the wait
             waitFuture.get();
@@ -234,7 +234,7 @@ class IntegrationTest {
             // Calling get() should suspend execution
             waitFuture.get();
 
-            var step = context.step("after-wait", String.class, () -> "done");
+            var step = context.step("after-wait", String.class, stepCtx -> "done");
             return new TestOutput(step);
         });
 

@@ -52,7 +52,7 @@ public class GenericTypesExample extends DurableHandler<GenericTypesExample.Inpu
         logger.info("Starting generic types example for user: {}", input.userId);
 
         // Step 1: Fetch a list of items (List<String>)
-        List<String> items = context.step("fetch-items", new TypeToken<List<String>>() {}, () -> {
+        List<String> items = context.step("fetch-items", new TypeToken<List<String>>() {}, stepCtx -> {
             logger.info("Fetching items for user: {}", input.userId);
             return List.of("item1", "item2", "item3", "item4");
         });
@@ -60,7 +60,7 @@ public class GenericTypesExample extends DurableHandler<GenericTypesExample.Inpu
 
         // Step 2: Count items by category (Map<String, Integer>)
         Map<String, Integer> counts =
-                context.step("count-by-category", new TypeToken<Map<String, Integer>>() {}, () -> {
+                context.step("count-by-category", new TypeToken<Map<String, Integer>>() {}, stepCtx -> {
                     logger.info("Counting items by category");
                     var result = new HashMap<String, Integer>();
                     result.put("electronics", 2);
@@ -74,7 +74,7 @@ public class GenericTypesExample extends DurableHandler<GenericTypesExample.Inpu
         Map<String, List<String>> categories = context.step(
                 "fetch-categories",
                 new TypeToken<Map<String, List<String>>>() {},
-                () -> {
+                stepCtx -> {
                     logger.info("Fetching category details");
                     var result = new HashMap<String, List<String>>();
                     result.put("electronics", List.of("laptop", "phone"));

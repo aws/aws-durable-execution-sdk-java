@@ -4,11 +4,11 @@ Steps execute your code and checkpoint the result. On replay, results from compl
 
 ```java
 // Basic step (blocks until complete)
-var result = ctx.step("fetch-user", User.class, () -> userService.getUser(userId));
+var result = ctx.step("fetch-user", User.class, stepCtx -> userService.getUser(userId));
 
 // Step with custom configuration (retries, semantics, serialization)
 var result = ctx.step("call-api", Response.class, 
-	() -> externalApi.call(request),
+	stepCtx -> externalApi.call(request),
 	StepConfig.builder()
 		.retryStrategy(...)
 		.semantics(...)
@@ -24,9 +24,9 @@ See [Step Configuration](#step-configuration) for retry strategies, delivery sem
 ```java
 // Start multiple operations concurrently
 DurableFuture<User> userFuture = ctx.stepAsync("fetch-user", User.class, 
-	() -> userService.getUser(userId));
+	stepCtx -> userService.getUser(userId));
 DurableFuture<List<Order>> ordersFuture = ctx.stepAsync("fetch-orders", 
-	new TypeToken<List<Order>>() {}, () -> orderService.getOrders(userId));
+	new TypeToken<List<Order>>() {}, stepCtx -> orderService.getOrders(userId));
 
 // Both operations run concurrently
 // Block and get results when needed
@@ -39,7 +39,7 @@ List<Order> orders = ordersFuture.get();
 Configure step behavior with `StepConfig`:
 
 ```java
-ctx.step("my-step", Result.class, () -> doWork(),
+ctx.step("my-step", Result.class, stepCtx -> doWork(),
 	StepConfig.builder()
 		.retryStrategy(...)    // How to handle failures
 		.semantics(...)        // At-least-once vs at-most-once
@@ -78,11 +78,11 @@ Control how steps behave when interrupted mid-execution:
 ```java
 // Default: at-least-once per retry (step may re-run if interrupted)
 var result = ctx.step("idempotent-update", Result.class, 
-	() -> database.upsert(record));
+	stepCtx -> database.upsert(record));
 
 // At-most-once per retry
 var result = ctx.step("send-email", Result.class,
-	() -> emailService.send(notification),
+	stepCtx -> emailService.send(notification),
 	StepConfig.builder()
 		.semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
 		.build());
@@ -98,7 +98,7 @@ To achieve step-level at-most-once semantics, combine with a no-retry strategy:
 ```java
 // True at-most-once: step executes at most once, ever
 var result = ctx.step("charge-payment", Result.class,
-	() -> paymentService.charge(amount),
+	stepCtx -> paymentService.charge(amount),
 	StepConfig.builder()
 		.semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
 		.retryStrategy(RetryStrategies.Presets.NO_RETRY)
@@ -113,10 +113,10 @@ When a step returns a parameterized type like `List<User>`, use `TypeToken` to p
 
 ```java
 var users = ctx.step("fetch-users", new TypeToken<List<User>>() {}, 
-	() -> userService.getAllUsers());
+	stepCtx -> userService.getAllUsers());
 
 var orderMap = ctx.step("fetch-orders", new TypeToken<Map<String, Order>>() {},
-	() -> orderService.getOrdersByCustomer());
+	stepCtx -> orderService.getOrdersByCustomer());
 ```
 
 This is needed for the SDK to deserialize a checkpointed result and get the exact type to reconstruct. See [TypeToken and Type Erasure](docs/internal-design.md#typetoken-and-type-erasure) for technical details. 

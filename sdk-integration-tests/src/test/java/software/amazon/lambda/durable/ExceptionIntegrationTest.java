@@ -22,7 +22,7 @@ class ExceptionIntegrationTest {
             return ctx.step(
                     "always-fails",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         throw new RuntimeException("Service unavailable");
                     },
                     StepConfig.builder()
@@ -42,14 +42,14 @@ class ExceptionIntegrationTest {
                 return ctx.step(
                         "primary",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             throw new RuntimeException("Primary failed");
                         },
                         StepConfig.builder()
                                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                                 .build());
             } catch (RuntimeException e) {
-                return ctx.step("fallback", String.class, () -> "fallback-result");
+                return ctx.step("fallback", String.class, stepCtx -> "fallback-result");
             }
         });
 
@@ -65,7 +65,7 @@ class ExceptionIntegrationTest {
             ctx.step(
                     "throws-illegal-arg",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         throw new IllegalArgumentException("Invalid parameter");
                     },
                     StepConfig.builder()
@@ -102,7 +102,7 @@ class ExceptionIntegrationTest {
                 return ctx.step(
                         "throws-illegal-state",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             throw new IllegalStateException("Invalid state");
                         },
                         StepConfig.builder()
@@ -110,10 +110,10 @@ class ExceptionIntegrationTest {
                                 .build());
             } catch (IllegalStateException e) {
                 // Catch specific exception type
-                return ctx.step("handle-illegal-state", String.class, () -> "recovered-from-illegal-state");
+                return ctx.step("handle-illegal-state", String.class, stepCtx -> "recovered-from-illegal-state");
             } catch (Exception e) {
                 // This should NOT be caught
-                return ctx.step("handle-illegal-arg", String.class, () -> "recovered-from-exception");
+                return ctx.step("handle-illegal-arg", String.class, stepCtx -> "recovered-from-exception");
             }
         });
 
@@ -129,7 +129,7 @@ class ExceptionIntegrationTest {
             ctx.step(
                     "throws-custom",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         throw new CustomBusinessException("Business rule violated", 42);
                     },
                     StepConfig.builder()
@@ -159,7 +159,7 @@ class ExceptionIntegrationTest {
             return ctx.step(
                     "at-most-once-step",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         executionCount.incrementAndGet();
                         return "result";
                     },
@@ -192,7 +192,7 @@ class ExceptionIntegrationTest {
                 return ctx.step(
                         "payment",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             executionCount.incrementAndGet();
                             return "payment-success";
                         },
@@ -201,7 +201,7 @@ class ExceptionIntegrationTest {
                                 .build());
             } catch (StepInterruptedException e) {
                 // Recovery: check external status and return verified result
-                return ctx.step("verify-payment", String.class, () -> "verified-payment");
+                return ctx.step("verify-payment", String.class, stepCtx -> "verified-payment");
             }
         });
 
@@ -224,7 +224,7 @@ class ExceptionIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var stepName = useNewName.get() == 0 ? "original-name" : "changed-name";
-            return ctx.step(stepName, String.class, () -> "result");
+            return ctx.step(stepName, String.class, stepCtx -> "result");
         });
 
         // First run with original name

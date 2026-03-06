@@ -21,13 +21,13 @@ public class SimpleStepExample extends DurableHandler<GreetingRequest, String> {
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
         // Step 1: Create greeting
-        var greeting = context.step("create-greeting", String.class, () -> "Hello, " + input.getName());
+        var greeting = context.step("create-greeting", String.class, stepCtx -> "Hello, " + input.getName());
 
         // Step 2: Transform to uppercase
-        var uppercase = context.step("to-uppercase", String.class, () -> greeting.toUpperCase());
+        var uppercase = context.step("to-uppercase", String.class, stepCtx -> greeting.toUpperCase());
 
         // Step 3: Add punctuation
-        var result = context.step("add-punctuation", String.class, () -> uppercase + "!");
+        var result = context.step("add-punctuation", String.class, stepCtx -> uppercase + "!");
 
         return result;
     }

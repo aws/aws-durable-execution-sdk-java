@@ -23,7 +23,7 @@ DurableExecutionException              - General durable exception
 ```java
 try {
     var result = ctx.step("charge-payment", Payment.class,
-        () -> paymentService.charge(amount),
+        stepCtx -> paymentService.charge(amount),
         StepConfig.builder()
             .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
             .build());

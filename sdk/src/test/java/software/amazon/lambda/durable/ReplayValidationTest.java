@@ -55,7 +55,7 @@ class ReplayValidationTest {
         var context = createTestContext(List.of());
 
         // When & Then: Should not throw
-        assertDoesNotThrow(() -> context.step("test", String.class, () -> "result"));
+        assertDoesNotThrow(() -> context.step("test", String.class, stepCtx -> "result"));
     }
 
     @Test
@@ -72,7 +72,7 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should not throw
-        assertDoesNotThrow(() -> context.step("test", String.class, () -> "result"));
+        assertDoesNotThrow(() -> context.step("test", String.class, stepCtx -> "result"));
     }
 
     @Test
@@ -104,7 +104,8 @@ class ReplayValidationTest {
 
         // When & Then: Should throw NonDeterministicExecutionException
         var exception = assertThrows(
-                NonDeterministicExecutionException.class, () -> context.step("test", String.class, () -> "result"));
+                NonDeterministicExecutionException.class,
+                () -> context.step("test", String.class, stepCtx -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation type mismatch"));
         assertTrue(exception.getMessage().contains("Expected WAIT"));
@@ -126,7 +127,8 @@ class ReplayValidationTest {
 
         // When & Then: Should throw NonDeterministicExecutionException
         var exception = assertThrows(
-                NonDeterministicExecutionException.class, () -> context.step("changed", String.class, () -> "result"));
+                NonDeterministicExecutionException.class,
+                () -> context.step("changed", String.class, stepCtx -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
         assertTrue(exception.getMessage().contains("Expected \"original\""));
@@ -147,7 +149,7 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should not throw when both names are null
-        assertDoesNotThrow(() -> context.step(null, String.class, () -> "result"));
+        assertDoesNotThrow(() -> context.step(null, String.class, stepCtx -> "result"));
     }
 
     @Test
@@ -165,7 +167,8 @@ class ReplayValidationTest {
 
         // When & Then: Should throw when name changes from null to value
         var exception = assertThrows(
-                NonDeterministicExecutionException.class, () -> context.step("newName", String.class, () -> "result"));
+                NonDeterministicExecutionException.class,
+                () -> context.step("newName", String.class, stepCtx -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
         assertTrue(exception.getMessage().contains("Expected \"null\""));
@@ -187,7 +190,7 @@ class ReplayValidationTest {
 
         // When & Then: Should throw when name changes from value to null
         var exception = assertThrows(
-                NonDeterministicExecutionException.class, () -> context.step(null, String.class, () -> "result"));
+                NonDeterministicExecutionException.class, () -> context.step(null, String.class, stepCtx -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation name mismatch"));
         assertTrue(exception.getMessage().contains("Expected \"existingName\""));
@@ -209,7 +212,7 @@ class ReplayValidationTest {
         // When & Then: Should throw NonDeterministicExecutionException
         var exception = assertThrows(
                 NonDeterministicExecutionException.class,
-                () -> context.stepAsync("test", String.class, () -> "result"));
+                () -> context.stepAsync("test", String.class, stepCtx -> "result"));
 
         assertTrue(exception.getMessage().contains("Operation type mismatch"));
         assertTrue(exception.getMessage().contains("Expected WAIT"));
@@ -230,6 +233,6 @@ class ReplayValidationTest {
         var context = createTestContext(List.of(existingOp));
 
         // When & Then: Should not throw (validation skipped)
-        assertDoesNotThrow(() -> context.step("test", String.class, () -> "result"));
+        assertDoesNotThrow(() -> context.step("test", String.class, stepCtx -> "result"));
     }
 }

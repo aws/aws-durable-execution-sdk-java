@@ -34,7 +34,7 @@ class RetryIntegrationTest {
                 return context.step(
                         "failing-step",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             callCount.incrementAndGet();
                             throw new RuntimeException("Simulated failure");
                         },
@@ -61,7 +61,7 @@ class RetryIntegrationTest {
                 return context.step(
                         "no-retry-step",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             callCount.incrementAndGet();
                             throw new RuntimeException("Simulated failure");
                         },
@@ -88,7 +88,7 @@ class RetryIntegrationTest {
                 return context.step(
                         "successful-step",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             callCount.incrementAndGet();
                             return "success: " + input;
                         },

@@ -38,7 +38,7 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
         DurableFuture<String> asyncStep = context.stepAsync(
                 "flaky-async-operation",
                 String.class,
-                () -> {
+                stepCtx -> {
                     int attempt = attemptCount.incrementAndGet();
                     logger.info(
                             "Async operation attempt #{} in thread: {}",
@@ -63,7 +63,7 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
 
         // Long-running synchronous step that keeps process busy
         // This prevents suspension during async step retries
-        String syncResult = context.step("long-running-operation", String.class, () -> {
+        String syncResult = context.step("long-running-operation", String.class, stepCtx -> {
             logger.info(
                     "Starting long-running operation (10 seconds) in thread: {}",
                     Thread.currentThread().getName());

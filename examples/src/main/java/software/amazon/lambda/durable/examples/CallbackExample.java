@@ -35,7 +35,7 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
         var prepared = context.step(
                 "prepare",
                 String.class,
-                () -> "Approval request for: " + input.description() + " ($" + input.amount() + ")");
+                stepCtx -> "Approval request for: " + input.description() + " ($" + input.amount() + ")");
 
         // Step 2: Create callback for external approval
         // Use timeout from input if provided, otherwise default to 5 minutes
@@ -68,7 +68,9 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
 
         // Step 4: Process the approval
         return context.step(
-                "process-approval", String.class, () -> prepared + " - " + preapprovalResult + " - " + approvalResult);
+                "process-approval",
+                String.class,
+                stepCtx -> prepared + " - " + preapprovalResult + " - " + approvalResult);
     }
 }
 

@@ -86,7 +86,7 @@ public class LocalDurableTestRunner<I, O> {
      * // Create test runner with custom configuration
      * var runner = LocalDurableTestRunner.create(
      *     String.class,
-     *     (input, context) -> context.step("process", String.class, () -> "result"),
+     *     (input, context) -> context.step("process", String.class, stepCtx -> "result"),
      *     config
      * );
      *

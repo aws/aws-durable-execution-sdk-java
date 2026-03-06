@@ -25,7 +25,7 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("compute", TypeToken.get(String.class), child -> {
                 childExecutionCount.incrementAndGet();
-                return child.step("work", String.class, () -> "result-" + input);
+                return child.step("work", String.class, stepCtx -> "result-" + input);
             });
         });
 
@@ -77,7 +77,7 @@ class ChildContextIntegrationTest {
     void operationsInChildContextHaveCorrectParentId() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("child-ctx", String.class, child -> {
-                var step1 = child.step("inner-step", String.class, () -> "step-result");
+                var step1 = child.step("inner-step", String.class, stepCtx -> "step-result");
                 return step1;
             });
         });
@@ -96,10 +96,10 @@ class ChildContextIntegrationTest {
     void childContextsHaveIndependentOperationCounters() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var r1 = ctx.runInChildContext("child-a", String.class, child -> {
-                return child.step("step-a", String.class, () -> "a-result");
+                return child.step("step-a", String.class, stepCtx -> "a-result");
             });
             var r2 = ctx.runInChildContext("child-b", String.class, child -> {
-                return child.step("step-b", String.class, () -> "b-result");
+                return child.step("step-b", String.class, stepCtx -> "b-result");
             });
             return r1 + "+" + r2;
         });
@@ -121,10 +121,10 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             // Both child contexts will have a step with local operation ID "1"
             var futureA = ctx.runInChildContextAsync("ctx-a", String.class, child -> {
-                return child.step("work", String.class, () -> "result-a");
+                return child.step("work", String.class, stepCtx -> "result-a");
             });
             var futureB = ctx.runInChildContextAsync("ctx-b", String.class, child -> {
-                return child.step("work", String.class, () -> "result-b");
+                return child.step("work", String.class, stepCtx -> "result-b");
             });
             return futureA.get() + "+" + futureB.get();
         });
@@ -139,13 +139,13 @@ class ChildContextIntegrationTest {
     void multipleAsyncChildContextsReturnCorrectResults() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var f1 = ctx.runInChildContextAsync("async-1", String.class, child -> {
-                return child.step("s1", String.class, () -> "one");
+                return child.step("s1", String.class, stepCtx -> "one");
             });
             var f2 = ctx.runInChildContextAsync("async-2", String.class, child -> {
-                return child.step("s2", String.class, () -> "two");
+                return child.step("s2", String.class, stepCtx -> "two");
             });
             var f3 = ctx.runInChildContextAsync("async-3", String.class, child -> {
-                return child.step("s3", String.class, () -> "three");
+                return child.step("s3", String.class, stepCtx -> "three");
             });
             return f1.get() + "," + f2.get() + "," + f3.get();
         });
@@ -160,13 +160,13 @@ class ChildContextIntegrationTest {
     void allOfReturnsResultsInOrder() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var f1 = ctx.runInChildContextAsync("first", String.class, child -> {
-                return child.step("s1", String.class, () -> "alpha");
+                return child.step("s1", String.class, stepCtx -> "alpha");
             });
             var f2 = ctx.runInChildContextAsync("second", String.class, child -> {
-                return child.step("s2", String.class, () -> "beta");
+                return child.step("s2", String.class, stepCtx -> "beta");
             });
             var f3 = ctx.runInChildContextAsync("third", String.class, child -> {
-                return child.step("s3", String.class, () -> "gamma");
+                return child.step("s3", String.class, stepCtx -> "gamma");
             });
 
             var results = DurableFuture.allOf(f1, f2, f3);
@@ -186,9 +186,9 @@ class ChildContextIntegrationTest {
     void waitInsideChildContextSuspendsAndResumes() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("workflow", String.class, child -> {
-                child.step("before-wait", Void.class, () -> null);
+                child.step("before-wait", Void.class, stepCtx -> null);
                 child.wait(null, Duration.ofSeconds(10));
-                return child.step("after-wait", String.class, () -> "done");
+                return child.step("after-wait", String.class, stepCtx -> "done");
             });
         });
 
@@ -205,9 +205,9 @@ class ChildContextIntegrationTest {
     void waitInsideChildContextReturnsPendingThenCompletes() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("workflow", String.class, child -> {
-                child.step("before-wait", Void.class, () -> null);
+                child.step("before-wait", Void.class, stepCtx -> null);
                 child.wait(null, Duration.ofSeconds(10));
-                return child.step("after-wait", String.class, () -> "done");
+                return child.step("after-wait", String.class, stepCtx -> "done");
             });
         });
         // First run - should suspend at the wait
@@ -231,14 +231,14 @@ class ChildContextIntegrationTest {
     void twoAsyncChildContextsBothWaitSuspendAndResume() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var f1 = ctx.runInChildContextAsync("child-a", String.class, child -> {
-                child.step("a-before", Void.class, () -> null);
+                child.step("a-before", Void.class, stepCtx -> null);
                 child.wait(null, Duration.ofSeconds(5));
-                return child.step("a-after", String.class, () -> "a-done");
+                return child.step("a-after", String.class, stepCtx -> "a-done");
             });
             var f2 = ctx.runInChildContextAsync("child-b", String.class, child -> {
-                child.step("b-before", Void.class, () -> null);
+                child.step("b-before", Void.class, stepCtx -> null);
                 child.wait(null, Duration.ofSeconds(10));
-                return child.step("b-after", String.class, () -> "b-done");
+                return child.step("b-after", String.class, stepCtx -> "b-done");
             });
             return f1.get() + "+" + f2.get();
         });
@@ -265,10 +265,10 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             var waiting = ctx.runInChildContextAsync("waiter", String.class, child -> {
                 child.wait(null, Duration.ofSeconds(30));
-                return child.step("w-after", String.class, () -> "waited");
+                return child.step("w-after", String.class, stepCtx -> "waited");
             });
             var busy = ctx.runInChildContextAsync("busy", String.class, child -> {
-                return child.step("slow-work", String.class, () -> {
+                return child.step("slow-work", String.class, stepCtx -> {
                     try {
                         Thread.sleep(200); // Simulate real work keeping the thread active
                     } catch (InterruptedException e) {
@@ -311,7 +311,7 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("large-result", String.class, child -> {
                 childExecutionCount.incrementAndGet();
-                return child.step("produce", String.class, () -> largePayload);
+                return child.step("produce", String.class, stepCtx -> largePayload);
             });
         });
 
@@ -343,11 +343,11 @@ class ChildContextIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             return ctx.runInChildContext("outer-child", String.class, outerChild -> {
                 outerChildCount.incrementAndGet();
-                var outerStep = outerChild.step("outer-step", String.class, () -> "outer");
+                var outerStep = outerChild.step("outer-step", String.class, stepCtx -> "outer");
 
                 var innerResult = outerChild.runInChildContext("inner-child", String.class, innerChild -> {
                     innerChildCount.incrementAndGet();
-                    return innerChild.step("inner-step", String.class, () -> "inner");
+                    return innerChild.step("inner-step", String.class, stepCtx -> "inner");
                 });
 
                 return outerStep + "+" + innerResult;
@@ -388,13 +388,13 @@ class ChildContextIntegrationTest {
             if (count == 1) {
                 // First execution: create child context with name "original-name"
                 return ctx.runInChildContext("original-name", String.class, child -> {
-                    return child.step("work", String.class, () -> "result");
+                    return child.step("work", String.class, stepCtx -> "result");
                 });
             } else {
                 // Second execution: use a different name at the same operation position
                 // This should trigger NonDeterministicExecutionException
                 return ctx.runInChildContext("different-name", String.class, child -> {
-                    return child.step("work", String.class, () -> "result");
+                    return child.step("work", String.class, stepCtx -> "result");
                 });
             }
         });
@@ -453,19 +453,19 @@ class ChildContextIntegrationTest {
     void stepAndInvokeWithinChildContextUseChildOperationCounter() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             // Parent context: operation 1 is a step
-            var parentStep = ctx.step("parent-step", String.class, () -> "parent");
+            var parentStep = ctx.step("parent-step", String.class, stepCtx -> "parent");
 
             // Parent context: operation 2 is a child context
             var childResult = ctx.runInChildContext("child-ctx", String.class, child -> {
                 // Child context: operations 1, 2, 3 are steps (independent counter)
-                var s1 = child.step("child-step-1", String.class, () -> "c1");
-                var s2 = child.step("child-step-2", String.class, () -> "c2");
-                var s3 = child.step("child-step-3", String.class, () -> "c3");
+                var s1 = child.step("child-step-1", String.class, stepCtx -> "c1");
+                var s2 = child.step("child-step-2", String.class, stepCtx -> "c2");
+                var s3 = child.step("child-step-3", String.class, stepCtx -> "c3");
                 return s1 + "," + s2 + "," + s3;
             });
 
             // Parent context: operation 3 is another step (counter continues from parent)
-            var afterStep = ctx.step("after-step", String.class, () -> "after");
+            var afterStep = ctx.step("after-step", String.class, stepCtx -> "after");
 
             return parentStep + "|" + childResult + "|" + afterStep;
         });

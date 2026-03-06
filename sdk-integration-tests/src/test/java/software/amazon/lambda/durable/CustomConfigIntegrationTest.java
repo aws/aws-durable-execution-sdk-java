@@ -64,7 +64,7 @@ class CustomConfigIntegrationTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> {
-                    return context.step("process", String.class, () -> "Custom SerDes: " + input);
+                    return context.step("process", String.class, stepCtx -> "Custom SerDes: " + input);
                 },
                 customConfig);
 
@@ -80,7 +80,7 @@ class CustomConfigIntegrationTest {
     @Test
     void testDefaultConfig_WorksCorrectly() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            return context.step("process", String.class, () -> "Default: " + input);
+            return context.step("process", String.class, stepCtx -> "Default: " + input);
         });
 
         var result = runner.run("test-input");
@@ -100,12 +100,12 @@ class CustomConfigIntegrationTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> {
-                    var step1 = context.step("step1", String.class, () -> "Step1: " + input);
+                    var step1 = context.step("step1", String.class, stepCtx -> "Step1: " + input);
 
                     // Remove wait operation to avoid complexity in this test
-                    var step2 = context.step("step2", String.class, () -> "Step2: " + input);
+                    var step2 = context.step("step2", String.class, stepCtx -> "Step2: " + input);
 
-                    var step3 = context.step("step3", String.class, () -> "Step3: " + input);
+                    var step3 = context.step("step3", String.class, stepCtx -> "Step3: " + input);
 
                     return step1 + " | " + step2 + " | " + step3;
                 },
@@ -141,7 +141,7 @@ class CustomConfigIntegrationTest {
                     return context.step(
                             "retry-step",
                             String.class,
-                            () -> {
+                            stepCtx -> {
                                 int currentAttempt = attemptCount.incrementAndGet();
                                 // Always fail to test retry behavior (like existing RetryIntegrationTest)
                                 throw new RuntimeException("Simulated failure attempt " + currentAttempt);
@@ -176,21 +176,21 @@ class CustomConfigIntegrationTest {
         var runner1 = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> {
-                    return context.step("process", String.class, () -> "Config1: " + input);
+                    return context.step("process", String.class, stepCtx -> "Config1: " + input);
                 },
                 customConfig1);
 
         var runner2 = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> {
-                    return context.step("process", String.class, () -> "Config2: " + input);
+                    return context.step("process", String.class, stepCtx -> "Config2: " + input);
                 },
                 customConfig2);
 
         var runner3 = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> {
-                    return context.step("process", String.class, () -> "Config3: " + input);
+                    return context.step("process", String.class, stepCtx -> "Config3: " + input);
                 },
                 customConfig3);
 
@@ -235,13 +235,13 @@ class CustomConfigIntegrationTest {
                 String.class,
                 (input, context) -> {
                     // Step 1: Use default SerDes (should use DurableConfig SerDes)
-                    var result1 = context.step("default-step", String.class, () -> "default-result");
+                    var result1 = context.step("default-step", String.class, stepCtx -> "default-result");
 
                     // Step 2: Use StepConfig SerDes (should override DurableConfig SerDes)
                     var result2 = context.step(
                             "custom-step",
                             String.class,
-                            () -> "custom-result",
+                            stepCtx -> "custom-result",
                             StepConfig.builder().serDes(stepConfigSerDes).build());
 
                     return result1 + "," + result2;

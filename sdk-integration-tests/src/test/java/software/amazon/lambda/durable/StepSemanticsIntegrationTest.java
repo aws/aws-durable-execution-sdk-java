@@ -21,7 +21,7 @@ class StepSemanticsIntegrationTest {
                 (input, ctx) -> ctx.step(
                         "my-step",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             executionCount.incrementAndGet();
                             return "result";
                         },
@@ -44,7 +44,7 @@ class StepSemanticsIntegrationTest {
                 (input, ctx) -> ctx.step(
                         "my-step",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             executionCount.incrementAndGet();
                             return "result";
                         },
@@ -67,7 +67,7 @@ class StepSemanticsIntegrationTest {
                 (input, ctx) -> ctx.step(
                         "my-step",
                         String.class,
-                        () -> {
+                        stepCtx -> {
                             executionCount.incrementAndGet();
                             throw new RuntimeException("Always fails");
                         },
@@ -88,7 +88,7 @@ class StepSemanticsIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, ctx) -> ctx.step("my-step", String.class, () -> {
+                (input, ctx) -> ctx.step("my-step", String.class, stepCtx -> {
                     executionCount.incrementAndGet();
                     return "result";
                 }));
@@ -107,7 +107,7 @@ class StepSemanticsIntegrationTest {
             return context.step(
                     "step",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         var count = executionCount.incrementAndGet();
                         return "Executed " + count + " times";
                     },
@@ -135,7 +135,7 @@ class StepSemanticsIntegrationTest {
             return context.step(
                     "step",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         var count = executionCount.incrementAndGet();
                         return "Executed " + count + " times";
                     },
@@ -162,7 +162,7 @@ class StepSemanticsIntegrationTest {
             return context.step(
                     "step",
                     String.class,
-                    () -> {
+                    stepCtx -> {
                         executionCount.incrementAndGet();
                         return "Should not re-execute";
                     },

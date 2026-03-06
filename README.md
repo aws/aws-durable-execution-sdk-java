@@ -45,18 +45,18 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
     protected OrderResult handleRequest(Order order, DurableContext ctx) {
         // Step 1: Validate and reserve inventory
         var reservation = ctx.step("reserve-inventory", Reservation.class, 
-            () -> inventoryService.reserve(order.getItems()));
+            stepCtx -> inventoryService.reserve(order.getItems()));
 
         // Step 2: Process payment
         var payment = ctx.step("process-payment", Payment.class,
-            () -> paymentService.charge(order.getPaymentMethod(), order.getTotal()));
+            stepCtx -> paymentService.charge(order.getPaymentMethod(), order.getTotal()));
 
         // Wait for warehouse processing (no compute charges)
         ctx.wait(null, Duration.ofHours(2));
 
         // Step 3: Confirm shipment
         var shipment = ctx.step("confirm-shipment", Shipment.class,
-            () -> shippingService.ship(reservation, order.getAddress()));
+            stepCtx -> shippingService.ship(reservation, order.getAddress()));
 
         return new OrderResult(order.getId(), shipment.getTrackingNumber());
     }

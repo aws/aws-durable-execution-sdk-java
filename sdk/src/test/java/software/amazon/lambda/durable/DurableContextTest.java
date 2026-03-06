@@ -78,7 +78,7 @@ class DurableContextTest {
     void testStepExecution() {
         var context = createTestContext();
 
-        var result = context.step("test", String.class, () -> "Hello World");
+        var result = context.step("test", String.class, stepCtx -> "Hello World");
 
         assertEquals("Hello World", result);
     }
@@ -94,7 +94,7 @@ class DurableContextTest {
         var context = createTestContext(List.of(existingOp));
 
         // This should return cached result, not execute the function
-        var result = context.step("test", String.class, () -> "New Result");
+        var result = context.step("test", String.class, stepCtx -> "New Result");
 
         assertEquals("Cached Result", result);
     }
@@ -103,7 +103,7 @@ class DurableContextTest {
     void testStepAsync() throws Exception {
         var context = createTestContext();
 
-        var future = context.stepAsync("async-test", String.class, () -> "Async Result");
+        var future = context.stepAsync("async-test", String.class, stepCtx -> "Async Result");
 
         assertNotNull(future);
         assertEquals("Async Result", future.get());
@@ -121,7 +121,7 @@ class DurableContextTest {
         var context = createTestContext(List.of(existingOp));
 
         // This should return cached result immediately
-        var future = context.stepAsync("async-test", String.class, () -> "New Async Result");
+        var future = context.stepAsync("async-test", String.class, stepCtx -> "New Async Result");
         assertEquals("Cached Async Result", future.get());
     }
 
@@ -155,11 +155,11 @@ class DurableContextTest {
         var context = createTestContext();
 
         // Execute sync step
-        var syncResult = context.step("sync-step", String.class, () -> "Sync Done");
+        var syncResult = context.step("sync-step", String.class, stepCtx -> "Sync Done");
         assertEquals("Sync Done", syncResult);
 
         // Execute async step
-        var asyncFuture = context.stepAsync("async-step", Integer.class, () -> 42);
+        var asyncFuture = context.stepAsync("async-step", Integer.class, stepCtx -> 42);
         assertEquals(42, asyncFuture.get());
 
         // Receiving results from `get` calls doesn't mean the step threads have been deregistered.So we wait for 500ms
@@ -193,10 +193,10 @@ class DurableContextTest {
         var context = createTestContext(List.of(syncOp, asyncOp, waitOp));
 
         // All operations should replay from cache
-        var syncResult = context.step("sync-step", String.class, () -> "New Sync");
+        var syncResult = context.step("sync-step", String.class, stepCtx -> "New Sync");
         assertEquals("Replayed Sync", syncResult);
 
-        var asyncFuture = context.stepAsync("async-step", Integer.class, () -> 999);
+        var asyncFuture = context.stepAsync("async-step", Integer.class, stepCtx -> 999);
         assertEquals(100, asyncFuture.get());
 
         // Wait should complete immediately (no exception)
@@ -229,7 +229,8 @@ class DurableContextTest {
     void testStepWithTypeToken() {
         var context = createTestContext();
 
-        List<String> result = context.step("test-list", new TypeToken<List<String>>() {}, () -> List.of("a", "b", "c"));
+        List<String> result =
+                context.step("test-list", new TypeToken<List<String>>() {}, stepCtx -> List.of("a", "b", "c"));
 
         assertNotNull(result);
         assertEquals(3, result.size());
@@ -250,7 +251,7 @@ class DurableContextTest {
 
         // This should return cached result, not execute the function
         List<String> result =
-                context.step("test-list", new TypeToken<List<String>>() {}, () -> List.of("new1", "new2"));
+                context.step("test-list", new TypeToken<List<String>>() {}, stepCtx -> List.of("new1", "new2"));
 
         assertEquals(2, result.size());
         assertEquals("cached1", result.get(0));
@@ -264,7 +265,7 @@ class DurableContextTest {
         List<Integer> result = context.step(
                 "test-numbers",
                 new TypeToken<List<Integer>>() {},
-                () -> List.of(1, 2, 3),
+                stepCtx -> List.of(1, 2, 3),
                 StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build());
@@ -279,7 +280,7 @@ class DurableContextTest {
         var context = createTestContext();
 
         DurableFuture<List<String>> future =
-                context.stepAsync("async-list", new TypeToken<List<String>>() {}, () -> List.of("x", "y", "z"));
+                context.stepAsync("async-list", new TypeToken<List<String>>() {}, stepCtx -> List.of("x", "y", "z"));
 
         assertNotNull(future);
         List<String> result = future.get();
@@ -301,7 +302,7 @@ class DurableContextTest {
 
         // This should return cached result immediately
         DurableFuture<List<String>> future = context.stepAsync(
-                "async-list", new TypeToken<List<String>>() {}, () -> List.of("async-new1", "async-new2"));
+                "async-list", new TypeToken<List<String>>() {}, stepCtx -> List.of("async-new1", "async-new2"));
 
         List<String> result = future.get();
         assertEquals(2, result.size());
@@ -316,7 +317,7 @@ class DurableContextTest {
         DurableFuture<List<Integer>> future = context.stepAsync(
                 "async-numbers",
                 new TypeToken<List<Integer>>() {},
-                () -> List.of(10, 20, 30),
+                stepCtx -> List.of(10, 20, 30),
                 StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build());

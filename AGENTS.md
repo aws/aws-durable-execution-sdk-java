@@ -142,7 +142,7 @@ examples/src/test/               # Customer-facing examples + cloud tests
 @Test
 void stepReturnsResultOnReplay() {
     var context = createTestContext(completedOperations);
-    var result = context.step("test", String.class, () -> "new");
+    var result = context.step("test", String.class, stepCtx -> "new");
     assertEquals("cached", result);  // Returns cached, doesn't re-execute
 }
 ```

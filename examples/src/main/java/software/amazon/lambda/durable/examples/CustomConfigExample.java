@@ -77,7 +77,7 @@ public class CustomConfigExample extends DurableHandler<String, String> {
         var customObject = context.step(
                 "create-custom-object",
                 CustomData.class,
-                () -> new CustomData("user123", "John Doe", 25, "john.doe@example.com"));
+                stepCtx -> new CustomData("user123", "John Doe", 25, "john.doe@example.com"));
 
         return "Created custom object: " + customObject.userId + ", " + customObject.fullName + ", "
                 + customObject.userAge + ", " + customObject.emailAddress;

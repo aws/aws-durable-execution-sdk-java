@@ -50,7 +50,7 @@ class CustomSerDesIntegrationTest {
             var result = context.step(
                     "custom-step",
                     String.class,
-                    () -> "custom-result",
+                    stepCtx -> "custom-result",
                     StepConfig.builder().serDes(customSerDes).build());
 
             return result;
@@ -69,7 +69,7 @@ class CustomSerDesIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             // Step without custom SerDes
-            var result = context.step("default-step", String.class, () -> "default-result");
+            var result = context.step("default-step", String.class, stepCtx -> "default-result");
 
             return result;
         });
@@ -88,20 +88,20 @@ class CustomSerDesIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             // Step 1: Default SerDes
-            var result1 = context.step("default-step", String.class, () -> "default");
+            var result1 = context.step("default-step", String.class, stepCtx -> "default");
 
             // Step 2: Custom SerDes 1
             var result2 = context.step(
                     "custom-step-1",
                     String.class,
-                    () -> "custom1",
+                    stepCtx -> "custom1",
                     StepConfig.builder().serDes(customSerDes1).build());
 
             // Step 3: Custom SerDes 2
             var result3 = context.step(
                     "custom-step-2",
                     String.class,
-                    () -> "custom2",
+                    stepCtx -> "custom2",
                     StepConfig.builder().serDes(customSerDes2).build());
 
             return result1 + "," + result2 + "," + result3;
@@ -122,7 +122,7 @@ class CustomSerDesIntegrationTest {
             return context.step(
                     "test-step",
                     String.class,
-                    () -> "result",
+                    stepCtx -> "result",
                     StepConfig.builder().serDes(null).build());
         });
 

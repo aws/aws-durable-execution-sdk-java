@@ -157,12 +157,12 @@ class CallbackIntegrationTest {
     @Test
     void callbackWithSteps() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            var step1 = ctx.step("prepare", String.class, () -> "prepared");
+            var step1 = ctx.step("prepare", String.class, stepCtx -> "prepared");
 
             var cb = ctx.createCallback("approval", String.class);
             var approval = cb.get();
 
-            return ctx.step("finalize", String.class, () -> step1 + " -> " + approval + " -> done");
+            return ctx.step("finalize", String.class, stepCtx -> step1 + " -> " + approval + " -> done");
         });
 
         // First run - step1 completes, callback created, suspends

@@ -32,7 +32,7 @@ You can also pass a lambda directly instead of a handler instance:
 
 ```java
 var runner = LocalDurableTestRunner.create(Order.class, (order, ctx) -> {
-    var result = ctx.step("process", String.class, () -> "done");
+    var result = ctx.step("process", String.class, stepCtx -> "done");
     return new OrderResult(order.getId(), result);
 });
 ```

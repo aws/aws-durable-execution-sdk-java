@@ -19,7 +19,7 @@ ctx.wait("cooling-off-period", Duration.ofDays(7));
 DurableFuture<Void> timer = ctx.waitAsync("min-delay", Duration.ofSeconds(5));
 
 // Do work while the timer runs
-var result = ctx.step("process", String.class, () -> doWork());
+var result = ctx.step("process", String.class, stepCtx -> doWork());
 
 // Block until the wait elapses
 timer.get();
