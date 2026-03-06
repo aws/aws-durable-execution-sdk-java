@@ -19,7 +19,6 @@ on:
     branches:
       - main
     paths:
-      - '.github/**'
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
@@ -62,16 +61,14 @@ jobs:
         run: mvn -B install --file pom.xml
 
       - name: Generate JaCoCo Badge
-        if: ${{ matrix.java == 17 }}
-        # if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
         uses: cicirello/jacoco-badge-generator@v2
         with:
           jacoco-csv-file: sdk/target/site/jacoco/jacoco.csv
           badges-directory: sdk/target/site/jacoco
 
       - name: Publish coverage report to GitHub Pages
-        if: ${{ matrix.java == 17 }}
-        # if: ${{ github.ref == 'refs/heads/coverage' && matrix.java == 17 }}
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: docs/coverage
