@@ -13,17 +13,32 @@ public enum JitterStrategy {
     /**
      * No jitter - use exact calculated delay. This provides predictable timing but may cause thundering herd issues.
      */
-    NONE,
-
+    NONE {
+        @Override
+        public double apply(double baseDelay) {
+            return baseDelay;
+        }
+    },
     /**
      * Full jitter - random delay between 0 and calculated delay. This provides maximum spread but may result in very
      * short delays.
      */
-    FULL,
-
+    FULL {
+        @Override
+        public double apply(double baseDelay) {
+            return Math.random() * baseDelay;
+        }
+    },
     /**
      * Half jitter - random delay between 50% and 100% of calculated delay. This provides good spread while maintaining
      * reasonable minimum delays.
      */
-    HALF
+    HALF {
+        @Override
+        public double apply(double baseDelay) {
+            return baseDelay / 2 + Math.random() * (baseDelay / 2);
+        }
+    };
+
+    public abstract double apply(double baseDelay);
 }

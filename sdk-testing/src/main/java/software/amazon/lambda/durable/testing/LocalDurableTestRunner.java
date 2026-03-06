@@ -155,6 +155,9 @@ public class LocalDurableTestRunner<I, O> {
                     .withDurableExecutionClient(storage)
                     .withSerDes(customerConfig.getSerDes())
                     .withExecutorService(customerConfig.getExecutorService())
+                    .withPollingStrategy(customerConfig.getPollingStrategy())
+                    .withCheckpointDelay(customerConfig.getCheckpointDelay())
+                    .withLoggerConfig(customerConfig.getLoggerConfig())
                     .build();
         } else {
             // Fallback to default config with in-memory client
