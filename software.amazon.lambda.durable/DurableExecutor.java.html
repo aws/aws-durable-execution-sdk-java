@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DurableExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">DurableExecutor.java</span></div><h1>DurableExecutor.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import com.amazonaws.services.lambda.runtime.Context;
+import com.amazonaws.services.lambda.runtime.RequestHandler;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BiFunction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
+
+<span class="nc" id="L27">public class DurableExecutor {</span>
+<span class="fc" id="L28">    private static final Logger logger = LoggerFactory.getLogger(DurableExecutor.class);</span>
+
+    // Lambda response size limit is 6MB minus small epsilon for envelope
+    private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
+
+    public static &lt;I, O&gt; DurableExecutionOutput execute(
+            DurableExecutionInput input,
+            Context lambdaContext,
+            Class&lt;I&gt; inputType,
+            BiFunction&lt;I, DurableContext, O&gt; handler,
+            DurableConfig config) {
+<span class="fc" id="L39">        try (var executionManager = new ExecutionManager(input, config)) {</span>
+<span class="fc" id="L40">            executionManager.registerActiveThread(null);</span>
+<span class="fc" id="L41">            var handlerFuture = CompletableFuture.supplyAsync(</span>
+                    () -&gt; {
+<span class="fc" id="L43">                        var userInput = extractUserInput(</span>
+<span class="fc" id="L44">                                executionManager.getExecutionOperation(), config.getSerDes(), inputType);</span>
+                        // use try-with-resources to clear logger properties
+<span class="fc" id="L46">                        try (var context = DurableContext.createRootContext(executionManager, config, lambdaContext)) {</span>
+<span class="fc" id="L47">                            return handler.apply(userInput, context);</span>
+                        }
+                    },
+<span class="fc" id="L50">                    config.getExecutorService()); // Get executor from config for running user code</span>
+
+            // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
+            // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
+            // failure.
+<span class="fc" id="L55">            return executionManager</span>
+<span class="fc" id="L56">                    .runUntilCompleteOrSuspend(handlerFuture)</span>
+<span class="fc" id="L57">                    .handle((result, ex) -&gt; {</span>
+<span class="fc bfc" id="L58" title="All 2 branches covered.">                        if (ex != null) {</span>
+                            // an exception thrown from handlerFuture or suspension/termination occurred
+<span class="fc" id="L60">                            Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">                            if (cause instanceof SuspendExecutionException) {</span>
+<span class="fc" id="L62">                                return DurableExecutionOutput.pending();</span>
+                            }
+
+<span class="fc" id="L65">                            logger.debug(&quot;Execution failed: {}&quot;, cause.getMessage());</span>
+<span class="fc" id="L66">                            return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));</span>
+                        }
+                        // user handler complete successfully
+<span class="fc" id="L69">                        var outputPayload = config.getSerDes().serialize(result);</span>
+
+<span class="fc" id="L71">                        logger.debug(&quot;Execution completed&quot;);</span>
+<span class="fc" id="L72">                        return DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));</span>
+                    })
+<span class="fc" id="L74">                    .join();</span>
+        }
+    }
+
+    private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {
+        // Check if the serialized payload exceeds Lambda response size limit
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">        var payloadSize = outputPayload != null ? outputPayload.getBytes(StandardCharsets.UTF_8).length : 0;</span>
+
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">        if (payloadSize &gt; LAMBDA_RESPONSE_SIZE_LIMIT) {</span>
+<span class="nc" id="L83">            logger.debug(</span>
+                    &quot;Response size ({} bytes) exceeds Lambda limit ({} bytes). Checkpointing result.&quot;,
+<span class="nc" id="L85">                    payloadSize,</span>
+<span class="nc" id="L86">                    LAMBDA_RESPONSE_SIZE_LIMIT);</span>
+
+            // Checkpoint the large result and wait for it to complete
+<span class="nc" id="L89">            executionManager</span>
+<span class="nc" id="L90">                    .sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="nc" id="L91">                            .type(OperationType.EXECUTION)</span>
+<span class="nc" id="L92">                            .id(executionManager.getExecutionOperation().id())</span>
+<span class="nc" id="L93">                            .action(OperationAction.SUCCEED)</span>
+<span class="nc" id="L94">                            .payload(outputPayload)</span>
+<span class="nc" id="L95">                            .build())</span>
+<span class="nc" id="L96">                    .join();</span>
+
+            // Return empty result, we checkpointed the data manually
+<span class="nc" id="L99">            logger.debug(&quot;Execution completed (large response checkpointed)&quot;);</span>
+<span class="nc" id="L100">            return &quot;&quot;;</span>
+        }
+
+        // If response size is acceptable, return the result directly
+<span class="fc" id="L104">        return outputPayload;</span>
+    }
+
+    private static ErrorObject buildErrorObject(Throwable e, SerDes serDes) {
+        // exceptions thrown from operations, e.g. Step
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">        if (e instanceof DurableOperationException) {</span>
+<span class="nc" id="L110">            return ((DurableOperationException) e).getErrorObject();</span>
+        }
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        if (e instanceof UnrecoverableDurableExecutionException) {</span>
+<span class="fc" id="L113">            return ((UnrecoverableDurableExecutionException) e).getErrorObject();</span>
+        }
+        // exceptions thrown from non-operation code
+<span class="fc" id="L116">        return ExceptionHelper.buildErrorObject(e, serDes);</span>
+    }
+
+    private static &lt;I&gt; I extractUserInput(Operation executionOp, SerDes serDes, Class&lt;I&gt; inputType) {
+<span class="fc bfc" id="L120" title="All 2 branches covered.">        if (executionOp.executionDetails() == null) {</span>
+<span class="fc" id="L121">            throw new IllegalDurableOperationException(&quot;EXECUTION operation missing executionDetails&quot;);</span>
+        }
+
+<span class="fc" id="L124">        var inputPayload = executionOp.executionDetails().inputPayload();</span>
+<span class="fc" id="L125">        return serDes.deserialize(inputPayload, TypeToken.get(inputType));</span>
+    }
+
+    public static &lt;I, O&gt; RequestHandler&lt;DurableExecutionInput, DurableExecutionOutput&gt; wrap(
+            Class&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handler, DurableConfig config) {
+<span class="fc" id="L130">        return (input, context) -&gt; execute(input, context, inputType, handler, config);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DurableHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">DurableHandler.java</span></div><h1>DurableHandler.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import com.amazonaws.services.lambda.runtime.Context;
+import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.ParameterizedType;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.util.Date;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.serde.AwsSdkV2Module;
+
+public abstract class DurableHandler&lt;I, O&gt; implements RequestStreamHandler {
+
+    private final Class&lt;I&gt; inputType;
+    private final DurableConfig config;
+<span class="fc" id="L39">    private final ObjectMapper objectMapper = createObjectMapper(); // Internal ObjectMapper</span>
+<span class="fc" id="L40">    private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L43">    protected DurableHandler() {</span>
+        // Extract input type from generic superclass
+<span class="fc" id="L45">        var superClass = getClass().getGenericSuperclass();</span>
+<span class="fc bfc" id="L46" title="All 2 branches covered.">        if (superClass instanceof ParameterizedType paramType) {</span>
+<span class="fc" id="L47">            this.inputType = (Class&lt;I&gt;) paramType.getActualTypeArguments()[0];</span>
+        } else {
+<span class="fc" id="L49">            throw new IllegalArgumentException(&quot;Cannot determine input type parameter&quot;);</span>
+        }
+<span class="fc" id="L51">        this.config = createConfiguration();</span>
+<span class="fc" id="L52">        validateConfiguration();</span>
+<span class="fc" id="L53">    }</span>
+
+    /**
+     * Gets the configuration used by this handler. This allows test frameworks and other tools to access the handler's
+     * configuration for testing purposes.
+     *
+     * &lt;p&gt;DurableConfig is immutable.
+     *
+     * @return The DurableConfig instance used by this handler
+     */
+    public DurableConfig getConfiguration() {
+<span class="nc" id="L64">        return config;</span>
+    }
+
+    /**
+     * Template method for creating configuration. Override this method to provide custom DurableExecutionClient,
+     * SerDes, or other configuration.
+     *
+     * &lt;p&gt;The {@link software.amazon.lambda.durable.client.LambdaDurableFunctionsClient} is a wrapper that customers
+     * should use to inject their own configured {@link software.amazon.awssdk.services.lambda.LambdaClient}. This
+     * allows full control over AWS SDK configuration including credentials, region, HTTP client, and retry policies.
+     *
+     * &lt;p&gt;Basic example with custom region and credentials:
+     *
+     * &lt;pre&gt;{@code
+     * @Override
+     * protected DurableConfig createConfiguration() {
+     *     // Create custom Lambda client with specific configuration
+     *     var lambdaClient = LambdaClient.builder()
+     *         .region(Region.US_WEST_2)
+     *         .credentialsProvider(ProfileCredentialsProvider.create(&quot;my-profile&quot;))
+     *         .build();
+     *
+     *     // Wrap the Lambda client with LambdaDurableFunctionsClient
+     *     var durableClient = new LambdaDurableFunctionsClient(lambdaClient);
+     *
+     *     return DurableConfig.builder()
+     *         .withDurableExecutionClient(durableClient)
+     *         .build();
+     * }
+     * }&lt;/pre&gt;
+     *
+     * &lt;p&gt;Advanced example with AWS CRT HTTP Client for high-performance scenarios:
+     *
+     * &lt;pre&gt;{@code
+     * @Override
+     * protected DurableConfig createConfiguration() {
+     *     // Configure AWS CRT HTTP Client for optimal performance
+     *     var crtHttpClient = AwsCrtAsyncHttpClient.builder()
+     *         .maxConcurrency(50)
+     *         .connectionTimeout(Duration.ofSeconds(30))
+     *         .connectionMaxIdleTime(Duration.ofSeconds(60))
+     *         .build();
+     *
+     *     // Create Lambda client with CRT HTTP client
+     *     var lambdaClient = LambdaClient.builder()
+     *         .region(Region.US_EAST_1)
+     *         .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
+     *         .httpClient(crtHttpClient)
+     *         .overrideConfiguration(ClientOverrideConfiguration.builder()
+     *             .retryPolicy(RetryPolicy.builder()
+     *                 .numRetries(5)
+     *                 .build())
+     *             .build())
+     *         .build();
+     *
+     *     // Wrap with LambdaDurableFunctionsClient
+     *     var durableClient = new LambdaDurableFunctionsClient(lambdaClient);
+     *
+     *     return DurableConfig.builder()
+     *         .withDurableExecutionClient(durableClient)
+     *         .withSerDes(customSerDes)  // Optional: custom SerDes for user data
+     *         .withExecutorService(customExecutor)  // Optional: custom thread pool
+     *         .build();
+     * }
+     * }&lt;/pre&gt;
+     *
+     * @return DurableConfig with desired configuration
+     */
+    protected DurableConfig createConfiguration() {
+<span class="fc" id="L133">        return DurableConfig.defaultConfig();</span>
+    }
+
+    private void validateConfiguration() {
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">        if (config.getDurableExecutionClient() == null) {</span>
+<span class="nc" id="L138">            throw new IllegalStateException(&quot;DurableExecutionClient configuration failed&quot;);</span>
+        }
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">        if (config.getSerDes() == null) {</span>
+<span class="nc" id="L141">            throw new IllegalStateException(&quot;SerDes configuration failed&quot;);</span>
+        }
+<span class="pc bpc" id="L143" title="1 of 2 branches missed.">        if (config.getExecutorService() == null) {</span>
+<span class="nc" id="L144">            throw new IllegalStateException(&quot;ExecutorService configuration failed&quot;);</span>
+        }
+<span class="fc" id="L146">    }</span>
+
+    @Override
+    public final void handleRequest(InputStream inputStream, OutputStream outputStream, Context context)
+            throws IOException {
+<span class="nc" id="L151">        var inputString = new String(inputStream.readAllBytes());</span>
+<span class="nc" id="L152">        logger.debug(&quot;Raw input from durable handler: {}&quot;, inputString);</span>
+<span class="nc" id="L153">        var input = this.objectMapper.readValue(inputString, DurableExecutionInput.class);</span>
+<span class="nc" id="L154">        var output = DurableExecutor.execute(input, context, inputType, this::handleRequest, config);</span>
+<span class="nc" id="L155">        outputStream.write(objectMapper.writeValueAsBytes(output));</span>
+<span class="nc" id="L156">    }</span>
+
+    /**
+     * Handle the durable execution.
+     *
+     * @param input User input
+     * @param context Durable context for operations
+     * @return Result
+     */
+    public abstract O handleRequest(I input, DurableContext context);
+
+    /**
+     * Creates ObjectMapper for DAR backend communication (internal use only). This is for INTERNAL use only - handles
+     * Lambda Durable Functions backend protocol.
+     *
+     * &lt;p&gt;Customer-facing serialization uses SerDes from DurableConfig.
+     *
+     * @return Configured ObjectMapper for durable backend communication
+     */
+    public static ObjectMapper createObjectMapper() {
+<span class="fc" id="L176">        var dateModule = new SimpleModule();</span>
+<span class="fc" id="L177">        dateModule.addDeserializer(Date.class, new JsonDeserializer&lt;&gt;() {</span>
+            @Override
+            public Date deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
+                    throws IOException {
+                // Timestamp is a double value represent seconds since epoch.
+<span class="nc" id="L182">                var timestamp = jsonParser.getDoubleValue();</span>
+                // Date expects milliseconds since epoch, so multiply by 1000.
+<span class="nc" id="L184">                return new Date((long) (timestamp * 1000));</span>
+            }
+        });
+<span class="fc" id="L187">        dateModule.addSerializer(Date.class, new JsonSerializer&lt;&gt;() {</span>
+            @Override
+            public void serialize(Date date, JsonGenerator jsonGenerator, SerializerProvider serializerProvider)
+                    throws IOException {
+                // Timestamp should be a double value representing seconds since epoch, so
+                // convert from milliseconds.
+<span class="nc" id="L193">                double timestamp = date.getTime() / 1000.0;</span>
+<span class="nc" id="L194">                jsonGenerator.writeNumber(timestamp);</span>
+<span class="nc" id="L195">            }</span>
+        });
+
+        // Needed for deserialization of timestamps for some SDK v2 objects
+<span class="fc" id="L199">        dateModule.addDeserializer(Instant.class, new JsonDeserializer&lt;&gt;() {</span>
+<span class="fc" id="L200">            private static final DateTimeFormatter TIMESTAMP_FORMATTER = new DateTimeFormatterBuilder()</span>
+<span class="fc" id="L201">                    .appendPattern(&quot;yyyy-MM-dd HH:mm:ss.SSSSSSXXX&quot;)</span>
+<span class="fc" id="L202">                    .toFormatter();</span>
+
+            @Override
+            public Instant deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
+                    throws IOException {
+<span class="fc bfc" id="L207" title="All 2 branches covered.">                if (jsonParser.hasToken(JsonToken.VALUE_NUMBER_INT)) {</span>
+<span class="fc" id="L208">                    return Instant.ofEpochMilli(jsonParser.getLongValue());</span>
+                }
+<span class="fc" id="L210">                var timestampStr = jsonParser.getValueAsString();</span>
+<span class="fc" id="L211">                return Instant.from(TIMESTAMP_FORMATTER.parse(timestampStr));</span>
+            }
+        });
+
+<span class="fc" id="L215">        return JsonMapper.builder()</span>
+<span class="fc" id="L216">                .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)</span>
+<span class="fc" id="L217">                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)</span>
+                // Looks pretty, and probably needed for tests to be deterministic.
+<span class="fc" id="L219">                .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)</span>
+<span class="fc" id="L220">                .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)</span>
+                // Data passed over the wire from the backend is UpperCamelCase
+<span class="fc" id="L222">                .propertyNamingStrategy(PropertyNamingStrategies.UPPER_CAMEL_CASE)</span>
+<span class="fc" id="L223">                .addModule(new JavaTimeModule())</span>
+<span class="fc" id="L224">                .addModule(dateModule)</span>
+<span class="fc" id="L225">                .addModule(new AwsSdkV2Module())</span>
+<span class="fc" id="L226">                .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

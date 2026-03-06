@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExecutionContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">ExecutionContext.java</span></div><h1>ExecutionContext.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+/**
+ * Provides metadata about the current durable execution.
+ *
+ * &lt;p&gt;This context contains information about the execution environment that remains constant throughout the execution
+ * lifecycle. Access it via {@link DurableContext#getExecutionContext()}.
+ */
+public class ExecutionContext {
+    private final String durableExecutionArn;
+
+<span class="fc" id="L14">    ExecutionContext(String durableExecutionArn) {</span>
+<span class="fc" id="L15">        this.durableExecutionArn = durableExecutionArn;</span>
+<span class="fc" id="L16">    }</span>
+
+    /**
+     * Returns the ARN of the current durable execution.
+     *
+     * &lt;p&gt;The durable execution ARN uniquely identifies this execution instance and remains constant across all
+     * invocations and replays. Use this ARN to:
+     *
+     * &lt;ul&gt;
+     *   &lt;li&gt;Track execution progress in external systems
+     *   &lt;li&gt;Correlate logs and metrics across invocations
+     *   &lt;li&gt;Reference this execution when calling Lambda APIs
+     * &lt;/ul&gt;
+     *
+     * &lt;p&gt;Example ARN format:
+     * {@code arn:aws:lambda:us-east-1:123456789012:function:my-function:$LATEST/durable-execution/349beff4-a89d-4bc8-a56f-af7a8af67a5f/20dae574-53da-37a1-bfd5-b0e2e6ec715d}
+     *
+     * @return the durable execution ARN
+     */
+    public String getDurableExecutionArn() {
+<span class="fc" id="L36">        return durableExecutionArn;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DurableLogger.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.logging</a> &gt; <span class="el_source">DurableLogger.java</span></div><h1>DurableLogger.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.logging;
+
+import org.slf4j.Logger;
+import org.slf4j.MDC;
+import software.amazon.lambda.durable.BaseContext;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.StepContext;
+
+/**
+ * Logger wrapper that adds durable execution context to log entries via MDC and optionally suppresses logs during
+ * replay.
+ */
+public class DurableLogger {
+    static final String MDC_EXECUTION_ARN = &quot;durableExecutionArn&quot;;
+    static final String MDC_REQUEST_ID = &quot;requestId&quot;;
+    static final String MDC_OPERATION_ID = &quot;operationId&quot;;
+    static final String MDC_CONTEXT_ID = &quot;contextId&quot;;
+    static final String MDC_OPERATION_NAME = &quot;operationName&quot;;
+    static final String MDC_CONTEXT_NAME = &quot;contextName&quot;;
+    static final String MDC_ATTEMPT = &quot;attempt&quot;;
+
+    private final Logger delegate;
+    private final BaseContext context;
+
+<span class="fc" id="L27">    public DurableLogger(Logger delegate, BaseContext context) {</span>
+<span class="fc" id="L28">        this.delegate = delegate;</span>
+<span class="fc" id="L29">        this.context = context;</span>
+
+        // execution arn
+<span class="fc" id="L32">        MDC.put(MDC_EXECUTION_ARN, context.getExecutionContext().getDurableExecutionArn());</span>
+
+        // lambda request id
+        var requestId =
+<span class="pc bpc" id="L36" title="1 of 2 branches missed.">                context.getLambdaContext() != null ? context.getLambdaContext().getAwsRequestId() : null;</span>
+<span class="fc bfc" id="L37" title="All 2 branches covered.">        if (requestId != null) {</span>
+<span class="fc" id="L38">            MDC.put(MDC_REQUEST_ID, requestId);</span>
+        }
+
+<span class="fc bfc" id="L41" title="All 2 branches covered.">        if (context instanceof DurableContext) {</span>
+            // context thread - context id
+<span class="pc bpc" id="L43" title="1 of 2 branches missed.">            if (context.getContextId() != null) {</span>
+<span class="nc" id="L44">                MDC.put(MDC_CONTEXT_ID, context.getContextId());</span>
+            }
+<span class="pc bpc" id="L46" title="1 of 2 branches missed.">            if (context.getContextName() != null) {</span>
+<span class="nc" id="L47">                MDC.put(MDC_CONTEXT_NAME, context.getContextName());</span>
+            }
+        } else {
+            // step context
+<span class="fc" id="L51">            var operationId = context.getContextId();</span>
+            // step context - step operation id
+<span class="fc" id="L53">            MDC.put(MDC_OPERATION_ID, operationId);</span>
+            // step context - step operation name
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">            if (context.getContextName() != null) {</span>
+<span class="fc" id="L56">                MDC.put(MDC_OPERATION_NAME, context.getContextName());</span>
+            }
+<span class="fc" id="L58">            MDC.put(MDC_ATTEMPT, String.valueOf(((StepContext) context).getAttempt()));</span>
+        }
+<span class="fc" id="L60">    }</span>
+
+    public void close() {
+<span class="fc" id="L63">        MDC.clear();</span>
+<span class="fc" id="L64">    }</span>
+
+    public void trace(String format, Object... args) {
+<span class="fc" id="L67">        log(() -&gt; delegate.trace(format, args));</span>
+<span class="fc" id="L68">    }</span>
+
+    public void debug(String format, Object... args) {
+<span class="fc" id="L71">        log(() -&gt; delegate.debug(format, args));</span>
+<span class="fc" id="L72">    }</span>
+
+    public void info(String format, Object... args) {
+<span class="fc" id="L75">        log(() -&gt; delegate.info(format, args));</span>
+<span class="fc" id="L76">    }</span>
+
+    public void warn(String format, Object... args) {
+<span class="fc" id="L79">        log(() -&gt; delegate.warn(format, args));</span>
+<span class="fc" id="L80">    }</span>
+
+    public void error(String format, Object... args) {
+<span class="fc" id="L83">        log(() -&gt; delegate.error(format, args));</span>
+<span class="fc" id="L84">    }</span>
+
+    public void error(String message, Throwable t) {
+<span class="fc" id="L87">        log(() -&gt; delegate.error(message, t));</span>
+<span class="fc" id="L88">    }</span>
+
+    private boolean shouldSuppress() {
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        return context.getDurableConfig().getLoggerConfig().suppressReplayLogs()</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">                &amp;&amp; context.getExecutionManager().isReplaying();</span>
+    }
+
+    private void log(Runnable logAction) {
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        if (!shouldSuppress()) {</span>
+<span class="fc" id="L97">            logAction.run();</span>
+        }
+<span class="fc" id="L99">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

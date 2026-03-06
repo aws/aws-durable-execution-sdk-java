@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExceptionHelper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.util</a> &gt; <span class="el_source">ExceptionHelper.java</span></div><h1>ExceptionHelper.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.util;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CompletionException;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.serde.SerDes;
+
+/** Utility class for handling exceptions */
+<span class="nc" id="L12">public class ExceptionHelper {</span>
+
+    /**
+     * Throws any exception as if it were unchecked using type erasure. This preserves the original exception type and
+     * stack trace.
+     *
+     * @param exception the exception to throw
+     * @param &lt;T&gt; the exception type (erased at runtime)
+     * @throws T the exception as an unchecked exception
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public static &lt;T extends Throwable&gt; void sneakyThrow(Throwable exception) throws T {
+<span class="fc" id="L24">        throw (T) exception;</span>
+    }
+
+    /**
+     * unwrap the exception that is wrapped by CompletionException
+     *
+     * @param throwable the throwable to unwrap
+     * @return the original Throwable that is not a CompletionException
+     */
+    public static Throwable unwrapCompletableFuture(Throwable throwable) {
+<span class="fc bfc" id="L34" title="All 2 branches covered.">        while (throwable instanceof CompletionException) {</span>
+<span class="fc" id="L35">            throwable = throwable.getCause();</span>
+        }
+<span class="fc" id="L37">        return throwable;</span>
+    }
+
+    /**
+     * build an ErrorObject from a Throwable
+     *
+     * @param throwable the Throwable from which to build the errorObject
+     * @return the ErrorObject
+     */
+    public static ErrorObject buildErrorObject(Throwable throwable, SerDes serDes) {
+<span class="fc" id="L47">        return ErrorObject.builder()</span>
+<span class="fc" id="L48">                .errorType(throwable.getClass().getName())</span>
+<span class="fc" id="L49">                .errorMessage(throwable.getMessage())</span>
+<span class="fc" id="L50">                .errorData(serDes.serialize(throwable))</span>
+<span class="fc" id="L51">                .stackTrace(serializeStackTrace(throwable.getStackTrace()))</span>
+<span class="fc" id="L52">                .build();</span>
+    }
+
+    // StackTraceElement.toString() is implementation-dependent, so we'll define our
+    // own format.
+    public static List&lt;String&gt; serializeStackTrace(StackTraceElement[] stackTrace) {
+<span class="fc" id="L58">        return Arrays.stream(stackTrace)</span>
+<span class="fc" id="L59">                .map((element) -&gt; String.format(</span>
+                        &quot;%s|%s|%s|%d&quot;,
+<span class="fc" id="L61">                        element.getClassName(),</span>
+<span class="fc" id="L62">                        element.getMethodName(),</span>
+<span class="fc" id="L63">                        element.getFileName(),</span>
+<span class="fc" id="L64">                        element.getLineNumber()))</span>
+<span class="fc" id="L65">                .toList();</span>
+    }
+
+    public static StackTraceElement[] deserializeStackTrace(List&lt;String&gt; stackTrace) {
+<span class="fc" id="L69">        return stackTrace.stream()</span>
+<span class="fc" id="L70">                .map((s) -&gt; {</span>
+<span class="fc" id="L71">                    String[] tokens = s.split(&quot;\\|&quot;);</span>
+<span class="fc" id="L72">                    return new StackTraceElement(tokens[0], tokens[1], tokens[2], Integer.parseInt(tokens[3]));</span>
+                })
+<span class="fc" id="L74">                .toArray(StackTraceElement[]::new);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

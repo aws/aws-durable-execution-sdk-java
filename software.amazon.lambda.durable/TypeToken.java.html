@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TypeToken.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">TypeToken.java</span></div><h1>TypeToken.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+
+/**
+ * Framework-agnostic type token for capturing generic type information at runtime.
+ *
+ * &lt;p&gt;This class enables type-safe deserialization of complex generic types like {@code List&lt;MyObject&gt;} or
+ * {@code Map&lt;String, MyObject&gt;} that would otherwise lose their type information due to Java's type erasure.
+ *
+ * &lt;p&gt;Usage example:
+ *
+ * &lt;pre&gt;{@code
+ * // Capture generic type information
+ * TypeToken&lt;List&lt;String&gt;&gt; token = new TypeToken&lt;List&lt;String&gt;&gt;() {};
+ *
+ * // Use with DurableContext
+ * List&lt;String&gt; items = context.step(&quot;fetch-items&quot;,
+ *     new TypeToken&lt;List&lt;String&gt;&gt;() {},
+ *     () -&gt; fetchItems());
+ * }&lt;/pre&gt;
+ *
+ * @param &lt;T&gt; the type being captured
+ */
+public abstract class TypeToken&lt;T&gt; {
+    private final Type type;
+
+    /**
+     * Constructs a new TypeToken. This constructor must be called from an anonymous subclass to capture the type
+     * parameter.
+     *
+     * @throws IllegalStateException if created without a type parameter
+     */
+<span class="fc" id="L37">    protected TypeToken() {</span>
+<span class="fc" id="L38">        Type superClass = getClass().getGenericSuperclass();</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (superClass instanceof ParameterizedType) {</span>
+<span class="fc" id="L40">            this.type = ((ParameterizedType) superClass).getActualTypeArguments()[0];</span>
+        } else {
+<span class="fc" id="L42">            throw new IllegalStateException(&quot;TypeToken must be created as an anonymous subclass with a type parameter. &quot;</span>
+                    + &quot;Example: new TypeToken&lt;List&lt;String&gt;&gt;() {}&quot;);
+        }
+<span class="fc" id="L45">    }</span>
+
+<span class="fc" id="L47">    private TypeToken(Type type) {</span>
+<span class="fc" id="L48">        this.type = type;</span>
+<span class="fc" id="L49">    }</span>
+
+    public static &lt;U&gt; TypeToken&lt;U&gt; get(Class&lt;U&gt; clazz) {
+<span class="fc" id="L52">        return new TypeToken&lt;&gt;(clazz) {};</span>
+    }
+
+    /**
+     * Returns the captured type.
+     *
+     * @return the type represented by this token
+     */
+    public Type getType() {
+<span class="fc" id="L61">        return type;</span>
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        if (this == obj) return true;</span>
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">        if (!(obj instanceof TypeToken)) return false;</span>
+<span class="fc" id="L68">        TypeToken&lt;?&gt; other = (TypeToken&lt;?&gt;) obj;</span>
+<span class="fc" id="L69">        return type.equals(other.type);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L74">        return type.hashCode();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="fc" id="L79">        return &quot;TypeToken&lt;&quot; + type.getTypeName() + &quot;&gt;&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

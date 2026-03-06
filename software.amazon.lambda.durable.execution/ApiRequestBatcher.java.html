@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ApiRequestBatcher.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.execution</a> &gt; <span class="el_source">ApiRequestBatcher.java</span></div><h1>ApiRequestBatcher.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.execution;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+/**
+ * Batches API requests to optimize throughput by grouping individual calls into batch operations. Batches are flushed
+ * when full, when size limits are reached, or after a timeout.
+ *
+ * &lt;p&gt;Uses a dedicated SDK thread pool for internal coordination, keeping checkpoint processing separate from
+ * customer-configured executors used for user-defined operations.
+ *
+ * @see InternalExecutor
+ * @param &lt;T&gt; Request type
+ */
+public class ApiRequestBatcher&lt;T&gt; {
+<span class="fc" id="L24">    private static final Duration MAX_DELAY = Duration.ofMinutes(60);</span>
+
+    /** Maximum items allowed in a single batch */
+    private final int maxItemCount;
+    /** Maximum bytes allowed in a single batch */
+    private final int maxBatchBytes;
+    /** Calculates byte size of each request */
+    private final Function&lt;T, Integer&gt; calculateItemSize;
+    /** Executes the batch operation */
+    private final Consumer&lt;List&lt;T&gt;&gt; executeBatch;
+
+    /** Accumulated requests */
+    private final List&lt;Item&lt;T&gt;&gt; items;
+
+    /** Current batch size in bytes */
+    private int totalBytes;
+
+    /** Time when the current batch must be flushed */
+    private long expireTime;
+
+    /** Timer to auto-flush incomplete batch */
+    private CompletableFuture&lt;Void&gt; flushTimer;
+
+    /** Future of flushing previous batch */
+    private CompletableFuture&lt;Void&gt; previousBatchFuture;
+
+<span class="fc" id="L50">    private record Item&lt;T&gt;(T request, CompletableFuture&lt;Void&gt; result) {}</span>
+
+    /**
+     * Creates a new ApiRequestBatcher with the specified configuration.
+     *
+     * @param maxItemCount Maximum number of items per batch
+     * @param maxBatchBytes Maximum total size in bytes for all items in a batch
+     * @param calculateItemSize Function to calculate the size in bytes of each item
+     * @param executeBatch Function to execute the batch action
+     */
+    public ApiRequestBatcher(
+            int maxItemCount,
+            int maxBatchBytes,
+            Function&lt;T, Integer&gt; calculateItemSize,
+<span class="fc" id="L64">            Consumer&lt;List&lt;T&gt;&gt; executeBatch) {</span>
+<span class="fc" id="L65">        this.maxItemCount = maxItemCount;</span>
+<span class="fc" id="L66">        this.maxBatchBytes = maxBatchBytes;</span>
+<span class="fc" id="L67">        this.calculateItemSize = calculateItemSize;</span>
+<span class="fc" id="L68">        this.executeBatch = executeBatch;</span>
+<span class="fc" id="L69">        this.previousBatchFuture = CompletableFuture.allOf();</span>
+<span class="fc" id="L70">        this.items = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L72">        initializeBatch();</span>
+<span class="fc" id="L73">    }</span>
+
+    /**
+     * Submits request for batched execution.
+     *
+     * @param request Request to batch
+     * @return Future completed when batch executes
+     */
+    CompletableFuture&lt;Void&gt; submit(T request, Duration flushDelay) {
+<span class="fc" id="L82">        synchronized (items) {</span>
+            // Flush the current batch if request doesn't fit
+<span class="pc bpc" id="L84" title="1 of 4 branches missed.">            if (isFull() || !canFit(request)) {</span>
+<span class="fc" id="L85">                flushNow();</span>
+            }
+
+            // add the request to the current batch
+<span class="fc" id="L89">            CompletableFuture&lt;Void&gt; future = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L90">            totalBytes += calculateItemSize.apply(request);</span>
+<span class="fc" id="L91">            items.add(new Item&lt;&gt;(request, future));</span>
+
+            // create or update the flush timer
+<span class="fc" id="L94">            long newExpireTime = System.nanoTime() + flushDelay.toNanos();</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">            if (expireTime &gt; newExpireTime) {</span>
+                // the batch needs to be completed earlier than previously scheduled
+<span class="fc" id="L97">                expireTime = newExpireTime;</span>
+<span class="fc" id="L98">                flushAfterDelay(flushDelay.toNanos());</span>
+            }
+
+<span class="fc bfc" id="L101" title="All 2 branches covered.">            if (isFull()) {</span>
+                // Flush early if batch is full
+<span class="fc" id="L103">                flushNow();</span>
+            }
+<span class="fc" id="L105">            return future;</span>
+        }
+    }
+
+    /** Flushes pending batch and waits for completion */
+    void shutdown() {
+<span class="fc" id="L111">        synchronized (items) {</span>
+<span class="fc" id="L112">            flushNow();</span>
+<span class="fc" id="L113">        }</span>
+
+        // wait for previous batches to be flushed
+<span class="fc" id="L116">        previousBatchFuture.join();</span>
+<span class="fc" id="L117">    }</span>
+
+    /** clear the current batch and creates a new batch */
+    private void initializeBatch() {
+<span class="fc" id="L121">        this.items.clear();</span>
+<span class="fc" id="L122">        this.totalBytes = 0;</span>
+        // MAX_DELAY is longer than a single Lambda invocation
+<span class="fc" id="L124">        this.expireTime = System.nanoTime() + MAX_DELAY.toNanos();</span>
+
+        // the timer future is created initially without a timeout until an item is added to the batch
+<span class="fc" id="L127">        this.flushTimer = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L128">        this.flushTimer.thenRun(() -&gt; {</span>
+<span class="fc" id="L129">            synchronized (items) {</span>
+<span class="fc" id="L130">                execute();</span>
+<span class="fc" id="L131">            }</span>
+<span class="fc" id="L132">        });</span>
+<span class="fc" id="L133">    }</span>
+
+    /** Returns true if request fits within byte limit */
+    private boolean canFit(T request) {
+<span class="fc bfc" id="L137" title="All 2 branches covered.">        return totalBytes + calculateItemSize.apply(request) &lt;= maxBatchBytes;</span>
+    }
+
+    /** Returns true if batch has reached item count limit */
+    private boolean isFull() {
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        return items.size() &gt;= maxItemCount;</span>
+    }
+
+    private void flushAfterDelay(long delayInNanos) {
+<span class="fc" id="L146">        flushTimer.completeOnTimeout(null, delayInNanos, TimeUnit.NANOSECONDS);</span>
+<span class="fc" id="L147">    }</span>
+
+    private void flushNow() {
+        // cancel the flush timer if it has not been triggered
+<span class="fc" id="L151">        this.flushTimer.cancel(false);</span>
+        // execute the current batch now
+<span class="fc" id="L153">        execute();</span>
+<span class="fc" id="L154">    }</span>
+
+    /** Executes batch and completes all item futures */
+    private void execute() {
+<span class="fc" id="L158">        var copyItems = new ArrayList&lt;&gt;(items);</span>
+<span class="fc" id="L159">        initializeBatch();</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">        if (copyItems.isEmpty()) {</span>
+<span class="fc" id="L161">            return;</span>
+        }
+
+        // append the current batch to the previous one so that the batches can run sequentially
+<span class="fc" id="L165">        previousBatchFuture = previousBatchFuture.thenRunAsync(</span>
+                () -&gt; {
+                    try {
+<span class="fc" id="L168">                        var requests = copyItems.stream().map(Item::request).toList();</span>
+<span class="fc" id="L169">                        executeBatch.accept(requests);</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">                        for (Item&lt;T&gt; item : copyItems) {</span>
+<span class="fc" id="L171">                            item.result().complete(null);</span>
+<span class="fc" id="L172">                        }</span>
+<span class="fc" id="L173">                    } catch (Throwable ex) {</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">                        for (Item&lt;T&gt; item : copyItems) {</span>
+<span class="fc" id="L175">                            item.result().completeExceptionally(ex);</span>
+<span class="fc" id="L176">                        }</span>
+<span class="fc" id="L177">                    }</span>
+<span class="fc" id="L178">                },</span>
+                InternalExecutor.INSTANCE);
+<span class="fc" id="L180">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
