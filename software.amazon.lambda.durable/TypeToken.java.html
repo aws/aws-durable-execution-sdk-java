@@ -20,7 +20,7 @@ import java.lang.reflect.Type;
  * // Use with DurableContext
  * List&lt;String&gt; items = context.step(&quot;fetch-items&quot;,
  *     new TypeToken&lt;List&lt;String&gt;&gt;() {},
- *     () -&gt; fetchItems());
+ *     stepCtx -&gt; fetchItems());
  * }&lt;/pre&gt;
  *
  * @param &lt;T&gt; the type being captured

@@ -89,7 +89,7 @@ public class DurableContext extends BaseContext {
     // ========== step methods ==========
 
     public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="nc" id="L92">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="fc" id="L92">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
@@ -98,17 +98,17 @@ public class DurableContext extends BaseContext {
     }
 
     public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func) {
-<span class="nc" id="L101">        return step(name, typeToken, func, StepConfig.builder().build());</span>
+<span class="fc" id="L101">        return step(name, typeToken, func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func, StepConfig config) {
         // Simply delegate to stepAsync and block on the result
-<span class="nc" id="L106">        return stepAsync(name, typeToken, func, config).get();</span>
+<span class="fc" id="L106">        return stepAsync(name, typeToken, func, config).get();</span>
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="nc" id="L110">        return stepAsync(</span>
-<span class="nc" id="L111">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="fc" id="L110">        return stepAsync(</span>
+<span class="fc" id="L111">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(
@@ -117,7 +117,7 @@ public class DurableContext extends BaseContext {
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func) {
-<span class="nc" id="L120">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
+<span class="fc" id="L120">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(
@@ -140,7 +140,7 @@ public class DurableContext extends BaseContext {
     }
 
     public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="fc" id="L143">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="nc" id="L143">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
@@ -149,17 +149,17 @@ public class DurableContext extends BaseContext {
     }
 
     public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func) {
-<span class="fc" id="L152">        return step(name, typeToken, func, StepConfig.builder().build());</span>
+<span class="nc" id="L152">        return step(name, typeToken, func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func, StepConfig config) {
         // Simply delegate to stepAsync and block on the result
-<span class="fc" id="L157">        return stepAsync(name, typeToken, func, config).get();</span>
+<span class="nc" id="L157">        return stepAsync(name, typeToken, func, config).get();</span>
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="fc" id="L161">        return stepAsync(</span>
-<span class="fc" id="L162">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="nc" id="L161">        return stepAsync(</span>
+<span class="nc" id="L162">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
@@ -167,11 +167,11 @@ public class DurableContext extends BaseContext {
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func) {
-<span class="fc" id="L170">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
+<span class="nc" id="L170">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
     }
 
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func, StepConfig config) {
-<span class="fc" id="L174">        return stepAsync(name, typeToken, stepContext -&gt; func.get(), config);</span>
+<span class="nc" id="L174">        return stepAsync(name, typeToken, stepContext -&gt; func.get(), config);</span>
     }
 
     // ========== wait methods ==========
