@@ -69,18 +69,13 @@ import software.amazon.lambda.durable.validation.ParameterValidator;
 <span class="fc" id="L69">            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attemptNumber), maxDelaySeconds);</span>
 
             // Apply jitter
-<span class="fc" id="L72">            double delayWithJitter =</span>
-<span class="fc bfc" id="L73" title="All 3 branches covered.">                    switch (jitter) {</span>
-<span class="fc" id="L74">                        case NONE -&gt; baseDelay;</span>
-<span class="fc" id="L75">                        case FULL -&gt; Math.random() * baseDelay;</span>
-<span class="fc" id="L76">                        case HALF -&gt; baseDelay / 2 + Math.random() * (baseDelay / 2);</span>
-                    };
+<span class="fc" id="L72">            double delayWithJitter = jitter.apply(baseDelay);</span>
 
             // Round to nearest second, minimum 1
             // Same rounding logic as TS SDK: https://tinyurl.com/4ntxsefu
-<span class="fc" id="L81">            long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));</span>
+<span class="fc" id="L76">            long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));</span>
 
-<span class="fc" id="L83">            return RetryDecision.retry(Duration.ofSeconds(finalDelaySeconds));</span>
+<span class="fc" id="L78">            return RetryDecision.retry(Duration.ofSeconds(finalDelaySeconds));</span>
         };
     }
 
@@ -92,16 +87,16 @@ import software.amazon.lambda.durable.validation.ParameterValidator;
      * @return RetryStrategy with fixed delay
      */
     public static RetryStrategy fixedDelay(int maxAttempts, Duration fixedDelay) {
-<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (maxAttempts &lt;= 0) {</span>
-<span class="fc" id="L96">            throw new IllegalArgumentException(&quot;maxAttempts must be positive&quot;);</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (maxAttempts &lt;= 0) {</span>
+<span class="fc" id="L91">            throw new IllegalArgumentException(&quot;maxAttempts must be positive&quot;);</span>
         }
-<span class="fc" id="L98">        ParameterValidator.validateDuration(fixedDelay, &quot;fixedDelay&quot;);</span>
+<span class="fc" id="L93">        ParameterValidator.validateDuration(fixedDelay, &quot;fixedDelay&quot;);</span>
 
-<span class="fc" id="L100">        return (error, attemptNumber) -&gt; {</span>
-<span class="fc bfc" id="L101" title="All 2 branches covered.">            if (attemptNumber + 1 &gt;= maxAttempts) {</span>
-<span class="fc" id="L102">                return RetryDecision.fail();</span>
+<span class="fc" id="L95">        return (error, attemptNumber) -&gt; {</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">            if (attemptNumber + 1 &gt;= maxAttempts) {</span>
+<span class="fc" id="L97">                return RetryDecision.fail();</span>
             }
-<span class="fc" id="L104">            return RetryDecision.retry(fixedDelay);</span>
+<span class="fc" id="L99">            return RetryDecision.retry(fixedDelay);</span>
         };
     }
 }

@@ -13,18 +13,33 @@ package software.amazon.lambda.durable.retry;
     /**
      * No jitter - use exact calculated delay. This provides predictable timing but may cause thundering herd issues.
      */
-<span class="fc" id="L16">    NONE,</span>
-
+<span class="fc" id="L16">    NONE {</span>
+        @Override
+        public double apply(double baseDelay) {
+<span class="fc" id="L19">            return baseDelay;</span>
+        }
+    },
     /**
      * Full jitter - random delay between 0 and calculated delay. This provides maximum spread but may result in very
      * short delays.
      */
-<span class="fc" id="L22">    FULL,</span>
-
+<span class="fc" id="L26">    FULL {</span>
+        @Override
+        public double apply(double baseDelay) {
+<span class="fc" id="L29">            return Math.random() * baseDelay;</span>
+        }
+    },
     /**
      * Half jitter - random delay between 50% and 100% of calculated delay. This provides good spread while maintaining
      * reasonable minimum delays.
      */
-<span class="fc" id="L28">    HALF</span>
+<span class="fc" id="L36">    HALF {</span>
+        @Override
+        public double apply(double baseDelay) {
+<span class="fc" id="L39">            return baseDelay / 2 + Math.random() * (baseDelay / 2);</span>
+        }
+    };
+
+    public abstract double apply(double baseDelay);
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
