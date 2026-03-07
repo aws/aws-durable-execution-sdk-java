@@ -21,6 +21,8 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
+import software.amazon.lambda.durable.retry.PollingStrategies;
+import software.amazon.lambda.durable.retry.PollingStrategy;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -77,7 +79,7 @@ public final class DurableConfig {
     private final SerDes serDes;
     private final ExecutorService executorService;
     private final LoggerConfig loggerConfig;
-    private final Duration pollingInterval;
+    private final PollingStrategy pollingStrategy;
     private final Duration checkpointDelay;
 
     private DurableConfig(Builder builder) {
@@ -87,7 +89,8 @@ public final class DurableConfig {
         this.serDes = builder.serDes != null ? builder.serDes : new JacksonSerDes();
         this.executorService = builder.executorService != null ? builder.executorService : createDefaultExecutor();
         this.loggerConfig = builder.loggerConfig != null ? builder.loggerConfig : LoggerConfig.defaults();
-        this.pollingInterval = builder.pollingInterval != null ? builder.pollingInterval : Duration.ofMillis(1000);
+        this.pollingStrategy =
+                builder.pollingStrategy != null ? builder.pollingStrategy : PollingStrategies.Presets.DEFAULT;
         this.checkpointDelay = builder.checkpointDelay != null ? builder.checkpointDelay : Duration.ofSeconds(0);
     }
 
@@ -146,12 +149,12 @@ public final class DurableConfig {
     }
 
     /**
-     * Gets the configured polling interval.
+     * Gets the polling strategy.
      *
-     * @return polling interval in Duration.
+     * @return PollingStrategy instance (never null)
      */
-    public Duration getPollingInterval() {
-        return pollingInterval;
+    public PollingStrategy getPollingStrategy() {
+        return pollingStrategy;
     }
 
     /**
@@ -248,7 +251,7 @@ public final class DurableConfig {
         private SerDes serDes;
         private ExecutorService executorService;
         private LoggerConfig loggerConfig;
-        private Duration pollingInterval;
+        private PollingStrategy pollingStrategy;
         private Duration checkpointDelay;
 
         private Builder() {}
@@ -336,14 +339,14 @@ public final class DurableConfig {
         }
 
         /**
-         * Sets how often the SDK polls updates from backend.
+         * Sets the polling strategy. If not set, defaults to 1 second with full jitter and 2x backoff.
          *
-         * @param duration the polling interval in Duration
+         * @param pollingStrategy Custom PollingStrategy instance
          * @return This builder
          */
-        public Builder withPollingInterval(Duration duration) {
+        public Builder withPollingStrategy(PollingStrategy pollingStrategy) {
             // No validation - polling intervals can be less than 1 second (e.g., 200ms with backoff)
-            this.pollingInterval = duration;
+            this.pollingStrategy = pollingStrategy;
             return this;
         }
 

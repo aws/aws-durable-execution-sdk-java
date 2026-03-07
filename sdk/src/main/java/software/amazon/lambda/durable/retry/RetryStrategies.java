@@ -69,12 +69,7 @@ public class RetryStrategies {
             double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attemptNumber), maxDelaySeconds);
 
             // Apply jitter
-            double delayWithJitter =
-                    switch (jitter) {
-                        case NONE -> baseDelay;
-                        case FULL -> Math.random() * baseDelay;
-                        case HALF -> baseDelay / 2 + Math.random() * (baseDelay / 2);
-                    };
+            double delayWithJitter = jitter.apply(baseDelay);
 
             // Round to nearest second, minimum 1
             // Same rounding logic as TS SDK: https://tinyurl.com/4ntxsefu

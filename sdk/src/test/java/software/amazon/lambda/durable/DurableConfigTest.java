@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
+import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,8 @@ import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.retry.JitterStrategy;
+import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -293,5 +296,92 @@ class DurableConfigTest {
         var result = DurableConfig.addUserAgentSuffix(lambdaClientBuilder);
 
         assertSame(lambdaClientBuilder, result);
+    }
+
+    // --- Polling strategy tests ---
+
+    @Test
+    void testDefaultConfig_PollingStrategyDefaults() {
+        var config = DurableConfig.defaultConfig();
+
+        assertNotNull(config.getPollingStrategy());
+        assertSame(PollingStrategies.Presets.DEFAULT, config.getPollingStrategy());
+        assertEquals(Duration.ofSeconds(0), config.getCheckpointDelay());
+    }
+
+    @Test
+    void testBuilder_WithCustomPollingStrategy() {
+        var customStrategy = PollingStrategies.exponentialBackoff(
+                Duration.ofMillis(500), 3.0, JitterStrategy.NONE, Duration.ofSeconds(10));
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPollingStrategy(customStrategy)
+                .build();
+
+        assertSame(customStrategy, config.getPollingStrategy());
+    }
+
+    @Test
+    void testBuilder_WithFixedDelayPollingStrategy() {
+        var fixedStrategy = PollingStrategies.fixedDelay(Duration.ofMillis(200));
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPollingStrategy(fixedStrategy)
+                .build();
+
+        assertSame(fixedStrategy, config.getPollingStrategy());
+    }
+
+    @Test
+    void testBuilder_WithPollingStrategyNull_UsesDefault() {
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPollingStrategy(null)
+                .build();
+
+        assertSame(PollingStrategies.Presets.DEFAULT, config.getPollingStrategy());
+    }
+
+    @Test
+    void testBuilder_WithCustomCheckpointDelay() {
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withCheckpointDelay(Duration.ofSeconds(5))
+                .build();
+
+        assertEquals(Duration.ofSeconds(5), config.getCheckpointDelay());
+    }
+
+    @Test
+    void testBuilder_WithPollingStrategyAndCheckpointDelay() {
+        var customStrategy = PollingStrategies.exponentialBackoff(
+                Duration.ofMillis(200), 1.5, JitterStrategy.HALF, Duration.ofSeconds(10));
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPollingStrategy(customStrategy)
+                .withCheckpointDelay(Duration.ofSeconds(2))
+                .build();
+
+        assertSame(customStrategy, config.getPollingStrategy());
+        assertEquals(Duration.ofSeconds(2), config.getCheckpointDelay());
+    }
+
+    @Test
+    void testBuilder_FluentAPI_PollingMethods() {
+        var builder = DurableConfig.builder();
+        var strategy = PollingStrategies.Presets.DEFAULT;
+
+        assertSame(builder, builder.withPollingStrategy(strategy));
+        assertSame(builder, builder.withCheckpointDelay(Duration.ofSeconds(1)));
+    }
+
+    @Test
+    void testBuilder_CheckpointDelayNull_UsesDefault() {
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withCheckpointDelay(null)
+                .build();
+
+        assertEquals(Duration.ofSeconds(0), config.getCheckpointDelay());
     }
 }

@@ -17,6 +17,8 @@ import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionSt
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.retry.PollingStrategies;
+import software.amazon.lambda.durable.retry.PollingStrategy;
 
 /**
  * Package-private checkpoint manager for batching and queueing checkpoint API calls.
@@ -57,11 +59,16 @@ class CheckpointBatcher {
 
     /** Polls for updates of the specified operation with preconfigured intervals */
     CompletableFuture<Operation> pollForUpdate(String operationId) {
-        return pollForUpdate(operationId, config.getPollingInterval());
+        return pollForUpdate(operationId, config.getPollingStrategy());
     }
 
     /** Polls for updates of the specified operation with specified delay */
     CompletableFuture<Operation> pollForUpdate(String operationId, Duration delay) {
+        return pollForUpdate(operationId, PollingStrategies.fixedDelay(delay));
+    }
+
+    /** Polls for updates of the specified operation with specified polling strategy */
+    CompletableFuture<Operation> pollForUpdate(String operationId, PollingStrategy pollingStrategy) {
         logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
         synchronized (pollingFutures) {
@@ -70,17 +77,20 @@ class CheckpointBatcher {
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
         }
-        pollForUpdateInternal(future, delay);
+        pollForUpdateInternal(future, 0, pollingStrategy);
         return future;
     }
 
-    private CompletableFuture<Void> pollForUpdateInternal(CompletableFuture<Operation> future, Duration delay) {
-        return checkpointApiRequestBatcher.submit(null, delay).thenCompose(v -> {
-            if (future.isDone()) {
-                return CompletableFuture.completedFuture(null);
-            }
-            return pollForUpdateInternal(future, delay);
-        });
+    private CompletableFuture<Void> pollForUpdateInternal(
+            CompletableFuture<Operation> future, int attempt, PollingStrategy pollingStrategy) {
+        return checkpointApiRequestBatcher
+                .submit(null, pollingStrategy.computeDelay(attempt))
+                .thenCompose(v -> {
+                    if (future.isDone()) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    return pollForUpdateInternal(future, attempt + 1, pollingStrategy);
+                });
     }
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
