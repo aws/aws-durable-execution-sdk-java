@@ -306,7 +306,7 @@ class DurableConfigTest {
 
         assertNotNull(config.getPollingStrategy());
         assertSame(PollingStrategies.Presets.DEFAULT, config.getPollingStrategy());
-        assertEquals(Duration.ofSeconds(0), config.getCheckpointDelay());
+        assertEquals(Duration.ofMillis(1), config.getCheckpointDelay());
     }
 
     @Test
@@ -382,6 +382,6 @@ class DurableConfigTest {
                 .withCheckpointDelay(null)
                 .build();
 
-        assertEquals(Duration.ofSeconds(0), config.getCheckpointDelay());
+        assertEquals(Duration.ofMillis(1), config.getCheckpointDelay());
     }
 }

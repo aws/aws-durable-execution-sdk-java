@@ -91,7 +91,7 @@ public final class DurableConfig {
         this.loggerConfig = builder.loggerConfig != null ? builder.loggerConfig : LoggerConfig.defaults();
         this.pollingStrategy =
                 builder.pollingStrategy != null ? builder.pollingStrategy : PollingStrategies.Presets.DEFAULT;
-        this.checkpointDelay = builder.checkpointDelay != null ? builder.checkpointDelay : Duration.ofSeconds(0);
+        this.checkpointDelay = builder.checkpointDelay != null ? builder.checkpointDelay : Duration.ofMillis(1);
     }
 
     /**
@@ -158,9 +158,16 @@ public final class DurableConfig {
     }
 
     /**
-     * Gets the configured checkpoint delay.
+     * Gets the configured checkpoint delay used by the internal request batcher.
      *
-     * @return check point in Duration.
+     * <p>The checkpoint delay controls how long the SDK waits before flushing a batch of checkpoint requests to the
+     * backend. A longer delay allows more operations to accumulate in a single batch (up to 100 items or 750KB),
+     * reducing the total number of API calls at the cost of added latency before results are persisted. A shorter delay
+     * flushes sooner, lowering checkpoint latency but potentially sending more, smaller batches.
+     *
+     * <p>Defaults to 1 millisecond.
+     *
+     * @return checkpoint delay as a Duration
      */
     public Duration getCheckpointDelay() {
         return checkpointDelay;
@@ -351,10 +358,25 @@ public final class DurableConfig {
         }
 
         /**
-         * Sets how often the SDK checkpoints updates to backend. If not set, defaults to 0, which disables checkpoint
-         * batching.
+         * Sets the delay before the SDK flushes a batch of checkpoint requests to the backend.
          *
-         * @param duration the checkpoint delay in Duration
+         * <p>The checkpoint delay controls the batching window for checkpoint API calls. When an operation completes,
+         * its checkpoint request is queued and the batcher waits up to this duration for additional requests before
+         * sending the batch. This allows multiple concurrent operations to be checkpointed in a single API call (up to
+         * 100 items or 750KB per batch).
+         *
+         * <p>Tradeoffs:
+         *
+         * <ul>
+         *   <li>Shorter delay (e.g., {@code Duration.ZERO}) — checkpoints are flushed almost immediately, minimizing
+         *       the window of un-persisted work but producing more API calls.
+         *   <li>Longer delay (e.g., {@code Duration.ofMillis(10)}) — more operations can be grouped into each batch,
+         *       reducing API call count and improving throughput for workflows with many concurrent steps.
+         * </ul>
+         *
+         * <p>Defaults to 1 millisecond if not set.
+         *
+         * @param duration the maximum time to wait before flushing a checkpoint batch
          * @return This builder
          */
         public Builder withCheckpointDelay(Duration duration) {
