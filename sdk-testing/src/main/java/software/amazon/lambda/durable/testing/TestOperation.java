@@ -58,13 +58,17 @@ public class TestOperation {
         return operation.callbackDetails();
     }
 
-    /** Type-safe result extraction from step details. */
     public <T> T getStepResult(Class<T> type) {
+        return getStepResult(TypeToken.get(type));
+    }
+
+    /** Type-safe result extraction from step details. */
+    public <T> T getStepResult(TypeToken<T> type) {
         var details = operation.stepDetails();
         if (details == null || details.result() == null) {
             return null;
         }
-        return serDes.deserialize(details.result(), TypeToken.get(type));
+        return serDes.deserialize(details.result(), type);
     }
 
     public ErrorObject getError() {

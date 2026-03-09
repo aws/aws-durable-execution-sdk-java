@@ -33,7 +33,7 @@ public class DurableExecutor {
     public static <I, O> DurableExecutionOutput execute(
             DurableExecutionInput input,
             Context lambdaContext,
-            Class<I> inputType,
+            TypeToken<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
         try (var executionManager = new ExecutionManager(input, config)) {
@@ -116,17 +116,17 @@ public class DurableExecutor {
         return ExceptionHelper.buildErrorObject(e, serDes);
     }
 
-    private static <I> I extractUserInput(Operation executionOp, SerDes serDes, Class<I> inputType) {
+    private static <I> I extractUserInput(Operation executionOp, SerDes serDes, TypeToken<I> inputType) {
         if (executionOp.executionDetails() == null) {
             throw new IllegalDurableOperationException("EXECUTION operation missing executionDetails");
         }
 
         var inputPayload = executionOp.executionDetails().inputPayload();
-        return serDes.deserialize(inputPayload, TypeToken.get(inputType));
+        return serDes.deserialize(inputPayload, inputType);
     }
 
     public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
-            Class<I> inputType, BiFunction<I, DurableContext, O> handler, DurableConfig config) {
+            TypeToken<I> inputType, BiFunction<I, DurableContext, O> handler, DurableConfig config) {
         return (input, context) -> execute(input, context, inputType, handler, config);
     }
 }
