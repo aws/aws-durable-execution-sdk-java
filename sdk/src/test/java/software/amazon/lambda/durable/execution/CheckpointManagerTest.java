@@ -27,11 +27,11 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 
-class CheckpointBatcherTest {
+class CheckpointManagerTest {
 
     private DurableConfig config;
     private DurableExecutionClient client;
-    private CheckpointBatcher batcher;
+    private CheckpointManager batcher;
     private List<Operation> callbackOperations;
 
     @BeforeEach
@@ -45,7 +45,7 @@ class CheckpointBatcherTest {
                 .build();
 
         callbackOperations = new ArrayList<>();
-        batcher = new CheckpointBatcher(config, "arn:test", "token-1", callbackOperations::addAll);
+        batcher = new CheckpointManager(config, "arn:test", "token-1", callbackOperations::addAll);
     }
 
     @Test
@@ -315,7 +315,7 @@ class CheckpointBatcherTest {
                         Duration.ofMillis(10), 2.0, JitterStrategy.NONE, Duration.ofSeconds(10)))
                 .withCheckpointDelay(Duration.ofMillis(50))
                 .build();
-        var backoffBatcher = new CheckpointBatcher(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var backoffBatcher = new CheckpointManager(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
 
         var operation = Operation.builder()
                 .id("op-1")
@@ -345,7 +345,7 @@ class CheckpointBatcherTest {
                         Duration.ofMillis(10), 1.5, JitterStrategy.NONE, Duration.ofSeconds(10)))
                 .withCheckpointDelay(Duration.ofMillis(50))
                 .build();
-        var backoffBatcher = new CheckpointBatcher(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var backoffBatcher = new CheckpointManager(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
 
         var operation = Operation.builder()
                 .id("op-1")
@@ -385,7 +385,7 @@ class CheckpointBatcherTest {
                         Duration.ofMillis(10), 100.0, JitterStrategy.NONE, Duration.ofSeconds(10)))
                 .withCheckpointDelay(Duration.ofMillis(50))
                 .build();
-        var backoffBatcher = new CheckpointBatcher(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var backoffBatcher = new CheckpointManager(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
 
         var operation = Operation.builder()
                 .id("op-1")
@@ -426,7 +426,7 @@ class CheckpointBatcherTest {
                         Duration.ofMillis(10), 2.0, JitterStrategy.FULL, Duration.ofSeconds(10)))
                 .withCheckpointDelay(Duration.ofMillis(50))
                 .build();
-        var jitterBatcher = new CheckpointBatcher(jitterConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var jitterBatcher = new CheckpointManager(jitterConfig, "arn:test", "token-1", callbackOperations::addAll);
 
         var operation = Operation.builder()
                 .id("op-1")
@@ -456,7 +456,7 @@ class CheckpointBatcherTest {
                         Duration.ofMillis(10), 2.0, JitterStrategy.HALF, Duration.ofSeconds(10)))
                 .withCheckpointDelay(Duration.ofMillis(50))
                 .build();
-        var jitterBatcher = new CheckpointBatcher(jitterConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var jitterBatcher = new CheckpointManager(jitterConfig, "arn:test", "token-1", callbackOperations::addAll);
 
         var operation = Operation.builder()
                 .id("op-1")
@@ -513,7 +513,7 @@ class CheckpointBatcherTest {
                         Duration.ofMillis(10), 2.0, JitterStrategy.NONE, Duration.ofSeconds(10)))
                 .withCheckpointDelay(Duration.ofMillis(50))
                 .build();
-        var backoffBatcher = new CheckpointBatcher(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var backoffBatcher = new CheckpointManager(backoffConfig, "arn:test", "token-1", callbackOperations::addAll);
 
         var operation = Operation.builder()
                 .id("op-1")
@@ -563,7 +563,7 @@ class CheckpointBatcherTest {
                 .withPollingStrategy(PollingStrategies.fixedDelay(Duration.ofMillis(50)))
                 .withCheckpointDelay(Duration.ofMillis(50))
                 .build();
-        var fixedBatcher = new CheckpointBatcher(fixedConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var fixedBatcher = new CheckpointManager(fixedConfig, "arn:test", "token-1", callbackOperations::addAll);
 
         var operation = Operation.builder()
                 .id("op-1")

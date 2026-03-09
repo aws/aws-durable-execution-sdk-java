@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.execution;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -26,19 +27,19 @@ import software.amazon.lambda.durable.retry.PollingStrategy;
  * <p>Single responsibility: Queue and batch checkpoint requests efficiently. Uses a Consumer to notify when checkpoints
  * complete, avoiding cyclic dependency.
  */
-class CheckpointBatcher {
+class CheckpointManager {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
-    private static final int MAX_ITEM_COUNT = 100; // max updates in one batch
-    private static final Logger logger = LoggerFactory.getLogger(CheckpointBatcher.class);
+    private static final int MAX_ITEM_COUNT = 200; // max updates in one batch
+    private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);
 
     private final Consumer<List<Operation>> callback;
     private final String durableExecutionArn;
     private final Map<String, List<CompletableFuture<Operation>>> pollingFutures = new ConcurrentHashMap<>();
-    private final ApiRequestBatcher<OperationUpdate> checkpointApiRequestBatcher;
+    private final ApiRequestDelayedBatcher<OperationUpdate> checkpointApiRequestDelayedBatcher;
     private final DurableConfig config;
     private String checkpointToken;
 
-    CheckpointBatcher(
+    CheckpointManager(
             DurableConfig config,
             String durableExecutionArn,
             String checkpointToken,
@@ -47,14 +48,14 @@ class CheckpointBatcher {
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
         this.checkpointToken = checkpointToken;
-        this.checkpointApiRequestBatcher = new ApiRequestBatcher<>(
-                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointBatcher::estimateSize, this::checkpointBatch);
+        this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
+                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
     }
 
     /** Queues a checkpoint request for batched execution */
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
-        return checkpointApiRequestBatcher.submit(update, config.getCheckpointDelay());
+        return checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());
     }
 
     /** Polls for updates of the specified operation with preconfigured intervals */
@@ -77,20 +78,38 @@ class CheckpointBatcher {
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
         }
-        pollForUpdateInternal(future, 0, pollingStrategy);
+        pollForUpdateInternal(future, 0, Instant.now(), pollingStrategy);
         return future;
     }
 
+    /**
+     * Recursively polls for updates of the specified operation with specified polling strategy
+     *
+     * @param future the future to complete
+     * @param attempt the attempt number
+     * @param startTime the start time of the current attempt
+     * @param pollingStrategy the polling strategy
+     * @return a completable future that completes when the polling is done
+     */
     private CompletableFuture<Void> pollForUpdateInternal(
-            CompletableFuture<Operation> future, int attempt, PollingStrategy pollingStrategy) {
-        return checkpointApiRequestBatcher
-                .submit(null, pollingStrategy.computeDelay(attempt))
-                .thenCompose(v -> {
-                    if (future.isDone()) {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    return pollForUpdateInternal(future, attempt + 1, pollingStrategy);
-                });
+            CompletableFuture<Operation> future, int attempt, Instant startTime, PollingStrategy pollingStrategy) {
+
+        // the delay is the polling interval minus the time already elapsed in the current attempt
+        var delay = pollingStrategy.computeDelay(attempt).minus(Duration.between(startTime, Instant.now()));
+        return checkpointApiRequestDelayedBatcher.submit(null, delay).thenCompose(v -> {
+            if (future.isDone()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            var now = Instant.now();
+            if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) > 0) {
+                // It has exceeded the previous attempt duration, starting a new attempt
+                return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);
+            } else {
+                // continue the previous attempt. The future was completed just because
+                // it was batched with other checkpoint API calls.
+                return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);
+            }
+        });
     }
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
@@ -107,7 +126,7 @@ class CheckpointBatcher {
         }
 
         // wait for all non-polling checkpoint requests to complete
-        checkpointApiRequestBatcher.shutdown();
+        checkpointApiRequestDelayedBatcher.shutdown();
     }
 
     /**
