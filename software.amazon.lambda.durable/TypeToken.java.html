@@ -52,31 +52,35 @@ public abstract class TypeToken&lt;T&gt; {
 <span class="fc" id="L52">        return new TypeToken&lt;&gt;(clazz) {};</span>
     }
 
+    static &lt;U&gt; TypeToken&lt;U&gt; get(Type clazz) {
+<span class="fc" id="L56">        return new TypeToken&lt;&gt;(clazz) {};</span>
+    }
+
     /**
      * Returns the captured type.
      *
      * @return the type represented by this token
      */
     public Type getType() {
-<span class="fc" id="L61">        return type;</span>
+<span class="fc" id="L65">        return type;</span>
     }
 
     @Override
     public boolean equals(Object obj) {
-<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        if (this == obj) return true;</span>
-<span class="pc bpc" id="L67" title="1 of 2 branches missed.">        if (!(obj instanceof TypeToken)) return false;</span>
-<span class="fc" id="L68">        TypeToken&lt;?&gt; other = (TypeToken&lt;?&gt;) obj;</span>
-<span class="fc" id="L69">        return type.equals(other.type);</span>
+<span class="pc bpc" id="L70" title="1 of 2 branches missed.">        if (this == obj) return true;</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">        if (!(obj instanceof TypeToken)) return false;</span>
+<span class="fc" id="L72">        TypeToken&lt;?&gt; other = (TypeToken&lt;?&gt;) obj;</span>
+<span class="fc" id="L73">        return type.equals(other.type);</span>
     }
 
     @Override
     public int hashCode() {
-<span class="fc" id="L74">        return type.hashCode();</span>
+<span class="fc" id="L78">        return type.hashCode();</span>
     }
 
     @Override
     public String toString() {
-<span class="fc" id="L79">        return &quot;TypeToken&lt;&quot; + type.getTypeName() + &quot;&gt;&quot;;</span>
+<span class="fc" id="L83">        return &quot;TypeToken&lt;&quot; + type.getTypeName() + &quot;&gt;&quot;;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

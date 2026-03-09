@@ -33,7 +33,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
     public static &lt;I, O&gt; DurableExecutionOutput execute(
             DurableExecutionInput input,
             Context lambdaContext,
-            Class&lt;I&gt; inputType,
+            TypeToken&lt;I&gt; inputType,
             BiFunction&lt;I, DurableContext, O&gt; handler,
             DurableConfig config) {
 <span class="fc" id="L39">        try (var executionManager = new ExecutionManager(input, config)) {</span>
@@ -116,17 +116,17 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 <span class="fc" id="L116">        return ExceptionHelper.buildErrorObject(e, serDes);</span>
     }
 
-    private static &lt;I&gt; I extractUserInput(Operation executionOp, SerDes serDes, Class&lt;I&gt; inputType) {
+    private static &lt;I&gt; I extractUserInput(Operation executionOp, SerDes serDes, TypeToken&lt;I&gt; inputType) {
 <span class="fc bfc" id="L120" title="All 2 branches covered.">        if (executionOp.executionDetails() == null) {</span>
 <span class="fc" id="L121">            throw new IllegalDurableOperationException(&quot;EXECUTION operation missing executionDetails&quot;);</span>
         }
 
 <span class="fc" id="L124">        var inputPayload = executionOp.executionDetails().inputPayload();</span>
-<span class="fc" id="L125">        return serDes.deserialize(inputPayload, TypeToken.get(inputType));</span>
+<span class="fc" id="L125">        return serDes.deserialize(inputPayload, inputType);</span>
     }
 
     public static &lt;I, O&gt; RequestHandler&lt;DurableExecutionInput, DurableExecutionOutput&gt; wrap(
-            Class&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handler, DurableConfig config) {
+            TypeToken&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handler, DurableConfig config) {
 <span class="fc" id="L130">        return (input, context) -&gt; execute(input, context, inputType, handler, config);</span>
     }
 }
