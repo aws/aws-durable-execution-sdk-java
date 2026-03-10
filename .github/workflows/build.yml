@@ -24,7 +24,6 @@ on:
       - 'sdk-integration-tests/**'
       - 'examples/**'
       - 'pom.xml'
-      - '.github/**'
   push:
     branches:
       - main
@@ -62,15 +61,14 @@ jobs:
         run: mvn -B install --file pom.xml
 
       - name: Generate JaCoCo Badge
-        # if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
-        if: ${{ matrix.java == 17 }}
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
         uses: cicirello/jacoco-badge-generator@v2
         with:
           jacoco-csv-file: sdk/target/site/jacoco/jacoco.csv
           badges-directory: sdk/target/site/jacoco
 
       - name: Publish coverage report to GitHub Pages
-        if: ${{ matrix.java == 17 }}
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: docs
@@ -78,6 +76,7 @@ jobs:
           target-folder: coverage
 
       - name: Deploy javadoc to Github Pages
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
         uses: MathieuSoysal/Javadoc-publisher.yml@v3.0.2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
