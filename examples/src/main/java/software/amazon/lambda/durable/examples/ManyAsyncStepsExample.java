@@ -4,7 +4,7 @@ package software.amazon.lambda.durable.examples;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import software.amazon.lambda.durable.DurableConfig;
+import java.util.concurrent.TimeUnit;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
@@ -28,7 +28,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
 
     @Override
     public String handleRequest(Input input, DurableContext context) {
-        var startTime = System.currentTimeMillis();
+        var startTime = System.nanoTime();
         var multiplier = input.multiplier() > 0 ? input.multiplier() : 1;
 
         context.getLogger().info("Starting {} async steps with multiplier {}", STEP_COUNT, multiplier);
@@ -47,20 +47,19 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
         var results = DurableFuture.allOf(futures);
         var totalSum = results.stream().mapToInt(Integer::intValue).sum();
 
-        var executionTimeMs = System.currentTimeMillis() - startTime;
+        // checkpoint the executionTime so that we can have the same value when replay
+        var executionTimeMs = context.step(
+                "execution-time", Long.class, stepCtx -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
         context.getLogger()
                 .info("Completed {} steps, total sum: {}, execution time: {}ms", STEP_COUNT, totalSum, executionTimeMs);
 
         // Wait 10 seconds to test replay
         context.wait("post-compute-wait", Duration.ofSeconds(10));
 
-        return String.format(
-                "Completed %d async steps. Sum: %d, Replay Time: %dms", STEP_COUNT, totalSum, executionTimeMs);
-    }
+        var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
 
-    @Override
-    protected DurableConfig createConfiguration() {
-        // add a small checkpoint delay to allow checkpoint batching
-        return DurableConfig.builder().withCheckpointDelay(Duration.ofMillis(1)).build();
+        return String.format(
+                "Completed %d async steps. Sum: %d, Execution Time: %dms, Replay Time: %dms",
+                STEP_COUNT, totalSum, executionTimeMs, replayTimeMs);
     }
 }

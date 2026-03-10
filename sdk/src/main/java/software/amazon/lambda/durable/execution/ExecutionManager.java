@@ -34,8 +34,8 @@ import software.amazon.lambda.durable.operation.BaseDurableOperation;
  * <ul>
  *   <li>Execution state (operations, checkpoint token)
  *   <li>Thread lifecycle (registration/deregistration)
- *   <li>Checkpoint batching (via CheckpointBatcher)
- *   <li>Checkpoint result handling (CheckpointBatcher callback)
+ *   <li>Checkpoint batching (via CheckpointManager)
+ *   <li>Checkpoint result handling (CheckpointManager callback)
  *   <li>Polling (for waits and retries)
  * </ul>
  *
@@ -65,16 +65,16 @@ public class ExecutionManager implements AutoCloseable {
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
 
     // ===== Checkpoint Batching =====
-    private final CheckpointBatcher checkpointBatcher;
+    private final CheckpointManager checkpointManager;
 
     public ExecutionManager(DurableExecutionInput input, DurableConfig config) {
         this.durableExecutionArn = input.durableExecutionArn();
 
         // Create checkpoint batcher for internal coordination
-        this.checkpointBatcher =
-                new CheckpointBatcher(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);
+        this.checkpointManager =
+                new CheckpointManager(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);
 
-        this.operationStorage = checkpointBatcher.fetchAllPages(input.initialExecutionState()).stream()
+        this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
@@ -244,7 +244,7 @@ public class ExecutionManager implements AutoCloseable {
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
-        return checkpointBatcher.checkpoint(update);
+        return checkpointManager.checkpoint(update);
     }
 
     // ===== Polling =====
@@ -255,18 +255,18 @@ public class ExecutionManager implements AutoCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId) {
-        return checkpointBatcher.pollForUpdate(operationId);
+        return checkpointManager.pollForUpdate(operationId);
     }
 
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId, Duration delay) {
-        return checkpointBatcher.pollForUpdate(operationId, delay);
+        return checkpointManager.pollForUpdate(operationId, delay);
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        checkpointBatcher.shutdown();
+        checkpointManager.shutdown();
     }
 
     public static boolean isTerminalStatus(OperationStatus status) {

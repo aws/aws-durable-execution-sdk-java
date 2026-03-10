@@ -133,9 +133,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
                 OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializeResult(result));
 
         // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
-        // the
-        // context
-        // threads waiting for the result of this step operation will be wakened up and registered.
+        // the context threads waiting for the result of this step operation will be wakened up and registered.
         sendOperationUpdate(successUpdate);
     }
 
