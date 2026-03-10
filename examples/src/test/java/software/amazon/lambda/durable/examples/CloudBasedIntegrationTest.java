@@ -11,6 +11,8 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
@@ -22,6 +24,7 @@ import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
 @EnabledIf("isEnabled")
 class CloudBasedIntegrationTest {
+    private static final int PERFORMANCE_TEST_REPEAT = 3;
 
     private static String account;
     private static String region;
@@ -462,22 +465,78 @@ class CloudBasedIntegrationTest {
         assertNotNull(runner.getOperation("shipping-estimate"));
     }
 
-    @Test
-    void testManyAsyncStepsExample() {
-        var runner = CloudDurableTestRunner.create(
-                arn("many-async-steps-example"), ManyAsyncStepsExample.Input.class, String.class);
-        var result = runner.run(new ManyAsyncStepsExample.Input(2));
+    @ParameterizedTest
+    @CsvSource({"100, 1000, 10", "500, 2000, 20", "1000, 3000, 30"})
+    void testManyAsyncStepsExample(int steps, long maxExecutionTime, long maxReplayTime) {
+        long minimalExecutionTimeMs = Long.MAX_VALUE;
+        long minimalReplayTimeMs = Long.MAX_VALUE;
+        for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
+            var runner = CloudDurableTestRunner.create(
+                    arn("many-async-steps-example"),
+                    ManyAsyncStepsExample.Input.class,
+                    ManyAsyncStepsExample.Output.class);
+            var result = runner.run(new ManyAsyncStepsExample.Input(2, steps));
 
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
-        System.out.println("ManyAsyncStepsExample result: " + finalResult);
-        assertNotNull(finalResult);
-        assertTrue(finalResult.contains("500 async steps"));
-        assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2
+            var finalResult = result.getResult(ManyAsyncStepsExample.Output.class);
+            System.out.printf("ManyAsyncStepsExample result (%d steps): %s\n", steps, finalResult);
+            assertNotNull(finalResult);
+            assertEquals((long) steps * (steps - 1), finalResult.result()); // Sum of 0..steps * 2
 
-        // Verify some operations are tracked
-        assertNotNull(runner.getOperation("compute-0"));
-        assertNotNull(runner.getOperation("compute-499"));
+            // Verify some operations are tracked
+            assertNotNull(runner.getOperation("compute-0"));
+            assertNotNull(runner.getOperation("compute-" + (steps - 1)));
+
+            if (finalResult.executionTimeMs() < minimalExecutionTimeMs) {
+                minimalExecutionTimeMs = finalResult.executionTimeMs();
+            }
+
+            if (finalResult.replayTimeMs() < minimalReplayTimeMs) {
+                minimalReplayTimeMs = finalResult.replayTimeMs();
+            }
+        }
+
+        assertTrue(minimalReplayTimeMs < maxReplayTime);
+        assertTrue(minimalExecutionTimeMs < maxExecutionTime);
+    }
+
+    @ParameterizedTest
+    // OOM if it creates 1000 child contexts
+    @CsvSource({"100, 1500, 10", "500, 3000, 20"})
+    void testManyAsyncChildContextExample(int steps, long maxExecutionTime, long maxReplayTime) {
+        long minimalExecutionTimeMs = Long.MAX_VALUE;
+        long minimalReplayTimeMs = Long.MAX_VALUE;
+        for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
+            var runner = CloudDurableTestRunner.create(
+                    arn("many-async-child-context-example"),
+                    ManyAsyncChildContextExample.Input.class,
+                    ManyAsyncChildContextExample.Output.class);
+            var result = runner.run(new ManyAsyncChildContextExample.Input(2, steps));
+
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+            var finalResult = result.getResult(ManyAsyncChildContextExample.Output.class);
+            System.out.printf("ManyAsyncChildContextExample result (%d child contexts): %s\n", steps, finalResult);
+            assertNotNull(finalResult);
+            assertEquals((long) steps * (steps - 1), finalResult.result()); // Sum of 0..steps * 2
+
+            // Verify some operations are tracked
+            assertNotNull(runner.getOperation("compute-0"));
+            assertNotNull(runner.getOperation("compute-" + (steps - 1)));
+            assertNotNull(runner.getOperation("child-0"));
+            assertNotNull(runner.getOperation("child-" + (steps - 1)));
+
+            if (finalResult.executionTimeMs() < minimalExecutionTimeMs) {
+                minimalExecutionTimeMs = finalResult.executionTimeMs();
+            }
+
+            if (finalResult.replayTimeMs() < minimalReplayTimeMs) {
+                minimalReplayTimeMs = finalResult.replayTimeMs();
+            }
+        }
+
+        assertTrue(minimalReplayTimeMs < maxReplayTime);
+        assertTrue(minimalExecutionTimeMs < maxExecutionTime);
     }
 }

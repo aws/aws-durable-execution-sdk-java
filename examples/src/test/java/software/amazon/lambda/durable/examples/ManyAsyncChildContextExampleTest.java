@@ -2,20 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
-class ManyAsyncStepsExampleTest {
+class ManyAsyncChildContextExampleTest {
 
     @Test
     void testManyAsyncSteps() {
-        var handler = new ManyAsyncStepsExample();
-        var runner = LocalDurableTestRunner.create(ManyAsyncStepsExample.Input.class, handler);
+        var handler = new ManyAsyncChildContextExample();
+        var runner = LocalDurableTestRunner.create(ManyAsyncChildContextExample.Input.class, handler);
 
-        var input = new ManyAsyncStepsExample.Input(2, 500);
+        var input = new ManyAsyncChildContextExample.Input(2, 500);
         var result = runner.runUntilComplete(input);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -24,31 +25,31 @@ class ManyAsyncStepsExampleTest {
         assertNotNull(output);
 
         // Sum of 0..499 * 2 = 499 * 500 / 2 * 2 = 249500
-        assertEquals(
-                249500, result.getResult(ManyAsyncStepsExample.Output.class).result());
+        assertEquals(249500, output.result());
     }
 
     @Test
     void testManyAsyncStepsWithDefaultMultiplier() {
-        var handler = new ManyAsyncStepsExample();
-        var runner = LocalDurableTestRunner.create(ManyAsyncStepsExample.Input.class, handler);
+        var handler = new ManyAsyncChildContextExample();
+        var runner = LocalDurableTestRunner.create(ManyAsyncChildContextExample.Input.class, handler);
 
-        var input = new ManyAsyncStepsExample.Input(1, 500);
+        var input = new ManyAsyncChildContextExample.Input(1, 500);
         var result = runner.runUntilComplete(input);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
         // Sum of 0..499 = 499 * 500 / 2 = 124750
         assertEquals(
-                124750, result.getResult(ManyAsyncStepsExample.Output.class).result());
+                124750,
+                result.getResult(ManyAsyncChildContextExample.Output.class).result());
     }
 
     @Test
     void testOperationsAreTracked() {
-        var handler = new ManyAsyncStepsExample();
-        var runner = LocalDurableTestRunner.create(ManyAsyncStepsExample.Input.class, handler);
+        var handler = new ManyAsyncChildContextExample();
+        var runner = LocalDurableTestRunner.create(ManyAsyncChildContextExample.Input.class, handler);
 
-        var result = runner.runUntilComplete(new ManyAsyncStepsExample.Input(1, 500));
+        var result = runner.runUntilComplete(new ManyAsyncChildContextExample.Input(1, 500));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
@@ -56,5 +57,9 @@ class ManyAsyncStepsExampleTest {
         assertNotNull(result.getOperation("compute-0"));
         assertNotNull(result.getOperation("compute-499"));
         assertNotNull(result.getOperation("compute-250"));
+
+        assertNotNull(result.getOperation("child-0"));
+        assertNotNull(result.getOperation("child-499"));
+        assertNotNull(result.getOperation("child-250"));
     }
 }

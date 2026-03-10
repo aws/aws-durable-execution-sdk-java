@@ -443,6 +443,31 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  ManyAsyncChildContextExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'many-async-child-context-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["software.amazon.lambda.durable.examples.ManyAsyncChildContextExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-child-context-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   NoopExampleFunction:
     Description: Noop Example Function ARN
@@ -579,3 +604,12 @@ Outputs:
   WaitAsyncExampleFunctionName:
     Description: Wait Async Example Function Name
     Value: !Ref WaitAsyncExampleFunction
+
+  ManyAsyncChildContextExampleFunction:
+    Description: Many Async Child Context Example Function ARN
+    Value: !GetAtt ManyAsyncChildContextExampleFunction.Arn
+
+  ManyAsyncChildContextExampleFunctionName:
+    Description: Many Async Child Context Example Function Name
+    Value: !Ref ManyAsyncChildContextExampleFunction
+
