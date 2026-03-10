@@ -29,8 +29,8 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
     @Override
     public Output handleRequest(Input input, DurableContext context) {
         var startTime = System.nanoTime();
-        var multiplier = input.multiplier() > 0 ? input.multiplier() : 1;
-        var steps = input.steps() > 0 ? input.steps : 500;
+        var multiplier = input.multiplier();
+        var steps = input.steps();
         var logger = context.getLogger();
 
         logger.info("Starting {} async steps with multiplier {}", steps, multiplier);
