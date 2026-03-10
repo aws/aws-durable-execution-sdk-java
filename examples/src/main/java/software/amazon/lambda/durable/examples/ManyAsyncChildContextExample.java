@@ -20,22 +20,25 @@ import software.amazon.lambda.durable.DurableHandler;
  *   <li>All results are collected using {@link DurableFuture#allOf}
  * </ul>
  */
-public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncChildContextExample.Input, String> {
+public class ManyAsyncChildContextExample
+        extends DurableHandler<ManyAsyncChildContextExample.Input, ManyAsyncChildContextExample.Output> {
 
-    private static final int STEP_COUNT = 500;
+    public record Input(int multiplier, int steps) {}
 
-    public record Input(int multiplier) {}
+    public record Output(long result, long executionTimeMs, long replayTimeMs) {}
 
     @Override
-    public String handleRequest(Input input, DurableContext context) {
+    public Output handleRequest(Input input, DurableContext context) {
         var startTime = System.nanoTime();
         var multiplier = input.multiplier() > 0 ? input.multiplier() : 1;
+        var steps = input.steps() > 0 ? input.steps() : 500;
+        var logger = context.getLogger();
 
-        context.getLogger().info("Starting {} async child context with multiplier {}", STEP_COUNT, multiplier);
+        logger.info("Starting {} async child context with multiplier {}", steps, multiplier);
 
         // Create async steps
-        var futures = new ArrayList<DurableFuture<Integer>>(STEP_COUNT);
-        for (var i = 0; i < STEP_COUNT; i++) {
+        var futures = new ArrayList<DurableFuture<Integer>>(steps);
+        for (var i = 0; i < steps; i++) {
             var index = i;
             var future = context.runInChildContextAsync("child-" + i, Integer.class, childCtx -> {
                 // create a step inside the child context, which doubles the number of threads
@@ -44,7 +47,7 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncChildC
             futures.add(future);
         }
 
-        context.getLogger().info("All {} async child context created, collecting results", STEP_COUNT);
+        logger.info("All {} async child context created, collecting results", steps);
 
         // Collect all results using allOf
         var results = DurableFuture.allOf(futures);
@@ -53,20 +56,14 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncChildC
         // checkpoint the executionTime so that we can have the same value when replay
         var executionTimeMs = context.step(
                 "execution-time", Long.class, stepCtx -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
-        context.getLogger()
-                .info(
-                        "Completed {} child context, total sum: {}, execution time: {}ms",
-                        STEP_COUNT,
-                        totalSum,
-                        executionTimeMs);
+        logger.info(
+                "Completed {} child context, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
 
         // Wait 2 seconds to test replay
         context.wait("post-compute-wait", Duration.ofSeconds(2));
 
         var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
 
-        return String.format(
-                "Completed %d async child context. Sum: %d, Execution Time: %dms, Replay Time: %dms",
-                STEP_COUNT, totalSum, executionTimeMs, replayTimeMs);
+        return new Output(totalSum, executionTimeMs, replayTimeMs);
     }
 }

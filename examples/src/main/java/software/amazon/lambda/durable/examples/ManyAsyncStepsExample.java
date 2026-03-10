@@ -20,28 +20,30 @@ import software.amazon.lambda.durable.DurableHandler;
  *   <li>All results are collected using {@link DurableFuture#allOf}
  * </ul>
  */
-public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.Input, String> {
+public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.Input, ManyAsyncStepsExample.Output> {
 
-    private static final int STEP_COUNT = 500;
+    public record Input(int multiplier, int steps) {}
 
-    public record Input(int multiplier) {}
+    public record Output(long result, long executionTimeMs, long replayTimeMs) {}
 
     @Override
-    public String handleRequest(Input input, DurableContext context) {
+    public Output handleRequest(Input input, DurableContext context) {
         var startTime = System.nanoTime();
         var multiplier = input.multiplier() > 0 ? input.multiplier() : 1;
+        var steps = input.steps() > 0 ? input.steps : 500;
+        var logger = context.getLogger();
 
-        context.getLogger().info("Starting {} async steps with multiplier {}", STEP_COUNT, multiplier);
+        logger.info("Starting {} async steps with multiplier {}", steps, multiplier);
 
         // Create async steps
-        var futures = new ArrayList<DurableFuture<Integer>>(STEP_COUNT);
-        for (var i = 0; i < STEP_COUNT; i++) {
+        var futures = new ArrayList<DurableFuture<Integer>>(steps);
+        for (var i = 0; i < steps; i++) {
             var index = i;
             var future = context.stepAsync("compute-" + i, Integer.class, stepCtx -> index * multiplier);
             futures.add(future);
         }
 
-        context.getLogger().info("All {} async steps created, collecting results", STEP_COUNT);
+        context.getLogger().info("All {} async steps created, collecting results", steps);
 
         // Collect all results using allOf
         var results = DurableFuture.allOf(futures);
@@ -51,15 +53,13 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
         var executionTimeMs = context.step(
                 "execution-time", Long.class, stepCtx -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
         context.getLogger()
-                .info("Completed {} steps, total sum: {}, execution time: {}ms", STEP_COUNT, totalSum, executionTimeMs);
+                .info("Completed {} steps, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
 
         // Wait 2 seconds to test replay
         context.wait("post-compute-wait", Duration.ofSeconds(2));
 
         var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
 
-        return String.format(
-                "Completed %d async steps. Sum: %d, Execution Time: %dms, Replay Time: %dms",
-                STEP_COUNT, totalSum, executionTimeMs, replayTimeMs);
+        return new Output(totalSum, executionTimeMs, replayTimeMs);
     }
 }

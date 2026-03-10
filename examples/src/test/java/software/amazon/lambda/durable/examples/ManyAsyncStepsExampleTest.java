@@ -15,17 +15,17 @@ class ManyAsyncStepsExampleTest {
         var handler = new ManyAsyncStepsExample();
         var runner = LocalDurableTestRunner.create(ManyAsyncStepsExample.Input.class, handler);
 
-        var input = new ManyAsyncStepsExample.Input(2);
+        var input = new ManyAsyncStepsExample.Input(2, 500);
         var result = runner.runUntilComplete(input);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var output = result.getResult(String.class);
+        var output = result.getResult(ManyAsyncStepsExample.Output.class);
         assertNotNull(output);
-        assertTrue(output.contains("500 async steps"));
 
         // Sum of 0..499 * 2 = 499 * 500 / 2 * 2 = 249500
-        assertTrue(output.contains("249500"));
+        assertEquals(
+                249500, result.getResult(ManyAsyncStepsExample.Output.class).result());
     }
 
     @Test
@@ -33,13 +33,14 @@ class ManyAsyncStepsExampleTest {
         var handler = new ManyAsyncStepsExample();
         var runner = LocalDurableTestRunner.create(ManyAsyncStepsExample.Input.class, handler);
 
-        var input = new ManyAsyncStepsExample.Input(1);
+        var input = new ManyAsyncStepsExample.Input(1, 500);
         var result = runner.runUntilComplete(input);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
         // Sum of 0..499 = 499 * 500 / 2 = 124750
-        assertTrue(result.getResult(String.class).contains("124750"));
+        assertEquals(
+                124750, result.getResult(ManyAsyncStepsExample.Output.class).result());
     }
 
     @Test
@@ -47,7 +48,7 @@ class ManyAsyncStepsExampleTest {
         var handler = new ManyAsyncStepsExample();
         var runner = LocalDurableTestRunner.create(ManyAsyncStepsExample.Input.class, handler);
 
-        var result = runner.runUntilComplete(new ManyAsyncStepsExample.Input(1));
+        var result = runner.runUntilComplete(new ManyAsyncStepsExample.Input(1, 500));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
