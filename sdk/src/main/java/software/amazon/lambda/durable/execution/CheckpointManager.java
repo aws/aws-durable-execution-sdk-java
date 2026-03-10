@@ -52,23 +52,39 @@ class CheckpointManager {
                 MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
     }
 
-    /** Queues a checkpoint request for batched execution */
+    /**
+     * Queues a checkpoint request for batched execution
+     *
+     * @return a future that completes when the checkpoint request is executed
+     */
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
         logger.debug("Checkpoint request received: Action {}", update.action());
         return checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());
     }
 
-    /** Polls for updates of the specified operation with preconfigured intervals */
+    /**
+     * Polls for updates of the specified operation with preconfigured intervals
+     *
+     * @return a future that completes when the operation is updated
+     */
     CompletableFuture<Operation> pollForUpdate(String operationId) {
         return pollForUpdate(operationId, config.getPollingStrategy());
     }
 
-    /** Polls for updates of the specified operation with specified delay */
+    /**
+     * Polls for updates of the specified operation with specified delay
+     *
+     * @return a future that completes when the operation is updated
+     */
     CompletableFuture<Operation> pollForUpdate(String operationId, Duration delay) {
         return pollForUpdate(operationId, PollingStrategies.fixedDelay(delay));
     }
 
-    /** Polls for updates of the specified operation with specified polling strategy */
+    /**
+     * Polls for updates of the specified operation with specified polling strategy
+     *
+     * @return a future that completes when the operation is updated
+     */
     CompletableFuture<Operation> pollForUpdate(String operationId, PollingStrategy pollingStrategy) {
         logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
