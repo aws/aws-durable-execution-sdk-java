@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InternalExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.execution</a> &gt; <span class="el_source">InternalExecutor.java</span></div><h1>InternalExecutor.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.execution;
+
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * Shared executor for internal SDK coordination tasks.
+ *
+ * &lt;p&gt;This executor is used for SDK-internal operations such as checkpoint batching. It is separate from the
+ * user-configured executor (via {@code DurableConfig}) which runs user-defined operations.
+ *
+ * &lt;p&gt;Using a dedicated thread pool ensures SDK coordination tasks are isolated from user code.
+ */
+final class InternalExecutor {
+
+<span class="fc" id="L19">    private static final AtomicInteger THREAD_COUNTER = new AtomicInteger(0);</span>
+
+    /**
+     * Shared executor for all SDK-internal coordination tasks. Uses a cached thread pool that creates threads on
+     * demand, reuses idle threads, and terminates threads after 60 seconds of inactivity by default.
+     */
+<span class="fc" id="L25">    static final Executor INSTANCE = Executors.newCachedThreadPool(runnable -&gt; {</span>
+<span class="fc" id="L26">        var thread = new Thread(runnable, &quot;durable-sdk-internal-&quot; + THREAD_COUNTER.getAndIncrement());</span>
+<span class="fc" id="L27">        thread.setDaemon(true);</span>
+<span class="fc" id="L28">        return thread;</span>
+    });
+
+    private InternalExecutor() {
+        // Utility class
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

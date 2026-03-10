@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InvokeConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">InvokeConfig.java</span></div><h1>InvokeConfig.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import software.amazon.lambda.durable.serde.SerDes;
+
+public class InvokeConfig {
+    private final SerDes payloadSerDes;
+    private final SerDes resultSerDes;
+    private final String tenantId;
+
+<span class="fc" id="L12">    public InvokeConfig(Builder builder) {</span>
+<span class="fc" id="L13">        this.payloadSerDes = builder.payloadSerDes;</span>
+<span class="fc" id="L14">        this.resultSerDes = builder.resultSerDes;</span>
+<span class="fc" id="L15">        this.tenantId = builder.tenantId;</span>
+<span class="fc" id="L16">    }</span>
+
+    public SerDes payloadSerDes() {
+<span class="fc" id="L19">        return this.payloadSerDes;</span>
+    }
+
+    public SerDes serDes() {
+<span class="fc" id="L23">        return this.resultSerDes;</span>
+    }
+
+    public String tenantId() {
+<span class="nc" id="L27">        return tenantId;</span>
+    }
+
+    public static Builder builder() {
+<span class="fc" id="L31">        return new Builder(null, null, null);</span>
+    }
+
+    public Builder toBuilder() {
+<span class="nc" id="L35">        return new Builder(payloadSerDes, resultSerDes, tenantId);</span>
+    }
+
+    /** Builder for creating InvokeConfig instances. */
+    public static class Builder {
+        private SerDes payloadSerDes;
+        private SerDes resultSerDes;
+        private String tenantId;
+
+<span class="fc" id="L44">        private Builder(SerDes payloadSerDes, SerDes resultSerDes, String tenantId) {</span>
+<span class="fc" id="L45">            this.payloadSerDes = payloadSerDes;</span>
+<span class="fc" id="L46">            this.resultSerDes = resultSerDes;</span>
+<span class="fc" id="L47">            this.tenantId = tenantId;</span>
+<span class="fc" id="L48">        }</span>
+
+        public Builder tenantId(String tenantId) {
+<span class="nc" id="L51">            this.tenantId = tenantId;</span>
+<span class="nc" id="L52">            return this;</span>
+        }
+
+        /**
+         * Sets a custom serializer for the invoke operation payload.
+         *
+         * &lt;p&gt;If not specified, the invoke operation will use the default SerDes configured for the handler. This allows
+         * per-invoke customization of serialization behavior, useful for invoke operations that need special handling
+         * (e.g., custom date formats, encryption, compression).
+         *
+         * @param payloadSerDes the custom serializer to use, or null to use the default
+         * @return this builder for method chaining
+         */
+        public Builder payloadSerDes(SerDes payloadSerDes) {
+<span class="nc" id="L66">            this.payloadSerDes = payloadSerDes;</span>
+<span class="nc" id="L67">            return this;</span>
+        }
+
+        /**
+         * Sets a custom serializer for the step.
+         *
+         * &lt;p&gt;If not specified, the step will use the default SerDes configured for the handler. This allows per-step
+         * customization of serialization behavior, useful for steps that need special handling (e.g., custom date
+         * formats, encryption, compression).
+         *
+         * @param resultSerDes the custom serializer to use, or null to use the default
+         * @return this builder for method chaining
+         */
+        public Builder serDes(SerDes resultSerDes) {
+<span class="fc" id="L81">            this.resultSerDes = resultSerDes;</span>
+<span class="fc" id="L82">            return this;</span>
+        }
+
+        /**
+         * Builds the InvokeConfig instance.
+         *
+         * @return a new InvokeConfig with the configured options
+         */
+        public InvokeConfig build() {
+<span class="fc" id="L91">            return new InvokeConfig(this);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

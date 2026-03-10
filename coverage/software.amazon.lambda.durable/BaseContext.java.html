@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BaseContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">BaseContext.java</span></div><h1>BaseContext.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import com.amazonaws.services.lambda.runtime.Context;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
+
+public abstract class BaseContext implements AutoCloseable {
+    private final ExecutionManager executionManager;
+    private final DurableConfig durableConfig;
+    private final Context lambdaContext;
+    private final ExecutionContext executionContext;
+    private final String contextId;
+    private final String contextName;
+    private final ThreadType threadType;
+
+    private boolean isReplaying;
+
+    /** Creates a new BaseContext instance. */
+    protected BaseContext(
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String contextId,
+            String contextName,
+<span class="fc" id="L30">            ThreadType threadType) {</span>
+<span class="fc" id="L31">        this.executionManager = executionManager;</span>
+<span class="fc" id="L32">        this.durableConfig = durableConfig;</span>
+<span class="fc" id="L33">        this.lambdaContext = lambdaContext;</span>
+<span class="fc" id="L34">        this.contextId = contextId;</span>
+<span class="fc" id="L35">        this.contextName = contextName;</span>
+<span class="fc" id="L36">        this.executionContext = new ExecutionContext(executionManager.getDurableExecutionArn());</span>
+<span class="fc" id="L37">        this.isReplaying = executionManager.hasOperationsForContext(contextId);</span>
+<span class="fc" id="L38">        this.threadType = threadType;</span>
+
+        // write the thread id and type to thread local
+<span class="fc" id="L41">        executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));</span>
+<span class="fc" id="L42">    }</span>
+
+    // =============== accessors ================
+    /**
+     * Gets a logger with additional information of the current execution context.
+     *
+     * @return a DurableLogger instance
+     */
+    public abstract DurableLogger getLogger();
+
+    /**
+     * Returns the AWS Lambda runtime context.
+     *
+     * @return the Lambda context
+     */
+    public Context getLambdaContext() {
+<span class="fc" id="L58">        return lambdaContext;</span>
+    }
+
+    /**
+     * Returns metadata about the current durable execution.
+     *
+     * &lt;p&gt;The execution context provides information that remains constant throughout the execution lifecycle, such as
+     * the durable execution ARN. This is useful for tracking execution progress, correlating logs, and referencing this
+     * execution in external systems.
+     *
+     * @return the execution context
+     */
+    public ExecutionContext getExecutionContext() {
+<span class="fc" id="L71">        return executionContext;</span>
+    }
+
+    /**
+     * Returns the configuration for durable execution behavior.
+     *
+     * @return the durable configuration
+     */
+    public DurableConfig getDurableConfig() {
+<span class="fc" id="L80">        return durableConfig;</span>
+    }
+
+    // ============= internal utilities ===============
+
+    /** Gets the context ID for this context. Null for root context, set for child contexts. */
+    public String getContextId() {
+<span class="fc" id="L87">        return contextId;</span>
+    }
+
+    public String getContextName() {
+<span class="fc" id="L91">        return contextName;</span>
+    }
+
+    public ExecutionManager getExecutionManager() {
+<span class="fc" id="L95">        return executionManager;</span>
+    }
+
+    /** Returns whether this context is currently in replay mode. */
+    boolean isReplaying() {
+<span class="nc" id="L100">        return isReplaying;</span>
+    }
+
+    /**
+     * Transitions this context from replay to execution mode. Called when the first un-cached operation is encountered.
+     */
+    void setExecutionMode() {
+<span class="nc" id="L107">        this.isReplaying = false;</span>
+<span class="nc" id="L108">    }</span>
+
+    public void close() {
+        // this is called in the user thread, after the context's user code has completed
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        if (getContextId() != null) {</span>
+            // if this is a child context or a step context, we need to
+            // deregister the context's thread from the execution manager
+            try {
+<span class="fc" id="L116">                executionManager.deregisterActiveThread(getContextId());</span>
+<span class="nc" id="L117">            } catch (SuspendExecutionException e) {</span>
+                // Expected when this is the last active thread. Must catch here because:
+                // 1/ This runs in a worker thread detached from handlerFuture
+                // 2/ Uncaught exception would prevent stepAsync().get() from resume
+                // Suspension/Termination is already signaled via
+                // suspendExecutionFuture/terminateExecutionFuture
+                // before the throw.
+<span class="fc" id="L124">            }</span>
+        }
+<span class="fc" id="L126">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

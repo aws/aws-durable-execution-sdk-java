@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StepContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">StepContext.java</span></div><h1>StepContext.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import com.amazonaws.services.lambda.runtime.Context;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
+
+public class StepContext extends BaseContext {
+    private volatile DurableLogger logger;
+    private final int attempt;
+
+    /**
+     * Creates a new StepContext instance for use in step operations.
+     *
+     * @param executionManager Manages durable execution state and operations
+     * @param durableConfig Configuration for durable execution behavior
+     * @param lambdaContext AWS Lambda runtime context
+     * @param stepOperationId Unique identifier for this context instance that equals to step operation id
+     */
+    protected StepContext(
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String stepOperationId,
+            String stepOperationName,
+            int attempt) {
+<span class="fc" id="L30">        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName, ThreadType.STEP);</span>
+<span class="fc" id="L31">        this.attempt = attempt;</span>
+<span class="fc" id="L32">    }</span>
+
+    /** @return the current attempt */
+    public int getAttempt() {
+<span class="fc" id="L36">        return attempt;</span>
+    }
+
+    @Override
+    public DurableLogger getLogger() {
+        // lazy initialize logger
+<span class="nc bnc" id="L42" title="All 2 branches missed.">        if (logger == null) {</span>
+<span class="nc" id="L43">            synchronized (this) {</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">                if (logger == null) {</span>
+<span class="nc" id="L45">                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);</span>
+                }
+<span class="nc" id="L47">            }</span>
+        }
+<span class="nc" id="L49">        return logger;</span>
+    }
+
+    /** Closes the logger for this context. */
+    @Override
+    public void close() {
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">        if (logger != null) {</span>
+<span class="nc" id="L56">            logger.close();</span>
+        }
+<span class="fc" id="L58">        super.close();</span>
+<span class="fc" id="L59">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

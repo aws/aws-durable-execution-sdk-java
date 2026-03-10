@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CallbackConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">CallbackConfig.java</span></div><h1>CallbackConfig.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.validation.ParameterValidator;
+
+/** Configuration for callback operations. */
+public class CallbackConfig {
+    private final Duration timeout;
+    private final Duration heartbeatTimeout;
+    private final SerDes serDes;
+
+<span class="fc" id="L15">    private CallbackConfig(Builder builder) {</span>
+<span class="fc" id="L16">        this.timeout = builder.timeout;</span>
+<span class="fc" id="L17">        this.heartbeatTimeout = builder.heartbeatTimeout;</span>
+<span class="fc" id="L18">        this.serDes = builder.serDes;</span>
+<span class="fc" id="L19">    }</span>
+
+    /**
+     * Returns the maximum duration to wait for the callback to complete.
+     *
+     * @return the timeout duration, or null if not specified
+     */
+    public Duration timeout() {
+<span class="fc" id="L27">        return timeout;</span>
+    }
+
+    /**
+     * Returns the maximum duration between heartbeats before the callback is considered failed.
+     *
+     * @return the heartbeat timeout duration, or null if not specified
+     */
+    public Duration heartbeatTimeout() {
+<span class="fc" id="L36">        return heartbeatTimeout;</span>
+    }
+
+    /** @return the custom serializer for this callback, or null if not specified (uses default SerDes) */
+    public SerDes serDes() {
+<span class="fc" id="L41">        return serDes;</span>
+    }
+
+    public static Builder builder() {
+<span class="fc" id="L45">        return new Builder(null, null, null);</span>
+    }
+
+    public Builder toBuilder() {
+<span class="fc" id="L49">        return new Builder(timeout, heartbeatTimeout, serDes);</span>
+    }
+
+    public static class Builder {
+        private Duration timeout;
+        private Duration heartbeatTimeout;
+        private SerDes serDes;
+
+<span class="fc" id="L57">        private Builder(Duration timeout, Duration heartbeatTimeout, SerDes serDes) {</span>
+<span class="fc" id="L58">            this.timeout = timeout;</span>
+<span class="fc" id="L59">            this.heartbeatTimeout = heartbeatTimeout;</span>
+<span class="fc" id="L60">            this.serDes = serDes;</span>
+<span class="fc" id="L61">        }</span>
+
+        public Builder timeout(Duration timeout) {
+<span class="fc" id="L64">            ParameterValidator.validateOptionalDuration(timeout, &quot;Callback timeout&quot;);</span>
+<span class="fc" id="L65">            this.timeout = timeout;</span>
+<span class="fc" id="L66">            return this;</span>
+        }
+
+        public Builder heartbeatTimeout(Duration heartbeatTimeout) {
+<span class="fc" id="L70">            ParameterValidator.validateOptionalDuration(heartbeatTimeout, &quot;Heartbeat timeout&quot;);</span>
+<span class="fc" id="L71">            this.heartbeatTimeout = heartbeatTimeout;</span>
+<span class="fc" id="L72">            return this;</span>
+        }
+
+        /**
+         * Sets a custom serializer for the callback.
+         *
+         * &lt;p&gt;If not specified, the callback will use the default SerDes configured for the handler. This allows
+         * per-callback customization of serialization behavior, useful for callbacks that need special handling (e.g.,
+         * custom date formats, encryption, compression).
+         *
+         * @param serDes the custom serializer to use, or null to use the default
+         * @return this builder for method chaining
+         */
+        public Builder serDes(SerDes serDes) {
+<span class="fc" id="L86">            this.serDes = serDes;</span>
+<span class="fc" id="L87">            return this;</span>
+        }
+
+        public CallbackConfig build() {
+<span class="fc" id="L91">            return new CallbackConfig(this);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

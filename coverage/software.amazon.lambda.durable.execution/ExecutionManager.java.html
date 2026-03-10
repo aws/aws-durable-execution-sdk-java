@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExecutionManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.execution</a> &gt; <span class="el_source">ExecutionManager.java</span></div><h1>ExecutionManager.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.execution;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
+
+/**
+ * Central manager for durable execution coordination.
+ *
+ * &lt;p&gt;Consolidates:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Execution state (operations, checkpoint token)
+ *   &lt;li&gt;Thread lifecycle (registration/deregistration)
+ *   &lt;li&gt;Checkpoint batching (via CheckpointBatcher)
+ *   &lt;li&gt;Checkpoint result handling (CheckpointBatcher callback)
+ *   &lt;li&gt;Polling (for waits and retries)
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;This is the single entry point for all execution coordination. Internal coordination (polling, checkpointing) uses
+ * a dedicated SDK thread pool, while user-defined operations run on a customer-configured executor.
+ *
+ * &lt;p&gt;Operations are keyed by their globally unique operation ID. Child context operations use prefixed IDs (e.g.,
+ * &quot;1-1&quot;, &quot;1-2&quot;) to avoid collisions with root-level operations.
+ *
+ * @see InternalExecutor
+ */
+public class ExecutionManager implements AutoCloseable {
+
+<span class="fc" id="L52">    private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);</span>
+
+    // ===== Execution State =====
+    private final Map&lt;String, Operation&gt; operationStorage;
+    private final Operation executionOp;
+    private final String durableExecutionArn;
+    private final AtomicReference&lt;ExecutionMode&gt; executionMode;
+
+    // ===== Thread Coordination =====
+<span class="fc" id="L61">    private final Map&lt;String, BaseDurableOperation&lt;?&gt;&gt; registeredOperations =</span>
+<span class="fc" id="L62">            Collections.synchronizedMap(new HashMap&lt;&gt;());</span>
+<span class="fc" id="L63">    private final Set&lt;String&gt; activeThreads = Collections.synchronizedSet(new HashSet&lt;&gt;());</span>
+<span class="fc" id="L64">    private static final ThreadLocal&lt;ThreadContext&gt; currentThreadContext = new ThreadLocal&lt;&gt;();</span>
+<span class="fc" id="L65">    private final CompletableFuture&lt;Void&gt; executionExceptionFuture = new CompletableFuture&lt;&gt;();</span>
+
+    // ===== Checkpoint Batching =====
+    private final CheckpointBatcher checkpointBatcher;
+
+<span class="fc" id="L70">    public ExecutionManager(DurableExecutionInput input, DurableConfig config) {</span>
+<span class="fc" id="L71">        this.durableExecutionArn = input.durableExecutionArn();</span>
+
+        // Create checkpoint batcher for internal coordination
+<span class="fc" id="L74">        this.checkpointBatcher =</span>
+<span class="fc" id="L75">                new CheckpointBatcher(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);</span>
+
+<span class="fc" id="L77">        this.operationStorage = checkpointBatcher.fetchAllPages(input.initialExecutionState()).stream()</span>
+<span class="fc" id="L78">                .collect(Collectors.toConcurrentMap(Operation::id, op -&gt; op));</span>
+
+        // Start in REPLAY mode if we have more than just the initial EXECUTION operation
+<span class="fc" id="L81">        this.executionMode =</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">                new AtomicReference&lt;&gt;(operationStorage.size() &gt; 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);</span>
+
+<span class="fc" id="L84">        executionOp = findExecutionOp(input.initialExecutionState());</span>
+
+        // Validate initial operation is an EXECUTION operation
+<span class="fc bfc" id="L87" title="All 2 branches covered.">        if (executionOp == null) {</span>
+<span class="fc" id="L88">            throw new IllegalStateException(&quot;First operation must be EXECUTION&quot;);</span>
+        }
+<span class="fc" id="L90">        logger.debug(&quot;DurableExecution.execute() called&quot;);</span>
+<span class="fc" id="L91">        logger.debug(&quot;DurableExecutionArn: {}&quot;, durableExecutionArn);</span>
+<span class="fc" id="L92">        logger.debug(&quot;Initial operations count: {}&quot;, operationStorage.size());</span>
+<span class="fc" id="L93">        logger.debug(&quot;EXECUTION operation found: {}&quot;, executionOp.id());</span>
+<span class="fc" id="L94">    }</span>
+
+    // ===== State Management =====
+
+    public String getDurableExecutionArn() {
+<span class="fc" id="L99">        return durableExecutionArn;</span>
+    }
+
+    public boolean isReplaying() {
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        return executionMode.get() == ExecutionMode.REPLAY;</span>
+    }
+
+    public void registerOperation(BaseDurableOperation&lt;?&gt; operation) {
+<span class="fc" id="L107">        registeredOperations.put(operation.getOperationId(), operation);</span>
+<span class="fc" id="L108">    }</span>
+
+    // ===== Checkpoint Completion Handler =====
+    /** Called by CheckpointManager when a checkpoint completes. Updates operationStorage and notify operations . */
+    private void onCheckpointComplete(List&lt;Operation&gt; newOperations) {
+<span class="fc" id="L113">        newOperations.forEach(op -&gt; {</span>
+            // Update operation storage
+<span class="fc" id="L115">            operationStorage.put(op.id(), op);</span>
+            // call registered operation's onCheckpointComplete method for completed operations
+<span class="fc" id="L117">            registeredOperations.computeIfPresent(op.id(), (id, operation) -&gt; {</span>
+<span class="fc" id="L118">                operation.onCheckpointComplete(op);</span>
+<span class="fc" id="L119">                return operation;</span>
+            });
+<span class="fc" id="L121">        });</span>
+<span class="fc" id="L122">    }</span>
+
+    /**
+     * Gets all child operations for a given operationId.
+     *
+     * @param operationId the operationId to get children for
+     * @return List of child operations for the given operationId
+     */
+    public List&lt;Operation&gt; getChildOperations(String operationId) {
+        // todo: this is O(n) - consider an improvement if performance becomes an issue
+<span class="nc" id="L132">        var children = new ArrayList&lt;Operation&gt;();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        for (Operation op : operationStorage.values()) {</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">            if (Objects.equals(op.parentId(), operationId)) {</span>
+<span class="nc" id="L135">                children.add(op);</span>
+            }
+<span class="nc" id="L137">        }</span>
+<span class="nc" id="L138">        return children;</span>
+    }
+
+    /**
+     * Gets an operation by its globally unique operationId, and updates replay state. Transitions from REPLAY to
+     * EXECUTION mode if the operation is not found or is not in a terminal state (still in progress).
+     *
+     * @param operationId the globally unique operation ID (e.g., &quot;1&quot; for root, &quot;1-1&quot; for child context)
+     * @return the existing operation, or null if not found (first execution)
+     */
+    public Operation getOperationAndUpdateReplayState(String operationId) {
+<span class="fc" id="L149">        var existing = operationStorage.get(operationId);</span>
+<span class="fc bfc" id="L150" title="All 6 branches covered.">        if (executionMode.get() == ExecutionMode.REPLAY &amp;&amp; (existing == null || !isTerminalStatus(existing.status()))) {</span>
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">            if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {</span>
+<span class="fc" id="L152">                logger.debug(&quot;Transitioned to EXECUTION mode at operation '{}'&quot;, operationId);</span>
+            }
+        }
+<span class="fc" id="L155">        return existing;</span>
+    }
+
+    public Operation getExecutionOperation() {
+<span class="fc" id="L159">        return executionOp;</span>
+    }
+
+    private Operation findExecutionOp(CheckpointUpdatedExecutionState initialExecutionState) {
+        // find execution OP in the input
+<span class="pc bpc" id="L164" title="1 of 2 branches missed.">        if (initialExecutionState != null</span>
+<span class="pc bpc" id="L165" title="1 of 2 branches missed.">                &amp;&amp; initialExecutionState.operations() != null</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">                &amp;&amp; !initialExecutionState.operations().isEmpty()) {</span>
+<span class="fc" id="L167">            var op = initialExecutionState.operations().get(0);</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">            if (op.type() != OperationType.EXECUTION) {</span>
+<span class="fc" id="L169">                throw new IllegalStateException(&quot;First operation must be EXECUTION&quot;);</span>
+            }
+<span class="fc" id="L171">            return op;</span>
+        }
+        // find execution OP in the checkpoint result
+<span class="fc bfc" id="L174" title="All 2 branches covered.">        for (Operation op : operationStorage.values()) {</span>
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">            if (op.type() == OperationType.EXECUTION) {</span>
+<span class="fc" id="L176">                return op;</span>
+            }
+<span class="nc" id="L178">        }</span>
+<span class="fc" id="L179">        return null;</span>
+    }
+
+    /**
+     * Checks whether there are any cached operations for the given parent context ID. Used to initialize per-context
+     * replay state — a context starts in replay mode if the ExecutionManager has cached operations belonging to it.
+     *
+     * @param parentId the context ID to check (null for root context)
+     * @return true if at least one operation exists with the given parentId
+     */
+    public boolean hasOperationsForContext(String parentId) {
+<span class="fc" id="L190">        return operationStorage.values().stream().anyMatch(op -&gt; Objects.equals(op.parentId(), parentId));</span>
+    }
+
+    // ===== Thread Coordination =====
+    /** Sets the current thread's ThreadContext (threadId and threadType). Called when a user thread is started. */
+    public void setCurrentThreadContext(ThreadContext threadContext) {
+<span class="fc" id="L196">        currentThreadContext.set(threadContext);</span>
+<span class="fc" id="L197">    }</span>
+
+    /** Returns the current thread's ThreadContext (threadId and threadType), or null if not set. */
+    public ThreadContext getCurrentThreadContext() {
+<span class="fc" id="L201">        return currentThreadContext.get();</span>
+    }
+
+    /**
+     * Registers a thread as active.
+     *
+     * @see ThreadContext
+     */
+    public void registerActiveThread(String threadId) {
+<span class="pc bpc" id="L210" title="1 of 2 branches missed.">        if (activeThreads.contains(threadId)) {</span>
+<span class="nc" id="L211">            logger.trace(&quot;Thread '{}' already registered as active&quot;, threadId);</span>
+<span class="nc" id="L212">            return;</span>
+        }
+<span class="fc" id="L214">        activeThreads.add(threadId);</span>
+<span class="fc" id="L215">        logger.trace(&quot;Registered thread '{}' as active. Active threads: {}&quot;, threadId, activeThreads.size());</span>
+<span class="fc" id="L216">    }</span>
+
+    /**
+     * Mark a thread as inactive. If no threads remain, suspends the execution.
+     *
+     * @param threadId the thread ID to deregister
+     */
+    public void deregisterActiveThread(String threadId) {
+        // Skip if already suspended
+<span class="pc bpc" id="L225" title="1 of 2 branches missed.">        if (executionExceptionFuture.isDone()) {</span>
+<span class="nc" id="L226">            return;</span>
+        }
+
+<span class="fc" id="L229">        boolean removed = activeThreads.remove(threadId);</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">        if (removed) {</span>
+<span class="fc" id="L231">            logger.trace(&quot;Deregistered thread '{}' Active threads: {}&quot;, threadId, activeThreads.size());</span>
+        } else {
+<span class="fc" id="L233">            logger.warn(&quot;Thread '{}' not active, cannot deregister&quot;, threadId);</span>
+        }
+
+<span class="fc bfc" id="L236" title="All 2 branches covered.">        if (activeThreads.isEmpty()) {</span>
+<span class="fc" id="L237">            logger.info(&quot;No active threads remaining - suspending execution&quot;);</span>
+<span class="nc" id="L238">            suspendExecution();</span>
+        }
+<span class="fc" id="L240">    }</span>
+
+    // ===== Checkpointing =====
+
+    // This method will checkpoint the operation updates to the durable backend and return a future which completes
+    // when the checkpoint completes.
+    public CompletableFuture&lt;Void&gt; sendOperationUpdate(OperationUpdate update) {
+<span class="fc" id="L247">        return checkpointBatcher.checkpoint(update);</span>
+    }
+
+    // ===== Polling =====
+
+    // This method will poll the operation updates from the durable backend and return a future which completes
+    // when an update of the operation is received.
+    // This is useful for in-process waits. For example, we want to
+    // wait while another thread is still running, and we therefore are not
+    // re-invoked because we never suspended.
+    public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId) {
+<span class="fc" id="L258">        return checkpointBatcher.pollForUpdate(operationId);</span>
+    }
+
+    public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId, Duration delay) {
+<span class="fc" id="L262">        return checkpointBatcher.pollForUpdate(operationId, delay);</span>
+    }
+
+    // ===== Utilities =====
+    /** Shutdown the checkpoint batcher. */
+    @Override
+    public void close() {
+<span class="fc" id="L269">        checkpointBatcher.shutdown();</span>
+<span class="fc" id="L270">    }</span>
+
+    public static boolean isTerminalStatus(OperationStatus status) {
+<span class="fc bfc" id="L273" title="All 10 branches covered.">        return status == OperationStatus.SUCCEEDED</span>
+                || status == OperationStatus.FAILED
+                || status == OperationStatus.CANCELLED
+                || status == OperationStatus.TIMED_OUT
+                || status == OperationStatus.STOPPED;
+    }
+
+    public void terminateExecution(UnrecoverableDurableExecutionException exception) {
+<span class="fc" id="L281">        executionExceptionFuture.completeExceptionally(exception);</span>
+<span class="fc" id="L282">        throw exception;</span>
+    }
+
+    public void suspendExecution() {
+<span class="fc" id="L286">        var ex = new SuspendExecutionException();</span>
+<span class="fc" id="L287">        executionExceptionFuture.completeExceptionally(ex);</span>
+<span class="fc" id="L288">        throw ex;</span>
+    }
+
+    /**
+     * return a future that completes when userFuture completes successfully or the execution is terminated or
+     * suspended.
+     *
+     * @param userFuture user provided function
+     * @return a future of userFuture result if userFuture completes successfully, a user exception if userFuture
+     *     completes with an exception, a SuspendExecutionException if the execution is suspended, or an
+     *     UnrecoverableDurableExecutionException if the execution is terminated.
+     */
+    public &lt;T&gt; CompletableFuture&lt;T&gt; runUntilCompleteOrSuspend(CompletableFuture&lt;T&gt; userFuture) {
+<span class="fc" id="L301">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
+            // reaches here only if userFuture complete successfully
+<span class="pc bpc" id="L303" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
+<span class="fc" id="L304">                return userFuture.join();</span>
+            }
+<span class="nc" id="L306">            return null;</span>
+        });
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

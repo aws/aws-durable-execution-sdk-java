@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StepConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">StepConfig.java</span></div><h1>StepConfig.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import software.amazon.lambda.durable.retry.RetryStrategies;
+import software.amazon.lambda.durable.retry.RetryStrategy;
+import software.amazon.lambda.durable.serde.SerDes;
+
+/**
+ * Configuration options for step operations in durable executions.
+ *
+ * &lt;p&gt;This class provides a builder pattern for configuring various aspects of step execution, including retry behavior
+ * and delivery semantics.
+ */
+public class StepConfig {
+    private final RetryStrategy retryStrategy;
+    private final StepSemantics semantics;
+    private final SerDes serDes;
+
+<span class="fc" id="L20">    private StepConfig(Builder builder) {</span>
+<span class="fc" id="L21">        this.retryStrategy = builder.retryStrategy;</span>
+<span class="fc" id="L22">        this.semantics = builder.semantics;</span>
+<span class="fc" id="L23">        this.serDes = builder.serDes;</span>
+<span class="fc" id="L24">    }</span>
+
+    /** @return the retry strategy for this step, or NO_RETRY if not specified */
+    public RetryStrategy retryStrategy() {
+<span class="fc bfc" id="L28" title="All 2 branches covered.">        return retryStrategy != null ? retryStrategy : RetryStrategies.Presets.DEFAULT;</span>
+    }
+
+    /** @return the delivery semantics for this step, defaults to AT_LEAST_ONCE_PER_RETRY if not specified */
+    public StepSemantics semantics() {
+<span class="fc bfc" id="L33" title="All 2 branches covered.">        return semantics != null ? semantics : StepSemantics.AT_LEAST_ONCE_PER_RETRY;</span>
+    }
+
+    /** @return the custom serializer for this step, or null if not specified (uses default SerDes) */
+    public SerDes serDes() {
+<span class="fc" id="L38">        return serDes;</span>
+    }
+
+    public Builder toBuilder() {
+<span class="fc" id="L42">        return new Builder(retryStrategy, semantics, serDes);</span>
+    }
+
+    /**
+     * Creates a new builder for StepConfig.
+     *
+     * @return a new Builder instance
+     */
+    public static Builder builder() {
+<span class="fc" id="L51">        return new Builder(null, null, null);</span>
+    }
+
+    /** Builder for creating StepConfig instances. */
+    public static class Builder {
+        private RetryStrategy retryStrategy;
+        private StepSemantics semantics;
+        private SerDes serDes;
+
+<span class="fc" id="L60">        private Builder(RetryStrategy retryStrategy, StepSemantics semantics, SerDes serDes) {</span>
+<span class="fc" id="L61">            this.retryStrategy = retryStrategy;</span>
+<span class="fc" id="L62">            this.semantics = semantics;</span>
+<span class="fc" id="L63">            this.serDes = serDes;</span>
+<span class="fc" id="L64">        }</span>
+
+        /**
+         * Sets the retry strategy for the step.
+         *
+         * @param retryStrategy the retry strategy to use, or null for default behavior
+         * @return this builder for method chaining
+         */
+        public Builder retryStrategy(RetryStrategy retryStrategy) {
+<span class="fc" id="L73">            this.retryStrategy = retryStrategy;</span>
+<span class="fc" id="L74">            return this;</span>
+        }
+
+        /**
+         * Sets the delivery semantics for the step.
+         *
+         * @param semantics the delivery semantics to use, defaults to AT_LEAST_ONCE_PER_RETRY if not specified
+         * @return this builder for method chaining
+         */
+        public Builder semantics(StepSemantics semantics) {
+<span class="fc" id="L84">            this.semantics = semantics;</span>
+<span class="fc" id="L85">            return this;</span>
+        }
+
+        /**
+         * Sets a custom serializer for the step.
+         *
+         * &lt;p&gt;If not specified, the step will use the default SerDes configured for the handler. This allows per-step
+         * customization of serialization behavior, useful for steps that need special handling (e.g., custom date
+         * formats, encryption, compression).
+         *
+         * @param serDes the custom serializer to use, or null to use the default
+         * @return this builder for method chaining
+         */
+        public Builder serDes(SerDes serDes) {
+<span class="fc" id="L99">            this.serDes = serDes;</span>
+<span class="fc" id="L100">            return this;</span>
+        }
+
+        /**
+         * Builds the StepConfig instance.
+         *
+         * @return a new StepConfig with the configured options
+         */
+        public StepConfig build() {
+<span class="fc" id="L109">            return new StepConfig(this);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

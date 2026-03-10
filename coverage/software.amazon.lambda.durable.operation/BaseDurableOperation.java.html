@@ -1,0 +1,342 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BaseDurableOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.operation</a> &gt; <span class="el_source">BaseDurableOperation.java</span></div><h1>BaseDurableOperation.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.operation;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
+
+/**
+ * Base class for all durable operations (STEP, WAIT, etc.).
+ *
+ * &lt;p&gt;Key methods:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@code execute()} starts the operation (returns immediately)
+ *   &lt;li&gt;{@code get()} blocks until complete and returns the result
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;The separation allows:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Starting multiple async operations quickly
+ *   &lt;li&gt;Blocking on results later when needed
+ *   &lt;li&gt;Proper thread coordination via future
+ * &lt;/ul&gt;
+ */
+public abstract class BaseDurableOperation&lt;T&gt; implements DurableFuture&lt;T&gt; {
+<span class="fc" id="L47">    private static final Logger logger = LoggerFactory.getLogger(BaseDurableOperation.class);</span>
+
+    private final String operationId;
+    private final String name;
+    private final OperationType operationType;
+    private final ExecutionManager executionManager;
+    private final TypeToken&lt;T&gt; resultTypeToken;
+    private final SerDes resultSerDes;
+    protected final CompletableFuture&lt;Void&gt; completionFuture;
+    private final DurableContext durableContext;
+
+    protected BaseDurableOperation(
+            String operationId,
+            String name,
+            OperationType operationType,
+            TypeToken&lt;T&gt; resultTypeToken,
+            SerDes resultSerDes,
+<span class="fc" id="L64">            DurableContext durableContext) {</span>
+<span class="fc" id="L65">        this.operationId = operationId;</span>
+<span class="fc" id="L66">        this.name = name;</span>
+<span class="fc" id="L67">        this.durableContext = durableContext;</span>
+<span class="fc" id="L68">        this.operationType = operationType;</span>
+<span class="fc" id="L69">        this.executionManager = durableContext.getExecutionManager();</span>
+<span class="fc" id="L70">        this.resultTypeToken = resultTypeToken;</span>
+<span class="fc" id="L71">        this.resultSerDes = resultSerDes;</span>
+
+<span class="fc" id="L73">        this.completionFuture = new CompletableFuture&lt;&gt;();</span>
+
+        // register this operation in ExecutionManager so that the operation can receive updates from ExecutionManager
+<span class="fc" id="L76">        executionManager.registerOperation(this);</span>
+<span class="fc" id="L77">    }</span>
+
+    /** Gets the unique identifier for this operation. */
+    public String getOperationId() {
+<span class="fc" id="L81">        return operationId;</span>
+    }
+
+    /** Gets the operation name (maybe null). */
+    public String getName() {
+<span class="fc" id="L86">        return name;</span>
+    }
+
+    /** Gets the parent context. */
+    protected DurableContext getContext() {
+<span class="fc" id="L91">        return durableContext;</span>
+    }
+
+    /** Gets the operation type */
+    public OperationType getType() {
+<span class="fc" id="L96">        return operationType;</span>
+    }
+
+    /** Starts the operation, processes the operation updates from backend. Does not block. */
+    public void execute() {
+<span class="fc" id="L101">        var existing = getOperation();</span>
+
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        if (existing != null) {</span>
+<span class="fc" id="L104">            validateReplay(existing);</span>
+<span class="fc" id="L105">            replay(existing);</span>
+        } else {
+<span class="fc" id="L107">            start();</span>
+        }
+<span class="fc" id="L109">    }</span>
+
+    /** Starts the operation. */
+    protected abstract void start();
+
+    /** Replays the operation. */
+    protected abstract void replay(Operation existing);
+
+    /**
+     * Gets the Operation from ExecutionManager and update the replay state from REPLAY to EXECUTE if operation is not
+     * found. Operation IDs are globally unique (prefixed for child contexts), so no parentId is needed for lookups.
+     *
+     * @return the operation if found, otherwise null
+     */
+    protected Operation getOperation() {
+<span class="fc" id="L124">        return executionManager.getOperationAndUpdateReplayState(getOperationId());</span>
+    }
+
+    /**
+     * Gets the direct child Operations of a give context operation.
+     *
+     * @param operationId the operation id of the context
+     * @return list of the child Operations
+     */
+    protected List&lt;Operation&gt; getChildOperations(String operationId) {
+<span class="nc" id="L134">        return executionManager.getChildOperations(operationId);</span>
+    }
+
+    /**
+     * Checks if it's called from a Step.
+     *
+     * @throws IllegalDurableOperationException if it's in a step
+     */
+    private void validateCurrentThreadType() {
+<span class="fc" id="L143">        ThreadType current = getCurrentThreadContext().threadType();</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">        if (current == ThreadType.STEP) {</span>
+<span class="nc" id="L145">            var message = String.format(</span>
+                    &quot;Nested %s operation is not supported on %s from within a %s execution.&quot;,
+<span class="nc" id="L147">                    getType(), getName(), current);</span>
+            // terminate execution and throw the exception
+<span class="nc" id="L149">            terminateExecutionWithIllegalDurableOperationException(message);</span>
+        }
+<span class="fc" id="L151">    }</span>
+
+    /** Checks if this operation is completed */
+    protected boolean isOperationCompleted() {
+<span class="fc" id="L155">        return completionFuture.isDone();</span>
+    }
+
+    /** Waits for the operation to complete and suspends the execution if no active thread is running */
+    protected Operation waitForOperationCompletion() {
+
+<span class="fc" id="L161">        validateCurrentThreadType();</span>
+
+<span class="fc" id="L163">        var threadContext = getCurrentThreadContext();</span>
+
+        // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
+        // completionFuture is completed by a user thread (a step or child context thread) when the execution here
+        // is between `isOperationCompleted` and `thenRun`.
+<span class="fc" id="L168">        synchronized (completionFuture) {</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">            if (!isOperationCompleted()) {</span>
+                // Operation not done yet
+<span class="fc" id="L171">                logger.trace(</span>
+                        &quot;deregistering thread {} when waiting for operation {} ({}) to complete ({})&quot;,
+<span class="fc" id="L173">                        threadContext.threadId(),</span>
+<span class="fc" id="L174">                        getOperation(),</span>
+<span class="fc" id="L175">                        getType(),</span>
+                        completionFuture);
+
+                // Add a completion stage to completionFuture so that when the completionFuture is completed,
+                // it will register the current Context thread synchronously to make sure it is always registered
+                // strictly before the execution thread (Step or child context) is deregistered.
+<span class="fc" id="L181">                completionFuture.thenRun(() -&gt; registerActiveThread(threadContext.threadId()));</span>
+
+                // Deregister the current thread to allow suspension
+<span class="fc" id="L184">                executionManager.deregisterActiveThread(threadContext.threadId());</span>
+            }
+<span class="fc" id="L186">        }</span>
+
+        // Block until operation completes. No-op if the future is already completed.
+<span class="fc" id="L189">        completionFuture.join();</span>
+
+        // Get result based on status
+<span class="fc" id="L192">        var op = getOperation();</span>
+<span class="fc bfc" id="L193" title="All 2 branches covered.">        if (op == null) {</span>
+<span class="pc" id="L194">            terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="fc" id="L195">                    String.format(&quot;%s operation not found: %s&quot;, getType(), getOperationId()));</span>
+        }
+<span class="fc" id="L197">        return op;</span>
+    }
+
+    /** Receives operation updates from ExecutionManager and updates the internal state of the operation */
+    public void onCheckpointComplete(Operation operation) {
+<span class="fc bfc" id="L202" title="All 2 branches covered.">        if (ExecutionManager.isTerminalStatus(operation.status())) {</span>
+            // This method handles only terminal status updates. Override this method if a DurableOperation needs to
+            // handle other updates.
+<span class="fc" id="L205">            logger.trace(&quot;In onCheckpointComplete, completing operation {} ({})&quot;, operationId, completionFuture);</span>
+            // It's important that we synchronize access to the future, otherwise the processing could happen
+            // on someone else's thread and cause a race condition.
+<span class="fc" id="L208">            synchronized (completionFuture) {</span>
+                // Completing the future here will also run any other completion stages that have been attached
+                // to the future. In our case, other contexts may have attached a function to reactivate themselves,
+                // so they will definitely have a chance to reactivate before we finish completing and deactivating
+                // whatever operations were just checkpointed.
+<span class="fc" id="L213">                completionFuture.complete(null);</span>
+<span class="fc" id="L214">            }</span>
+        }
+<span class="fc" id="L216">    }</span>
+
+    /** Marks the operation as already completed (in replay). */
+    protected void markAlreadyCompleted() {
+        // When the operation is already completed in a replay, we complete completionFuture immediately
+        // so that the `get` method will be unblocked and the context thread will be registered
+<span class="fc" id="L222">        logger.trace(&quot;In markAlreadyCompleted, completing operation: {} ({}).&quot;, operationId, completionFuture);</span>
+
+        // It's important that we synchronize access to the future, otherwise the processing could happen
+        // on someone else's thread and cause a race condition.
+<span class="fc" id="L226">        synchronized (completionFuture) {</span>
+<span class="fc" id="L227">            completionFuture.complete(null);</span>
+<span class="fc" id="L228">        }</span>
+<span class="fc" id="L229">    }</span>
+
+    // terminate the execution
+    protected T terminateExecution(UnrecoverableDurableExecutionException exception) {
+<span class="fc" id="L233">        executionManager.terminateExecution(exception);</span>
+        // Exception is already thrown from above. Keep the throw statement below to make tests happy
+<span class="fc" id="L235">        throw exception;</span>
+    }
+
+    protected T terminateExecutionWithIllegalDurableOperationException(String message) {
+<span class="nc" id="L239">        return terminateExecution(new IllegalDurableOperationException(message));</span>
+    }
+
+    // advanced thread and context control
+    protected void registerActiveThread(String threadId) {
+<span class="fc" id="L244">        executionManager.registerActiveThread(threadId);</span>
+<span class="fc" id="L245">    }</span>
+
+    protected ThreadContext getCurrentThreadContext() {
+<span class="fc" id="L248">        return executionManager.getCurrentThreadContext();</span>
+    }
+
+    // polling and checkpointing
+    protected CompletableFuture&lt;Operation&gt; pollForOperationUpdates() {
+<span class="fc" id="L253">        return executionManager.pollForOperationUpdates(operationId);</span>
+    }
+
+    protected CompletableFuture&lt;Operation&gt; pollForOperationUpdates(Duration delay) {
+<span class="fc" id="L257">        return executionManager.pollForOperationUpdates(operationId, delay);</span>
+    }
+
+    protected void sendOperationUpdate(OperationUpdate.Builder builder) {
+<span class="fc" id="L261">        sendOperationUpdateAsync(builder).join();</span>
+<span class="fc" id="L262">    }</span>
+
+    protected CompletableFuture&lt;Void&gt; sendOperationUpdateAsync(OperationUpdate.Builder builder) {
+<span class="fc" id="L265">        return executionManager.sendOperationUpdate(builder.id(operationId)</span>
+<span class="fc" id="L266">                .name(name)</span>
+<span class="fc" id="L267">                .type(operationType)</span>
+<span class="fc" id="L268">                .parentId(durableContext.getContextId())</span>
+<span class="fc" id="L269">                .build());</span>
+    }
+
+    // serialization/deserialization utilities
+    protected T deserializeResult(String result) {
+        try {
+<span class="fc" id="L275">            return resultSerDes.deserialize(result, resultTypeToken);</span>
+<span class="fc" id="L276">        } catch (SerDesException e) {</span>
+<span class="fc" id="L277">            logger.warn(</span>
+                    &quot;Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.&quot;,
+<span class="fc" id="L279">                    getType(),</span>
+<span class="fc" id="L280">                    getName());</span>
+<span class="fc" id="L281">            throw e;</span>
+        }
+    }
+
+    protected String serializeResult(T result) {
+<span class="fc" id="L286">        return resultSerDes.serialize(result);</span>
+    }
+
+    protected ErrorObject serializeException(Throwable throwable) {
+<span class="fc" id="L290">        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);</span>
+    }
+
+    protected Throwable deserializeException(ErrorObject errorObject) {
+<span class="fc" id="L294">        Throwable original = null;</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">        if (errorObject == null) {</span>
+<span class="nc" id="L296">            return original;</span>
+        }
+<span class="fc" id="L298">        var errorType = errorObject.errorType();</span>
+<span class="fc" id="L299">        var errorData = errorObject.errorData();</span>
+
+<span class="fc bfc" id="L301" title="All 2 branches covered.">        if (errorType == null) {</span>
+<span class="fc" id="L302">            return original;</span>
+        }
+        try {
+
+<span class="fc" id="L306">            Class&lt;?&gt; exceptionClass = Class.forName(errorType);</span>
+<span class="pc bpc" id="L307" title="1 of 2 branches missed.">            if (Throwable.class.isAssignableFrom(exceptionClass)) {</span>
+<span class="fc" id="L308">                original =</span>
+<span class="fc" id="L309">                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));</span>
+
+<span class="fc bfc" id="L311" title="All 2 branches covered.">                if (original != null) {</span>
+<span class="fc" id="L312">                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));</span>
+                }
+            }
+<span class="fc" id="L315">        } catch (ClassNotFoundException e) {</span>
+<span class="fc" id="L316">            logger.warn(&quot;Cannot re-construct original exception type. Falling back to generic StepFailedException.&quot;);</span>
+<span class="fc" id="L317">        } catch (SerDesException e) {</span>
+<span class="fc" id="L318">            logger.warn(&quot;Cannot deserialize original exception data. Falling back to generic StepFailedException.&quot;, e);</span>
+<span class="fc" id="L319">        }</span>
+<span class="fc" id="L320">        return original;</span>
+    }
+
+    /** Validates that current operation matches checkpointed operation during replay. */
+    protected void validateReplay(Operation checkpointed) {
+<span class="fc bfc" id="L325" title="All 4 branches covered.">        if (checkpointed == null || checkpointed.type() == null) {</span>
+<span class="fc" id="L326">            return; // First execution, no validation needed</span>
+        }
+
+<span class="fc bfc" id="L329" title="All 2 branches covered.">        if (!checkpointed.type().equals(getType())) {</span>
+<span class="pc" id="L330">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+                    &quot;Operation type mismatch for \&quot;%s\&quot;. Expected %s, got %s&quot;,
+<span class="fc" id="L332">                    operationId, checkpointed.type(), getType())));</span>
+        }
+
+<span class="fc bfc" id="L335" title="All 2 branches covered.">        if (!Objects.equals(checkpointed.name(), getName())) {</span>
+<span class="pc" id="L336">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+                    &quot;Operation name mismatch for \&quot;%s\&quot;. Expected \&quot;%s\&quot;, got \&quot;%s\&quot;&quot;,
+<span class="fc" id="L338">                    operationId, checkpointed.name(), getName())));</span>
+        }
+<span class="fc" id="L340">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

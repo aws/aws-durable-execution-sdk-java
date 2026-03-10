@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DurableFuture.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">DurableFuture.java</span></div><h1>DurableFuture.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import java.util.Arrays;
+import java.util.List;
+
+public interface DurableFuture&lt;T&gt; {
+    /**
+     * Blocks until the operation completes and returns the result.
+     *
+     * &lt;p&gt;This delegates to operation.get() which handles: - Thread deregistration (allows suspension) - Thread
+     * reactivation (resumes execution) - Result retrieval
+     *
+     * @return the operation result
+     */
+    T get();
+
+    /**
+     * Waits for all provided futures to complete and returns their results in order.
+     *
+     * &lt;p&gt;The futures are resolved sequentially, but since the underlying operations run concurrently, this effectively
+     * waits for all operations to complete. During replay, completed operations return immediately.
+     *
+     * @param futures the futures to wait for
+     * @param &lt;T&gt; the result type of the futures
+     * @return a list of results in the same order as the input futures
+     */
+    @SafeVarargs
+    static &lt;T&gt; List&lt;T&gt; allOf(DurableFuture&lt;T&gt;... futures) {
+<span class="fc" id="L31">        return Arrays.stream(futures).map(DurableFuture::get).toList();</span>
+    }
+
+    /**
+     * Waits for all provided futures to complete and returns their results in order.
+     *
+     * &lt;p&gt;The futures are resolved sequentially, but since the underlying operations run concurrently, this effectively
+     * waits for all operations to complete. During replay, completed operations return immediately.
+     *
+     * @param futures the list of futures to wait for
+     * @param &lt;T&gt; the result type of the futures
+     * @return a list of results in the same order as the input futures
+     */
+    static &lt;T&gt; List&lt;T&gt; allOf(List&lt;DurableFuture&lt;T&gt;&gt; futures) {
+<span class="fc" id="L45">        return futures.stream().map(DurableFuture::get).toList();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

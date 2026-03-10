@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChildContextFailedException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.exception</a> &gt; <span class="el_source">ChildContextFailedException.java</span></div><h1>ChildContextFailedException.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.exception;
+
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+
+/** Exception thrown when a child context fails and the original exception cannot be reconstructed. */
+public class ChildContextFailedException extends DurableOperationException {
+    public ChildContextFailedException(Operation operation) {
+<span class="fc" id="L11">        super(operation, getError(operation), formatMessage(getError(operation)));</span>
+<span class="fc" id="L12">    }</span>
+
+    private static ErrorObject getError(Operation operation) {
+<span class="pc bpc" id="L15" title="1 of 2 branches missed.">        return operation.contextDetails() != null ? operation.contextDetails().error() : null;</span>
+    }
+
+    private static String formatMessage(ErrorObject errorObject) {
+<span class="pc bpc" id="L19" title="1 of 2 branches missed.">        if (errorObject == null) {</span>
+<span class="nc" id="L20">            return &quot;Child context failed without an error&quot;;</span>
+        }
+<span class="fc" id="L22">        return String.format(</span>
+                &quot;Child context failed with error of type %s. Message: %s&quot;,
+<span class="fc" id="L24">                errorObject.errorType(), errorObject.errorMessage());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

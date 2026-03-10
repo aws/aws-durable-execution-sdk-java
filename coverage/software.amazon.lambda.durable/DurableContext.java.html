@@ -1,0 +1,475 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DurableContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">DurableContext.java</span></div><h1>DurableContext.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import com.amazonaws.services.lambda.runtime.Context;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.operation.CallbackOperation;
+import software.amazon.lambda.durable.operation.ChildContextOperation;
+import software.amazon.lambda.durable.operation.InvokeOperation;
+import software.amazon.lambda.durable.operation.StepOperation;
+import software.amazon.lambda.durable.operation.WaitOperation;
+import software.amazon.lambda.durable.validation.ParameterValidator;
+
+public class DurableContext extends BaseContext {
+    private static final String WAIT_FOR_CALLBACK_CALLBACK_SUFFIX = &quot;-callback&quot;;
+    private static final String WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX = &quot;-submitter&quot;;
+<span class="fc" id="L31">    private static final int MAX_WAIT_FOR_CALLBACK_NAME_LENGTH = ParameterValidator.MAX_OPERATION_NAME_LENGTH</span>
+<span class="fc" id="L32">            - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());</span>
+    private final AtomicInteger operationCounter;
+    private volatile DurableLogger logger;
+
+    /** Shared initialization — sets all fields. */
+    private DurableContext(
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String contextId,
+            String contextName) {
+<span class="fc" id="L43">        super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);</span>
+<span class="fc" id="L44">        this.operationCounter = new AtomicInteger(0);</span>
+<span class="fc" id="L45">    }</span>
+
+    /**
+     * Creates a root context (contextId = null)
+     *
+     * &lt;p&gt;The context itself always has a null contextId (making it a root context).
+     *
+     * @param executionManager the execution manager
+     * @param durableConfig the durable configuration
+     * @param lambdaContext the Lambda context
+     * @return a new root DurableContext
+     */
+    public static DurableContext createRootContext(
+            ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
+<span class="fc" id="L59">        return new DurableContext(executionManager, durableConfig, lambdaContext, null, null);</span>
+    }
+
+    /**
+     * Creates a child context.
+     *
+     * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
+     * @return a new DurableContext for the child context
+     */
+    public DurableContext createChildContext(String childContextId, String childContextName) {
+<span class="fc" id="L69">        return new DurableContext(</span>
+<span class="fc" id="L70">                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName);</span>
+    }
+
+    /**
+     * Creates a step context for executing step operations.
+     *
+     * @param stepOperationId the ID of the step operation (used for thread registration)
+     * @return a new StepContext instance
+     */
+    public StepContext createStepContext(String stepOperationId, String stepOperationName, int attempt) {
+<span class="fc" id="L80">        return new StepContext(</span>
+<span class="fc" id="L81">                getExecutionManager(),</span>
+<span class="fc" id="L82">                getDurableConfig(),</span>
+<span class="fc" id="L83">                getLambdaContext(),</span>
+                stepOperationId,
+                stepOperationName,
+                attempt);
+    }
+
+    // ========== step methods ==========
+
+    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
+<span class="fc" id="L92">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
+        // Simply delegate to stepAsync and block on the result
+<span class="fc" id="L97">        return stepAsync(name, resultType, func, config).get();</span>
+    }
+
+    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func) {
+<span class="fc" id="L101">        return step(name, typeToken, func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func, StepConfig config) {
+        // Simply delegate to stepAsync and block on the result
+<span class="fc" id="L106">        return stepAsync(name, typeToken, func, config).get();</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
+<span class="fc" id="L110">        return stepAsync(</span>
+<span class="fc" id="L111">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(
+            String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
+<span class="fc" id="L116">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func) {
+<span class="fc" id="L120">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(
+            String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func, StepConfig config) {
+<span class="fc" id="L125">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="fc" id="L126">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
+<span class="fc" id="L127">        ParameterValidator.validateOperationName(name);</span>
+
+<span class="fc bfc" id="L129" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L130">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+        }
+<span class="fc" id="L132">        var operationId = nextOperationId();</span>
+
+        // Create and start step operation with TypeToken
+<span class="fc" id="L135">        var operation = new StepOperation&lt;&gt;(operationId, name, func, typeToken, config, this);</span>
+
+<span class="fc" id="L137">        operation.execute(); // Start the step (returns immediately)</span>
+
+<span class="fc" id="L139">        return operation;</span>
+    }
+
+    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
+<span class="nc" id="L143">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
+        // Simply delegate to stepAsync and block on the result
+<span class="nc" id="L148">        return stepAsync(name, resultType, func, config).get();</span>
+    }
+
+    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func) {
+<span class="nc" id="L152">        return step(name, typeToken, func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func, StepConfig config) {
+        // Simply delegate to stepAsync and block on the result
+<span class="nc" id="L157">        return stepAsync(name, typeToken, func, config).get();</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
+<span class="nc" id="L161">        return stepAsync(</span>
+<span class="nc" id="L162">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
+<span class="nc" id="L166">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func) {
+<span class="nc" id="L170">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func, StepConfig config) {
+<span class="nc" id="L174">        return stepAsync(name, typeToken, stepContext -&gt; func.get(), config);</span>
+    }
+
+    // ========== wait methods ==========
+
+    public Void wait(String name, Duration duration) {
+        // Block (will throw SuspendExecutionException if there is no active thread)
+<span class="fc" id="L181">        return waitAsync(name, duration).get();</span>
+    }
+
+    public DurableFuture&lt;Void&gt; waitAsync(String name, Duration duration) {
+<span class="fc" id="L185">        ParameterValidator.validateDuration(duration, &quot;Wait duration&quot;);</span>
+<span class="fc" id="L186">        ParameterValidator.validateOperationName(name);</span>
+
+<span class="fc" id="L188">        var operationId = nextOperationId();</span>
+
+        // Create and start wait operation
+<span class="fc" id="L191">        var operation = new WaitOperation(operationId, name, duration, this);</span>
+
+<span class="fc" id="L193">        operation.execute(); // Checkpoint the wait</span>
+<span class="fc" id="L194">        return operation;</span>
+    }
+
+    // ========== chained invoke methods ==========
+
+    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, Class&lt;T&gt; resultType) {
+<span class="nc" id="L200">        return invokeAsync(</span>
+                        name,
+                        functionName,
+                        payload,
+                        resultType,
+<span class="nc" id="L205">                        InvokeConfig.builder().build())</span>
+<span class="nc" id="L206">                .get();</span>
+    }
+
+    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, Class&lt;T&gt; resultType, InvokeConfig config) {
+<span class="nc" id="L210">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config)</span>
+<span class="nc" id="L211">                .get();</span>
+    }
+
+    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, TypeToken&lt;T&gt; typeToken) {
+<span class="nc" id="L215">        return invokeAsync(</span>
+                        name,
+                        functionName,
+                        payload,
+                        typeToken,
+<span class="nc" id="L220">                        InvokeConfig.builder().build())</span>
+<span class="nc" id="L221">                .get();</span>
+    }
+
+    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, TypeToken&lt;T&gt; typeToken, InvokeConfig config) {
+<span class="nc" id="L225">        return invokeAsync(name, functionName, payload, typeToken, config).get();</span>
+    }
+
+    public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(
+            String name, String functionName, U payload, Class&lt;T&gt; resultType, InvokeConfig config) {
+<span class="nc" id="L230">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config);</span>
+    }
+
+    public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(String name, String functionName, U payload, Class&lt;T&gt; resultType) {
+<span class="nc" id="L234">        return invokeAsync(</span>
+                name,
+                functionName,
+                payload,
+<span class="nc" id="L238">                TypeToken.get(resultType),</span>
+<span class="nc" id="L239">                InvokeConfig.builder().build());</span>
+    }
+
+    public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(String name, String functionName, U payload, TypeToken&lt;T&gt; resultType) {
+<span class="nc" id="L243">        return invokeAsync(</span>
+<span class="nc" id="L244">                name, functionName, payload, resultType, InvokeConfig.builder().build());</span>
+    }
+
+    public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(
+            String name, String functionName, U payload, TypeToken&lt;T&gt; typeToken, InvokeConfig config) {
+<span class="nc" id="L249">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="nc" id="L250">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
+<span class="nc" id="L251">        ParameterValidator.validateOperationName(name);</span>
+
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (config.serDes() == null) {</span>
+<span class="nc" id="L254">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+        }
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        if (config.payloadSerDes() == null) {</span>
+<span class="nc" id="L257">            config = config.toBuilder()</span>
+<span class="nc" id="L258">                    .payloadSerDes(getDurableConfig().getSerDes())</span>
+<span class="nc" id="L259">                    .build();</span>
+        }
+<span class="nc" id="L261">        var operationId = nextOperationId();</span>
+
+        // Create and start invoke operation
+<span class="nc" id="L264">        var operation = new InvokeOperation&lt;&gt;(operationId, name, functionName, payload, typeToken, config, this);</span>
+
+<span class="nc" id="L266">        operation.execute(); // checkpoint the invoke operation</span>
+<span class="nc" id="L267">        return operation; // Block (will throw SuspendExecutionException if needed)</span>
+    }
+
+    // ========== createCallback methods ==========
+
+    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, Class&lt;T&gt; resultType, CallbackConfig config) {
+<span class="nc" id="L273">        return createCallback(name, TypeToken.get(resultType), config);</span>
+    }
+
+    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, TypeToken&lt;T&gt; typeToken) {
+<span class="nc" id="L277">        return createCallback(name, typeToken, CallbackConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, Class&lt;T&gt; resultType) {
+<span class="nc" id="L281">        return createCallback(name, resultType, CallbackConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, TypeToken&lt;T&gt; typeToken, CallbackConfig config) {
+<span class="fc" id="L285">        ParameterValidator.validateOperationName(name);</span>
+<span class="pc bpc" id="L286" title="1 of 2 branches missed.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L287">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+        }
+<span class="fc" id="L289">        var operationId = nextOperationId();</span>
+
+<span class="fc" id="L291">        var operation = new CallbackOperation&lt;&gt;(operationId, name, typeToken, config, this);</span>
+<span class="fc" id="L292">        operation.execute();</span>
+
+<span class="fc" id="L294">        return operation;</span>
+    }
+
+    // ========== runInChildContext methods ==========
+
+    public &lt;T&gt; T runInChildContext(String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
+<span class="nc" id="L300">        return runInChildContextAsync(name, TypeToken.get(resultType), func).get();</span>
+    }
+
+    public &lt;T&gt; T runInChildContext(String name, TypeToken&lt;T&gt; typeToken, Function&lt;DurableContext, T&gt; func) {
+<span class="nc" id="L304">        return runInChildContextAsync(name, typeToken, func).get();</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
+            String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
+<span class="nc" id="L309">        return runInChildContextAsync(name, TypeToken.get(resultType), func);</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
+            String name, TypeToken&lt;T&gt; typeToken, Function&lt;DurableContext, T&gt; func) {
+<span class="nc" id="L314">        return runInChildContextAsync(name, typeToken, func, OperationSubType.RUN_IN_CHILD_CONTEXT);</span>
+    }
+
+    private &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
+            String name, TypeToken&lt;T&gt; typeToken, Function&lt;DurableContext, T&gt; func, OperationSubType subType) {
+<span class="fc" id="L319">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
+<span class="fc" id="L320">        ParameterValidator.validateOperationName(name);</span>
+<span class="fc" id="L321">        var operationId = nextOperationId();</span>
+
+<span class="fc" id="L323">        var operation = new ChildContextOperation&lt;&gt;(</span>
+<span class="fc" id="L324">                operationId, name, func, subType, typeToken, getDurableConfig().getSerDes(), this);</span>
+
+<span class="fc" id="L326">        operation.execute();</span>
+<span class="fc" id="L327">        return operation;</span>
+    }
+
+    // ========= waitForCallback methods =============
+    public &lt;T&gt; T waitForCallback(String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
+<span class="fc" id="L332">        return waitForCallbackAsync(</span>
+                        name,
+<span class="fc" id="L334">                        TypeToken.get(resultType),</span>
+                        func,
+<span class="fc" id="L336">                        WaitForCallbackConfig.builder().build())</span>
+<span class="fc" id="L337">                .get();</span>
+    }
+
+    public &lt;T&gt; T waitForCallback(String name, TypeToken&lt;T&gt; typeToken, BiConsumer&lt;String, StepContext&gt; func) {
+<span class="nc" id="L341">        return waitForCallbackAsync(</span>
+<span class="nc" id="L342">                        name, typeToken, func, WaitForCallbackConfig.builder().build())</span>
+<span class="nc" id="L343">                .get();</span>
+    }
+
+    public &lt;T&gt; T waitForCallback(
+            String name,
+            Class&lt;T&gt; resultType,
+            BiConsumer&lt;String, StepContext&gt; func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+<span class="nc" id="L351">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
+<span class="nc" id="L352">                .get();</span>
+    }
+
+    public &lt;T&gt; T waitForCallback(
+            String name,
+            TypeToken&lt;T&gt; typeToken,
+            BiConsumer&lt;String, StepContext&gt; func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+<span class="nc" id="L360">        return waitForCallbackAsync(name, typeToken, func, waitForCallbackConfig)</span>
+<span class="nc" id="L361">                .get();</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
+            String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
+<span class="nc" id="L366">        return waitForCallbackAsync(</span>
+                name,
+<span class="nc" id="L368">                TypeToken.get(resultType),</span>
+                func,
+<span class="nc" id="L370">                WaitForCallbackConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
+            String name, TypeToken&lt;T&gt; typeToken, BiConsumer&lt;String, StepContext&gt; func) {
+<span class="nc" id="L375">        return waitForCallbackAsync(</span>
+<span class="nc" id="L376">                name, typeToken, func, WaitForCallbackConfig.builder().build());</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
+            String name,
+            Class&lt;T&gt; resultType,
+            BiConsumer&lt;String, StepContext&gt; func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+<span class="nc" id="L384">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);</span>
+    }
+
+    public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
+            String name,
+            TypeToken&lt;T&gt; typeToken,
+            BiConsumer&lt;String, StepContext&gt; func,
+            WaitForCallbackConfig waitForCallbackConfig) {
+<span class="fc" id="L392">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
+<span class="fc" id="L393">        Objects.requireNonNull(waitForCallbackConfig, &quot;waitForCallbackConfig cannot be null&quot;);</span>
+        // waitForCallback adds a suffix for the callback operation name and the submitter operation name so
+        // the length restriction of waitForCallback name is different from the other operations.
+<span class="fc" id="L396">        ParameterValidator.validateOperationName(name, MAX_WAIT_FOR_CALLBACK_NAME_LENGTH);</span>
+
+<span class="pc bpc" id="L398" title="1 of 2 branches missed.">        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null</span>
+<span class="fc" id="L399">                ? waitForCallbackConfig.toBuilder()</span>
+<span class="fc" id="L400">                        .stepConfig(waitForCallbackConfig.stepConfig().toBuilder()</span>
+<span class="fc" id="L401">                                .serDes(getDurableConfig().getSerDes())</span>
+<span class="fc" id="L402">                                .build())</span>
+<span class="fc" id="L403">                        .build()</span>
+<span class="pc" id="L404">                : waitForCallbackConfig;</span>
+
+<span class="fc" id="L406">        return runInChildContextAsync(</span>
+                name,
+                typeToken,
+                childCtx -&gt; {
+<span class="fc" id="L410">                    var callback = childCtx.createCallback(</span>
+                            name + WAIT_FOR_CALLBACK_CALLBACK_SUFFIX,
+                            typeToken,
+<span class="fc" id="L413">                            finalWaitForCallbackConfig.callbackConfig());</span>
+<span class="fc" id="L414">                    childCtx.step(</span>
+                            name + WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX,
+                            Void.class,
+                            stepCtx -&gt; {
+<span class="nc" id="L418">                                func.accept(callback.callbackId(), stepCtx);</span>
+<span class="nc" id="L419">                                return null;</span>
+                            },
+<span class="fc" id="L421">                            finalWaitForCallbackConfig.stepConfig());</span>
+<span class="fc" id="L422">                    return callback.get();</span>
+                },
+                OperationSubType.WAIT_FOR_CALLBACK);
+    }
+
+    // =============== accessors ================
+    /**
+     * Returns a logger with execution context information for replay-aware logging.
+     *
+     * @return the durable logger
+     */
+    public DurableLogger getLogger() {
+        // lazy initialize logger
+<span class="nc bnc" id="L435" title="All 2 branches missed.">        if (logger == null) {</span>
+<span class="nc" id="L436">            synchronized (this) {</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">                if (logger == null) {</span>
+<span class="nc" id="L438">                    logger = new DurableLogger(LoggerFactory.getLogger(DurableContext.class), this);</span>
+                }
+<span class="nc" id="L440">            }</span>
+        }
+<span class="nc" id="L442">        return logger;</span>
+    }
+
+    /**
+     * Clears the logger's thread properties. Called during context destruction to prevent memory leaks and ensure clean
+     * state for subsequent executions.
+     */
+    @Override
+    public void close() {
+<span class="pc bpc" id="L451" title="1 of 2 branches missed.">        if (logger != null) {</span>
+<span class="nc" id="L452">            logger.close();</span>
+        }
+<span class="fc" id="L454">        super.close();</span>
+<span class="fc" id="L455">    }</span>
+
+    /**
+     * Get the next operationId. Returns a globally unique operation ID by hashing a sequential operation counter. For
+     * root contexts, the counter value is hashed directly (e.g. &quot;1&quot;, &quot;2&quot;, &quot;3&quot;). For child contexts, the values are
+     * prefixed with the parent hashed contextId (e.g. &quot;&lt;hash&gt;-1&quot;, &quot;&lt;hash&gt;-2&quot; inside parent context &lt;hash&gt;). This
+     * matches the Python SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
+     */
+    private String nextOperationId() {
+<span class="fc" id="L464">        var counter = String.valueOf(operationCounter.incrementAndGet());</span>
+<span class="fc bfc" id="L465" title="All 2 branches covered.">        var rawId = getContextId() != null ? getContextId() + &quot;-&quot; + counter : counter;</span>
+        try {
+<span class="fc" id="L467">            var messageDigest = MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="fc" id="L468">            var hash = messageDigest.digest(rawId.getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L469">            return HexFormat.of().formatHex(hash);</span>
+<span class="nc" id="L470">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L471">            throw new RuntimeException(&quot;failed to get next operation id, SHA-256 not available&quot;, e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

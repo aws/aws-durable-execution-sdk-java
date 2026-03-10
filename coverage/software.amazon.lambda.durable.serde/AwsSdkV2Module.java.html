@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AwsSdkV2Module.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.serde</a> &gt; <span class="el_source">AwsSdkV2Module.java</span></div><h1>AwsSdkV2Module.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.serde;
+
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.List;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+
+public class AwsSdkV2Module extends SimpleModule {
+
+    /**
+     * List of AWS SDK v2 classes that require custom serialization/deserialization. Add new SDK classes here to
+     * automatically register serializers and deserializers.
+     *
+     * &lt;p&gt;See https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
+     */
+<span class="fc" id="L28">    private static final List&lt;Class&lt;?&gt;&gt; SDK_CLASSES =</span>
+<span class="fc" id="L29">            List.of(Operation.class, ErrorObject.class, CheckpointUpdatedExecutionState.class);</span>
+
+    public AwsSdkV2Module() {
+<span class="fc" id="L32">        super(&quot;AwsSdkV2Module&quot;);</span>
+
+        // Register serializers and deserializers for all SDK classes
+<span class="fc bfc" id="L35" title="All 2 branches covered.">        for (Class&lt;?&gt; sdkClass : SDK_CLASSES) {</span>
+<span class="fc" id="L36">            registerSdkClass(sdkClass);</span>
+<span class="fc" id="L37">        }</span>
+<span class="fc" id="L38">    }</span>
+
+    private &lt;T&gt; void registerSdkClass(Class&lt;T&gt; sdkClass) {
+<span class="fc" id="L41">        addDeserializer(sdkClass, new SdkDeserializer&lt;&gt;(sdkClass));</span>
+<span class="fc" id="L42">        addSerializer(sdkClass, new SdkSerializer&lt;&gt;());</span>
+<span class="fc" id="L43">    }</span>
+
+    private static class SdkDeserializer&lt;T&gt; extends JsonDeserializer&lt;T&gt; {
+        private final Class&lt;T&gt; sdkClass;
+
+<span class="fc" id="L48">        SdkDeserializer(Class&lt;T&gt; sdkClass) {</span>
+<span class="fc" id="L49">            this.sdkClass = sdkClass;</span>
+<span class="fc" id="L50">        }</span>
+
+        @Override
+        @SuppressWarnings(&quot;unchecked&quot;)
+        public T deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+            try {
+                // Call serializableBuilderClass() method on the SDK class
+<span class="fc" id="L57">                Method serializableBuilderClassMethod = sdkClass.getMethod(&quot;serializableBuilderClass&quot;);</span>
+<span class="fc" id="L58">                serializableBuilderClassMethod.setAccessible(true);</span>
+<span class="fc" id="L59">                Class&lt;?&gt; builderClass = (Class&lt;?&gt;) serializableBuilderClassMethod.invoke(null);</span>
+
+                // Deserialize to builder using treeToValue (avoids double parsing via toString())
+<span class="fc" id="L62">                Object builder = p.readValueAs(builderClass);</span>
+<span class="fc" id="L63">                Method buildMethod = builderClass.getMethod(&quot;build&quot;);</span>
+<span class="fc" id="L64">                buildMethod.setAccessible(true);</span>
+<span class="fc" id="L65">                return (T) buildMethod.invoke(builder);</span>
+<span class="nc" id="L66">            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {</span>
+<span class="nc" id="L67">                throw new IOException(</span>
+<span class="nc" id="L68">                        &quot;Failed to deserialize &quot; + sdkClass.getSimpleName() + &quot; using AWS SDK v2 builder pattern&quot;, e);</span>
+            }
+        }
+    }
+
+    private static class SdkSerializer&lt;T&gt; extends JsonSerializer&lt;T&gt; {
+        @Override
+        public void serialize(T value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            try {
+                // Call toBuilder() method on the SDK object
+<span class="fc" id="L78">                Method toBuilderMethod = value.getClass().getMethod(&quot;toBuilder&quot;);</span>
+<span class="fc" id="L79">                toBuilderMethod.setAccessible(true);</span>
+<span class="fc" id="L80">                Object builder = toBuilderMethod.invoke(value);</span>
+
+                // Serialize the builder
+<span class="fc" id="L83">                serializers.defaultSerializeValue(builder, gen);</span>
+<span class="nc" id="L84">            } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {</span>
+<span class="nc" id="L85">                throw new IOException(</span>
+<span class="nc" id="L86">                        &quot;Failed to serialize &quot; + value.getClass().getSimpleName() + &quot; using AWS SDK v2 builder pattern&quot;,</span>
+                        e);
+<span class="fc" id="L88">            }</span>
+<span class="fc" id="L89">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

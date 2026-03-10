@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StepOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.operation</a> &gt; <span class="el_source">StepOperation.java</span></div><h1>StepOperation.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.operation;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.function.Function;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.awssdk.services.lambda.model.StepOptions;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.StepContext;
+import software.amazon.lambda.durable.StepSemantics;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.StepFailedException;
+import software.amazon.lambda.durable.exception.StepInterruptedException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.util.ExceptionHelper;
+
+public class StepOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt; {
+
+    private final Function&lt;StepContext, T&gt; function;
+    private final StepConfig config;
+    private final ExecutorService userExecutor;
+
+    public StepOperation(
+            String operationId,
+            String name,
+            Function&lt;StepContext, T&gt; function,
+            TypeToken&lt;T&gt; resultTypeToken,
+            StepConfig config,
+            DurableContext durableContext) {
+<span class="fc" id="L40">        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), durableContext);</span>
+
+<span class="fc" id="L42">        this.function = function;</span>
+<span class="fc" id="L43">        this.config = config;</span>
+<span class="fc" id="L44">        this.userExecutor = durableContext.getDurableConfig().getExecutorService();</span>
+<span class="fc" id="L45">    }</span>
+
+    /** Starts the operation. */
+    @Override
+    protected void start() {
+<span class="fc" id="L50">        executeStepLogic(0);</span>
+<span class="fc" id="L51">    }</span>
+
+    /** Replays the operation. */
+    @Override
+    protected void replay(Operation existing) {
+<span class="pc bpc" id="L56" title="4 of 5 branches missed.">        switch (existing.status()) {</span>
+<span class="fc" id="L57">            case SUCCEEDED, FAILED -&gt; markAlreadyCompleted();</span>
+            case STARTED -&gt; {
+<span class="nc bnc" id="L59" title="All 2 branches missed.">                var attempt = existing.stepDetails().attempt() != null</span>
+<span class="nc" id="L60">                        ? existing.stepDetails().attempt()</span>
+<span class="nc" id="L61">                        : 0;</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">                if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {</span>
+                    // AT_MOST_ONCE: treat as interrupted, go through retry logic
+<span class="nc" id="L64">                    handleStepFailure(new StepInterruptedException(existing), attempt + 1);</span>
+                } else {
+                    // AT_LEAST_ONCE: re-execute the step
+<span class="nc" id="L67">                    executeStepLogic(attempt);</span>
+                }
+<span class="nc" id="L69">            }</span>
+            // Step is pending retry - Start polling for PENDING -&gt; READY transition
+<span class="nc" id="L71">            case PENDING -&gt; pollReadyAndExecuteStepLogic(existing.stepDetails().attempt());</span>
+            // Execute with current attempt
+<span class="nc" id="L73">            case READY -&gt; executeStepLogic(existing.stepDetails().attempt());</span>
+            default -&gt;
+<span class="nc" id="L75">                terminateExecutionWithIllegalDurableOperationException(&quot;Unexpected step status: &quot; + existing.status());</span>
+        }
+<span class="fc" id="L77">    }</span>
+
+    private CompletableFuture&lt;Void&gt; pollReadyAndExecuteStepLogic(int attempt) {
+<span class="nc" id="L80">        return pollForOperationUpdates()</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+<span class="nc" id="L82">                        ? CompletableFuture.completedFuture(op)</span>
+<span class="nc" id="L83">                        : pollForOperationUpdates())</span>
+<span class="nc" id="L84">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
+    }
+
+    private void executeStepLogic(int attempt) {
+        // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters).
+        // The thread local ThreadContext is set inside the executor since that's where the step actually runs
+<span class="fc" id="L90">        registerActiveThread(getOperationId());</span>
+
+<span class="fc" id="L92">        Runnable userHandler = () -&gt; {</span>
+            // use a try-with-resources to
+            // - add thread id/type to thread local when the step starts
+            // - clear logger properties when the step finishes
+<span class="fc" id="L96">            try (StepContext stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {</span>
+                try {
+<span class="fc" id="L98">                    checkpointStarted();</span>
+
+                    // Execute the function
+<span class="fc" id="L101">                    T result = function.apply(stepContext);</span>
+
+<span class="fc" id="L103">                    handleStepSucceeded(result);</span>
+<span class="nc" id="L104">                } catch (Throwable e) {</span>
+<span class="nc" id="L105">                    handleStepFailure(e, attempt);</span>
+<span class="fc" id="L106">                }</span>
+            }
+<span class="fc" id="L108">        };</span>
+
+        // Execute user provided step code in user-configured executor
+<span class="fc" id="L111">        CompletableFuture.runAsync(userHandler, userExecutor);</span>
+<span class="fc" id="L112">    }</span>
+
+    private void checkpointStarted() {
+        // Check if we need to send START
+<span class="fc" id="L116">        var existing = getOperation();</span>
+<span class="pc bpc" id="L117" title="3 of 4 branches missed.">        if (existing == null || existing.status() != OperationStatus.STARTED) {</span>
+<span class="fc" id="L118">            var startUpdate = OperationUpdate.builder().action(OperationAction.START);</span>
+
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">            if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {</span>
+                // AT_MOST_ONCE: await START checkpoint before executing user code
+<span class="nc" id="L122">                sendOperationUpdate(startUpdate);</span>
+            } else {
+                // AT_LEAST_ONCE: fire-and-forget START checkpoint
+<span class="fc" id="L125">                sendOperationUpdateAsync(startUpdate);</span>
+            }
+        }
+<span class="fc" id="L128">    }</span>
+
+    private void handleStepSucceeded(T result) {
+        // Send SUCCEED
+        var successUpdate =
+<span class="fc" id="L133">                OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializeResult(result));</span>
+
+        // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
+        // the
+        // context
+        // threads waiting for the result of this step operation will be wakened up and registered.
+<span class="fc" id="L139">        sendOperationUpdate(successUpdate);</span>
+<span class="fc" id="L140">    }</span>
+
+    private void handleStepFailure(Throwable exception, int attempt) {
+<span class="nc" id="L143">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (exception instanceof SuspendExecutionException) {</span>
+<span class="nc" id="L145">            ExceptionHelper.sneakyThrow(exception);</span>
+        }
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (exception instanceof UnrecoverableDurableExecutionException) {</span>
+            // terminate the execution and throw the exception if it's not recoverable
+<span class="nc" id="L149">            terminateExecution((UnrecoverableDurableExecutionException) exception);</span>
+        }
+
+        final ErrorObject errorObject;
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (exception instanceof DurableOperationException) {</span>
+<span class="nc" id="L154">            errorObject = ((DurableOperationException) exception).getErrorObject();</span>
+        } else {
+<span class="nc" id="L156">            errorObject = serializeException(exception);</span>
+        }
+
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        var isRetryable = !(exception instanceof StepInterruptedException);</span>
+<span class="nc" id="L160">        var retryDecision = config.retryStrategy().makeRetryDecision(exception, attempt);</span>
+
+<span class="nc bnc" id="L162" title="All 4 branches missed.">        if (isRetryable &amp;&amp; retryDecision.shouldRetry()) {</span>
+            // Send RETRY
+<span class="nc" id="L164">            var retryUpdate = OperationUpdate.builder()</span>
+<span class="nc" id="L165">                    .action(OperationAction.RETRY)</span>
+<span class="nc" id="L166">                    .error(errorObject)</span>
+<span class="nc" id="L167">                    .stepOptions(StepOptions.builder()</span>
+                            // RetryDecisions always produce integer number of seconds greater or equals to
+                            // 1 (no sub-second numbers)
+<span class="nc" id="L170">                            .nextAttemptDelaySeconds(</span>
+<span class="nc" id="L171">                                    Math.toIntExact(retryDecision.delay().toSeconds()))</span>
+<span class="nc" id="L172">                            .build());</span>
+<span class="nc" id="L173">            sendOperationUpdate(retryUpdate);</span>
+
+<span class="nc" id="L175">            pollReadyAndExecuteStepLogic(attempt + 1);</span>
+<span class="nc" id="L176">        } else {</span>
+            // Send FAIL - retries exhausted
+            var failUpdate =
+<span class="nc" id="L179">                    OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);</span>
+<span class="nc" id="L180">            sendOperationUpdate(failUpdate);</span>
+        }
+<span class="nc" id="L182">    }</span>
+
+    @Override
+    public T get() {
+<span class="fc" id="L186">        var op = waitForOperationCompletion();</span>
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="fc" id="L189">            var stepDetails = op.stepDetails();</span>
+<span class="pc bpc" id="L190" title="1 of 2 branches missed.">            var result = (stepDetails != null) ? stepDetails.result() : null;</span>
+
+<span class="fc" id="L192">            return deserializeResult(result);</span>
+        } else {
+<span class="fc" id="L194">            var errorObject = op.stepDetails().error();</span>
+
+            // Throw StepInterruptedException directly for AT_MOST_ONCE interrupted steps
+<span class="fc bfc" id="L197" title="All 2 branches covered.">            if (StepInterruptedException.isStepInterruptedException(errorObject)) {</span>
+<span class="fc" id="L198">                throw new StepInterruptedException(op);</span>
+            }
+
+            // Attempt to reconstruct and throw the original exception
+<span class="fc" id="L202">            Throwable original = deserializeException(errorObject);</span>
+<span class="fc bfc" id="L203" title="All 2 branches covered.">            if (original != null) {</span>
+<span class="nc" id="L204">                ExceptionHelper.sneakyThrow(original);</span>
+            }
+            // Fallback: wrap in StepFailedException
+<span class="fc" id="L207">            throw new StepFailedException(op);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

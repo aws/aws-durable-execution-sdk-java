@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DurableOperationException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.exception</a> &gt; <span class="el_source">DurableOperationException.java</span></div><h1>DurableOperationException.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.exception;
+
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.util.ExceptionHelper;
+
+public class DurableOperationException extends DurableExecutionException {
+    private final Operation operation;
+    private final ErrorObject errorObject;
+
+    public DurableOperationException(Operation operation, ErrorObject errorObject) {
+<span class="fc bfc" id="L15" title="All 2 branches covered.">        this(operation, errorObject, errorObject != null ? errorObject.errorMessage() : null);</span>
+<span class="fc" id="L16">    }</span>
+
+    public DurableOperationException(Operation operation, ErrorObject errorObject, String errorMessage) {
+<span class="fc" id="L19">        this(operation, errorObject, errorMessage, null);</span>
+<span class="fc" id="L20">    }</span>
+
+    public DurableOperationException(
+            Operation operation, ErrorObject errorObject, String errorMessage, Throwable cause) {
+<span class="fc" id="L24">        this(</span>
+                operation,
+                errorObject,
+                errorMessage,
+<span class="fc bfc" id="L28" title="All 2 branches covered.">                errorObject != null ? ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()) : null,</span>
+                cause);
+<span class="fc" id="L30">    }</span>
+
+    public DurableOperationException(
+            Operation operation,
+            ErrorObject errorObject,
+            String errorMessage,
+            StackTraceElement[] stackTrace,
+            Throwable cause) {
+<span class="fc" id="L38">        super(errorMessage, cause, stackTrace);</span>
+<span class="fc" id="L39">        this.operation = operation;</span>
+<span class="fc" id="L40">        this.errorObject = errorObject;</span>
+<span class="fc" id="L41">    }</span>
+
+    public ErrorObject getErrorObject() {
+<span class="fc" id="L44">        return errorObject;</span>
+    }
+
+    public Operation getOperation() {
+<span class="fc" id="L48">        return operation;</span>
+    }
+
+    public OperationStatus getOperationStatus() {
+<span class="fc" id="L52">        return operation.status();</span>
+    }
+
+    public String getOperationId() {
+<span class="fc" id="L56">        return operation.id();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
