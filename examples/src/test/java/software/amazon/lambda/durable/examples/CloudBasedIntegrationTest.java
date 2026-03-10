@@ -480,7 +480,7 @@ class CloudBasedIntegrationTest {
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
             var finalResult = result.getResult(ManyAsyncStepsExample.Output.class);
-            System.out.printf("ManyAsyncStepsExample result (%d steps): %s", steps, finalResult);
+            System.out.printf("ManyAsyncStepsExample result (%d steps): %s\n", steps, finalResult);
             assertNotNull(finalResult);
             assertEquals((long) steps * (steps - 1), finalResult.result()); // Sum of 0..steps * 2
 
@@ -517,7 +517,7 @@ class CloudBasedIntegrationTest {
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
             var finalResult = result.getResult(ManyAsyncChildContextExample.Output.class);
-            System.out.printf("ManyAsyncChildContextExample result (%d child contexts): %s", steps, finalResult);
+            System.out.printf("ManyAsyncChildContextExample result (%d child contexts): %s\n", steps, finalResult);
             assertNotNull(finalResult);
             assertEquals((long) steps * (steps - 1), finalResult.result()); // Sum of 0..steps * 2
 
