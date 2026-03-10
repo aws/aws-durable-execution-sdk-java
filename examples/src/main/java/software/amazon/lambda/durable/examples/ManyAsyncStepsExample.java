@@ -43,7 +43,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
             futures.add(future);
         }
 
-        context.getLogger().info("All {} async steps created, collecting results", steps);
+        logger.info("All {} async steps created, collecting results", steps);
 
         // Collect all results using allOf
         var results = DurableFuture.allOf(futures);
@@ -52,8 +52,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
         // checkpoint the executionTime so that we can have the same value when replay
         var executionTimeMs = context.step(
                 "execution-time", Long.class, stepCtx -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
-        context.getLogger()
-                .info("Completed {} steps, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
+        logger.info("Completed {} steps, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
 
         // Wait 2 seconds to test replay
         context.wait("post-compute-wait", Duration.ofSeconds(2));
