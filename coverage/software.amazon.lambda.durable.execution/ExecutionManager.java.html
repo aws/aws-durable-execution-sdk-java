@@ -34,8 +34,8 @@ import software.amazon.lambda.durable.operation.BaseDurableOperation;
  * &lt;ul&gt;
  *   &lt;li&gt;Execution state (operations, checkpoint token)
  *   &lt;li&gt;Thread lifecycle (registration/deregistration)
- *   &lt;li&gt;Checkpoint batching (via CheckpointBatcher)
- *   &lt;li&gt;Checkpoint result handling (CheckpointBatcher callback)
+ *   &lt;li&gt;Checkpoint batching (via CheckpointManager)
+ *   &lt;li&gt;Checkpoint result handling (CheckpointManager callback)
  *   &lt;li&gt;Polling (for waits and retries)
  * &lt;/ul&gt;
  *
@@ -65,16 +65,16 @@ public class ExecutionManager implements AutoCloseable {
 <span class="fc" id="L65">    private final CompletableFuture&lt;Void&gt; executionExceptionFuture = new CompletableFuture&lt;&gt;();</span>
 
     // ===== Checkpoint Batching =====
-    private final CheckpointBatcher checkpointBatcher;
+    private final CheckpointManager checkpointManager;
 
 <span class="fc" id="L70">    public ExecutionManager(DurableExecutionInput input, DurableConfig config) {</span>
 <span class="fc" id="L71">        this.durableExecutionArn = input.durableExecutionArn();</span>
 
         // Create checkpoint batcher for internal coordination
-<span class="fc" id="L74">        this.checkpointBatcher =</span>
-<span class="fc" id="L75">                new CheckpointBatcher(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);</span>
+<span class="fc" id="L74">        this.checkpointManager =</span>
+<span class="fc" id="L75">                new CheckpointManager(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);</span>
 
-<span class="fc" id="L77">        this.operationStorage = checkpointBatcher.fetchAllPages(input.initialExecutionState()).stream()</span>
+<span class="fc" id="L77">        this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()</span>
 <span class="fc" id="L78">                .collect(Collectors.toConcurrentMap(Operation::id, op -&gt; op));</span>
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
@@ -244,7 +244,7 @@ public class ExecutionManager implements AutoCloseable {
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture&lt;Void&gt; sendOperationUpdate(OperationUpdate update) {
-<span class="fc" id="L247">        return checkpointBatcher.checkpoint(update);</span>
+<span class="fc" id="L247">        return checkpointManager.checkpoint(update);</span>
     }
 
     // ===== Polling =====
@@ -255,18 +255,18 @@ public class ExecutionManager implements AutoCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId) {
-<span class="fc" id="L258">        return checkpointBatcher.pollForUpdate(operationId);</span>
+<span class="fc" id="L258">        return checkpointManager.pollForUpdate(operationId);</span>
     }
 
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId, Duration delay) {
-<span class="fc" id="L262">        return checkpointBatcher.pollForUpdate(operationId, delay);</span>
+<span class="fc" id="L262">        return checkpointManager.pollForUpdate(operationId, delay);</span>
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-<span class="fc" id="L269">        checkpointBatcher.shutdown();</span>
+<span class="fc" id="L269">        checkpointManager.shutdown();</span>
 <span class="fc" id="L270">    }</span>
 
     public static boolean isTerminalStatus(OperationStatus status) {
