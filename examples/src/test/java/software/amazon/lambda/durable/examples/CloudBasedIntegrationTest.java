@@ -480,4 +480,25 @@ class CloudBasedIntegrationTest {
         assertNotNull(runner.getOperation("compute-0"));
         assertNotNull(runner.getOperation("compute-499"));
     }
+
+    @Test
+    void testManyAsyncChildContextExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("many-async-child-context-example"), ManyAsyncChildContextExample.Input.class, String.class);
+        var result = runner.run(new ManyAsyncChildContextExample.Input(2));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult(String.class);
+        System.out.println("ManyAsyncChildContextExample result: " + finalResult);
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("500 async child context"));
+        assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2
+
+        // Verify some operations are tracked
+        assertNotNull(runner.getOperation("compute-0"));
+        assertNotNull(runner.getOperation("compute-499"));
+        assertNotNull(runner.getOperation("child-0"));
+        assertNotNull(runner.getOperation("child-499"));
+    }
 }
