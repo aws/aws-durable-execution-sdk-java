@@ -4,7 +4,9 @@ package software.amazon.lambda.durable.examples;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
@@ -60,5 +62,13 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
         var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
 
         return new Output(totalSum, executionTimeMs, replayTimeMs);
+    }
+
+    public DurableConfig createConfiguration() {
+
+        // using a virtual thread pool
+        return DurableConfig.builder()
+                .withExecutorService(Executors.newVirtualThreadPerTaskExecutor())
+                .build();
     }
 }

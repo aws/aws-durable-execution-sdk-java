@@ -466,7 +466,7 @@ class CloudBasedIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"100, 1000, 10", "500, 2000, 20", "1000, 3000, 30"})
+    @CsvSource({"100, 1000, 10", "500, 2000, 20", "1000, 3000, 30", "2000, 5000, 40"})
     void testManyAsyncStepsExample(int steps, long maxExecutionTime, long maxReplayTime) {
         long minimalExecutionTimeMs = Long.MAX_VALUE;
         long minimalReplayTimeMs = Long.MAX_VALUE;
@@ -502,8 +502,7 @@ class CloudBasedIntegrationTest {
     }
 
     @ParameterizedTest
-    // OOM if it creates 1000 child contexts
-    @CsvSource({"100, 1500, 10", "500, 3000, 20"})
+    @CsvSource({"100, 1500, 10", "500, 3000, 20", "1000, 4500, 30"})
     void testManyAsyncChildContextExample(int steps, long maxExecutionTime, long maxReplayTime) {
         long minimalExecutionTimeMs = Long.MAX_VALUE;
         long minimalReplayTimeMs = Long.MAX_VALUE;

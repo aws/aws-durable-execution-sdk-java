@@ -237,12 +237,7 @@ public final class DurableConfig {
      */
     private static ExecutorService createDefaultExecutor() {
         logger.debug("Creating default ExecutorService");
-        return Executors.newCachedThreadPool(r -> {
-            Thread t = new Thread(r);
-            t.setName("durable-exec-" + t.getId());
-            t.setDaemon(true);
-            return t;
-        });
+        return Executors.newVirtualThreadPerTaskExecutor();
     }
 
     /** Builder for DurableConfig. Provides fluent API for configuring SDK components. */

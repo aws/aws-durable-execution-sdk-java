@@ -1,5 +1,5 @@
 # Build stage
-FROM amazoncorretto:17-alpine AS builder
+FROM amazoncorretto:25-alpine AS builder
 
 # Install Maven
 RUN apk add --no-cache maven
@@ -19,7 +19,7 @@ RUN mvn clean install -DskipTests -pl sdk,sdk-testing -am
 RUN mvn clean package -DskipTests -pl examples -am
 
 # Runtime stage
-FROM public.ecr.aws/lambda/java:17
+FROM public.ecr.aws/lambda/java:25
 
 # Copy only the built JAR from build stage
 COPY --from=builder /build/examples/target/*.jar ${LAMBDA_TASK_ROOT}/lib/

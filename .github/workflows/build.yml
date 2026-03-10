@@ -8,7 +8,7 @@
 #   - push: when code is pushed to main
 #
 # Notes:
-#   Builds against Java 17, 21, and 25.
+#   Builds against Java 21, and 25.
 
 name: Build
 run-name: Build - ${{ github.event_name }}
@@ -43,7 +43,6 @@ jobs:
     strategy:
       matrix:
         java:
-          - 17
           - 21
           - 25
     steps:

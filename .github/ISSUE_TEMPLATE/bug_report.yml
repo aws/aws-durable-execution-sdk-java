@@ -53,7 +53,6 @@ body:
       label: Java Version
       description: What version of Java are you using?
       options:
-        - "17"
         - "21"
         - "25"
         - Other (specify in additional context)
