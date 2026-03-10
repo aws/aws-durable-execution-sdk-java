@@ -22,6 +22,7 @@ import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
 @EnabledIf("isEnabled")
 class CloudBasedIntegrationTest {
+    private static final int PERFORMANCE_TEST_REPEAT = 3;
 
     private static String account;
     private static String region;
@@ -464,41 +465,45 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testManyAsyncStepsExample() {
-        var runner = CloudDurableTestRunner.create(
-                arn("many-async-steps-example"), ManyAsyncStepsExample.Input.class, String.class);
-        var result = runner.run(new ManyAsyncStepsExample.Input(2));
+        for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
+            var runner = CloudDurableTestRunner.create(
+                    arn("many-async-steps-example"), ManyAsyncStepsExample.Input.class, String.class);
+            var result = runner.run(new ManyAsyncStepsExample.Input(2));
 
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
-        System.out.println("ManyAsyncStepsExample result: " + finalResult);
-        assertNotNull(finalResult);
-        assertTrue(finalResult.contains("500 async steps"));
-        assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2
+            var finalResult = result.getResult(String.class);
+            System.out.println("ManyAsyncStepsExample result: " + finalResult);
+            assertNotNull(finalResult);
+            assertTrue(finalResult.contains("500 async steps"));
+            assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2
 
-        // Verify some operations are tracked
-        assertNotNull(runner.getOperation("compute-0"));
-        assertNotNull(runner.getOperation("compute-499"));
+            // Verify some operations are tracked
+            assertNotNull(runner.getOperation("compute-0"));
+            assertNotNull(runner.getOperation("compute-499"));
+        }
     }
 
     @Test
     void testManyAsyncChildContextExample() {
-        var runner = CloudDurableTestRunner.create(
-                arn("many-async-child-context-example"), ManyAsyncChildContextExample.Input.class, String.class);
-        var result = runner.run(new ManyAsyncChildContextExample.Input(2));
+        for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
+            var runner = CloudDurableTestRunner.create(
+                    arn("many-async-child-context-example"), ManyAsyncChildContextExample.Input.class, String.class);
+            var result = runner.run(new ManyAsyncChildContextExample.Input(2));
 
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
-        System.out.println("ManyAsyncChildContextExample result: " + finalResult);
-        assertNotNull(finalResult);
-        assertTrue(finalResult.contains("500 async child context"));
-        assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2
+            var finalResult = result.getResult(String.class);
+            System.out.println("ManyAsyncChildContextExample result: " + finalResult);
+            assertNotNull(finalResult);
+            assertTrue(finalResult.contains("500 async child context"));
+            assertTrue(finalResult.contains("249500")); // Sum of 0..499 * 2
 
-        // Verify some operations are tracked
-        assertNotNull(runner.getOperation("compute-0"));
-        assertNotNull(runner.getOperation("compute-499"));
-        assertNotNull(runner.getOperation("child-0"));
-        assertNotNull(runner.getOperation("child-499"));
+            // Verify some operations are tracked
+            assertNotNull(runner.getOperation("compute-0"));
+            assertNotNull(runner.getOperation("compute-499"));
+            assertNotNull(runner.getOperation("child-0"));
+            assertNotNull(runner.getOperation("child-499"));
+        }
     }
 }

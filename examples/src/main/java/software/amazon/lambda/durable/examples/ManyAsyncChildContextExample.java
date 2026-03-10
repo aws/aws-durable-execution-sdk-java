@@ -60,8 +60,8 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncChildC
                         totalSum,
                         executionTimeMs);
 
-        // Wait 10 seconds to test replay
-        context.wait("post-compute-wait", Duration.ofSeconds(10));
+        // Wait 2 seconds to test replay
+        context.wait("post-compute-wait", Duration.ofSeconds(2));
 
         var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
 
