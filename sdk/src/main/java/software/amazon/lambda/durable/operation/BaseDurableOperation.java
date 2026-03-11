@@ -50,8 +50,8 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private final String name;
     private final OperationType operationType;
     private final ExecutionManager executionManager;
-    private final TypeToken<T> resultTypeToken;
-    private final SerDes resultSerDes;
+    protected final TypeToken<T> resultTypeToken;
+    protected final SerDes resultSerDes;
     protected final CompletableFuture<Void> completionFuture;
     private final DurableContext durableContext;
 
@@ -337,5 +337,10 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
                     "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     operationId, checkpointed.name(), getName())));
         }
+    }
+
+    protected <U> void onChildContextComplete(ChildContextOperation<U> tChildContextOperation) {
+        // do nothing
+
     }
 }

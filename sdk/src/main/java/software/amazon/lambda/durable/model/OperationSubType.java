@@ -11,7 +11,9 @@ package software.amazon.lambda.durable.model;
 public enum OperationSubType {
     RUN_IN_CHILD_CONTEXT("RunInChildContext"),
     MAP("Map"),
+    MAP_ITERATION("MapInteration"),
     PARALLEL("Parallel"),
+    PARALLEL_BRANCH("ParallelBranch"),
     WAIT_FOR_CALLBACK("WaitForCallback");
 
     private final String value;

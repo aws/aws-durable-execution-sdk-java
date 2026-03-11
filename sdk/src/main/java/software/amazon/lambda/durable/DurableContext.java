@@ -8,6 +8,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
@@ -21,8 +22,11 @@ import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
+import software.amazon.lambda.durable.operation.MapOperation;
+import software.amazon.lambda.durable.operation.ParallelOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.validation.ParameterValidator;
 
 public class DurableContext extends BaseContext {
@@ -335,7 +339,7 @@ public class DurableContext extends BaseContext {
         var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
-                operationId, name, func, subType, typeToken, getDurableConfig().getSerDes(), this);
+                operationId, name, func, subType, typeToken, getDurableConfig().getSerDes(), this, null);
 
         operation.execute();
         return operation;
@@ -438,6 +442,28 @@ public class DurableContext extends BaseContext {
                 OperationSubType.WAIT_FOR_CALLBACK);
     }
 
+    // parallel operations
+    public DurableParallelFuture parallelAsync(String name, ConcurrencyConfig config) {
+        var operationId = nextOperationId();
+        var operation = new ParallelOperation(operationId, name, config, this);
+        operation.execute();
+        return operation;
+    }
+
+    // map operations
+    public <T, I> DurableFuture<BatchResult<T>> mapAsync(
+            String name,
+            List<I> collection,
+            MapFunction<I, T> func,
+            TypeToken<T> resultTypeToken,
+            ConcurrencyConfig config) {
+        var operationId = nextOperationId();
+        var operation = new MapOperation<>(
+                operationId, name, collection, func, resultTypeToken, new JacksonSerDes(), config, this);
+        operation.execute();
+        return operation;
+    }
+
     // =============== accessors ================
     /**
      * Returns a logger with execution context information for replay-aware logging.
@@ -474,7 +500,7 @@ public class DurableContext extends BaseContext {
      * prefixed with the parent hashed contextId (e.g. "<hash>-1", "<hash>-2" inside parent context <hash>). This
      * matches the Python SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
-    private String nextOperationId() {
+    public String nextOperationId() {
         var counter = String.valueOf(operationCounter.incrementAndGet());
         var rawId = getContextId() != null ? getContextId() + "-" + counter : counter;
         try {

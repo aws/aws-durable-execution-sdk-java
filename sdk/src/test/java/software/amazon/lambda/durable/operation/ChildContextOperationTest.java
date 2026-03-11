@@ -58,7 +58,8 @@ class ChildContextOperationTest {
                 OperationSubType.RUN_IN_CHILD_CONTEXT,
                 TypeToken.get(String.class),
                 SERDES,
-                durableContext);
+                durableContext,
+                null);
     }
 
     // ===== SUCCEEDED replay =====
