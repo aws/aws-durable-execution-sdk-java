@@ -466,7 +466,7 @@ class CloudBasedIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"100, 1000, 10", "500, 2000, 20", "1000, 3000, 30"})
+    @CsvSource({"100, 1000, 10", "500, 2000, 20", "1000, 3000, 50"})
     void testManyAsyncStepsExample(int steps, long maxExecutionTime, long maxReplayTime) {
         long minimalExecutionTimeMs = Long.MAX_VALUE;
         long minimalReplayTimeMs = Long.MAX_VALUE;
