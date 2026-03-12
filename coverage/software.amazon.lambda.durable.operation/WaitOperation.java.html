@@ -9,11 +9,11 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.NoopSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -24,8 +24,8 @@ public class WaitOperation extends BaseDurableOperation&lt;Void&gt; {
 
     private final Duration duration;
 
-    public WaitOperation(String operationId, String name, Duration duration, DurableContext durableContext) {
-<span class="fc" id="L28">        super(operationId, name, OperationType.WAIT, TypeToken.get(Void.class), NOOP_SER_DES, durableContext);</span>
+    public WaitOperation(OperationIdentifier operationIdentifier, Duration duration, DurableContext durableContext) {
+<span class="fc" id="L28">        super(operationIdentifier, TypeToken.get(Void.class), NOOP_SER_DES, durableContext);</span>
 <span class="fc" id="L29">        this.duration = duration;</span>
 <span class="fc" id="L30">    }</span>
 

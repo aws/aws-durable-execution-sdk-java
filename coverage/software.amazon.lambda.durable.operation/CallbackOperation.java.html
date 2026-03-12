@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.operation;
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableCallbackFuture;
@@ -13,6 +12,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt; implements DurableCallbackFuture&lt;T&gt; {
@@ -22,80 +22,79 @@ public class CallbackOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt; im
     private String callbackId;
 
     public CallbackOperation(
-            String operationId,
-            String name,
+            OperationIdentifier operationIdentifier,
             TypeToken&lt;T&gt; resultTypeToken,
             CallbackConfig config,
             DurableContext durableContext) {
-<span class="fc" id="L30">        super(operationId, name, OperationType.CALLBACK, resultTypeToken, config.serDes(), durableContext);</span>
-<span class="fc" id="L31">        this.config = config;</span>
-<span class="fc" id="L32">    }</span>
+<span class="fc" id="L29">        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);</span>
+<span class="fc" id="L30">        this.config = config;</span>
+<span class="fc" id="L31">    }</span>
 
     public String callbackId() {
-<span class="fc" id="L35">        return callbackId;</span>
+<span class="fc" id="L34">        return callbackId;</span>
     }
 
     /** Starts the operation. */
     @Override
     protected void start() {
         // First execution: checkpoint and get callback ID
-<span class="fc" id="L42">        var update = OperationUpdate.builder().action(OperationAction.START).callbackOptions(buildCallbackOptions());</span>
+<span class="fc" id="L41">        var update = OperationUpdate.builder().action(OperationAction.START).callbackOptions(buildCallbackOptions());</span>
 
-<span class="fc" id="L44">        sendOperationUpdate(update);</span>
+<span class="fc" id="L43">        sendOperationUpdate(update);</span>
 
         // Get the callback ID from the updated operation
-<span class="fc" id="L47">        var op = getOperation();</span>
-<span class="fc" id="L48">        callbackId = op.callbackDetails().callbackId();</span>
+<span class="fc" id="L46">        var op = getOperation();</span>
+<span class="fc" id="L47">        callbackId = op.callbackDetails().callbackId();</span>
 
-<span class="fc" id="L50">        pollForOperationUpdates();</span>
-<span class="fc" id="L51">    }</span>
+<span class="fc" id="L49">        pollForOperationUpdates();</span>
+<span class="fc" id="L50">    }</span>
 
     /** Replays the operation. */
     @Override
     protected void replay(Operation existing) {
         // Replay: use existing callback ID
-<span class="fc" id="L57">        callbackId = existing.callbackDetails().callbackId();</span>
+<span class="fc" id="L56">        callbackId = existing.callbackDetails().callbackId();</span>
 
-<span class="pc bpc" id="L59" title="2 of 3 branches missed.">        switch (existing.status()) {</span>
+<span class="pc bpc" id="L58" title="2 of 3 branches missed.">        switch (existing.status()) {</span>
             case SUCCEEDED, FAILED, TIMED_OUT -&gt; {
                 // Terminal state - complete the operation immediately
-<span class="fc" id="L62">                markAlreadyCompleted();</span>
-<span class="fc" id="L63">                return;</span>
+<span class="fc" id="L61">                markAlreadyCompleted();</span>
+<span class="fc" id="L62">                return;</span>
             }
             case STARTED -&gt; {
                 // Still waiting - continue to polling
-<span class="nc" id="L67">            }</span>
+<span class="nc" id="L66">            }</span>
             default -&gt;
-<span class="nc" id="L69">                terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="nc" id="L70">                        &quot;Unexpected callback status: &quot; + existing.status());</span>
+<span class="nc" id="L68">                terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L69">                        &quot;Unexpected callback status: &quot; + existing.status());</span>
         }
-<span class="nc" id="L72">        pollForOperationUpdates();</span>
-<span class="nc" id="L73">    }</span>
+<span class="nc" id="L71">        pollForOperationUpdates();</span>
+<span class="nc" id="L72">    }</span>
 
     @Override
     public T get() {
-<span class="fc" id="L77">        var op = waitForOperationCompletion();</span>
+<span class="fc" id="L76">        var op = waitForOperationCompletion();</span>
 
-<span class="pc bpc" id="L79" title="1 of 4 branches missed.">        return switch (op.status()) {</span>
-<span class="fc" id="L80">            case SUCCEEDED -&gt; deserializeResult(op.callbackDetails().result());</span>
-<span class="fc" id="L81">            case FAILED -&gt; throw new CallbackFailedException(op);</span>
-<span class="fc" id="L82">            case TIMED_OUT -&gt; throw new CallbackTimeoutException(op);</span>
+<span class="pc bpc" id="L78" title="1 of 4 branches missed.">        return switch (op.status()) {</span>
+<span class="fc" id="L79">            case SUCCEEDED -&gt; deserializeResult(op.callbackDetails().result());</span>
+<span class="fc" id="L80">            case FAILED -&gt; throw new CallbackFailedException(op);</span>
+<span class="fc" id="L81">            case TIMED_OUT -&gt; throw new CallbackTimeoutException(op);</span>
             default -&gt;
-<span class="nc" id="L84">                terminateExecutionWithIllegalDurableOperationException(&quot;Unexpected callback status: &quot; + op.status());</span>
+<span class="nc" id="L83">                terminateExecutionWithIllegalDurableOperationException(&quot;Unexpected callback status: &quot; + op.status());</span>
         };
     }
 
     private CallbackOptions buildCallbackOptions() {
-<span class="fc" id="L89">        var builder = CallbackOptions.builder();</span>
-<span class="pc bpc" id="L90" title="1 of 2 branches missed.">        if (config != null) {</span>
-<span class="fc bfc" id="L91" title="All 2 branches covered.">            if (config.timeout() != null) {</span>
-<span class="fc" id="L92">                builder.timeoutSeconds((int) config.timeout().toSeconds());</span>
+<span class="fc" id="L88">        var builder = CallbackOptions.builder();</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">        if (config != null) {</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">            if (config.timeout() != null) {</span>
+<span class="fc" id="L91">                builder.timeoutSeconds((int) config.timeout().toSeconds());</span>
             }
-<span class="fc bfc" id="L94" title="All 2 branches covered.">            if (config.heartbeatTimeout() != null) {</span>
-<span class="fc" id="L95">                builder.heartbeatTimeoutSeconds((int) config.heartbeatTimeout().toSeconds());</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">            if (config.heartbeatTimeout() != null) {</span>
+<span class="fc" id="L94">                builder.heartbeatTimeoutSeconds((int) config.heartbeatTimeout().toSeconds());</span>
             }
         }
-<span class="fc" id="L98">        return builder.build();</span>
+<span class="fc" id="L97">        return builder.build();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
