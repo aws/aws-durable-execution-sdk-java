@@ -71,6 +71,7 @@ public class DurableContext extends BaseContext {
      * Creates a child context.
      *
      * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
+     * @param childContextName the name of the child context
      * @return a new DurableContext for the child context
      */
     public DurableContext createChildContext(String childContextId, String childContextName) {
@@ -82,6 +83,8 @@ public class DurableContext extends BaseContext {
      * Creates a step context for executing step operations.
      *
      * @param stepOperationId the ID of the step operation (used for thread registration)
+     * @param stepOperationName the name of the step operation
+     * @param attempt the current retry attempt number (1-based)
      * @return a new StepContext instance
      */
     public StepContext createStepContext(String stepOperationId, String stepOperationName, int attempt) {

@@ -48,6 +48,13 @@ public abstract class TypeToken<T> {
         this.type = type;
     }
 
+    /**
+     * Creates a TypeToken for a simple (non-generic) class.
+     *
+     * @param clazz the class to create a token for
+     * @param <U> the type
+     * @return a TypeToken representing the given class
+     */
     public static <U> TypeToken<U> get(Class<U> clazz) {
         return new TypeToken<>(clazz) {};
     }

@@ -72,7 +72,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         executionManager.registerOperation(this);
     }
 
-    /** Gets the operation identifier containing id, name, type, and subType. */
+    /** Gets the operation sub-type (e.g. RUN_IN_CHILD_CONTEXT, WAIT_FOR_CALLBACK). */
     public OperationSubType getSubType() {
         return operationIdentifier.subType();
     }

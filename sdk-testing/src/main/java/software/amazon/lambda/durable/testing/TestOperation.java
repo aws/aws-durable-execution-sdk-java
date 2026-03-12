@@ -70,7 +70,7 @@ public class TestOperation {
         return getStepResult(TypeToken.get(type));
     }
 
-    /** Type-safe result extraction from step details. */
+    /** Deserializes and returns the step result using a TypeToken for generic types. */
     public <T> T getStepResult(TypeToken<T> type) {
         var details = operation.stepDetails();
         if (details == null || details.result() == null) {
