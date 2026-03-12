@@ -248,6 +248,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                 case PARALLEL -> throw new ChildContextFailedException(op);
                 case PARALLEL_BRANCH -> throw new ChildContextFailedException(op);
                 case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
+                case WAIT_FOR_CONDITION -> throw new ChildContextFailedException(op);
             };
         }
     }

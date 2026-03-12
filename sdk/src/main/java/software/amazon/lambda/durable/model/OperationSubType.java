@@ -14,7 +14,8 @@ public enum OperationSubType {
     MAP_ITERATION("MapIteration"),
     PARALLEL("Parallel"),
     PARALLEL_BRANCH("ParallelBranch"),
-    WAIT_FOR_CALLBACK("WaitForCallback");
+    WAIT_FOR_CALLBACK("WaitForCallback"),
+    WAIT_FOR_CONDITION("WaitForCondition");
 
     private final String value;
 

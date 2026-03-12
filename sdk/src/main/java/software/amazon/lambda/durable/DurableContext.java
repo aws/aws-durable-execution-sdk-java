@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.operation.InvokeOperation;
 import software.amazon.lambda.durable.operation.MapOperation;
 import software.amazon.lambda.durable.operation.ParallelOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
+import software.amazon.lambda.durable.operation.WaitForConditionOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.validation.ParameterValidator;
 
@@ -752,6 +754,56 @@ public class DurableContext extends BaseContext {
                     return callback.get();
                 },
                 OperationSubType.WAIT_FOR_CALLBACK);
+    }
+
+    // ========== waitForCondition methods ==========
+
+    public <T> T waitForCondition(
+            String name,
+            Class<T> resultType,
+            BiFunction<T, StepContext, T> checkFunc,
+            WaitForConditionConfig<T> config) {
+        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config)
+                .get();
+    }
+
+    public <T> T waitForCondition(
+            String name,
+            TypeToken<T> typeToken,
+            BiFunction<T, StepContext, T> checkFunc,
+            WaitForConditionConfig<T> config) {
+        return waitForConditionAsync(name, typeToken, checkFunc, config).get();
+    }
+
+    public <T> DurableFuture<T> waitForConditionAsync(
+            String name,
+            Class<T> resultType,
+            BiFunction<T, StepContext, T> checkFunc,
+            WaitForConditionConfig<T> config) {
+        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config);
+    }
+
+    public <T> DurableFuture<T> waitForConditionAsync(
+            String name,
+            TypeToken<T> typeToken,
+            BiFunction<T, StepContext, T> checkFunc,
+            WaitForConditionConfig<T> config) {
+        Objects.requireNonNull(config, "config cannot be null");
+        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        ParameterValidator.validateOperationName(name);
+
+        if (config.serDes() == null) {
+            config = WaitForConditionConfig.<T>builder(config.waitStrategy(), config.initialState())
+                    .serDes(getDurableConfig().getSerDes())
+                    .build();
+        }
+        var operationId = nextOperationId();
+
+        var operation = new WaitForConditionOperation<>(operationId, name, checkFunc, typeToken, config, this);
+
+        operation.execute();
+
+        return operation;
     }
 
     // =============== accessors ================
