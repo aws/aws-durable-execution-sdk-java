@@ -539,4 +539,13 @@ class CloudBasedIntegrationTest {
         assertTrue(minimalReplayTimeMs < maxReplayTime);
         assertTrue(minimalExecutionTimeMs < maxExecutionTime);
     }
+
+    @Test
+    void testSimpleMapExample() {
+        var runner = CloudDurableTestRunner.create(arn("simple-map-example"), GreetingRequest.class, String.class);
+        var result = runner.run(new GreetingRequest("Alice"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("Hello, Alice! | Hello, ALICE! | Hello, alice!", result.getResult(String.class));
+    }
 }

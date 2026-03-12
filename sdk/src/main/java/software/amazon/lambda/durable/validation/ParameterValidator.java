@@ -3,6 +3,13 @@
 package software.amazon.lambda.durable.validation;
 
 import java.time.Duration;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Utility class for validating input parameters in the Durable Execution SDK.
@@ -102,5 +109,32 @@ public final class ParameterValidator {
                         "Operation name must contain only printable ASCII characters, got: " + name);
             }
         }
+    }
+
+    /** Known unordered map types whose views (keySet, values, entrySet) do not guarantee iteration order. */
+    private static final Set<Class<?>> UNORDERED_MAP_TYPES =
+            Set.of(HashMap.class, IdentityHashMap.class, WeakHashMap.class, ConcurrentHashMap.class);
+
+    /**
+     * Validates that a collection has deterministic iteration order.
+     *
+     * <p>Rejects known unordered collection types: {@link HashSet} (and subclasses), and views returned by
+     * {@link HashMap}, {@link IdentityHashMap}, {@link WeakHashMap}, and {@link ConcurrentHashMap}.
+     *
+     * @param items the collection to validate
+     * @throws IllegalArgumentException if items is null or has non-deterministic iteration order
+     */
+    public static void validateOrderedCollection(Collection<?> items) {
+        if (items == null) {
+            throw new IllegalArgumentException("items cannot be null");
+        }
+        if (items instanceof HashSet || isUnorderedMapView(items)) {
+            throw new IllegalArgumentException("items must have deterministic iteration order");
+        }
+    }
+
+    private static boolean isUnorderedMapView(Collection<?> collection) {
+        var enclosing = collection.getClass().getEnclosingClass();
+        return enclosing != null && UNORDERED_MAP_TYPES.contains(enclosing);
     }
 }

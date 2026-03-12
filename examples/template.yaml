@@ -468,6 +468,31 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  SimpleMapExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'simple-map-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["software.amazon.lambda.durable.examples.SimpleMapExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-map-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   NoopExampleFunction:
     Description: Noop Example Function ARN
@@ -612,4 +637,12 @@ Outputs:
   ManyAsyncChildContextExampleFunctionName:
     Description: Many Async Child Context Example Function Name
     Value: !Ref ManyAsyncChildContextExampleFunction
+
+  SimpleMapExampleFunction:
+    Description: Simple Map Example Function ARN
+    Value: !GetAtt SimpleMapExampleFunction.Arn
+
+  SimpleMapExampleFunctionName:
+    Description: Simple Map Example Function Name
+    Value: !Ref SimpleMapExampleFunction
 

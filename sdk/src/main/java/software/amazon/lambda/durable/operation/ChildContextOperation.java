@@ -203,8 +203,8 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             // throw a general failed exception if a user exception is not reconstructed
             return switch (getSubType()) {
                 case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure(op);
-                // todo: handle MAP/PARALLEL
                 case MAP -> throw new ChildContextFailedException(op);
+                case MAP_ITERATION -> throw new ChildContextFailedException(op);
                 case PARALLEL -> throw new ChildContextFailedException(op);
                 case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
             };

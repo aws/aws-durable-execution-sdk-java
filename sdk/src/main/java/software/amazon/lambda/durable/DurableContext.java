@@ -4,6 +4,8 @@ package software.amazon.lambda.durable;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -14,11 +16,13 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.BatchResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
+import software.amazon.lambda.durable.operation.MapOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.validation.ParameterValidator;
@@ -357,6 +361,83 @@ public class DurableContext extends BaseContext {
                 getDurableConfig().getSerDes(),
                 this);
 
+        operation.execute();
+        return operation;
+    }
+
+    // ========== map methods ==========
+
+    public <I, O> BatchResult<O> map(
+            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(
+                        name,
+                        items,
+                        TypeToken.get(resultType),
+                        function,
+                        MapConfig.builder().build())
+                .get();
+    }
+
+    public <I, O> BatchResult<O> map(
+            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
+        return mapAsync(name, items, TypeToken.get(resultType), function, config)
+                .get();
+    }
+
+    public <I, O> BatchResult<O> map(
+            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(name, items, resultType, function, MapConfig.builder().build())
+                .get();
+    }
+
+    public <I, O> BatchResult<O> map(
+            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
+        return mapAsync(name, items, resultType, function, config).get();
+    }
+
+    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(
+                name,
+                items,
+                TypeToken.get(resultType),
+                function,
+                MapConfig.builder().build());
+    }
+
+    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
+        return mapAsync(name, items, TypeToken.get(resultType), function, config);
+    }
+
+    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(name, items, resultType, function, MapConfig.builder().build());
+    }
+
+    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
+        Objects.requireNonNull(items, "items cannot be null");
+        Objects.requireNonNull(function, "function cannot be null");
+        Objects.requireNonNull(resultType, "resultType cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+        ParameterValidator.validateOperationName(name);
+        ParameterValidator.validateOrderedCollection(items);
+
+        if (config.serDes() == null) {
+            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
+        }
+
+        // Short-circuit for empty collections — no checkpoint overhead
+        if (items.isEmpty()) {
+            return new CompletedDurableFuture<>(BatchResult.empty());
+        }
+
+        // Convert to List for deterministic index-based access
+        var itemList = List.copyOf(items);
+        var operationId = nextOperationId();
+
+        var operation = new MapOperation<>(operationId, name, itemList, function, resultType, config, this);
         operation.execute();
         return operation;
     }
