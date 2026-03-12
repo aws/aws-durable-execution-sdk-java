@@ -82,7 +82,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return operationIdentifier.operationId();
     }
 
-    /** Gets the operation name (maybe null). */
+    /** Gets the operation name (may be null). */
     public String getName() {
         return operationIdentifier.name();
     }

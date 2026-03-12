@@ -58,6 +58,12 @@ public class LocalDurableTestRunner<I, O> {
     /**
      * Creates a LocalDurableTestRunner with default configuration. Use this method when your handler uses the default
      * DurableConfig.
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param <I> Input type
+     * @param <O> Output type
+     * @return LocalDurableTestRunner with default configuration
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
@@ -88,6 +94,13 @@ public class LocalDurableTestRunner<I, O> {
     /**
      * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
      * SerDes and other configuration, while overriding the DurableExecutionClient with the in-memory implementation.
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param config The DurableConfig to use (DurableExecutionClient will be overridden with in-memory implementation)
+     * @param <I> Input type
+     * @param <O> Output type
+     * @return LocalDurableTestRunner configured with the provided settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
@@ -136,6 +149,12 @@ public class LocalDurableTestRunner<I, O> {
      * Creates a LocalDurableTestRunner from a DurableHandler instance, automatically extracting the configuration. This
      * is a convenient method when you have a handler instance and want to test it with the same configuration it uses
      * in production.
+     *
+     * @param inputType The input type class
+     * @param handler The DurableHandler instance to test
+     * @param <I> Input type
+     * @param <O> Output type
+     * @return LocalDurableTestRunner configured with the handler's settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, DurableHandler<I, O> handler) {
         return new LocalDurableTestRunner<>(
