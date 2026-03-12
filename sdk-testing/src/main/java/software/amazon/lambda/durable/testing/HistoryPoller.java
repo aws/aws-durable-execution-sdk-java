@@ -11,13 +11,27 @@ import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
 
+/**
+ * Polls the GetDurableExecutionHistory API until execution completes or a timeout is reached. Used by
+ * {@link CloudDurableTestRunner} for synchronous test execution.
+ */
 public class HistoryPoller {
     private final LambdaClient lambdaClient;
 
+    /** Creates a poller backed by the given Lambda client. */
     public HistoryPoller(LambdaClient lambdaClient) {
         this.lambdaClient = lambdaClient;
     }
 
+    /**
+     * Polls execution history until a terminal event is found or the timeout is exceeded.
+     *
+     * @param executionArn the durable execution ARN to poll
+     * @param pollInterval the interval between poll requests
+     * @param timeout the maximum time to wait for completion
+     * @return all history events collected during polling
+     * @throws RuntimeException if the timeout is exceeded or polling is interrupted
+     */
     public List<Event> pollUntilComplete(String executionArn, Duration pollInterval, Duration timeout) {
         var allEvents = new ArrayList<Event>();
         var startTime = Instant.now();

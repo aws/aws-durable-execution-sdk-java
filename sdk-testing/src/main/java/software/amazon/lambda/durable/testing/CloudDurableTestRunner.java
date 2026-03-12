@@ -11,6 +11,13 @@ import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
+/**
+ * Test runner for durable Lambda functions deployed to AWS. Invokes a real Lambda function, polls execution history,
+ * and returns structured test results.
+ *
+ * @param <I> the handler input type
+ * @param <O> the handler output type
+ */
 public class CloudDurableTestRunner<I, O> {
     private final String functionArn;
     private final TypeToken<I> inputType;
@@ -39,11 +46,13 @@ public class CloudDurableTestRunner<I, O> {
         this.invocationType = invocationType;
     }
 
+    /** Creates a runner for the given function ARN with Class-based input/output types. */
     public static <I, O> CloudDurableTestRunner<I, O> create(
             String functionArn, Class<I> inputType, Class<O> outputType) {
         return create(functionArn, TypeToken.get(inputType), TypeToken.get(outputType));
     }
 
+    /** Creates a runner for the given function ARN with TypeToken-based input/output types. */
     public static <I, O> CloudDurableTestRunner<I, O> create(
             String functionArn, TypeToken<I> inputType, TypeToken<O> outputType) {
         return new CloudDurableTestRunner<>(
@@ -59,11 +68,13 @@ public class CloudDurableTestRunner<I, O> {
                 InvocationType.REQUEST_RESPONSE);
     }
 
+    /** Creates a runner with a custom {@link LambdaClient} and Class-based input/output types. */
     public static <I, O> CloudDurableTestRunner<I, O> create(
             String functionArn, Class<I> inputType, Class<O> outputType, LambdaClient lambdaClient) {
         return create(functionArn, TypeToken.get(inputType), TypeToken.get(outputType), lambdaClient);
     }
 
+    /** Creates a runner with a custom {@link LambdaClient} and TypeToken-based input/output types. */
     public static <I, O> CloudDurableTestRunner<I, O> create(
             String functionArn, TypeToken<I> inputType, TypeToken<O> outputType, LambdaClient lambdaClient) {
         return new CloudDurableTestRunner<>(
@@ -76,21 +87,25 @@ public class CloudDurableTestRunner<I, O> {
                 InvocationType.REQUEST_RESPONSE);
     }
 
+    /** Returns a new runner with the specified poll interval between history checks. */
     public CloudDurableTestRunner<I, O> withPollInterval(Duration interval) {
         return new CloudDurableTestRunner<>(
                 functionArn, inputType, outputType, lambdaClient, interval, timeout, invocationType);
     }
 
+    /** Returns a new runner with the specified maximum wait time for execution completion. */
     public CloudDurableTestRunner<I, O> withTimeout(Duration timeout) {
         return new CloudDurableTestRunner<>(
                 functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType);
     }
 
+    /** Returns a new runner with the specified Lambda invocation type. */
     public CloudDurableTestRunner<I, O> withInvocationType(InvocationType type) {
         return new CloudDurableTestRunner<>(
                 functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type);
     }
 
+    /** Invokes the Lambda function, polls execution history until completion, and returns the result. */
     public TestResult<O> run(I input) {
         try {
             // Serialize input
@@ -167,6 +182,7 @@ public class CloudDurableTestRunner<I, O> {
         }
     }
 
+    /** Returns the {@link TestOperation} for the given name from the last execution result. */
     public TestOperation getOperation(String name) {
         if (lastResult == null) {
             throw new IllegalStateException("No execution has been run yet");

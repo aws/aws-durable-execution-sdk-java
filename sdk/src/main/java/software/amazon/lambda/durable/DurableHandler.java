@@ -32,6 +32,16 @@ import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.serde.AwsSdkV2Module;
 
+/**
+ * Abstract base class for Lambda handlers that use durable execution.
+ *
+ * <p>Extend this class and implement {@link #handleRequest(Object, DurableContext)} to build resilient, multi-step
+ * workflows. The handler automatically manages checkpoint-and-replay, input deserialization, and communication with the
+ * Lambda Durable Functions backend.
+ *
+ * @param <I> the input type
+ * @param <O> the output type
+ */
 public abstract class DurableHandler<I, O> implements RequestStreamHandler {
 
     private final TypeToken<I> inputType;

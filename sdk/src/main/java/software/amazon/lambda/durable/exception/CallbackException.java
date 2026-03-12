@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
 
+/** Thrown when a callback operation encounters an error. */
 public class CallbackException extends DurableOperationException {
     private final String callbackId;
 
@@ -16,6 +17,7 @@ public class CallbackException extends DurableOperationException {
         this.callbackId = operation.callbackDetails().callbackId();
     }
 
+    /** Returns the callback ID associated with this exception. */
     public String getCallbackId() {
         return callbackId;
     }

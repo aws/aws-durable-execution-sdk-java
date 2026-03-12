@@ -24,6 +24,12 @@ import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
+/**
+ * Orchestrates the lifecycle of a durable execution.
+ *
+ * <p>Handles deserialization of user input, invocation of the user handler within a {@link DurableContext}, and
+ * production of the {@link DurableExecutionOutput} (success, failure, or pending suspension).
+ */
 public class DurableExecutor {
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutor.class);
 

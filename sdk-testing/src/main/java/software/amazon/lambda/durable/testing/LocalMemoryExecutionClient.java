@@ -17,6 +17,10 @@ import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * In-memory implementation of {@link DurableExecutionClient} for local testing. Stores operations and checkpoint state
+ * in memory, simulating the durable execution backend without AWS infrastructure.
+ */
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();
     private final List<Event> allEvents = new CopyOnWriteArrayList<>();
@@ -96,6 +100,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         return replaced.get();
     }
 
+    /** Completes a chained invoke operation with the given result, simulating a child Lambda response. */
     public void completeChainedInvoke(String name, OperationResult result) {
         var op = getOperationByName(name);
         if (op == null) {
@@ -126,6 +131,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         }
     }
 
+    /** Returns the operation with the given name, or null if not found. */
     public Operation getOperationByName(String name) {
         return operations.values().stream()
                 .filter(op -> name.equals(op.name()))
@@ -133,10 +139,12 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 .orElse(null);
     }
 
+    /** Returns all operations currently stored. */
     public List<Operation> getAllOperations() {
         return operations.values().stream().toList();
     }
 
+    /** Clears all operations and events, resetting the client to its initial state. */
     public void reset() {
         operations.clear();
         allEvents.clear();

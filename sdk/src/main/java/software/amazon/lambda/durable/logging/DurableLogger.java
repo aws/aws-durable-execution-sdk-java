@@ -24,6 +24,12 @@ public class DurableLogger {
     private final Logger delegate;
     private final BaseContext context;
 
+    /**
+     * Creates a DurableLogger wrapping the given SLF4J logger with execution context MDC entries.
+     *
+     * @param delegate the SLF4J logger to wrap
+     * @param context the durable execution context providing MDC values
+     */
     public DurableLogger(Logger delegate, BaseContext context) {
         this.delegate = delegate;
         this.context = context;
@@ -59,6 +65,7 @@ public class DurableLogger {
         }
     }
 
+    /** Clears all MDC entries set by this logger. */
     public void close() {
         MDC.clear();
     }

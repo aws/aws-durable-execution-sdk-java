@@ -8,6 +8,12 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
+/**
+ * Context available inside a step operation's user function.
+ *
+ * <p>Provides access to the current retry attempt number and a logger that includes execution metadata. Extends
+ * {@link BaseContext} for thread lifecycle management.
+ */
 public class StepContext extends BaseContext {
     private volatile DurableLogger logger;
     private final int attempt;

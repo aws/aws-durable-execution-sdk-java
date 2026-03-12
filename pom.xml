@@ -9,7 +9,7 @@
     <version>0.7.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>AWS Lambda Durable Execution SDK Parent</name>
+    <name>AWS Lambda Durable Execution SDK</name>
     <description>Parent POM for AWS Lambda Durable Execution SDK and Examples</description>
     <url>https://github.com/aws/aws-durable-execution-sdk-java</url>
 

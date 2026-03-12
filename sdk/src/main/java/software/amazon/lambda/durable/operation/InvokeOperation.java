@@ -16,6 +16,12 @@ import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * Durable operation that invokes another Lambda function and waits for its result.
+ *
+ * @param <T> the result type from the invoked function
+ * @param <U> the payload type sent to the invoked function
+ */
 public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     private final String functionName;
     private final U payload;

@@ -22,6 +22,13 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * In-memory test runner for durable Lambda functions. Simulates the Lambda re-invocation loop locally without requiring
+ * AWS infrastructure, enabling fast unit and integration tests.
+ *
+ * @param <I> the handler input type
+ * @param <O> the handler output type
+ */
 public class LocalDurableTestRunner<I, O> {
     private static final int MAX_INVOCATIONS = 100;
 
@@ -220,14 +227,17 @@ public class LocalDurableTestRunner<I, O> {
         return result;
     }
 
+    /** Resets a named step operation to STARTED status, simulating a checkpoint failure. */
     public void resetCheckpointToStarted(String stepName) {
         storage.resetCheckpointToStarted(stepName);
     }
 
+    /** Removes a named step operation entirely, simulating loss of a fire-and-forget checkpoint. */
     public void simulateFireAndForgetCheckpointLoss(String stepName) {
         storage.simulateFireAndForgetCheckpointLoss(stepName);
     }
 
+    /** Returns the {@link TestOperation} for the given operation name, or null if not found. */
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
         return op != null ? new TestOperation(op, serDes) : null;
@@ -253,27 +263,27 @@ public class LocalDurableTestRunner<I, O> {
         storage.timeoutCallback(callbackId);
     }
 
-    // Manual time advancement for skipTime=false scenarios
+    /** Advances all pending operations, simulating time passing for retries and waits. */
     public void advanceTime() {
         storage.advanceReadyOperations();
     }
 
-    // Manual complete a chained invoke call
+    /** Completes a chained invoke operation with a successful result. */
     public void completeChainedInvoke(String name, String result) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.SUCCEEDED, result, null));
     }
 
-    // Manual mark a chained invoke call TIMEOUT
+    /** Marks a chained invoke operation as timed out. */
     public void timeoutChainedInvoke(String name) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.TIMED_OUT, null, null));
     }
 
-    // Manual fail a chained invoke call
+    /** Fails a chained invoke operation with the given error. */
     public void failChainedInvoke(String name, ErrorObject error) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.FAILED, null, error));
     }
 
-    // Manual stop a chained invoke call
+    /** Stops a chained invoke operation with the given error. */
     public void stopChainedInvoke(String name, ErrorObject error) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.STOPPED, null, error));
     }

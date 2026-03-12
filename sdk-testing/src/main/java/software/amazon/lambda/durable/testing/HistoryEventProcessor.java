@@ -19,9 +19,21 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
+/**
+ * Processes execution history events from the GetDurableExecutionHistory API into {@link TestResult} objects. Used by
+ * {@link CloudDurableTestRunner} and {@link AsyncExecution} to convert cloud execution history into testable results.
+ */
 public class HistoryEventProcessor {
     private final JacksonSerDes serDes = new JacksonSerDes();
 
+    /**
+     * Processes a list of execution history events into a structured {@link TestResult}.
+     *
+     * @param events the raw history events from the GetDurableExecutionHistory API
+     * @param outputType the expected output type for deserialization
+     * @param <O> the handler output type
+     * @return a TestResult containing the execution status, output, and operation details
+     */
     public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType) {
         var operations = new HashMap<String, Operation>();
         var operationEvents = new HashMap<String, List<Event>>();

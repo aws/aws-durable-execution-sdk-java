@@ -15,6 +15,12 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * Represents the result of a durable execution, providing access to the execution status, output, operations, and
+ * history events.
+ *
+ * @param <O> the handler output type
+ */
 public class TestResult<O> {
     private static final Set<OperationStatus> FAIL_OPERATION_STATUS = Set.of(
             OperationStatus.FAILED, OperationStatus.CANCELLED, OperationStatus.TIMED_OUT, OperationStatus.STOPPED);
@@ -43,14 +49,17 @@ public class TestResult<O> {
         this.serDes = serDes;
     }
 
+    /** Returns the execution status (SUCCEEDED, FAILED, or PENDING). */
     public ExecutionStatus getStatus() {
         return status;
     }
 
+    /** Deserializes and returns the execution output, throwing if the execution did not succeed. */
     public <T> T getResult(Class<T> resultType) {
         return getResult(TypeToken.get(resultType));
     }
 
+    /** Deserializes and returns the execution output using a TypeToken for generic types. */
     public <T> T getResult(TypeToken<T> resultType) {
         if (status != ExecutionStatus.SUCCEEDED) {
             throw new IllegalStateException("Execution did not succeed: " + status);
@@ -66,41 +75,50 @@ public class TestResult<O> {
         return serDes.deserialize(resultPayload, resultType);
     }
 
+    /** Returns the execution error, if present. */
     public Optional<ErrorObject> getError() {
         return Optional.ofNullable(error);
     }
 
+    /** Returns all operations from the execution. */
     public List<TestOperation> getOperations() {
         return operations;
     }
 
+    /** Returns the {@link TestOperation} with the given name, or null if not found. */
     public TestOperation getOperation(String name) {
         return operationsByName.get(name);
     }
 
+    /** Returns all raw history events from the execution. */
     public List<Event> getHistoryEvents() {
         return allEvents;
     }
 
+    /** Returns the raw history events for the given operation name, or an empty list if not found. */
     public List<Event> getEventsForOperation(String operationName) {
         var testOp = operationsByName.get(operationName);
         return testOp != null ? testOp.getEvents() : List.of();
     }
 
+    /** Returns true if the execution completed successfully. */
     public boolean isSucceeded() {
         return status == ExecutionStatus.SUCCEEDED;
     }
 
+    /** Returns true if the execution failed. */
     public boolean isFailed() {
         return status == ExecutionStatus.FAILED;
     }
 
+    /** Returns all operations that completed successfully. */
     public List<TestOperation> getSucceededOperations() {
         return operations.stream()
                 .filter(op -> op.getStatus() == OperationStatus.SUCCEEDED)
                 .toList();
     }
 
+    /** Returns all operations that failed, were cancelled, timed out, or stopped. */
     public List<TestOperation> getFailedOperations() {
         return operations.stream()
                 .filter(op -> FAIL_OPERATION_STATUS.contains(op.getStatus()))

@@ -4,6 +4,11 @@ package software.amazon.lambda.durable;
 
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * Configuration for chained invoke operations.
+ *
+ * <p>Controls serialization of the invoke payload and result, and optionally specifies a tenant ID.
+ */
 public class InvokeConfig {
     private final SerDes payloadSerDes;
     private final SerDes resultSerDes;

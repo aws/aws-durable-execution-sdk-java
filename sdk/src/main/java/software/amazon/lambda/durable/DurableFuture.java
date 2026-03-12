@@ -5,6 +5,14 @@ package software.amazon.lambda.durable;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * A future representing the result of an asynchronous durable operation.
+ *
+ * <p>Calling {@link #get()} blocks the current thread until the operation completes, which may involve suspension and
+ * replay across Lambda invocations.
+ *
+ * @param <T> the result type
+ */
 public interface DurableFuture<T> {
     /**
      * Blocks until the operation completes and returns the result.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.model;
 
+/** Terminal status of a durable execution. */
 public enum ExecutionStatus {
     SUCCEEDED,
     FAILED,

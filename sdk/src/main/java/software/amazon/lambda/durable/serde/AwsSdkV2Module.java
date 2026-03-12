@@ -17,6 +17,12 @@ import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionSt
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 
+/**
+ * Jackson module that registers custom serializers and deserializers for AWS SDK v2 model classes.
+ *
+ * <p>AWS SDK v2 model classes use an immutable builder pattern that Jackson cannot handle natively. This module bridges
+ * the gap by serializing via {@code toBuilder()} and deserializing via {@code serializableBuilderClass()}.
+ */
 public class AwsSdkV2Module extends SimpleModule {
 
     /**

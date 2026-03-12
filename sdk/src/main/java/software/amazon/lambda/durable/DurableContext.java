@@ -27,6 +27,12 @@ import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.validation.ParameterValidator;
 
+/**
+ * User-facing API for defining durable operations within a workflow.
+ *
+ * <p>Provides methods for creating steps, waits, chained invokes, callbacks, and child contexts. Each method creates a
+ * checkpoint-backed operation that survives Lambda interruptions.
+ */
 public class DurableContext extends BaseContext {
     private static final String WAIT_FOR_CALLBACK_CALLBACK_SUFFIX = "-callback";
     private static final String WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX = "-submitter";

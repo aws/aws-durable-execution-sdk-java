@@ -52,8 +52,13 @@ public class ExceptionHelper {
                 .build();
     }
 
-    // StackTraceElement.toString() is implementation-dependent, so we'll define our
-    // own format.
+    /**
+     * Serializes a stack trace to a list of pipe-delimited strings in the format
+     * {@code className|methodName|fileName|lineNumber}.
+     *
+     * @param stackTrace the stack trace elements to serialize
+     * @return list of serialized stack trace strings
+     */
     public static List<String> serializeStackTrace(StackTraceElement[] stackTrace) {
         return Arrays.stream(stackTrace)
                 .map((element) -> String.format(
@@ -65,6 +70,12 @@ public class ExceptionHelper {
                 .toList();
     }
 
+    /**
+     * Deserializes a list of pipe-delimited strings back into stack trace elements.
+     *
+     * @param stackTrace the serialized stack trace strings
+     * @return array of reconstructed StackTraceElements
+     */
     public static StackTraceElement[] deserializeStackTrace(List<String> stackTrace) {
         return stackTrace.stream()
                 .map((s) -> {
