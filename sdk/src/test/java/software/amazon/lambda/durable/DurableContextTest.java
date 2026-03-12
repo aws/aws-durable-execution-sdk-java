@@ -14,6 +14,7 @@ import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class DurableContextTest {
@@ -385,6 +386,7 @@ class DurableContextTest {
                 .name("approval")
                 .status(OperationStatus.STARTED)
                 .type(OperationType.CONTEXT)
+                .subType(OperationSubType.WAIT_FOR_CALLBACK.getValue())
                 .build();
         var callbackOp = Operation.builder()
                 .id(TestUtils.hashOperationId(OPERATION_ID1 + "-1"))

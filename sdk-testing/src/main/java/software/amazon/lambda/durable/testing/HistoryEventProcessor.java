@@ -359,6 +359,7 @@ public class HistoryEventProcessor {
                 .name(name)
                 .status(status)
                 .type(OperationType.CONTEXT)
+                .subType(event.subType())
                 .contextDetails(builder.build())
                 .build();
     }

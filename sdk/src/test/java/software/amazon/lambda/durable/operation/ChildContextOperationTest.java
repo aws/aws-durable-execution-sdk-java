@@ -69,6 +69,7 @@ class ChildContextOperationTest {
                         .id("1")
                         .name("test-context")
                         .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
                         .status(OperationStatus.SUCCEEDED)
                         .contextDetails(ContextDetails.builder()
                                 .result("\"cached-value\"")
@@ -101,6 +102,7 @@ class ChildContextOperationTest {
                         .id("1")
                         .name("test-context")
                         .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
                         .status(OperationStatus.FAILED)
                         .contextDetails(ContextDetails.builder()
                                 .error(ErrorObject.builder()
@@ -133,6 +135,7 @@ class ChildContextOperationTest {
                         .id("1")
                         .name("test-context")
                         .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
                         .status(OperationStatus.FAILED)
                         .contextDetails(ContextDetails.builder()
                                 .error(ErrorObject.builder()
@@ -161,6 +164,7 @@ class ChildContextOperationTest {
                         .id("1")
                         .name("test-context")
                         .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
                         .status(OperationStatus.STARTED)
                         .build());
         // hasOperationsForContext for the child context ID "1"
@@ -189,6 +193,7 @@ class ChildContextOperationTest {
                         .id("1")
                         .name("test-context")
                         .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
                         .status(OperationStatus.SUCCEEDED)
                         .contextDetails(
                                 ContextDetails.builder().replayChildren(true).build())

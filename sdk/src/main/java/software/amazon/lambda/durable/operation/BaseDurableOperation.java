@@ -338,5 +338,13 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
                     "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     getOperationId(), checkpointed.name(), getName())));
         }
+
+        if ((getSubType() == null && checkpointed.subType() != null)
+                || getSubType() != null
+                        && !Objects.equals(checkpointed.subType(), getSubType().getValue())) {
+            terminateExecution(new NonDeterministicExecutionException(String.format(
+                    "Operation subType mismatch for \"%s\". Expected \"%s\", got \"%s\"",
+                    getOperationId(), checkpointed.subType(), getSubType())));
+        }
     }
 }
