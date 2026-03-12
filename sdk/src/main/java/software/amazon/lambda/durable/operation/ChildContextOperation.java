@@ -26,7 +26,7 @@ import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -44,28 +44,25 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     private final ExecutorService userExecutor;
     private boolean replayChildContext;
     private T reconstructedResult;
-    private final OperationSubType subType;
 
     public ChildContextOperation(
-            String operationId,
-            String name,
+            OperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,
-            OperationSubType subType,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContext durableContext) {
-        super(operationId, name, OperationType.CONTEXT, resultTypeToken, resultSerDes, durableContext);
+        super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.function = function;
         this.userExecutor = getContext().getDurableConfig().getExecutorService();
-        this.subType = subType;
     }
 
     /** Starts the operation. */
     @Override
     protected void start() {
         // First execution: fire-and-forget START checkpoint, then run
-        sendOperationUpdateAsync(
-                OperationUpdate.builder().action(OperationAction.START).subType(subType.getValue()));
+        sendOperationUpdateAsync(OperationUpdate.builder()
+                .action(OperationAction.START)
+                .subType(getSubType().getValue()));
         executeChildContext();
     }
 
@@ -144,7 +141,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .subType(subType.getValue())
+                    .subType(getSubType().getValue())
                     .payload(serialized));
         } else {
             // Large result: checkpoint with empty payload + ReplayChildren flag.
@@ -152,7 +149,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             this.reconstructedResult = result;
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .subType(subType.getValue())
+                    .subType(getSubType().getValue())
                     .payload("")
                     .contextOptions(
                             ContextOptions.builder().replayChildren(true).build()));
@@ -178,7 +175,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.FAIL)
-                .subType(subType.getValue())
+                .subType(getSubType().getValue())
                 .error(errorObject));
     }
 
@@ -204,7 +201,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             }
 
             // throw a general failed exception if a user exception is not reconstructed
-            return switch (subType) {
+            return switch (getSubType()) {
                 case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure(op);
                 // todo: handle MAP/PARALLEL
                 case MAP -> throw new ChildContextFailedException(op);

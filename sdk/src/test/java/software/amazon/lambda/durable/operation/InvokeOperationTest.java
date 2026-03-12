@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.TypeToken;
@@ -23,10 +24,14 @@ import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class InvokeOperationTest {
     private static final String OPERATION_ID = "2";
+    private static final String OPERATION_NAME = "test-invoke";
+    private static final OperationIdentifier OPERATION_IDENTIFIER =
+            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.CHAINED_INVOKE, null);
 
     private ExecutionManager executionManager;
     private DurableContext durableContext;
@@ -43,7 +48,7 @@ class InvokeOperationTest {
     void getDoesNotThrowWhenCalledFromHandlerContext() {
         var op = Operation.builder()
                 .id(OPERATION_ID)
-                .name("test-invoke")
+                .name(OPERATION_NAME)
                 .status(OperationStatus.SUCCEEDED)
                 .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .result("\"cached-result\"")
@@ -52,8 +57,7 @@ class InvokeOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                OPERATION_ID,
-                "test-invoke",
+                OPERATION_IDENTIFIER,
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
@@ -69,7 +73,7 @@ class InvokeOperationTest {
     void getInvokeFailedExceptionWhenInvocationFailed() {
         var op = Operation.builder()
                 .id(OPERATION_ID)
-                .name("test-invoke")
+                .name(OPERATION_NAME)
                 .status(OperationStatus.FAILED)
                 .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
@@ -82,8 +86,7 @@ class InvokeOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                OPERATION_ID,
-                "test-invoke",
+                OPERATION_IDENTIFIER,
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
@@ -101,7 +104,7 @@ class InvokeOperationTest {
     void getInvokeTimedOutExceptionWhenInvocationTimedOut() {
         var op = Operation.builder()
                 .id(OPERATION_ID)
-                .name("test-invoke")
+                .name(OPERATION_NAME)
                 .status(OperationStatus.TIMED_OUT)
                 .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
@@ -114,8 +117,7 @@ class InvokeOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                OPERATION_ID,
-                "test-invoke",
+                OPERATION_IDENTIFIER,
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
@@ -133,7 +135,7 @@ class InvokeOperationTest {
     void getInvokeStoppedExceptionWhenInvocationTimedOut() {
         var op = Operation.builder()
                 .id(OPERATION_ID)
-                .name("test-invoke")
+                .name(OPERATION_NAME)
                 .status(OperationStatus.STOPPED)
                 .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
@@ -146,8 +148,7 @@ class InvokeOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                OPERATION_ID,
-                "test-invoke",
+                OPERATION_IDENTIFIER,
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
@@ -165,7 +166,7 @@ class InvokeOperationTest {
     void getInvokeFailedExceptionWhenInvocationEndedUnexpectedly() {
         var op = Operation.builder()
                 .id(OPERATION_ID)
-                .name("test-invoke")
+                .name(OPERATION_NAME)
                 .status(OperationStatus.CANCELLED)
                 .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
@@ -178,8 +179,7 @@ class InvokeOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new InvokeOperation<>(
-                OPERATION_ID,
-                "test-invoke",
+                OPERATION_IDENTIFIER,
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),

@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.operation;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.InvokeConfig;
@@ -14,6 +13,7 @@ import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 
 public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
@@ -23,14 +23,13 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
     private final SerDes payloadSerDes;
 
     public InvokeOperation(
-            String operationId,
-            String name,
+            OperationIdentifier operationIdentifier,
             String functionName,
             U payload,
             TypeToken<T> resultTypeToken,
             InvokeConfig config,
             DurableContext durableContext) {
-        super(operationId, name, OperationType.CHAINED_INVOKE, resultTypeToken, config.serDes(), durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 
         this.functionName = functionName;
         this.payload = payload;

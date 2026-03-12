@@ -9,7 +9,6 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.DurableContext;
@@ -22,6 +21,7 @@ import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 public class StepOperation<T> extends BaseDurableOperation<T> {
@@ -31,13 +31,12 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     private final ExecutorService userExecutor;
 
     public StepOperation(
-            String operationId,
-            String name,
+            OperationIdentifier operationIdentifier,
             Function<StepContext, T> function,
             TypeToken<T> resultTypeToken,
             StepConfig config,
             DurableContext durableContext) {
-        super(operationId, name, OperationType.STEP, resultTypeToken, config.serDes(), durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 
         this.function = function;
         this.config = config;

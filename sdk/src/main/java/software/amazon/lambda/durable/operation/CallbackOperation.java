@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.operation;
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableCallbackFuture;
@@ -13,6 +12,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
@@ -22,12 +22,11 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
     private String callbackId;
 
     public CallbackOperation(
-            String operationId,
-            String name,
+            OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             CallbackConfig config,
             DurableContext durableContext) {
-        super(operationId, name, OperationType.CALLBACK, resultTypeToken, config.serDes(), durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
         this.config = config;
     }
 

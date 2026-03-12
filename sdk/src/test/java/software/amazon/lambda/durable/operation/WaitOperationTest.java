@@ -12,16 +12,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 
 class WaitOperationTest {
     private static final String OPERATION_ID = "2";
     private static final String CONTEXT_ID = "handler";
     private static final String OPERATION_NAME = "test-wait";
+    private static final OperationIdentifier OPERATION_IDENTIFIER =
+            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.WAIT, null);
     private ExecutionManager executionManager;
     private DurableContext durableContext;
 
@@ -34,7 +38,7 @@ class WaitOperationTest {
 
     @Test
     void constructor_withValidDuration_shouldPass() {
-        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), durableContext);
+        var operation = new WaitOperation(OPERATION_IDENTIFIER, Duration.ofSeconds(10), durableContext);
 
         assertEquals(OPERATION_ID, operation.getOperationId());
     }
@@ -50,7 +54,7 @@ class WaitOperationTest {
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
-        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), durableContext);
+        var operation = new WaitOperation(OPERATION_IDENTIFIER, Duration.ofSeconds(10), durableContext);
         operation.onCheckpointComplete(op);
 
         var result = operation.get();
@@ -67,7 +71,7 @@ class WaitOperationTest {
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
-        var operation = new WaitOperation(OPERATION_ID, OPERATION_NAME, Duration.ofSeconds(10), durableContext);
+        var operation = new WaitOperation(OPERATION_IDENTIFIER, Duration.ofSeconds(10), durableContext);
         operation.onCheckpointComplete(op);
 
         // we currently don't check the operation status at all, so it's not blocked or failed

@@ -14,9 +14,11 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
@@ -132,7 +134,8 @@ public class DurableContext extends BaseContext {
         var operationId = nextOperationId();
 
         // Create and start step operation with TypeToken
-        var operation = new StepOperation<>(operationId, name, func, typeToken, config, this);
+        var operation = new StepOperation<>(
+                new OperationIdentifier(operationId, name, OperationType.STEP, null), func, typeToken, config, this);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -201,7 +204,8 @@ public class DurableContext extends BaseContext {
         var operationId = nextOperationId();
 
         // Create and start wait operation
-        var operation = new WaitOperation(operationId, name, duration, this);
+        var operation =
+                new WaitOperation(new OperationIdentifier(operationId, name, OperationType.WAIT, null), duration, this);
 
         operation.execute(); // Checkpoint the wait
         return operation;
@@ -274,7 +278,13 @@ public class DurableContext extends BaseContext {
         var operationId = nextOperationId();
 
         // Create and start invoke operation
-        var operation = new InvokeOperation<>(operationId, name, functionName, payload, typeToken, config, this);
+        var operation = new InvokeOperation<>(
+                new OperationIdentifier(operationId, name, OperationType.CHAINED_INVOKE, null),
+                functionName,
+                payload,
+                typeToken,
+                config,
+                this);
 
         operation.execute(); // checkpoint the invoke operation
         return operation; // Block (will throw SuspendExecutionException if needed)
@@ -302,7 +312,8 @@ public class DurableContext extends BaseContext {
         }
         var operationId = nextOperationId();
 
-        var operation = new CallbackOperation<>(operationId, name, typeToken, config, this);
+        var operation = new CallbackOperation<>(
+                new OperationIdentifier(operationId, name, OperationType.CALLBACK, null), typeToken, config, this);
         operation.execute();
 
         return operation;
@@ -335,7 +346,11 @@ public class DurableContext extends BaseContext {
         var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
-                operationId, name, func, subType, typeToken, getDurableConfig().getSerDes(), this);
+                new OperationIdentifier(operationId, name, OperationType.CONTEXT, subType),
+                func,
+                typeToken,
+                getDurableConfig().getSerDes(),
+                this);
 
         operation.execute();
         return operation;

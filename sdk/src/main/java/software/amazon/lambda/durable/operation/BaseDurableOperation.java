@@ -22,6 +22,8 @@ import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionExc
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -46,9 +48,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private static final Logger logger = LoggerFactory.getLogger(BaseDurableOperation.class);
 
-    private final String operationId;
-    private final String name;
-    private final OperationType operationType;
+    private final OperationIdentifier operationIdentifier;
     private final ExecutionManager executionManager;
     private final TypeToken<T> resultTypeToken;
     private final SerDes resultSerDes;
@@ -56,16 +56,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private final DurableContext durableContext;
 
     protected BaseDurableOperation(
-            String operationId,
-            String name,
-            OperationType operationType,
+            OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContext durableContext) {
-        this.operationId = operationId;
-        this.name = name;
+        this.operationIdentifier = operationIdentifier;
         this.durableContext = durableContext;
-        this.operationType = operationType;
         this.executionManager = durableContext.getExecutionManager();
         this.resultTypeToken = resultTypeToken;
         this.resultSerDes = resultSerDes;
@@ -76,14 +72,19 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         executionManager.registerOperation(this);
     }
 
+    /** Gets the operation identifier containing id, name, type, and subType. */
+    public OperationSubType getSubType() {
+        return operationIdentifier.subType();
+    }
+
     /** Gets the unique identifier for this operation. */
     public String getOperationId() {
-        return operationId;
+        return operationIdentifier.operationId();
     }
 
     /** Gets the operation name (maybe null). */
     public String getName() {
-        return name;
+        return operationIdentifier.name();
     }
 
     /** Gets the parent context. */
@@ -93,7 +94,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     /** Gets the operation type */
     public OperationType getType() {
-        return operationType;
+        return operationIdentifier.operationType();
     }
 
     /** Starts the operation, processes the operation updates from backend. Does not block. */
@@ -202,7 +203,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         if (ExecutionManager.isTerminalStatus(operation.status())) {
             // This method handles only terminal status updates. Override this method if a DurableOperation needs to
             // handle other updates.
-            logger.trace("In onCheckpointComplete, completing operation {} ({})", operationId, completionFuture);
+            logger.trace("In onCheckpointComplete, completing operation {} ({})", getOperationId(), completionFuture);
             // It's important that we synchronize access to the future, otherwise the processing could happen
             // on someone else's thread and cause a race condition.
             synchronized (completionFuture) {
@@ -219,7 +220,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     protected void markAlreadyCompleted() {
         // When the operation is already completed in a replay, we complete completionFuture immediately
         // so that the `get` method will be unblocked and the context thread will be registered
-        logger.trace("In markAlreadyCompleted, completing operation: {} ({}).", operationId, completionFuture);
+        logger.trace("In markAlreadyCompleted, completing operation: {} ({}).", getOperationId(), completionFuture);
 
         // It's important that we synchronize access to the future, otherwise the processing could happen
         // on someone else's thread and cause a race condition.
@@ -250,11 +251,11 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     // polling and checkpointing
     protected CompletableFuture<Operation> pollForOperationUpdates() {
-        return executionManager.pollForOperationUpdates(operationId);
+        return executionManager.pollForOperationUpdates(getOperationId());
     }
 
     protected CompletableFuture<Operation> pollForOperationUpdates(Duration delay) {
-        return executionManager.pollForOperationUpdates(operationId, delay);
+        return executionManager.pollForOperationUpdates(getOperationId(), delay);
     }
 
     protected void sendOperationUpdate(OperationUpdate.Builder builder) {
@@ -262,9 +263,9 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     protected CompletableFuture<Void> sendOperationUpdateAsync(OperationUpdate.Builder builder) {
-        return executionManager.sendOperationUpdate(builder.id(operationId)
-                .name(name)
-                .type(operationType)
+        return executionManager.sendOperationUpdate(builder.id(getOperationId())
+                .name(getName())
+                .type(getType())
                 .parentId(durableContext.getContextId())
                 .build());
     }
@@ -329,13 +330,13 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         if (!checkpointed.type().equals(getType())) {
             terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation type mismatch for \"%s\". Expected %s, got %s",
-                    operationId, checkpointed.type(), getType())));
+                    getOperationId(), checkpointed.type(), getType())));
         }
 
         if (!Objects.equals(checkpointed.name(), getName())) {
             terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                    operationId, checkpointed.name(), getName())));
+                    getOperationId(), checkpointed.name(), getName())));
         }
     }
 }

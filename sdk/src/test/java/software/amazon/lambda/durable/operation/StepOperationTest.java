@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -22,6 +23,7 @@ import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class StepOperationTest {
@@ -29,6 +31,8 @@ class StepOperationTest {
     private static final String OPERATION_ID = "1";
     private static final String OPERATION_NAME = "test-step";
     private static final String RESULT = "result";
+    private static final OperationIdentifier OPERATION_IDENTIFIER =
+            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.STEP, null);
     private ExecutionManager executionManager;
     private DurableContext durableContext;
 
@@ -79,8 +83,7 @@ class StepOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var operation = new StepOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
+                OPERATION_IDENTIFIER,
                 (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
@@ -105,8 +108,7 @@ class StepOperationTest {
                 stackTrace);
 
         var operation = new StepOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
+                OPERATION_IDENTIFIER,
                 (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(serDes).build(),
@@ -135,8 +137,7 @@ class StepOperationTest {
                 stackTrace);
 
         var operation = new StepOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
+                OPERATION_IDENTIFIER,
                 (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(serDes).build(),
@@ -156,8 +157,7 @@ class StepOperationTest {
         mockFailedOperation(executionManager, "NonExistentException", "This class doesn't exist", "{}", stackTrace);
 
         var operation = new StepOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
+                OPERATION_IDENTIFIER,
                 (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
@@ -183,8 +183,7 @@ class StepOperationTest {
                 stackTrace);
 
         var operation = new StepOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
+                OPERATION_IDENTIFIER,
                 (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
@@ -205,8 +204,7 @@ class StepOperationTest {
                 executionManager, RuntimeException.class.getName(), "Something went wrong", null, stackTrace);
 
         var operation = new StepOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
+                OPERATION_IDENTIFIER,
                 (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),
@@ -227,8 +225,7 @@ class StepOperationTest {
                 executionManager, StepInterruptedException.class.getName(), "Step was interrupted", null, stackTrace);
 
         var operation = new StepOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
+                OPERATION_IDENTIFIER,
                 (ctx) -> RESULT,
                 TypeToken.get(String.class),
                 StepConfig.builder().serDes(new JacksonSerDes()).build(),

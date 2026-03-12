@@ -8,6 +8,7 @@ import static org.mockito.Mockito.*;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -23,6 +24,7 @@ import software.amazon.lambda.durable.exception.NonDeterministicExecutionExcepti
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
@@ -49,16 +51,12 @@ class ChildContextOperationTest {
                 .build();
     }
 
-    private ChildContextOperation<String> createOperation(
-            java.util.function.Function<software.amazon.lambda.durable.DurableContext, String> func) {
+    private static final OperationIdentifier OPERATION_IDENTIFIER =
+            new OperationIdentifier("1", "test-context", OperationType.CONTEXT, OperationSubType.RUN_IN_CHILD_CONTEXT);
+
+    private ChildContextOperation<String> createOperation(Function<DurableContext, String> func) {
         return new ChildContextOperation<>(
-                "1",
-                "test-context",
-                func,
-                OperationSubType.RUN_IN_CHILD_CONTEXT,
-                TypeToken.get(String.class),
-                SERDES,
-                durableContext);
+                OPERATION_IDENTIFIER, func, TypeToken.get(String.class), SERDES, durableContext);
     }
 
     // ===== SUCCEEDED replay =====
