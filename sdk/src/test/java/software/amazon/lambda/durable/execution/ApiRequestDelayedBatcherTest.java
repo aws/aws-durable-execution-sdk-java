@@ -25,7 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class ApiRequestDelayedBatcherTest {
-    private static final Duration SHORT_DELAY = Duration.ofMillis(1);
+    private static final Duration SHORT_DELAY = Duration.ofMillis(5);
     private static final Duration LONG_DELAY = Duration.ofMillis(100);
     private static final int MAX_BATCH_SIZE = 3;
     private static final int MAX_BATCH_BINARY_SIZE_IN_BYTES = 200;
