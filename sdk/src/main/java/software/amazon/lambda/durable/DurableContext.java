@@ -135,7 +135,7 @@ public class DurableContext extends BaseContext {
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
-                new OperationIdentifier(operationId, name, OperationType.STEP, null), func, typeToken, config, this);
+                OperationIdentifier.of(operationId, name, OperationType.STEP), func, typeToken, config, this);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -205,7 +205,7 @@ public class DurableContext extends BaseContext {
 
         // Create and start wait operation
         var operation =
-                new WaitOperation(new OperationIdentifier(operationId, name, OperationType.WAIT, null), duration, this);
+                new WaitOperation(OperationIdentifier.of(operationId, name, OperationType.WAIT), duration, this);
 
         operation.execute(); // Checkpoint the wait
         return operation;
@@ -279,7 +279,7 @@ public class DurableContext extends BaseContext {
 
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
-                new OperationIdentifier(operationId, name, OperationType.CHAINED_INVOKE, null),
+                OperationIdentifier.of(operationId, name, OperationType.CHAINED_INVOKE),
                 functionName,
                 payload,
                 typeToken,
@@ -313,7 +313,7 @@ public class DurableContext extends BaseContext {
         var operationId = nextOperationId();
 
         var operation = new CallbackOperation<>(
-                new OperationIdentifier(operationId, name, OperationType.CALLBACK, null), typeToken, config, this);
+                OperationIdentifier.of(operationId, name, OperationType.CALLBACK), typeToken, config, this);
         operation.execute();
 
         return operation;
@@ -346,7 +346,7 @@ public class DurableContext extends BaseContext {
         var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
-                new OperationIdentifier(operationId, name, OperationType.CONTEXT, subType),
+                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),
                 func,
                 typeToken,
                 getDurableConfig().getSerDes(),

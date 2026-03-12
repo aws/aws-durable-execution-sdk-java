@@ -34,7 +34,7 @@ class CallbackOperationTest {
     private static final String OPERATION_ID = "1";
     private static final String OPERATION_NAME = "approval";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.CALLBACK, null);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.CALLBACK);
 
     private DurableContext durableContext;
 

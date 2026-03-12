@@ -31,7 +31,7 @@ class InvokeOperationTest {
     private static final String OPERATION_ID = "2";
     private static final String OPERATION_NAME = "test-invoke";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.CHAINED_INVOKE, null);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.CHAINED_INVOKE);
 
     private ExecutionManager executionManager;
     private DurableContext durableContext;

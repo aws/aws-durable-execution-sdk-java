@@ -32,7 +32,7 @@ class StepOperationTest {
     private static final String OPERATION_NAME = "test-step";
     private static final String RESULT = "result";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.STEP, null);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.STEP);
     private ExecutionManager executionManager;
     private DurableContext durableContext;
 

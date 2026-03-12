@@ -47,7 +47,7 @@ class BaseDurableOperationTest {
     private static final Operation OPERATION = Operation.builder().build();
     private static final OperationType OPERATION_TYPE = OperationType.STEP;
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OPERATION_TYPE, null);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OPERATION_TYPE);
     private static final TypeToken<String> RESULT_TYPE = TypeToken.get(String.class);
     private static final SerDes SER_DES = new JacksonSerDes();
     private static final String RESULT = "name";

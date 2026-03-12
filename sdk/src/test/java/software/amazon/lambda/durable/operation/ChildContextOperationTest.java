@@ -52,7 +52,7 @@ class ChildContextOperationTest {
     }
 
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            new OperationIdentifier("1", "test-context", OperationType.CONTEXT, OperationSubType.RUN_IN_CHILD_CONTEXT);
+            OperationIdentifier.of("1", "test-context", OperationType.CONTEXT, OperationSubType.RUN_IN_CHILD_CONTEXT);
 
     private ChildContextOperation<String> createOperation(Function<DurableContext, String> func) {
         return new ChildContextOperation<>(

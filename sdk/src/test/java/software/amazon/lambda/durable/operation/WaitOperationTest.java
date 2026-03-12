@@ -25,7 +25,7 @@ class WaitOperationTest {
     private static final String CONTEXT_ID = "handler";
     private static final String OPERATION_NAME = "test-wait";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            new OperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.WAIT, null);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.WAIT);
     private ExecutionManager executionManager;
     private DurableContext durableContext;
 
