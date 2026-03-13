@@ -55,6 +55,14 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     protected final CompletableFuture<Void> completionFuture;
     private final DurableContext durableContext;
 
+    /**
+     * Constructs a new durable operation.
+     *
+     * @param operationIdentifier the unique identifier for this operation
+     * @param resultTypeToken the type token for deserializing the result
+     * @param resultSerDes the serializer/deserializer for the result
+     * @param durableContext the parent context this operation belongs to
+     */
     protected BaseDurableOperation(
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
@@ -92,12 +100,15 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return durableContext;
     }
 
-    /** Gets the operation type */
+    /** Gets the operation type. */
     public OperationType getType() {
         return operationIdentifier.operationType();
     }
 
-    /** Starts the operation, processes the operation updates from backend. Does not block. */
+    /**
+     * Starts the operation by checking for an existing checkpoint. If a checkpoint exists, validates and replays it;
+     * otherwise starts fresh execution.
+     */
     public void execute() {
         var existing = getOperation();
 
@@ -109,10 +120,14 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         }
     }
 
-    /** Starts the operation. */
+    /** Starts the operation on first execution (no existing checkpoint). */
     protected abstract void start();
 
-    /** Replays the operation. */
+    /**
+     * Replays the operation from an existing checkpoint.
+     *
+     * @param existing the checkpointed operation state
+     */
     protected abstract void replay(Operation existing);
 
     /**
@@ -151,12 +166,17 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         }
     }
 
-    /** Checks if this operation is completed */
+    /** Returns true if this operation has completed (successfully or exceptionally). */
     protected boolean isOperationCompleted() {
         return completionFuture.isDone();
     }
 
-    /** Waits for the operation to complete and suspends the execution if no active thread is running */
+    /**
+     * Waits for the operation to complete. Deregisters the current thread to allow Lambda suspension if the operation
+     * is still in progress, then re-registers when the operation completes.
+     *
+     * @return the completed operation
+     */
     protected Operation waitForOperationCompletion() {
 
         validateCurrentThreadType();
@@ -198,7 +218,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return op;
     }
 
-    /** Receives operation updates from ExecutionManager and updates the internal state of the operation */
+    /**
+     * Receives operation updates from ExecutionManager. Completes the internal future when the operation reaches a
+     * terminal status, unblocking any threads waiting on this operation.
+     *
+     * @param operation the updated operation state
+     */
     public void onCheckpointComplete(Operation operation) {
         if (ExecutionManager.isTerminalStatus(operation.status())) {
             // This method handles only terminal status updates. Override this method if a DurableOperation needs to
@@ -229,39 +254,63 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         }
     }
 
-    // terminate the execution
+    /**
+     * Terminates the execution with the given exception.
+     *
+     * @param exception the unrecoverable exception
+     * @return never returns normally; always throws
+     */
     protected T terminateExecution(UnrecoverableDurableExecutionException exception) {
         executionManager.terminateExecution(exception);
         // Exception is already thrown from above. Keep the throw statement below to make tests happy
         throw exception;
     }
 
+    /**
+     * Terminates the execution with an {@link IllegalDurableOperationException}.
+     *
+     * @param message the error message
+     * @return never returns normally; always throws
+     */
     protected T terminateExecutionWithIllegalDurableOperationException(String message) {
         return terminateExecution(new IllegalDurableOperationException(message));
     }
 
-    // advanced thread and context control
+    /**
+     * Registers a thread as active in the execution manager.
+     *
+     * @param threadId the thread identifier to register
+     */
     protected void registerActiveThread(String threadId) {
         executionManager.registerActiveThread(threadId);
     }
 
+    /** Returns the current thread's context from the execution manager. */
     protected ThreadContext getCurrentThreadContext() {
         return executionManager.getCurrentThreadContext();
     }
 
-    // polling and checkpointing
+    /** Polls the backend for updates to this operation. */
     protected CompletableFuture<Operation> pollForOperationUpdates() {
         return executionManager.pollForOperationUpdates(getOperationId());
     }
 
+    /**
+     * Polls the backend for updates to this operation after the specified delay.
+     *
+     * @param delay the delay before polling
+     * @return a future that completes with the updated operation
+     */
     protected CompletableFuture<Operation> pollForOperationUpdates(Duration delay) {
         return executionManager.pollForOperationUpdates(getOperationId(), delay);
     }
 
+    /** Sends an operation update synchronously (blocks until the update is acknowledged). */
     protected void sendOperationUpdate(OperationUpdate.Builder builder) {
         sendOperationUpdateAsync(builder).join();
     }
 
+    /** Sends an operation update asynchronously. */
     protected CompletableFuture<Void> sendOperationUpdateAsync(OperationUpdate.Builder builder) {
         return executionManager.sendOperationUpdate(builder.id(getOperationId())
                 .name(getName())
@@ -270,7 +319,13 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
                 .build());
     }
 
-    // serialization/deserialization utilities
+    /**
+     * Deserializes a result string into the operation's result type.
+     *
+     * @param result the serialized result string
+     * @return the deserialized result
+     * @throws SerDesException if deserialization fails
+     */
     protected T deserializeResult(String result) {
         try {
             return resultSerDes.deserialize(result, resultTypeToken);
@@ -283,14 +338,33 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         }
     }
 
+    /**
+     * Serializes the result to a string.
+     *
+     * @param result the result to serialize
+     * @return the serialized string
+     */
     protected String serializeResult(T result) {
         return resultSerDes.serialize(result);
     }
 
+    /**
+     * Serializes a throwable into an {@link ErrorObject} for checkpointing.
+     *
+     * @param throwable the exception to serialize
+     * @return the serialized error object
+     */
     protected ErrorObject serializeException(Throwable throwable) {
         return ExceptionHelper.buildErrorObject(throwable, resultSerDes);
     }
 
+    /**
+     * Deserializes an {@link ErrorObject} back into a throwable, reconstructing the original exception type and stack
+     * trace when possible. Falls back to null if the exception class is not found or deserialization fails.
+     *
+     * @param errorObject the serialized error object
+     * @return the reconstructed throwable, or null if reconstruction is not possible
+     */
     protected Throwable deserializeException(ErrorObject errorObject) {
         Throwable original = null;
         if (errorObject == null) {

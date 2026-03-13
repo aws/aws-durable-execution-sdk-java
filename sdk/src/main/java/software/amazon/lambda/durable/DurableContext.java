@@ -98,8 +98,8 @@ public class DurableContext extends BaseContext {
     /**
      * Executes a durable step with the given name and blocks until it completes.
      *
-     * <p>On first execution, runs {@code func} and checkpoints the result. On replay, returns the cached result
-     * without re-executing.
+     * <p>On first execution, runs {@code func} and checkpoints the result. On replay, returns the cached result without
+     * re-executing.
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
@@ -439,8 +439,8 @@ public class DurableContext extends BaseContext {
     /**
      * Creates a callback operation that suspends execution until an external system completes it.
      *
-     * <p>This is the core createCallback implementation. Returns a {@link DurableCallbackFuture} containing a
-     * callback ID that external systems use to report completion via the Lambda Durable API.
+     * <p>This is the core createCallback implementation. Returns a {@link DurableCallbackFuture} containing a callback
+     * ID that external systems use to report completion via the Lambda Durable API.
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
@@ -467,8 +467,8 @@ public class DurableContext extends BaseContext {
     /**
      * Runs a function in a child context, blocking until it completes.
      *
-     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without
-     * ID collisions. On replay, the child context's operations are replayed independently.
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
@@ -480,7 +480,9 @@ public class DurableContext extends BaseContext {
         return runInChildContextAsync(name, TypeToken.get(resultType), func).get();
     }
 
-    /** Runs a function in a child context using a {@link TypeToken} for generic result types, blocking until complete. */
+    /**
+     * Runs a function in a child context using a {@link TypeToken} for generic result types, blocking until complete.
+     */
     public <T> T runInChildContext(String name, TypeToken<T> typeToken, Function<DurableContext, T> func) {
         return runInChildContextAsync(name, typeToken, func).get();
     }
@@ -519,8 +521,8 @@ public class DurableContext extends BaseContext {
     /**
      * Executes a submitter function and waits for an external callback, blocking until the callback completes.
      *
-     * <p>Combines a step (to run the submitter) and a callback (to receive the external result) in a child context.
-     * The submitter receives a callback ID that external systems use to report completion.
+     * <p>Combines a step (to run the submitter) and a callback (to receive the external result) in a child context. The
+     * submitter receives a callback ID that external systems use to report completion.
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
@@ -594,9 +596,9 @@ public class DurableContext extends BaseContext {
      * Asynchronously executes a submitter and waits for an external callback using a {@link TypeToken} and custom
      * configuration.
      *
-     * <p>This is the core waitForCallbackAsync implementation. All other waitForCallback/waitForCallbackAsync
-     * overloads delegate here. Internally creates a child context containing a callback operation and a step
-     * that runs the submitter function.
+     * <p>This is the core waitForCallbackAsync implementation. All other waitForCallback/waitForCallbackAsync overloads
+     * delegate here. Internally creates a child context containing a callback operation and a step that runs the
+     * submitter function.
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
