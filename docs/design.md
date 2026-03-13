@@ -561,7 +561,7 @@ executionManager.runUntilCompleteOrSuspend(handlerFuture)
     .join();
 ```
 
-`runUntilCompleteOrSuspend` uses `CompletableFuture.anyOf(userFuture, executionExceptionFuture)`:
+`runUntilCompleteOrSuspend` uses `CompletableFuture.anyOf(handlerFuture, executionExceptionFuture)`:
 - If `handlerFuture` completes first → `SUCCESS` (or `FAILED` if the handler threw).
 - If `executionExceptionFuture` completes first → `PENDING` (suspension) or unrecoverable error.
 
