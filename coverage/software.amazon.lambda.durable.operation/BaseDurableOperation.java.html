@@ -263,89 +263,90 @@ public abstract class BaseDurableOperation&lt;T&gt; implements DurableFuture&lt;
 <span class="fc" id="L263">    }</span>
 
     protected CompletableFuture&lt;Void&gt; sendOperationUpdateAsync(OperationUpdate.Builder builder) {
-<span class="fc" id="L266">        return executionManager.sendOperationUpdate(builder.id(getOperationId())</span>
-<span class="fc" id="L267">                .name(getName())</span>
-<span class="fc" id="L268">                .type(getType())</span>
-<span class="fc" id="L269">                .parentId(durableContext.getContextId())</span>
-<span class="fc" id="L270">                .build());</span>
+<span class="fc" id="L266">        var updateBuilder =</span>
+<span class="fc" id="L267">                builder.id(getOperationId()).name(getName()).type(getType()).parentId(durableContext.getContextId());</span>
+<span class="fc bfc" id="L268" title="All 2 branches covered.">        if (getSubType() != null) {</span>
+<span class="fc" id="L269">            updateBuilder.subType(getSubType().getValue());</span>
+        }
+<span class="fc" id="L271">        return executionManager.sendOperationUpdate(updateBuilder.build());</span>
     }
 
     // serialization/deserialization utilities
     protected T deserializeResult(String result) {
         try {
-<span class="fc" id="L276">            return resultSerDes.deserialize(result, resultTypeToken);</span>
-<span class="fc" id="L277">        } catch (SerDesException e) {</span>
-<span class="fc" id="L278">            logger.warn(</span>
+<span class="fc" id="L277">            return resultSerDes.deserialize(result, resultTypeToken);</span>
+<span class="fc" id="L278">        } catch (SerDesException e) {</span>
+<span class="fc" id="L279">            logger.warn(</span>
                     &quot;Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.&quot;,
-<span class="fc" id="L280">                    getType(),</span>
-<span class="fc" id="L281">                    getName());</span>
-<span class="fc" id="L282">            throw e;</span>
+<span class="fc" id="L281">                    getType(),</span>
+<span class="fc" id="L282">                    getName());</span>
+<span class="fc" id="L283">            throw e;</span>
         }
     }
 
     protected String serializeResult(T result) {
-<span class="fc" id="L287">        return resultSerDes.serialize(result);</span>
+<span class="fc" id="L288">        return resultSerDes.serialize(result);</span>
     }
 
     protected ErrorObject serializeException(Throwable throwable) {
-<span class="fc" id="L291">        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);</span>
+<span class="fc" id="L292">        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);</span>
     }
 
     protected Throwable deserializeException(ErrorObject errorObject) {
-<span class="fc" id="L295">        Throwable original = null;</span>
-<span class="pc bpc" id="L296" title="1 of 2 branches missed.">        if (errorObject == null) {</span>
-<span class="nc" id="L297">            return original;</span>
+<span class="fc" id="L296">        Throwable original = null;</span>
+<span class="pc bpc" id="L297" title="1 of 2 branches missed.">        if (errorObject == null) {</span>
+<span class="nc" id="L298">            return original;</span>
         }
-<span class="fc" id="L299">        var errorType = errorObject.errorType();</span>
-<span class="fc" id="L300">        var errorData = errorObject.errorData();</span>
+<span class="fc" id="L300">        var errorType = errorObject.errorType();</span>
+<span class="fc" id="L301">        var errorData = errorObject.errorData();</span>
 
-<span class="fc bfc" id="L302" title="All 2 branches covered.">        if (errorType == null) {</span>
-<span class="fc" id="L303">            return original;</span>
+<span class="fc bfc" id="L303" title="All 2 branches covered.">        if (errorType == null) {</span>
+<span class="fc" id="L304">            return original;</span>
         }
         try {
 
-<span class="fc" id="L307">            Class&lt;?&gt; exceptionClass = Class.forName(errorType);</span>
-<span class="pc bpc" id="L308" title="1 of 2 branches missed.">            if (Throwable.class.isAssignableFrom(exceptionClass)) {</span>
-<span class="fc" id="L309">                original =</span>
-<span class="fc" id="L310">                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));</span>
+<span class="fc" id="L308">            Class&lt;?&gt; exceptionClass = Class.forName(errorType);</span>
+<span class="pc bpc" id="L309" title="1 of 2 branches missed.">            if (Throwable.class.isAssignableFrom(exceptionClass)) {</span>
+<span class="fc" id="L310">                original =</span>
+<span class="fc" id="L311">                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));</span>
 
-<span class="fc bfc" id="L312" title="All 2 branches covered.">                if (original != null) {</span>
-<span class="fc" id="L313">                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));</span>
+<span class="fc bfc" id="L313" title="All 2 branches covered.">                if (original != null) {</span>
+<span class="fc" id="L314">                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));</span>
                 }
             }
-<span class="fc" id="L316">        } catch (ClassNotFoundException e) {</span>
-<span class="fc" id="L317">            logger.warn(&quot;Cannot re-construct original exception type. Falling back to generic StepFailedException.&quot;);</span>
-<span class="fc" id="L318">        } catch (SerDesException e) {</span>
-<span class="fc" id="L319">            logger.warn(&quot;Cannot deserialize original exception data. Falling back to generic StepFailedException.&quot;, e);</span>
-<span class="fc" id="L320">        }</span>
-<span class="fc" id="L321">        return original;</span>
+<span class="fc" id="L317">        } catch (ClassNotFoundException e) {</span>
+<span class="fc" id="L318">            logger.warn(&quot;Cannot re-construct original exception type. Falling back to generic StepFailedException.&quot;);</span>
+<span class="fc" id="L319">        } catch (SerDesException e) {</span>
+<span class="fc" id="L320">            logger.warn(&quot;Cannot deserialize original exception data. Falling back to generic StepFailedException.&quot;, e);</span>
+<span class="fc" id="L321">        }</span>
+<span class="fc" id="L322">        return original;</span>
     }
 
     /** Validates that current operation matches checkpointed operation during replay. */
     protected void validateReplay(Operation checkpointed) {
-<span class="fc bfc" id="L326" title="All 4 branches covered.">        if (checkpointed == null || checkpointed.type() == null) {</span>
-<span class="fc" id="L327">            return; // First execution, no validation needed</span>
+<span class="fc bfc" id="L327" title="All 4 branches covered.">        if (checkpointed == null || checkpointed.type() == null) {</span>
+<span class="fc" id="L328">            return; // First execution, no validation needed</span>
         }
 
-<span class="fc bfc" id="L330" title="All 2 branches covered.">        if (!checkpointed.type().equals(getType())) {</span>
-<span class="pc" id="L331">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+<span class="fc bfc" id="L331" title="All 2 branches covered.">        if (!checkpointed.type().equals(getType())) {</span>
+<span class="pc" id="L332">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
                     &quot;Operation type mismatch for \&quot;%s\&quot;. Expected %s, got %s&quot;,
-<span class="fc" id="L333">                    getOperationId(), checkpointed.type(), getType())));</span>
+<span class="fc" id="L334">                    getOperationId(), checkpointed.type(), getType())));</span>
         }
 
-<span class="fc bfc" id="L336" title="All 2 branches covered.">        if (!Objects.equals(checkpointed.name(), getName())) {</span>
-<span class="pc" id="L337">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+<span class="fc bfc" id="L337" title="All 2 branches covered.">        if (!Objects.equals(checkpointed.name(), getName())) {</span>
+<span class="pc" id="L338">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
                     &quot;Operation name mismatch for \&quot;%s\&quot;. Expected \&quot;%s\&quot;, got \&quot;%s\&quot;&quot;,
-<span class="fc" id="L339">                    getOperationId(), checkpointed.name(), getName())));</span>
+<span class="fc" id="L340">                    getOperationId(), checkpointed.name(), getName())));</span>
         }
 
-<span class="pc bpc" id="L342" title="1 of 4 branches missed.">        if ((getSubType() == null &amp;&amp; checkpointed.subType() != null)</span>
-<span class="fc bfc" id="L343" title="All 2 branches covered.">                || getSubType() != null</span>
-<span class="pc bpc" id="L344" title="1 of 2 branches missed.">                        &amp;&amp; !Objects.equals(checkpointed.subType(), getSubType().getValue())) {</span>
-<span class="nc" id="L345">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+<span class="pc bpc" id="L343" title="1 of 4 branches missed.">        if ((getSubType() == null &amp;&amp; checkpointed.subType() != null)</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">                || getSubType() != null</span>
+<span class="pc bpc" id="L345" title="1 of 2 branches missed.">                        &amp;&amp; !Objects.equals(checkpointed.subType(), getSubType().getValue())) {</span>
+<span class="nc" id="L346">            terminateExecution(new NonDeterministicExecutionException(String.format(</span>
                     &quot;Operation subType mismatch for \&quot;%s\&quot;. Expected \&quot;%s\&quot;, got \&quot;%s\&quot;&quot;,
-<span class="nc" id="L347">                    getOperationId(), checkpointed.subType(), getSubType())));</span>
+<span class="nc" id="L348">                    getOperationId(), checkpointed.subType(), getSubType())));</span>
         }
-<span class="fc" id="L349">    }</span>
+<span class="fc" id="L350">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

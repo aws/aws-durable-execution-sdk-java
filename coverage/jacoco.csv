@@ -48,8 +48,8 @@ AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operati
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,StepOperation,174,156,27,12,42,43,22,12,4,9
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,CallbackOperation,18,111,4,9,6,26,4,10,0,6
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,MapOperation,144,0,6,0,31,0,8,0,5,0
-AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,ChildContextOperation,212,170,34,18,56,50,27,14,5,7
-AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,BaseDurableOperation,72,423,5,29,8,106,7,39,2,27
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,ChildContextOperation,200,166,34,18,51,48,27,14,5,7
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,BaseDurableOperation,72,434,5,31,8,106,7,40,2,27
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,MapOperation.new TypeToken() {...},3,0,0,0,1,0,1,0,1,0
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,InvokeOperation,55,67,5,7,18,15,7,6,3,2
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,BaseConcurrentOperation,489,0,64,0,116,0,50,0,17,0
