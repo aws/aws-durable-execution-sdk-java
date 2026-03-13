@@ -526,68 +526,228 @@ The `SerDes` interface provides both `Class<T>` and `TypeToken<T>` overloads:
 
 ## Thread Coordination and Suspension Mechanism (Advanced)
 
-The SDK uses a threaded execution model where the handler runs in a background thread, racing against a suspension future. This enables immediate suspension when operations need to pause execution (waits, retries), without waiting for the handler to complete naturally.
+The SDK uses a threaded execution model where the handler runs on a user-configured executor, racing against an internal suspension future. This enables immediate suspension when no thread can make forward progress (waits, retries, callbacks), without waiting for the handler to complete naturally.
 
-### Complete Suspension Flow
+### Key Concepts
 
-#### 1. Handler Level - The Suspension Race
-Handler runs in background thread, racing against suspension detection:
+**Thread types.** The SDK distinguishes two thread types via `ThreadType`:
+
+| ThreadType | Identifier (threadId)                                                          | Created By | Purpose |
+|------------|--------------------------------------------------------------------------------|------------|---------|
+| `CONTEXT` | `null` for root context; the operation ID for child contexts (e.g. `"hash(1)"`) | `DurableExecutor` (root), `ChildContextOperation` (child) | Runs the handler function body or a child context function body. Orchestrates operations. |
+| `STEP` | The step's operation ID (e.g. `"hash(2)"`)                                     | `StepOperation` | Runs user-provided step code (`Function<StepContext, T>`). |
+
+Each thread has a `ThreadContext` record (threadId + threadType) stored in a `ThreadLocal` so operations can identify which context they belong to.
+
+**Active thread set.** `ExecutionManager` maintains a `Set<String> activeThreads`. A thread is "active" when it can make forward progress. When the set becomes empty, the execution suspends.
+
+**Completion futures.** Each operation holds a `CompletableFuture<Void> completionFuture` used to coordinate between the thread that starts an operation and the thread that waits for its result.
+
+### The Suspension Race
+
+`DurableExecutor.execute()` runs the handler on the user executor and races it against an internal exception future:
+
 ```java
-// DurableExecutor - which completes first?
-CompletableFuture.anyOf(suspendFuture, handlerFuture).get();
+// DurableExecutor
+executionManager.registerActiveThread(null);  // register root context thread
+var handlerFuture = CompletableFuture.supplyAsync(() -> {
+    try (var context = DurableContext.createRootContext(...)) {
+        return handler.apply(userInput, context);
+    }
+}, config.getExecutorService());
+
+executionManager.runUntilCompleteOrSuspend(handlerFuture)
+    .handle((result, ex) -> { ... })
+    .join();
 ```
-Returns `PENDING` if suspension wins, `SUCCESS` if handler completes. See [ADR-001: Threaded Handler Execution](adr/001-threaded-handler-execution.md).
 
-#### 2. Suspension Detection - Unified Thread Counting
-We use thread counting as the suspension trigger because threads naturally deregister when they cannot make progress on durable operations. This provides a simple, unified mechanism that works across all operation types.
+`runUntilCompleteOrSuspend` uses `CompletableFuture.anyOf(userFuture, executionExceptionFuture)`:
+- If `handlerFuture` completes first → `SUCCESS` (or `FAILED` if the handler threw).
+- If `executionExceptionFuture` completes first → `PENDING` (suspension) or unrecoverable error.
+
+See [ADR-001: Threaded Handler Execution](adr/001-threaded-handler-execution.md).
+
+### Suspension Trigger — Thread Counting
+
+Suspension is triggered exclusively by `ExecutionManager.deregisterActiveThread()`:
 
 ```java
-// ExecutionManager.deregisterActiveThread() - ONLY suspension trigger
-synchronized (this) {
+// ExecutionManager.deregisterActiveThread()
+public void deregisterActiveThread(String threadId) {
+    if (executionExceptionFuture.isDone()) return;  // already suspended
+
     activeThreads.remove(threadId);
+
     if (activeThreads.isEmpty()) {
-        suspendExecutionFuture.complete(null); // Suspension wins the race
-        throw new SuspendExecutionException();
+        suspendExecution();  // completes executionExceptionFuture with SuspendExecutionException
     }
 }
 ```
 
-**Suspension triggers when:** There are no active threads (all have deregistered). The SDK tracks two types of threads:
+A thread deregisters when it cannot make forward progress — typically when it calls `waitForOperationCompletion()` on an operation that hasn't completed yet. This is a unified mechanism: the SDK doesn't need operation-specific suspension logic.
 
-| Thread Type | Purpose | Deregisters When |
-|-------------|---------|------------------|
-| **Root thread** | Main execution thread running the handler function | • Calling `future.get()` to allow suspension while blocked<br>• Calling `context.wait()` or `context.waitAsync().get()` to trigger suspension |
-| **Step threads** | Background threads executing individual step operations | • Completing work: After checkpointing result (success or failure) |
+### The `waitForOperationCompletion()` Pattern
 
-**Why root thread deregistration matters:** Critical for allowing suspension when steps are retrying or when multiple operations depend on each other.
-This approach ensures suspension happens precisely when no thread can make progress on durable operations.
+This method in `BaseDurableOperation` is the core coordination primitive. It is called by every operation's `get()` method (step, wait, invoke, callback, child context):
 
-#### Advanced Feature: In-Process Completion
-In scenarios where waits or step retries would normally suspend execution, but other active threads prevent suspension, the SDK automatically switches to in-process completion by polling the backend until timing conditions are met. This allows complex concurrent workflows to complete efficiently without unnecessary Lambda re-invocations or extended waiting periods.
+```java
+// BaseDurableOperation.waitForOperationCompletion()
+protected Operation waitForOperationCompletion() {
+    var threadContext = getCurrentThreadContext();
 
-### Active Thread Tracking and Operation Completion Coordination
+    synchronized (completionFuture) {
+        if (!isOperationCompleted()) {
+            // Attach a callback: when the operation completes, re-register this thread
+            completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
 
-Each piece of user code - main function body, step body or child context body - runs in its own thread. Execution manager tracks active running threads. When a new step or child context is created, a new thread will be created and registered in execution manager. When the user code is blocked on `get()` or synchronous durable operations, the thread will be deregistered from execution manager. When there is no active running thread, the function execution will be suspended.
+            // Deregister — may trigger suspension if no other threads are active
+            executionManager.deregisterActiveThread(threadContext.threadId());
+        }
+    }
 
-These user threads and the system thread use CompletableFuture to communicate the completion of operations. When a context executes a step, the communication happens as shown below
+    completionFuture.join();  // block until complete (no-op if already done)
+    return getOperation();
+}
+```
 
-| Sequence  | Context thread                                                                             | Step Thread                                                         | System Thread                                                                                                                                                                   |
-|-----------|--------------------------------------------------------------------------------------------|---------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1         | create StepOperation, create CompletableFuture                                             | (not created)                                                       | (idle)                                                                                                                                                                          |
-| 2         | checkpoint START event (synchronously or asynchronously)                                   | (not created)                                                       | call checkpoint API                                                                                                                                                             |
-| 3         | create and register the Step thread                                                        | execute user code for the step                                      | (idle)                                                                                                                                                                          |
-| 4         | call `get()`, deregister the context thread and wait for the CompletableFuture to complete | (continue)                                                          | (idle)                                                                                                                                                                          |
-| 5         | (blocked)                                                                                  | checkpoint the step result and wait for checkpoint call to complete | call checkpoint API, and handle the API response. If it is a terminal response, it will complete the Step operation CompletableFuture, register and unblock the context thread. |
-| 6         | retrieve the result of the step                                                            | deregister and terminate the Step thread                            | (idle)                                                                                                                                                                          |        
+The `synchronized(completionFuture)` block prevents a race between checking `isOperationCompleted()` and attaching the `thenRun` callback. Without it, the future could complete between the check and the callback attachment, causing the thread to deregister without ever being re-registered.
 
-If the user code completes quickly, an alternative scenario could happen as follows
+The re-registration callback (`thenRun`) runs synchronously on the thread that completes the future (typically the checkpoint response handler). This guarantees the context thread is re-registered *before* the completing thread (step or child context) deregisters itself, preventing a premature suspension.
 
-| Sequence | Context thread                                                                | Step Thread                                                         | System Thread                                                                                                                          |
-|----------|-------------------------------------------------------------------------------|---------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| 1        | create StepOperation, create CompletableFuture                                | (not created)                                                       | (idle)                                                                                                                                 |
-| 2        | checkpoint START event (synchronously or asynchronously)                      | (not created)                                                       | call checkpoint API                                                                                                                    |
-| 3        | create and register the Step thread                                           | execute user code for the step and complete quickly                 | (idle)                                                                                                                                 |
-| 5        | (do something else or just get starved)                                       | checkpoint the step result and wait for checkpoint call to complete | call checkpoint API, and handle the API response. If it is a terminal response, it will complete the Step operation CompletableFuture. |
-| 4        | call `get()`. It's not blocked because CompletableFuture is already completed | deregister and terminate the Step thread                            | (idle)                                                                                                                                 |
-| 6        | retrieve the result of the step                                               | (ended)                                                             | (idle)                                                                                                                                 |        
+### `onCheckpointComplete` — Waking Up Waiters
+
+When `CheckpointManager` receives a checkpoint response, it calls `ExecutionManager.onCheckpointComplete()`, which notifies each registered operation:
+
+```java
+// BaseDurableOperation.onCheckpointComplete()
+public void onCheckpointComplete(Operation operation) {
+    if (ExecutionManager.isTerminalStatus(operation.status())) {
+        synchronized (completionFuture) {
+            completionFuture.complete(null);  // unblocks waitForOperationCompletion()
+        }
+    }
+}
+```
+
+Completing the future triggers the `thenRun` callback (re-registers the waiting context thread), then unblocks the `join()` call.
+
+### Operation-Specific Threading
+
+#### StepOperation
+
+Steps run user code on a separate thread via the user executor:
+
+```java
+// StepOperation.executeStepLogic()
+registerActiveThread(getOperationId());  // register BEFORE submitting to executor
+
+CompletableFuture.runAsync(() -> {
+    try (StepContext stepContext = getContext().createStepContext(...)) {
+        T result = function.apply(stepContext);
+        handleStepSucceeded(result);      // checkpoint SUCCEED synchronously
+    } catch (Throwable e) {
+        handleStepFailure(e, attempt);    // checkpoint RETRY or FAIL
+    }
+}, userExecutor);
+```
+
+Key details:
+- `registerActiveThread` is called on the *parent* thread before `runAsync`, preventing a race where the parent deregisters (triggering suspension) before the step thread starts.
+- The step thread is implicitly deregistered when it finishes — it never calls `deregisterActiveThread` directly. Instead, the step thread's work is done after checkpointing, and the checkpoint response completes the `completionFuture`, which re-registers the waiting context thread.
+- For retries, the step sends a RETRY checkpoint and then polls for the READY status before re-executing. If no other threads are active during the retry delay, the execution suspends.
+
+#### WaitOperation
+
+Waits checkpoint a WAIT action with a duration, then poll for completion:
+
+```java
+// WaitOperation.start()
+sendOperationUpdate(OperationUpdate.builder()
+    .action(OperationAction.START)
+    .waitOptions(WaitOptions.builder().waitSeconds((int) duration.toSeconds()).build()));
+pollForOperationUpdates(remainingWaitTime);
+```
+
+The wait itself doesn't deregister any thread. Suspension happens when the context thread calls `wait()` (synchronous) which calls `get()`, which calls `waitForOperationCompletion()`, which deregisters the context thread. If no other threads are active, the execution suspends and the Lambda returns PENDING. On re-invocation, the wait replays: if the wait period has elapsed, `markAlreadyCompleted()` is called; otherwise, polling resumes with the remaining duration.
+
+#### InvokeOperation
+
+Invokes checkpoint a START action with the target function name and payload, then poll for the result. The threading model is identical to WaitOperation — the invoke itself doesn't create a new thread. The context thread deregisters when it calls `get()` on the invoke future.
+
+#### CallbackOperation
+
+Callbacks checkpoint a START action to obtain a `callbackId`, then poll for an external system to complete the callback. Like waits and invokes, the context thread deregisters when it calls `get()`. The callback can complete via an external API call (success, failure, or heartbeat timeout).
+
+#### ChildContextOperation
+
+Child contexts run a user function in a separate thread with its own `DurableContext` and operation counter:
+
+```java
+// ChildContextOperation.executeChildContext()
+var contextId = getOperationId();
+
+// Register on PARENT thread — prevents race with parent deregistration
+registerActiveThread(contextId);
+
+CompletableFuture.runAsync(() -> {
+    try (var childContext = getContext().createChildContext(contextId, getName())) {
+        T result = function.apply(childContext);
+        handleChildContextSuccess(result);
+    } catch (Throwable e) {
+        handleChildContextFailure(e);
+    }
+}, userExecutor);
+```
+
+Key details:
+- The child context thread runs as `ThreadType.CONTEXT` (not STEP), so it can itself create steps, waits, invokes, callbacks, and nested child contexts.
+- Operations within the child context use the child's `contextId` as their `parentId`, and operation IDs are prefixed with the context path (e.g. `"hash(1)"` for first-level, `"hash(hash(1)-2)"` for second-level).
+- On replay, if the child context completed with a large result (> 256KB), the SDK re-executes the child context to reconstruct the result in memory rather than storing it in the checkpoint payload.
+
+### In-Process Completion
+
+When a wait, retry delay, or invoke would normally suspend execution, but other active threads prevent suspension (because `activeThreads` is not empty), the SDK stays alive and polls the backend for updates. This is the "in-process completion" path — the operation polls via `CheckpointManager.pollForUpdate()` on the internal executor until the backend reports the operation is ready. This avoids unnecessary Lambda re-invocations when the execution can simply wait in-process.
+
+### Sequence: Synchronous Step Execution
+
+When a context thread calls `ctx.step(...)`, the following coordination occurs:
+
+| Seq | Context Thread                                                                                                                                                                                                | Step Thread                                                                                                                                | System Thread (CheckpointManager)                                                                                                                                  |
+|-----|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1   | Create `StepOperation` + `completionFuture`. Call `execute()`. `execute()` calls `start()` which registers step thread and submits to user executor. Checkpoint START (sync or async depending on semantics). | —                                                                                                                                          | (idle)                                                                                                                                                             |
+| 2   | `step()` calls `get()` → `waitForOperationCompletion()`. Attach `thenRun(re-register)` to `completionFuture`. Deregister context thread. Block on `join()`.                                                   | User code begins executing. Execute `function.apply(stepContext)`.                                                                         | (idle)                                                                                                                                                             |
+| 3   | (blocked)                                                                                                                                                                                                     | User code completes. Call `handleStepSucceeded(result)` → `sendOperationUpdate(SUCCEED)` (synchronous — blocks until checkpoint response). | Process checkpoint API call. On terminal response, call `onCheckpointComplete()` → `completionFuture.complete(null)`. `thenRun` fires: re-register context thread. |
+| 4   | `join()` returns. Retrieve result from operation.                                                                                                                                                             | Call `deregisterActiveThread` to deregister Step thread. Step thread ends.                                                                 | (idle)                                                                                                                                                             |
+
+**Alternative (fast step):** If the step completes and checkpoints before the context thread calls `get()`, the `completionFuture` is already done when `waitForOperationCompletion()` runs. The context thread skips deregistration entirely and returns the result immediately.
+
+### Sequence: Wait with Suspension
+
+| Seq | Context Thread                                                                                                                 | System Thread          |
+|-----|--------------------------------------------------------------------------------------------------------------------------------|------------------------|
+| 1   | Create `WaitOperation` + `completionFuture`. Call `execute()`. `execute()` calls `start()` → checkpoint WAIT with duration → `pollForOperationUpdates(remainingWaitTime)`.                                                                |  Begin polling backend.                      |
+| 2   | `wait()` calls `get()` → `waitForOperationCompletion()`. Attach `thenRun(re-register)`. Deregister context thread.             | (polling)              |
+| 3   | `activeThreads` is empty → `suspendExecution()` → `executionExceptionFuture.completeExceptionally(SuspendExecutionException)`. | —                      |
+| 4   | `runUntilCompleteOrSuspend` resolves with `SuspendExecutionException` → return `PENDING`.                                      | —                      |
+
+On re-invocation, the wait replays. If the scheduled end time has passed, `markAlreadyCompleted()` fires and the context thread continues without deregistering.
+
+### Sequence: Async Step + Wait (Concurrent)
+
+```java
+var stepFuture = ctx.stepAsync("fetch", String.class, stepCtx -> callApi());
+ctx.wait("delay", Duration.ofSeconds(30));
+var result = stepFuture.get();
+```
+
+| Seq | Context Thread                                                     | Step Thread                    | System Thread                                                                                           |
+|-----|--------------------------------------------------------------------|--------------------------------|---------------------------------------------------------------------------------------------------------|
+| 1   | Create `StepOperation`, register step thread, submit to executor.  | —                              | —                                                                                                       |
+| 2   | Create `WaitOperation`, checkpoint WAIT, start polling.            | User code begins.              | Begin polling for wait.                                                                                 |
+| 3   | `wait()` calls `get()` → deregister context thread.                | (running)                      | (polling)                                                                                               |
+| 4   | (blocked — but step thread is still active, so no suspension)      | Complete → checkpoint SUCCEED. | Process step checkpoint.                                                                                |
+| 5   | (blocked)                                                          | —                              | Wait poll returns SUCCEEDED → `completionFuture.complete(null)` for wait. Context thread re-registered. |
+| 6   | `wait()` returns. `stepFuture.get()` → result already available.   | —                              | —                                                                                                       |
+
+If the wait duration hasn't elapsed when the step completes, the execution is suspended. If the step finishes *after* the wait, the step thread keeps the execution alive (prevents suspension) while the wait polls to completion.
 
