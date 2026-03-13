@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.exception;
 
+/** Base exception for all durable execution errors. */
 public class DurableExecutionException extends RuntimeException {
     public DurableExecutionException(String message, Throwable cause, StackTraceElement[] stackTrace) {
         super(message, cause);

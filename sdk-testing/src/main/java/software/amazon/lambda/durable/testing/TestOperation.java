@@ -30,39 +30,47 @@ public class TestOperation {
         this.serDes = serDes;
     }
 
+    /** Returns the raw history events associated with this operation. */
     public List<Event> getEvents() {
         return List.copyOf(events);
     }
 
+    /** Returns the operation name. */
     public String getName() {
         return operation.name();
     }
 
+    /** Returns the current status of this operation (e.g. STARTED, SUCCEEDED, FAILED). */
     public OperationStatus getStatus() {
         return operation.status();
     }
 
+    /** Returns the operation type (STEP, WAIT, CALLBACK, etc.). */
     public OperationType getType() {
         return operation.type();
     }
 
+    /** Returns the step details, or null if this is not a step operation. */
     public StepDetails getStepDetails() {
         return operation.stepDetails();
     }
 
+    /** Returns the wait details, or null if this is not a wait operation. */
     public WaitDetails getWaitDetails() {
         return operation.waitDetails();
     }
 
+    /** Returns the callback details, or null if this is not a callback operation. */
     public CallbackDetails getCallbackDetails() {
         return operation.callbackDetails();
     }
 
+    /** Deserializes and returns the step result as the given type. */
     public <T> T getStepResult(Class<T> type) {
         return getStepResult(TypeToken.get(type));
     }
 
-    /** Type-safe result extraction from step details. */
+    /** Deserializes and returns the step result using a TypeToken for generic types. */
     public <T> T getStepResult(TypeToken<T> type) {
         var details = operation.stepDetails();
         if (details == null || details.result() == null) {
@@ -71,11 +79,13 @@ public class TestOperation {
         return serDes.deserialize(details.result(), type);
     }
 
+    /** Returns the step error, or null if the step succeeded or this is not a step operation. */
     public ErrorObject getError() {
         var details = operation.stepDetails();
         return details != null ? details.error() : null;
     }
 
+    /** Returns the current retry attempt number (1-based), defaulting to 1 if not available. */
     public int getAttempt() {
         var details = operation.stepDetails();
         return details != null && details.attempt() != null ? details.attempt() : 1;

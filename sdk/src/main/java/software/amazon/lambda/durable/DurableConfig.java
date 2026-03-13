@@ -160,7 +160,7 @@ public final class DurableConfig {
     /**
      * Gets the configured checkpoint delay.
      *
-     * @return check point in Duration.
+     * @return the checkpoint delay duration
      */
     public Duration getCheckpointDelay() {
         return checkpointDelay;

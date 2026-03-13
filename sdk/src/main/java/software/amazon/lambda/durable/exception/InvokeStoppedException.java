@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
 
+/** Thrown when a chained invoke operation is stopped before completion. */
 public class InvokeStoppedException extends InvokeException {
 
     public InvokeStoppedException(Operation operation) {

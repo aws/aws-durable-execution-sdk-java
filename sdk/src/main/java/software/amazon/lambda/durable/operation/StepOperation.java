@@ -26,6 +26,14 @@ import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
+/**
+ * Durable operation that executes a user-provided function with retry support.
+ *
+ * <p>Steps are the primary unit of work in a durable execution. Each step is checkpointed before and after execution,
+ * enabling automatic retry on failure and replay on re-invocation.
+ *
+ * @param <T> the result type of the step function
+ */
 public class StepOperation<T> extends BaseDurableOperation<T> {
     private static final Integer FIRST_ATTEMPT = 0;
 

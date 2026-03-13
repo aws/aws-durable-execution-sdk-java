@@ -11,6 +11,12 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
+/**
+ * Default implementation of {@link DurableExecutionClient} backed by the AWS Lambda SDK client.
+ *
+ * <p>Translates SDK-level checkpoint and state-retrieval calls into the corresponding {@link LambdaClient} API
+ * requests.
+ */
 public class LambdaDurableFunctionsClient implements DurableExecutionClient {
 
     private final LambdaClient lambdaClient;

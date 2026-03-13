@@ -16,8 +16,8 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 /**
  * Example demonstrating a durable Lambda function that uses generic types in input and output.
  *
- * <p>This example shows how to use TypeToken to work with generic types like List<String>, Map<String, List<String,
- * String>, and nested generics that cannot be represented by simple Class objects.
+ * <p>This example shows how to use TypeToken to work with generic types like {@code List<String>}, {@code Map<String,
+ * List<String>>}, and nested generics that cannot be represented by simple Class objects.
  */
 public class GenericInputOutputExample
         extends DurableHandler<Map<String, String>, Map<String, Map<String, List<String>>>> {

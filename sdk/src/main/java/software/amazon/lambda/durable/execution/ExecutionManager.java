@@ -95,14 +95,17 @@ public class ExecutionManager implements AutoCloseable {
 
     // ===== State Management =====
 
+    /** Returns the ARN of the durable execution being managed. */
     public String getDurableExecutionArn() {
         return durableExecutionArn;
     }
 
+    /** Returns {@code true} if the execution is currently replaying completed operations. */
     public boolean isReplaying() {
         return executionMode.get() == ExecutionMode.REPLAY;
     }
 
+    /** Registers an operation so it can receive checkpoint completion notifications. */
     public void registerOperation(BaseDurableOperation<?> operation) {
         registeredOperations.put(operation.getOperationId(), operation);
     }
@@ -155,6 +158,7 @@ public class ExecutionManager implements AutoCloseable {
         return existing;
     }
 
+    /** Returns the initial EXECUTION operation from the checkpoint state. */
     public Operation getExecutionOperation() {
         return executionOp;
     }
@@ -269,6 +273,7 @@ public class ExecutionManager implements AutoCloseable {
         checkpointManager.shutdown();
     }
 
+    /** Returns {@code true} if the given status represents a terminal (final) operation state. */
     public static boolean isTerminalStatus(OperationStatus status) {
         return status == OperationStatus.SUCCEEDED
                 || status == OperationStatus.FAILED
@@ -277,11 +282,17 @@ public class ExecutionManager implements AutoCloseable {
                 || status == OperationStatus.STOPPED;
     }
 
+    /**
+     * Terminates the execution immediately with an unrecoverable error.
+     *
+     * @param exception the unrecoverable exception that caused termination
+     */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
         executionExceptionFuture.completeExceptionally(exception);
         throw exception;
     }
 
+    /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
         var ex = new SuspendExecutionException();
         executionExceptionFuture.completeExceptionally(ex);

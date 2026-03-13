@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.exception;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 
+/** Thrown when a step operation fails after exhausting all retry attempts. */
 public class StepFailedException extends StepException {
     public StepFailedException(Operation operation) {
         super(

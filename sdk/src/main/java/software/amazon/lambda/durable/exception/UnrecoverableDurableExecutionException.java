@@ -13,6 +13,7 @@ public class UnrecoverableDurableExecutionException extends DurableExecutionExce
         this.errorObject = errorObject;
     }
 
+    /** Returns the error details for this unrecoverable exception. */
     public ErrorObject getErrorObject() {
         return errorObject;
     }

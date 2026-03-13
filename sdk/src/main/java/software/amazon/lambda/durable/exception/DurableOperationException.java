@@ -7,6 +7,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
+/** Exception associated with a specific durable operation, carrying the operation and error details. */
 public class DurableOperationException extends DurableExecutionException {
     private final Operation operation;
     private final ErrorObject errorObject;
@@ -40,18 +41,22 @@ public class DurableOperationException extends DurableExecutionException {
         this.errorObject = errorObject;
     }
 
+    /** Returns the error details from the failed operation. */
     public ErrorObject getErrorObject() {
         return errorObject;
     }
 
+    /** Returns the operation that caused this exception. */
     public Operation getOperation() {
         return operation;
     }
 
+    /** Returns the status of the operation that caused this exception. */
     public OperationStatus getOperationStatus() {
         return operation.status();
     }
 
+    /** Returns the ID of the operation that caused this exception. */
     public String getOperationId() {
         return operation.id();
     }

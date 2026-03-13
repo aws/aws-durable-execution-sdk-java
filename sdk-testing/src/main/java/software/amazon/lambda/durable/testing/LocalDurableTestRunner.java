@@ -22,6 +22,13 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * In-memory test runner for durable Lambda functions. Simulates the Lambda re-invocation loop locally without requiring
+ * AWS infrastructure, enabling fast unit and integration tests.
+ *
+ * @param <I> the handler input type
+ * @param <O> the handler output type
+ */
 public class LocalDurableTestRunner<I, O> {
     private static final int MAX_INVOCATIONS = 100;
 
@@ -51,6 +58,12 @@ public class LocalDurableTestRunner<I, O> {
     /**
      * Creates a LocalDurableTestRunner with default configuration. Use this method when your handler uses the default
      * DurableConfig.
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param <I> Input type
+     * @param <O> Output type
+     * @return LocalDurableTestRunner with default configuration
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
@@ -81,6 +94,13 @@ public class LocalDurableTestRunner<I, O> {
     /**
      * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
      * SerDes and other configuration, while overriding the DurableExecutionClient with the in-memory implementation.
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param config The DurableConfig to use (DurableExecutionClient will be overridden with in-memory implementation)
+     * @param <I> Input type
+     * @param <O> Output type
+     * @return LocalDurableTestRunner configured with the provided settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
@@ -129,6 +149,12 @@ public class LocalDurableTestRunner<I, O> {
      * Creates a LocalDurableTestRunner from a DurableHandler instance, automatically extracting the configuration. This
      * is a convenient method when you have a handler instance and want to test it with the same configuration it uses
      * in production.
+     *
+     * @param inputType The input type class
+     * @param handler The DurableHandler instance to test
+     * @param <I> Input type
+     * @param <O> Output type
+     * @return LocalDurableTestRunner configured with the handler's settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, DurableHandler<I, O> handler) {
         return new LocalDurableTestRunner<>(
@@ -220,14 +246,17 @@ public class LocalDurableTestRunner<I, O> {
         return result;
     }
 
+    /** Resets a named step operation to STARTED status, simulating a checkpoint failure. */
     public void resetCheckpointToStarted(String stepName) {
         storage.resetCheckpointToStarted(stepName);
     }
 
+    /** Removes a named step operation entirely, simulating loss of a fire-and-forget checkpoint. */
     public void simulateFireAndForgetCheckpointLoss(String stepName) {
         storage.simulateFireAndForgetCheckpointLoss(stepName);
     }
 
+    /** Returns the {@link TestOperation} for the given operation name, or null if not found. */
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
         return op != null ? new TestOperation(op, serDes) : null;
@@ -253,27 +282,27 @@ public class LocalDurableTestRunner<I, O> {
         storage.timeoutCallback(callbackId);
     }
 
-    // Manual time advancement for skipTime=false scenarios
+    /** Advances all pending operations, simulating time passing for retries and waits. */
     public void advanceTime() {
         storage.advanceReadyOperations();
     }
 
-    // Manual complete a chained invoke call
+    /** Completes a chained invoke operation with a successful result. */
     public void completeChainedInvoke(String name, String result) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.SUCCEEDED, result, null));
     }
 
-    // Manual mark a chained invoke call TIMEOUT
+    /** Marks a chained invoke operation as timed out. */
     public void timeoutChainedInvoke(String name) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.TIMED_OUT, null, null));
     }
 
-    // Manual fail a chained invoke call
+    /** Fails a chained invoke operation with the given error. */
     public void failChainedInvoke(String name, ErrorObject error) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.FAILED, null, error));
     }
 
-    // Manual stop a chained invoke call
+    /** Stops a chained invoke operation with the given error. */
     public void stopChainedInvoke(String name, ErrorObject error) {
         storage.completeChainedInvoke(name, new OperationResult(OperationStatus.STOPPED, null, error));
     }

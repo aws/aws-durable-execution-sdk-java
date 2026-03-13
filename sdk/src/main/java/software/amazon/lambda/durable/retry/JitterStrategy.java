@@ -40,5 +40,11 @@ public enum JitterStrategy {
         }
     };
 
+    /**
+     * Applies jitter to the given base delay.
+     *
+     * @param baseDelay the calculated delay before jitter
+     * @return the delay after applying jitter
+     */
     public abstract double apply(double baseDelay);
 }

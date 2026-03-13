@@ -17,6 +17,12 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.NoopSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * Durable operation that suspends execution for a specified duration without consuming compute.
+ *
+ * <p>The wait is checkpointed and the Lambda is suspended. On re-invocation after the wait period, execution resumes
+ * from where it left off.
+ */
 public class WaitOperation extends BaseDurableOperation<Void> {
 
     private static final Logger logger = LoggerFactory.getLogger(WaitOperation.class);

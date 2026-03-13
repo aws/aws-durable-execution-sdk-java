@@ -34,6 +34,7 @@ public class JacksonSerDes implements SerDes {
     private final TypeFactory typeFactory;
     private final Map<Type, JavaType> typeCache;
 
+    /** Creates a new JacksonSerDes with default ObjectMapper configuration. */
     public JacksonSerDes() {
         this.mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

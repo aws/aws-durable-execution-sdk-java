@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
 
+/** Base exception for chained invoke operation failures. */
 public class InvokeException extends DurableOperationException {
     public InvokeException(Operation operation) {
         super(
