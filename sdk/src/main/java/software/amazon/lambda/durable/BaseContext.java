@@ -20,7 +20,16 @@ public abstract class BaseContext implements AutoCloseable {
 
     private boolean isReplaying;
 
-    /** Creates a new BaseContext instance. */
+    /**
+     * Creates a new BaseContext instance.
+     *
+     * @param executionManager the execution manager for thread coordination and state management
+     * @param durableConfig the durable execution configuration
+     * @param lambdaContext the AWS Lambda runtime context
+     * @param contextId the context ID, null for root context, set for child contexts
+     * @param contextName the human-readable name for this context
+     * @param threadType the type of thread this context runs on
+     */
     protected BaseContext(
             ExecutionManager executionManager,
             DurableConfig durableConfig,

@@ -36,7 +36,7 @@ public class CallbackConfig {
         return heartbeatTimeout;
     }
 
-    /** @return the custom serializer for this callback, or null if not specified (uses default SerDes) */
+    /** Returns the custom serializer for this callback, or null if not specified (uses default SerDes). */
     public SerDes serDes() {
         return serDes;
     }

@@ -23,17 +23,17 @@ public class StepConfig {
         this.serDes = builder.serDes;
     }
 
-    /** @return the retry strategy for this step, or NO_RETRY if not specified */
+    /** Returns the retry strategy for this step, or the default strategy if not specified. */
     public RetryStrategy retryStrategy() {
         return retryStrategy != null ? retryStrategy : RetryStrategies.Presets.DEFAULT;
     }
 
-    /** @return the delivery semantics for this step, defaults to AT_LEAST_ONCE_PER_RETRY if not specified */
+    /** Returns the delivery semantics for this step, defaults to AT_LEAST_ONCE_PER_RETRY if not specified. */
     public StepSemantics semantics() {
         return semantics != null ? semantics : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
     }
 
-    /** @return the custom serializer for this step, or null if not specified (uses default SerDes) */
+    /** Returns the custom serializer for this step, or null if not specified (uses default SerDes). */
     public SerDes serDes() {
         return serDes;
     }
