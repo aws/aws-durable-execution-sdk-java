@@ -2,32 +2,43 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
+/**
+ * Configuration for the {@code waitForCallback} composite operation.
+ *
+ * &lt;p&gt;Combines a {@link StepConfig} (for the step that produces the callback) and a {@link CallbackConfig} (for the
+ * callback wait itself).
+ */
 public class WaitForCallbackConfig {
     private final StepConfig stepConfig;
     private final CallbackConfig callbackConfig;
 
-<span class="fc" id="L9">    private WaitForCallbackConfig(Builder builder) {</span>
-<span class="fc bfc" id="L10" title="All 2 branches covered.">        this.stepConfig = builder.stepConfig == null ? StepConfig.builder().build() : builder.stepConfig;</span>
-<span class="fc" id="L11">        this.callbackConfig =</span>
-<span class="fc bfc" id="L12" title="All 2 branches covered.">                builder.callbackConfig == null ? CallbackConfig.builder().build() : builder.callbackConfig;</span>
-<span class="fc" id="L13">    }</span>
+<span class="fc" id="L15">    private WaitForCallbackConfig(Builder builder) {</span>
+<span class="fc bfc" id="L16" title="All 2 branches covered.">        this.stepConfig = builder.stepConfig == null ? StepConfig.builder().build() : builder.stepConfig;</span>
+<span class="fc" id="L17">        this.callbackConfig =</span>
+<span class="fc bfc" id="L18" title="All 2 branches covered.">                builder.callbackConfig == null ? CallbackConfig.builder().build() : builder.callbackConfig;</span>
+<span class="fc" id="L19">    }</span>
 
+    /** Returns the step configuration for the composite operation. */
     public StepConfig stepConfig() {
-<span class="fc" id="L16">        return stepConfig;</span>
+<span class="fc" id="L23">        return stepConfig;</span>
     }
 
+    /** Returns the callback configuration for the composite operation. */
     public CallbackConfig callbackConfig() {
-<span class="fc" id="L20">        return callbackConfig;</span>
+<span class="fc" id="L28">        return callbackConfig;</span>
     }
 
+    /** Creates a new builder. */
     public static Builder builder() {
-<span class="fc" id="L24">        return new Builder();</span>
+<span class="fc" id="L33">        return new Builder();</span>
     }
 
+    /** Creates a builder pre-populated with this instance's values. */
     public Builder toBuilder() {
-<span class="fc" id="L28">        return new Builder().stepConfig(this.stepConfig).callbackConfig(this.callbackConfig);</span>
+<span class="fc" id="L38">        return new Builder().stepConfig(this.stepConfig).callbackConfig(this.callbackConfig);</span>
     }
 
+    /** Builder for {@link WaitForCallbackConfig}. */
     public static class Builder {
         private StepConfig stepConfig;
         private CallbackConfig callbackConfig;
@@ -35,17 +46,17 @@ public class WaitForCallbackConfig {
         private Builder() {}
 
         public Builder stepConfig(StepConfig stepConfig) {
-<span class="fc" id="L38">            this.stepConfig = stepConfig;</span>
-<span class="fc" id="L39">            return this;</span>
+<span class="fc" id="L49">            this.stepConfig = stepConfig;</span>
+<span class="fc" id="L50">            return this;</span>
         }
 
         public Builder callbackConfig(CallbackConfig callbackConfig) {
-<span class="fc" id="L43">            this.callbackConfig = callbackConfig;</span>
-<span class="fc" id="L44">            return this;</span>
+<span class="fc" id="L54">            this.callbackConfig = callbackConfig;</span>
+<span class="fc" id="L55">            return this;</span>
         }
 
         public WaitForCallbackConfig build() {
-<span class="fc" id="L48">            return new WaitForCallbackConfig(this);</span>
+<span class="fc" id="L59">            return new WaitForCallbackConfig(this);</span>
         }
     }
 }

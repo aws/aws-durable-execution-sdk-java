@@ -34,38 +34,39 @@ public class JacksonSerDes implements SerDes {
     private final TypeFactory typeFactory;
     private final Map&lt;Type, JavaType&gt; typeCache;
 
-<span class="fc" id="L37">    public JacksonSerDes() {</span>
-<span class="fc" id="L38">        this.mapper = new ObjectMapper()</span>
-<span class="fc" id="L39">                .registerModule(new JavaTimeModule())</span>
-<span class="fc" id="L40">                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)</span>
-<span class="fc" id="L41">                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);</span>
-<span class="fc" id="L42">        this.typeFactory = mapper.getTypeFactory();</span>
-<span class="fc" id="L43">        this.typeCache = new ConcurrentHashMap&lt;&gt;();</span>
-<span class="fc" id="L44">    }</span>
+    /** Creates a new JacksonSerDes with default ObjectMapper configuration. */
+<span class="fc" id="L38">    public JacksonSerDes() {</span>
+<span class="fc" id="L39">        this.mapper = new ObjectMapper()</span>
+<span class="fc" id="L40">                .registerModule(new JavaTimeModule())</span>
+<span class="fc" id="L41">                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)</span>
+<span class="fc" id="L42">                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);</span>
+<span class="fc" id="L43">        this.typeFactory = mapper.getTypeFactory();</span>
+<span class="fc" id="L44">        this.typeCache = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L45">    }</span>
 
     @Override
     public String serialize(Object value) {
-<span class="fc bfc" id="L48" title="All 2 branches covered.">        if (value == null) return null;</span>
+<span class="fc bfc" id="L49" title="All 2 branches covered.">        if (value == null) return null;</span>
         try {
-<span class="fc" id="L50">            return mapper.writeValueAsString(value);</span>
-<span class="fc" id="L51">        } catch (Exception e) {</span>
-<span class="fc" id="L52">            throw new SerDesException(</span>
-<span class="fc" id="L53">                    &quot;Serialization failed for type: &quot; + value.getClass().getName(), e);</span>
+<span class="fc" id="L51">            return mapper.writeValueAsString(value);</span>
+<span class="fc" id="L52">        } catch (Exception e) {</span>
+<span class="fc" id="L53">            throw new SerDesException(</span>
+<span class="fc" id="L54">                    &quot;Serialization failed for type: &quot; + value.getClass().getName(), e);</span>
         }
     }
 
     @Override
     public &lt;T&gt; T deserialize(String data, TypeToken&lt;T&gt; typeToken) {
-<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (data == null) return null;</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        if (data == null) return null;</span>
 
         try {
             // Convert TypeToken to Jackson's JavaType using TypeFactory
             // Cache to avoid repeated reflection overhead
-<span class="fc" id="L64">            JavaType javaType = typeCache.computeIfAbsent(typeToken.getType(), type -&gt; typeFactory.constructType(type));</span>
-<span class="fc" id="L65">            return mapper.readValue(data, javaType);</span>
-<span class="fc" id="L66">        } catch (Exception e) {</span>
-<span class="fc" id="L67">            throw new SerDesException(</span>
-<span class="fc" id="L68">                    &quot;Deserialization failed for type: &quot; + typeToken.getType().getTypeName(), e);</span>
+<span class="fc" id="L65">            JavaType javaType = typeCache.computeIfAbsent(typeToken.getType(), type -&gt; typeFactory.constructType(type));</span>
+<span class="fc" id="L66">            return mapper.readValue(data, javaType);</span>
+<span class="fc" id="L67">        } catch (Exception e) {</span>
+<span class="fc" id="L68">            throw new SerDesException(</span>
+<span class="fc" id="L69">                    &quot;Deserialization failed for type: &quot; + typeToken.getType().getTypeName(), e);</span>
         }
     }
 }

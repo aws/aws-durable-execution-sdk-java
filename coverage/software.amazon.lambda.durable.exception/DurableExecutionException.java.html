@@ -2,20 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.exception;
 
+/** Base exception for all durable execution errors. */
 public class DurableExecutionException extends RuntimeException {
     public DurableExecutionException(String message, Throwable cause, StackTraceElement[] stackTrace) {
-<span class="fc" id="L7">        super(message, cause);</span>
-<span class="fc bfc" id="L8" title="All 2 branches covered.">        if (stackTrace != null) {</span>
-<span class="fc" id="L9">            this.setStackTrace(stackTrace);</span>
+<span class="fc" id="L8">        super(message, cause);</span>
+<span class="fc bfc" id="L9" title="All 2 branches covered.">        if (stackTrace != null) {</span>
+<span class="fc" id="L10">            this.setStackTrace(stackTrace);</span>
         }
-<span class="fc" id="L11">    }</span>
+<span class="fc" id="L12">    }</span>
 
     public DurableExecutionException(String message, Throwable cause) {
-<span class="fc" id="L14">        this(message, cause, null);</span>
-<span class="fc" id="L15">    }</span>
+<span class="fc" id="L15">        this(message, cause, null);</span>
+<span class="fc" id="L16">    }</span>
 
     public DurableExecutionException(String message) {
-<span class="fc" id="L18">        this(message, null, null);</span>
-<span class="fc" id="L19">    }</span>
+<span class="fc" id="L19">        this(message, null, null);</span>
+<span class="fc" id="L20">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

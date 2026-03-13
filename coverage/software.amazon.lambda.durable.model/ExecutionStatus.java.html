@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.model;
 
-<span class="fc" id="L5">public enum ExecutionStatus {</span>
-<span class="fc" id="L6">    SUCCEEDED,</span>
-<span class="fc" id="L7">    FAILED,</span>
-<span class="fc" id="L8">    PENDING;</span>
+/** Terminal status of a durable execution. */
+<span class="fc" id="L6">public enum ExecutionStatus {</span>
+<span class="fc" id="L7">    SUCCEEDED,</span>
+<span class="fc" id="L8">    FAILED,</span>
+<span class="fc" id="L9">    PENDING;</span>
 
     @Override
     public String toString() {
-<span class="fc" id="L12">        return name();</span>
+<span class="fc" id="L13">        return name();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

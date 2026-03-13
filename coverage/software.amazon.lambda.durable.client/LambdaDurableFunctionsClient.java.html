@@ -11,6 +11,12 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 
+/**
+ * Default implementation of {@link DurableExecutionClient} backed by the AWS Lambda SDK client.
+ *
+ * &lt;p&gt;Translates SDK-level checkpoint and state-retrieval calls into the corresponding {@link LambdaClient} API
+ * requests.
+ */
 public class LambdaDurableFunctionsClient implements DurableExecutionClient {
 
     private final LambdaClient lambdaClient;
@@ -21,30 +27,30 @@ public class LambdaDurableFunctionsClient implements DurableExecutionClient {
      * @param lambdaClient LambdaClient instance to use for backend communication
      * @throws NullPointerException if lambdaClient is null
      */
-<span class="fc" id="L24">    public LambdaDurableFunctionsClient(LambdaClient lambdaClient) {</span>
-<span class="fc" id="L25">        this.lambdaClient = Objects.requireNonNull(lambdaClient, &quot;LambdaClient cannot be null&quot;);</span>
-<span class="fc" id="L26">    }</span>
+<span class="fc" id="L30">    public LambdaDurableFunctionsClient(LambdaClient lambdaClient) {</span>
+<span class="fc" id="L31">        this.lambdaClient = Objects.requireNonNull(lambdaClient, &quot;LambdaClient cannot be null&quot;);</span>
+<span class="fc" id="L32">    }</span>
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List&lt;OperationUpdate&gt; updates) {
-<span class="nc" id="L30">        var request = CheckpointDurableExecutionRequest.builder()</span>
-<span class="nc" id="L31">                .durableExecutionArn(arn)</span>
-<span class="nc" id="L32">                .checkpointToken(token)</span>
-<span class="nc" id="L33">                .updates(updates)</span>
-<span class="nc" id="L34">                .build();</span>
+<span class="nc" id="L36">        var request = CheckpointDurableExecutionRequest.builder()</span>
+<span class="nc" id="L37">                .durableExecutionArn(arn)</span>
+<span class="nc" id="L38">                .checkpointToken(token)</span>
+<span class="nc" id="L39">                .updates(updates)</span>
+<span class="nc" id="L40">                .build();</span>
 
-<span class="nc" id="L36">        return lambdaClient.checkpointDurableExecution(request);</span>
+<span class="nc" id="L42">        return lambdaClient.checkpointDurableExecution(request);</span>
     }
 
     @Override
     public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
-<span class="nc" id="L41">        var request = GetDurableExecutionStateRequest.builder()</span>
-<span class="nc" id="L42">                .durableExecutionArn(arn)</span>
-<span class="nc" id="L43">                .checkpointToken(checkpointToken)</span>
-<span class="nc" id="L44">                .marker(marker)</span>
-<span class="nc" id="L45">                .build();</span>
+<span class="nc" id="L47">        var request = GetDurableExecutionStateRequest.builder()</span>
+<span class="nc" id="L48">                .durableExecutionArn(arn)</span>
+<span class="nc" id="L49">                .checkpointToken(checkpointToken)</span>
+<span class="nc" id="L50">                .marker(marker)</span>
+<span class="nc" id="L51">                .build();</span>
 
-<span class="nc" id="L47">        return lambdaClient.getDurableExecutionState(request);</span>
+<span class="nc" id="L53">        return lambdaClient.getDurableExecutionState(request);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

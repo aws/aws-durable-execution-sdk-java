@@ -72,7 +72,7 @@ public abstract class BaseDurableOperation&lt;T&gt; implements DurableFuture&lt;
 <span class="fc" id="L72">        executionManager.registerOperation(this);</span>
 <span class="fc" id="L73">    }</span>
 
-    /** Gets the operation identifier containing id, name, type, and subType. */
+    /** Gets the operation sub-type (e.g. RUN_IN_CHILD_CONTEXT, WAIT_FOR_CALLBACK). */
     public OperationSubType getSubType() {
 <span class="fc" id="L77">        return operationIdentifier.subType();</span>
     }
@@ -82,7 +82,7 @@ public abstract class BaseDurableOperation&lt;T&gt; implements DurableFuture&lt;
 <span class="fc" id="L82">        return operationIdentifier.operationId();</span>
     }
 
-    /** Gets the operation name (maybe null). */
+    /** Gets the operation name (may be null). */
     public String getName() {
 <span class="fc" id="L87">        return operationIdentifier.name();</span>
     }

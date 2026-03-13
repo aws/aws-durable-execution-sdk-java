@@ -8,6 +8,12 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
+/**
+ * Context available inside a step operation's user function.
+ *
+ * &lt;p&gt;Provides access to the current retry attempt number and a logger that includes execution metadata. Extends
+ * {@link BaseContext} for thread lifecycle management.
+ */
 public class StepContext extends BaseContext {
     private volatile DurableLogger logger;
     private final int attempt;
@@ -19,6 +25,8 @@ public class StepContext extends BaseContext {
      * @param durableConfig Configuration for durable execution behavior
      * @param lambdaContext AWS Lambda runtime context
      * @param stepOperationId Unique identifier for this context instance that equals to step operation id
+     * @param stepOperationName the name of the step operation
+     * @param attempt the current retry attempt number (1-based)
      */
     protected StepContext(
             ExecutionManager executionManager,
@@ -27,35 +35,35 @@ public class StepContext extends BaseContext {
             String stepOperationId,
             String stepOperationName,
             int attempt) {
-<span class="fc" id="L30">        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName, ThreadType.STEP);</span>
-<span class="fc" id="L31">        this.attempt = attempt;</span>
-<span class="fc" id="L32">    }</span>
+<span class="fc" id="L38">        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName, ThreadType.STEP);</span>
+<span class="fc" id="L39">        this.attempt = attempt;</span>
+<span class="fc" id="L40">    }</span>
 
-    /** @return the current attempt */
+    /** Returns the current retry attempt number (1-based). */
     public int getAttempt() {
-<span class="fc" id="L36">        return attempt;</span>
+<span class="fc" id="L44">        return attempt;</span>
     }
 
     @Override
     public DurableLogger getLogger() {
         // lazy initialize logger
-<span class="nc bnc" id="L42" title="All 2 branches missed.">        if (logger == null) {</span>
-<span class="nc" id="L43">            synchronized (this) {</span>
-<span class="nc bnc" id="L44" title="All 2 branches missed.">                if (logger == null) {</span>
-<span class="nc" id="L45">                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);</span>
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (logger == null) {</span>
+<span class="nc" id="L51">            synchronized (this) {</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">                if (logger == null) {</span>
+<span class="nc" id="L53">                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);</span>
                 }
-<span class="nc" id="L47">            }</span>
+<span class="nc" id="L55">            }</span>
         }
-<span class="nc" id="L49">        return logger;</span>
+<span class="nc" id="L57">        return logger;</span>
     }
 
     /** Closes the logger for this context. */
     @Override
     public void close() {
-<span class="pc bpc" id="L55" title="1 of 2 branches missed.">        if (logger != null) {</span>
-<span class="nc" id="L56">            logger.close();</span>
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        if (logger != null) {</span>
+<span class="nc" id="L64">            logger.close();</span>
         }
-<span class="fc" id="L58">        super.close();</span>
-<span class="fc" id="L59">    }</span>
+<span class="fc" id="L66">        super.close();</span>
+<span class="fc" id="L67">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -4,20 +4,22 @@ package software.amazon.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
 
+/** Thrown when a callback operation encounters an error. */
 public class CallbackException extends DurableOperationException {
     private final String callbackId;
 
     public CallbackException(Operation operation, String message) {
-<span class="fc" id="L11">        this(operation, message, null);</span>
-<span class="fc" id="L12">    }</span>
+<span class="fc" id="L12">        this(operation, message, null);</span>
+<span class="fc" id="L13">    }</span>
 
     public CallbackException(Operation operation, String message, Throwable cause) {
-<span class="fc" id="L15">        super(operation, operation.callbackDetails().error(), message, cause);</span>
-<span class="fc" id="L16">        this.callbackId = operation.callbackDetails().callbackId();</span>
-<span class="fc" id="L17">    }</span>
+<span class="fc" id="L16">        super(operation, operation.callbackDetails().error(), message, cause);</span>
+<span class="fc" id="L17">        this.callbackId = operation.callbackDetails().callbackId();</span>
+<span class="fc" id="L18">    }</span>
 
+    /** Returns the callback ID associated with this exception. */
     public String getCallbackId() {
-<span class="fc" id="L20">        return callbackId;</span>
+<span class="fc" id="L22">        return callbackId;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

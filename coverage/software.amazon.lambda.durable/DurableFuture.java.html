@@ -5,6 +5,14 @@ package software.amazon.lambda.durable;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * A future representing the result of an asynchronous durable operation.
+ *
+ * &lt;p&gt;Calling {@link #get()} blocks the current thread until the operation completes, which may involve suspension and
+ * replay across Lambda invocations.
+ *
+ * @param &lt;T&gt; the result type
+ */
 public interface DurableFuture&lt;T&gt; {
     /**
      * Blocks until the operation completes and returns the result.
@@ -28,7 +36,7 @@ public interface DurableFuture&lt;T&gt; {
      */
     @SafeVarargs
     static &lt;T&gt; List&lt;T&gt; allOf(DurableFuture&lt;T&gt;... futures) {
-<span class="fc" id="L31">        return Arrays.stream(futures).map(DurableFuture::get).toList();</span>
+<span class="fc" id="L39">        return Arrays.stream(futures).map(DurableFuture::get).toList();</span>
     }
 
     /**
@@ -42,7 +50,7 @@ public interface DurableFuture&lt;T&gt; {
      * @return a list of results in the same order as the input futures
      */
     static &lt;T&gt; List&lt;T&gt; allOf(List&lt;DurableFuture&lt;T&gt;&gt; futures) {
-<span class="fc" id="L45">        return futures.stream().map(DurableFuture::get).toList();</span>
+<span class="fc" id="L53">        return futures.stream().map(DurableFuture::get).toList();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

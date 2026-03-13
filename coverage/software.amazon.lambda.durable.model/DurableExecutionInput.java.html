@@ -4,6 +4,13 @@ package software.amazon.lambda.durable.model;
 
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 
-<span class="fc" id="L7">public record DurableExecutionInput(</span>
+/**
+ * Input payload received by the Lambda handler from the Durable Functions backend.
+ *
+ * @param durableExecutionArn ARN identifying this durable execution
+ * @param checkpointToken token used to authenticate checkpoint API calls
+ * @param initialExecutionState snapshot of operations already completed in previous invocations
+ */
+<span class="fc" id="L14">public record DurableExecutionInput(</span>
         String durableExecutionArn, String checkpointToken, CheckpointUpdatedExecutionState initialExecutionState) {}
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

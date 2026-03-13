@@ -4,35 +4,40 @@ package software.amazon.lambda.durable;
 
 import software.amazon.lambda.durable.serde.SerDes;
 
+/**
+ * Configuration for chained invoke operations.
+ *
+ * &lt;p&gt;Controls serialization of the invoke payload and result, and optionally specifies a tenant ID.
+ */
 public class InvokeConfig {
     private final SerDes payloadSerDes;
     private final SerDes resultSerDes;
     private final String tenantId;
 
-<span class="fc" id="L12">    public InvokeConfig(Builder builder) {</span>
-<span class="fc" id="L13">        this.payloadSerDes = builder.payloadSerDes;</span>
-<span class="fc" id="L14">        this.resultSerDes = builder.resultSerDes;</span>
-<span class="fc" id="L15">        this.tenantId = builder.tenantId;</span>
-<span class="fc" id="L16">    }</span>
+<span class="fc" id="L17">    public InvokeConfig(Builder builder) {</span>
+<span class="fc" id="L18">        this.payloadSerDes = builder.payloadSerDes;</span>
+<span class="fc" id="L19">        this.resultSerDes = builder.resultSerDes;</span>
+<span class="fc" id="L20">        this.tenantId = builder.tenantId;</span>
+<span class="fc" id="L21">    }</span>
 
     public SerDes payloadSerDes() {
-<span class="fc" id="L19">        return this.payloadSerDes;</span>
+<span class="fc" id="L24">        return this.payloadSerDes;</span>
     }
 
     public SerDes serDes() {
-<span class="fc" id="L23">        return this.resultSerDes;</span>
+<span class="fc" id="L28">        return this.resultSerDes;</span>
     }
 
     public String tenantId() {
-<span class="nc" id="L27">        return tenantId;</span>
+<span class="nc" id="L32">        return tenantId;</span>
     }
 
     public static Builder builder() {
-<span class="fc" id="L31">        return new Builder(null, null, null);</span>
+<span class="fc" id="L36">        return new Builder(null, null, null);</span>
     }
 
     public Builder toBuilder() {
-<span class="nc" id="L35">        return new Builder(payloadSerDes, resultSerDes, tenantId);</span>
+<span class="nc" id="L40">        return new Builder(payloadSerDes, resultSerDes, tenantId);</span>
     }
 
     /** Builder for creating InvokeConfig instances. */
@@ -41,15 +46,15 @@ public class InvokeConfig {
         private SerDes resultSerDes;
         private String tenantId;
 
-<span class="fc" id="L44">        private Builder(SerDes payloadSerDes, SerDes resultSerDes, String tenantId) {</span>
-<span class="fc" id="L45">            this.payloadSerDes = payloadSerDes;</span>
-<span class="fc" id="L46">            this.resultSerDes = resultSerDes;</span>
-<span class="fc" id="L47">            this.tenantId = tenantId;</span>
-<span class="fc" id="L48">        }</span>
+<span class="fc" id="L49">        private Builder(SerDes payloadSerDes, SerDes resultSerDes, String tenantId) {</span>
+<span class="fc" id="L50">            this.payloadSerDes = payloadSerDes;</span>
+<span class="fc" id="L51">            this.resultSerDes = resultSerDes;</span>
+<span class="fc" id="L52">            this.tenantId = tenantId;</span>
+<span class="fc" id="L53">        }</span>
 
         public Builder tenantId(String tenantId) {
-<span class="nc" id="L51">            this.tenantId = tenantId;</span>
-<span class="nc" id="L52">            return this;</span>
+<span class="nc" id="L56">            this.tenantId = tenantId;</span>
+<span class="nc" id="L57">            return this;</span>
         }
 
         /**
@@ -63,23 +68,23 @@ public class InvokeConfig {
          * @return this builder for method chaining
          */
         public Builder payloadSerDes(SerDes payloadSerDes) {
-<span class="nc" id="L66">            this.payloadSerDes = payloadSerDes;</span>
-<span class="nc" id="L67">            return this;</span>
+<span class="nc" id="L71">            this.payloadSerDes = payloadSerDes;</span>
+<span class="nc" id="L72">            return this;</span>
         }
 
         /**
-         * Sets a custom serializer for the step.
+         * Sets a custom serializer for the invoke result.
          *
-         * &lt;p&gt;If not specified, the step will use the default SerDes configured for the handler. This allows per-step
-         * customization of serialization behavior, useful for steps that need special handling (e.g., custom date
-         * formats, encryption, compression).
+         * &lt;p&gt;If not specified, the invoke will use the default SerDes configured for the handler. This allows
+         * per-invoke customization of serialization behavior, useful for invoke operations that need special handling
+         * (e.g., custom date formats, encryption, compression).
          *
          * @param resultSerDes the custom serializer to use, or null to use the default
          * @return this builder for method chaining
          */
         public Builder serDes(SerDes resultSerDes) {
-<span class="fc" id="L81">            this.resultSerDes = resultSerDes;</span>
-<span class="fc" id="L82">            return this;</span>
+<span class="fc" id="L86">            this.resultSerDes = resultSerDes;</span>
+<span class="fc" id="L87">            return this;</span>
         }
 
         /**
@@ -88,7 +93,7 @@ public class InvokeConfig {
          * @return a new InvokeConfig with the configured options
          */
         public InvokeConfig build() {
-<span class="fc" id="L91">            return new InvokeConfig(this);</span>
+<span class="fc" id="L96">            return new InvokeConfig(this);</span>
         }
     }
 }

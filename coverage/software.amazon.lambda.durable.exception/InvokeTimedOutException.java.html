@@ -4,10 +4,11 @@ package software.amazon.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
 
+/** Thrown when a chained invoke operation exceeds its timeout. */
 public class InvokeTimedOutException extends InvokeException {
 
     public InvokeTimedOutException(Operation operation) {
-<span class="fc" id="L10">        super(operation);</span>
-<span class="fc" id="L11">    }</span>
+<span class="fc" id="L11">        super(operation);</span>
+<span class="fc" id="L12">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

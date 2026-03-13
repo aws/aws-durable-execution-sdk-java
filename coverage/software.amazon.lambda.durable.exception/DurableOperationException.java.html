@@ -7,27 +7,28 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
+/** Exception associated with a specific durable operation, carrying the operation and error details. */
 public class DurableOperationException extends DurableExecutionException {
     private final Operation operation;
     private final ErrorObject errorObject;
 
     public DurableOperationException(Operation operation, ErrorObject errorObject) {
-<span class="fc bfc" id="L15" title="All 2 branches covered.">        this(operation, errorObject, errorObject != null ? errorObject.errorMessage() : null);</span>
-<span class="fc" id="L16">    }</span>
+<span class="fc bfc" id="L16" title="All 2 branches covered.">        this(operation, errorObject, errorObject != null ? errorObject.errorMessage() : null);</span>
+<span class="fc" id="L17">    }</span>
 
     public DurableOperationException(Operation operation, ErrorObject errorObject, String errorMessage) {
-<span class="fc" id="L19">        this(operation, errorObject, errorMessage, null);</span>
-<span class="fc" id="L20">    }</span>
+<span class="fc" id="L20">        this(operation, errorObject, errorMessage, null);</span>
+<span class="fc" id="L21">    }</span>
 
     public DurableOperationException(
             Operation operation, ErrorObject errorObject, String errorMessage, Throwable cause) {
-<span class="fc" id="L24">        this(</span>
+<span class="fc" id="L25">        this(</span>
                 operation,
                 errorObject,
                 errorMessage,
-<span class="fc bfc" id="L28" title="All 2 branches covered.">                errorObject != null ? ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()) : null,</span>
+<span class="fc bfc" id="L29" title="All 2 branches covered.">                errorObject != null ? ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()) : null,</span>
                 cause);
-<span class="fc" id="L30">    }</span>
+<span class="fc" id="L31">    }</span>
 
     public DurableOperationException(
             Operation operation,
@@ -35,25 +36,29 @@ public class DurableOperationException extends DurableExecutionException {
             String errorMessage,
             StackTraceElement[] stackTrace,
             Throwable cause) {
-<span class="fc" id="L38">        super(errorMessage, cause, stackTrace);</span>
-<span class="fc" id="L39">        this.operation = operation;</span>
-<span class="fc" id="L40">        this.errorObject = errorObject;</span>
-<span class="fc" id="L41">    }</span>
+<span class="fc" id="L39">        super(errorMessage, cause, stackTrace);</span>
+<span class="fc" id="L40">        this.operation = operation;</span>
+<span class="fc" id="L41">        this.errorObject = errorObject;</span>
+<span class="fc" id="L42">    }</span>
 
+    /** Returns the error details from the failed operation. */
     public ErrorObject getErrorObject() {
-<span class="fc" id="L44">        return errorObject;</span>
+<span class="fc" id="L46">        return errorObject;</span>
     }
 
+    /** Returns the operation that caused this exception. */
     public Operation getOperation() {
-<span class="fc" id="L48">        return operation;</span>
+<span class="fc" id="L51">        return operation;</span>
     }
 
+    /** Returns the status of the operation that caused this exception. */
     public OperationStatus getOperationStatus() {
-<span class="fc" id="L52">        return operation.status();</span>
+<span class="fc" id="L56">        return operation.status();</span>
     }
 
+    /** Returns the ID of the operation that caused this exception. */
     public String getOperationId() {
-<span class="fc" id="L56">        return operation.id();</span>
+<span class="fc" id="L61">        return operation.id();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
