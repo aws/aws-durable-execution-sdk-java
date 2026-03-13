@@ -60,9 +60,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     @Override
     protected void start() {
         // First execution: fire-and-forget START checkpoint, then run
-        sendOperationUpdateAsync(OperationUpdate.builder()
-                .action(OperationAction.START)
-                .subType(getSubType().getValue()));
+        sendOperationUpdateAsync(OperationUpdate.builder().action(OperationAction.START));
         executeChildContext();
     }
 
@@ -139,17 +137,14 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
 
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
-            sendOperationUpdate(OperationUpdate.builder()
-                    .action(OperationAction.SUCCEED)
-                    .subType(getSubType().getValue())
-                    .payload(serialized));
+            sendOperationUpdate(
+                    OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));
         } else {
             // Large result: checkpoint with empty payload + ReplayChildren flag.
             // Store the result so get() can return it directly without deserializing the empty payload.
             this.reconstructedResult = result;
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .subType(getSubType().getValue())
                     .payload("")
                     .contextOptions(
                             ContextOptions.builder().replayChildren(true).build()));
@@ -173,10 +168,8 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             errorObject = serializeException(exception);
         }
 
-        sendOperationUpdate(OperationUpdate.builder()
-                .action(OperationAction.FAIL)
-                .subType(getSubType().getValue())
-                .error(errorObject));
+        sendOperationUpdate(
+                OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));
     }
 
     @Override
