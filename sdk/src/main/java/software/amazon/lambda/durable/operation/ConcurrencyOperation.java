@@ -29,7 +29,8 @@ import software.amazon.lambda.durable.serde.SerDes;
  * <ul>
  *   <li>Does NOT register its own thread — child context threads handle all suspension
  *   <li>Uses a pending queue + running counter for concurrency control
- *   <li>Completion is determined by {@code minSuccessful}, {@code failureRateThreshold} and {@code toleratedFailureCount}
+ *   <li>Completion is determined by {@code minSuccessful}, {@code failureRateThreshold} and
+ *       {@code toleratedFailureCount}
  *   <li>When a child suspends, the running count is NOT decremented
  * </ul>
  *
