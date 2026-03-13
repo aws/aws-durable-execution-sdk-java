@@ -56,7 +56,7 @@ class ChildContextOperationTest {
 
     private ChildContextOperation<String> createOperation(Function<DurableContext, String> func) {
         return new ChildContextOperation<>(
-                OPERATION_IDENTIFIER, func, TypeToken.get(String.class), SERDES, durableContext);
+                OPERATION_IDENTIFIER, func, TypeToken.get(String.class), SERDES, durableContext, null);
     }
 
     // ===== SUCCEEDED replay =====

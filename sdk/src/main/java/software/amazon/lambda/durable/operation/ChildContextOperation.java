@@ -42,6 +42,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
     private final Function<DurableContext, T> function;
     private final ExecutorService userExecutor;
+    private final BaseConcurrentOperation<?> parentOperation;
     private boolean replayChildContext;
     private T reconstructedResult;
 
@@ -50,10 +51,12 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext) {
+            DurableContext durableContext,
+            BaseConcurrentOperation<?> parentOperation) {
         super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.function = function;
         this.userExecutor = getContext().getDurableConfig().getExecutorService();
+        this.parentOperation = parentOperation;
     }
 
     /** Starts the operation. */
@@ -115,6 +118,10 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                     handleChildContextSuccess(result);
                 } catch (Throwable e) {
                     handleChildContextFailure(e);
+                } finally {
+                    if (parentOperation != null) {
+                        parentOperation.onChildContextComplete(this);
+                    }
                 }
             }
         };
@@ -135,6 +142,9 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void checkpointSuccess(T result) {
+        if (parentOperation != null && parentOperation.isOperationCompleted()) {
+            return; // Already completed by parent operation
+        }
         var serialized = serializeResult(result);
         var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
 
@@ -164,6 +174,10 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         }
         if (exception instanceof UnrecoverableDurableExecutionException) {
             terminateExecution((UnrecoverableDurableExecutionException) exception);
+        }
+
+        if (parentOperation != null && parentOperation.isOperationCompleted()) {
+            return; // Already completed by parent operation
         }
 
         final ErrorObject errorObject;
@@ -207,6 +221,8 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                 case MAP -> throw new ChildContextFailedException(op);
                 case PARALLEL -> throw new ChildContextFailedException(op);
                 case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
+                case PARALLEL_BRANCH -> throw new ChildContextFailedException(op);
+                case MAP_ITERATION -> throw new ChildContextFailedException(op);
             };
         }
     }

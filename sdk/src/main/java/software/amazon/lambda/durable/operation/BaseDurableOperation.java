@@ -50,8 +50,8 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
 
     private final OperationIdentifier operationIdentifier;
     private final ExecutionManager executionManager;
-    private final TypeToken<T> resultTypeToken;
-    private final SerDes resultSerDes;
+    protected final TypeToken<T> resultTypeToken;
+    protected final SerDes resultSerDes;
     protected final CompletableFuture<Void> completionFuture;
     private final DurableContext durableContext;
 
@@ -266,6 +266,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         return executionManager.sendOperationUpdate(builder.id(getOperationId())
                 .name(getName())
                 .type(getType())
+                .subType(getSubType().getValue())
                 .parentId(durableContext.getContextId())
                 .build());
     }
