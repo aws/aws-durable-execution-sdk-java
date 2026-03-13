@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BatchResult.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.model</a> &gt; <span class="el_source">BatchResult.java</span></div><h1>BatchResult.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.model;
+
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * Result container for batch concurrent operations (map, parallel).
+ *
+ * &lt;p&gt;Holds ordered results and errors from a batch of concurrent operations. Each index corresponds to the input item
+ * at the same position. Includes the {@link CompletionReason} indicating why the operation completed.
+ *
+ * @param &lt;T&gt; the result type of each item
+ */
+public class BatchResult&lt;T&gt; {
+    private final List&lt;T&gt; results;
+    private final List&lt;Throwable&gt; errors;
+    private final CompletionReason completionReason;
+
+<span class="nc" id="L21">    public BatchResult(List&lt;T&gt; results, List&lt;Throwable&gt; errors, CompletionReason completionReason) {</span>
+<span class="nc" id="L22">        this.results = results;</span>
+<span class="nc" id="L23">        this.errors = errors;</span>
+<span class="nc" id="L24">        this.completionReason = completionReason;</span>
+<span class="nc" id="L25">    }</span>
+
+    /** Returns an empty BatchResult with no results and no errors. */
+    public static &lt;T&gt; BatchResult&lt;T&gt; empty() {
+<span class="nc" id="L29">        return new BatchResult&lt;&gt;(Collections.emptyList(), Collections.emptyList(), CompletionReason.ALL_COMPLETED);</span>
+    }
+
+    /** Returns the result at the given index, or null if that item failed. */
+    public T getResult(int index) {
+<span class="nc" id="L34">        return results.get(index);</span>
+    }
+
+    /** Returns the error at the given index, or null if that item succeeded. */
+    public Throwable getError(int index) {
+<span class="nc" id="L39">        return errors.get(index);</span>
+    }
+
+    /** Returns true if all items succeeded (no errors). */
+    public boolean allSucceeded() {
+<span class="nc bnc" id="L44" title="All 2 branches missed.">        return errors.stream().noneMatch(e -&gt; e != null);</span>
+    }
+
+    /** Returns the reason the operation completed. */
+    public CompletionReason completionReason() {
+<span class="nc" id="L49">        return completionReason;</span>
+    }
+
+    /** Returns all results as an unmodifiable list. */
+    public List&lt;T&gt; results() {
+<span class="nc" id="L54">        return Collections.unmodifiableList(results);</span>
+    }
+
+    /** Returns all errors as an unmodifiable list. */
+    public List&lt;Throwable&gt; errors() {
+<span class="nc" id="L59">        return Collections.unmodifiableList(errors);</span>
+    }
+
+    /** Returns the number of items in this batch. */
+    public int size() {
+<span class="nc" id="L64">        return results.size();</span>
+    }
+
+    /** Returns results that succeeded (non-null results). */
+    public List&lt;T&gt; succeeded() {
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        return results.stream().filter(r -&gt; r != null).toList();</span>
+    }
+
+    /** Returns errors that occurred (non-null errors). */
+    public List&lt;Throwable&gt; failed() {
+<span class="nc bnc" id="L74" title="All 2 branches missed.">        return errors.stream().filter(e -&gt; e != null).toList();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

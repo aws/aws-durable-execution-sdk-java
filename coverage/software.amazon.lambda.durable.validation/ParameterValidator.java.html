@@ -3,6 +3,13 @@
 package software.amazon.lambda.durable.validation;
 
 import java.time.Duration;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Utility class for validating input parameters in the Durable Execution SDK.
@@ -26,14 +33,14 @@ public final class ParameterValidator {
      * @throws IllegalArgumentException if duration is null or less than 1 second
      */
     public static void validateDuration(Duration duration, String parameterName) {
-<span class="fc bfc" id="L29" title="All 2 branches covered.">        if (duration == null) {</span>
-<span class="fc" id="L30">            throw new IllegalArgumentException(parameterName + &quot; cannot be null&quot;);</span>
+<span class="fc bfc" id="L36" title="All 2 branches covered.">        if (duration == null) {</span>
+<span class="fc" id="L37">            throw new IllegalArgumentException(parameterName + &quot; cannot be null&quot;);</span>
         }
-<span class="fc bfc" id="L32" title="All 2 branches covered.">        if (duration.toSeconds() &lt; MIN_DURATION_SECONDS) {</span>
-<span class="fc" id="L33">            throw new IllegalArgumentException(</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (duration.toSeconds() &lt; MIN_DURATION_SECONDS) {</span>
+<span class="fc" id="L40">            throw new IllegalArgumentException(</span>
                     parameterName + &quot; must be at least &quot; + MIN_DURATION_SECONDS + &quot; second, got: &quot; + duration);
         }
-<span class="fc" id="L36">    }</span>
+<span class="fc" id="L43">    }</span>
 
     /**
      * Validates that an optional duration (if provided) is at least 1 second.
@@ -43,11 +50,11 @@ public final class ParameterValidator {
      * @throws IllegalArgumentException if duration is non-null and less than 1 second
      */
     public static void validateOptionalDuration(Duration duration, String parameterName) {
-<span class="fc bfc" id="L46" title="All 4 branches covered.">        if (duration != null &amp;&amp; duration.toSeconds() &lt; MIN_DURATION_SECONDS) {</span>
-<span class="fc" id="L47">            throw new IllegalArgumentException(</span>
+<span class="fc bfc" id="L53" title="All 4 branches covered.">        if (duration != null &amp;&amp; duration.toSeconds() &lt; MIN_DURATION_SECONDS) {</span>
+<span class="fc" id="L54">            throw new IllegalArgumentException(</span>
                     parameterName + &quot; must be at least &quot; + MIN_DURATION_SECONDS + &quot; second, got: &quot; + duration);
         }
-<span class="fc" id="L50">    }</span>
+<span class="fc" id="L57">    }</span>
 
     /**
      * Validates that an integer value is positive (greater than 0).
@@ -57,13 +64,13 @@ public final class ParameterValidator {
      * @throws IllegalArgumentException if value is null or not positive
      */
     public static void validatePositiveInteger(Integer value, String parameterName) {
-<span class="fc bfc" id="L60" title="All 2 branches covered.">        if (value == null) {</span>
-<span class="fc" id="L61">            throw new IllegalArgumentException(parameterName + &quot; cannot be null&quot;);</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (value == null) {</span>
+<span class="fc" id="L68">            throw new IllegalArgumentException(parameterName + &quot; cannot be null&quot;);</span>
         }
-<span class="fc bfc" id="L63" title="All 2 branches covered.">        if (value &lt;= 0) {</span>
-<span class="fc" id="L64">            throw new IllegalArgumentException(parameterName + &quot; must be positive, got: &quot; + value);</span>
+<span class="fc bfc" id="L70" title="All 2 branches covered.">        if (value &lt;= 0) {</span>
+<span class="fc" id="L71">            throw new IllegalArgumentException(parameterName + &quot; must be positive, got: &quot; + value);</span>
         }
-<span class="fc" id="L66">    }</span>
+<span class="fc" id="L73">    }</span>
 
     /**
      * Validates that an optional integer value (if provided) is positive (greater than 0).
@@ -73,35 +80,62 @@ public final class ParameterValidator {
      * @throws IllegalArgumentException if value is non-null and not positive
      */
     public static void validateOptionalPositiveInteger(Integer value, String parameterName) {
-<span class="fc bfc" id="L76" title="All 4 branches covered.">        if (value != null &amp;&amp; value &lt;= 0) {</span>
-<span class="fc" id="L77">            throw new IllegalArgumentException(parameterName + &quot; must be positive, got: &quot; + value);</span>
+<span class="fc bfc" id="L83" title="All 4 branches covered.">        if (value != null &amp;&amp; value &lt;= 0) {</span>
+<span class="fc" id="L84">            throw new IllegalArgumentException(parameterName + &quot; must be positive, got: &quot; + value);</span>
         }
-<span class="fc" id="L79">    }</span>
+<span class="fc" id="L86">    }</span>
 
     public static void validateOperationName(String name) {
-<span class="fc" id="L82">        validateOperationName(name, MAX_OPERATION_NAME_LENGTH);</span>
-<span class="fc" id="L83">    }</span>
+<span class="fc" id="L89">        validateOperationName(name, MAX_OPERATION_NAME_LENGTH);</span>
+<span class="fc" id="L90">    }</span>
 
     public static void validateOperationName(String name, int maxLength) {
-<span class="fc bfc" id="L86" title="All 2 branches covered.">        if (name == null) {</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (name == null) {</span>
             // operation name is optional
-<span class="fc" id="L88">            return;</span>
+<span class="fc" id="L95">            return;</span>
         }
-<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (name.isEmpty()) {</span>
-<span class="fc" id="L91">            throw new IllegalArgumentException(&quot;Operation name cannot be empty&quot;);</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (name.isEmpty()) {</span>
+<span class="fc" id="L98">            throw new IllegalArgumentException(&quot;Operation name cannot be empty&quot;);</span>
         }
-<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (name.length() &gt; maxLength) {</span>
-<span class="fc" id="L94">            throw new IllegalArgumentException(</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        if (name.length() &gt; maxLength) {</span>
+<span class="fc" id="L101">            throw new IllegalArgumentException(</span>
                     &quot;Operation name must be less than &quot; + maxLength + &quot; characters, got: &quot; + name);
         }
 
         // validate each character is printable ASCII
-<span class="fc bfc" id="L99" title="All 2 branches covered.">        for (char c : name.toCharArray()) {</span>
-<span class="fc bfc" id="L100" title="All 4 branches covered.">            if (c &lt; 0x20 || c &gt; 0x7e) {</span>
-<span class="fc" id="L101">                throw new IllegalArgumentException(</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        for (char c : name.toCharArray()) {</span>
+<span class="fc bfc" id="L107" title="All 4 branches covered.">            if (c &lt; 0x20 || c &gt; 0x7e) {</span>
+<span class="fc" id="L108">                throw new IllegalArgumentException(</span>
                         &quot;Operation name must contain only printable ASCII characters, got: &quot; + name);
             }
         }
-<span class="fc" id="L105">    }</span>
+<span class="fc" id="L112">    }</span>
+
+    /** Known unordered map types whose views (keySet, values, entrySet) do not guarantee iteration order. */
+<span class="fc" id="L115">    private static final Set&lt;Class&lt;?&gt;&gt; UNORDERED_MAP_TYPES =</span>
+<span class="fc" id="L116">            Set.of(HashMap.class, IdentityHashMap.class, WeakHashMap.class, ConcurrentHashMap.class);</span>
+
+    /**
+     * Validates that a collection has deterministic iteration order.
+     *
+     * &lt;p&gt;Rejects known unordered collection types: {@link HashSet} (and subclasses), and views returned by
+     * {@link HashMap}, {@link IdentityHashMap}, {@link WeakHashMap}, and {@link ConcurrentHashMap}.
+     *
+     * @param items the collection to validate
+     * @throws IllegalArgumentException if items is null or has non-deterministic iteration order
+     */
+    public static void validateOrderedCollection(Collection&lt;?&gt; items) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (items == null) {</span>
+<span class="nc" id="L129">            throw new IllegalArgumentException(&quot;items cannot be null&quot;);</span>
+        }
+<span class="nc bnc" id="L131" title="All 4 branches missed.">        if (items instanceof HashSet || isUnorderedMapView(items)) {</span>
+<span class="nc" id="L132">            throw new IllegalArgumentException(&quot;items must have deterministic iteration order&quot;);</span>
+        }
+<span class="nc" id="L134">    }</span>
+
+    private static boolean isUnorderedMapView(Collection&lt;?&gt; collection) {
+<span class="nc" id="L137">        var enclosing = collection.getClass().getEnclosingClass();</span>
+<span class="nc bnc" id="L138" title="All 4 branches missed.">        return enclosing != null &amp;&amp; UNORDERED_MAP_TYPES.contains(enclosing);</span>
+    }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

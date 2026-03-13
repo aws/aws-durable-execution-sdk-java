@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CompletionConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">CompletionConfig.java</span></div><h1>CompletionConfig.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+/**
+ * Controls when a concurrent operation (map or parallel) completes.
+ *
+ * &lt;p&gt;Provides factory methods for common completion strategies and fine-grained control via {@code minSuccessful},
+ * {@code toleratedFailureCount}, and {@code toleratedFailurePercentage}.
+ */
+public class CompletionConfig {
+    private final Integer minSuccessful;
+    private final Integer toleratedFailureCount;
+    private final Double toleratedFailurePercentage;
+
+<span class="nc" id="L16">    private CompletionConfig(Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {</span>
+<span class="nc" id="L17">        this.minSuccessful = minSuccessful;</span>
+<span class="nc" id="L18">        this.toleratedFailureCount = toleratedFailureCount;</span>
+<span class="nc" id="L19">        this.toleratedFailurePercentage = toleratedFailurePercentage;</span>
+<span class="nc" id="L20">    }</span>
+
+    /** All items must succeed. Zero failures tolerated. */
+    public static CompletionConfig allSuccessful() {
+<span class="nc" id="L24">        return new CompletionConfig(null, 0, null);</span>
+    }
+
+    /** All items run regardless of failures. Failures captured per-item. */
+    public static CompletionConfig allCompleted() {
+<span class="nc" id="L29">        return new CompletionConfig(null, null, null);</span>
+    }
+
+    /** Complete as soon as the first item succeeds. */
+    public static CompletionConfig firstSuccessful() {
+<span class="nc" id="L34">        return new CompletionConfig(1, null, null);</span>
+    }
+
+    /** @return minimum number of successful items required, or null if not set */
+    public Integer minSuccessful() {
+<span class="nc" id="L39">        return minSuccessful;</span>
+    }
+
+    /** @return maximum number of failures tolerated, or null if unlimited */
+    public Integer toleratedFailureCount() {
+<span class="nc" id="L44">        return toleratedFailureCount;</span>
+    }
+
+    /** @return maximum percentage of failures tolerated (0.0 to 1.0), or null if not set */
+    public Double toleratedFailurePercentage() {
+<span class="nc" id="L49">        return toleratedFailurePercentage;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
