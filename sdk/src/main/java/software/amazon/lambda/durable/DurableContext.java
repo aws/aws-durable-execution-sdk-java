@@ -3,19 +3,15 @@
 package software.amazon.lambda.durable;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.HexFormat;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -32,7 +28,7 @@ public class DurableContext extends BaseContext {
     private static final String WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX = "-submitter";
     private static final int MAX_WAIT_FOR_CALLBACK_NAME_LENGTH = ParameterValidator.MAX_OPERATION_NAME_LENGTH
             - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());
-    private final AtomicInteger operationCounter;
+    private final OperationIdGenerator operationIdGenerator;
     private volatile DurableLogger logger;
 
     /** Shared initialization — sets all fields. */
@@ -43,7 +39,7 @@ public class DurableContext extends BaseContext {
             String contextId,
             String contextName) {
         super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);
-        this.operationCounter = new AtomicInteger(0);
+        operationIdGenerator = new OperationIdGenerator(contextId);
     }
 
     /**
@@ -490,14 +486,6 @@ public class DurableContext extends BaseContext {
      * matches the Python SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
     private String nextOperationId() {
-        var counter = String.valueOf(operationCounter.incrementAndGet());
-        var rawId = getContextId() != null ? getContextId() + "-" + counter : counter;
-        try {
-            var messageDigest = MessageDigest.getInstance("SHA-256");
-            var hash = messageDigest.digest(rawId.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("failed to get next operation id, SHA-256 not available", e);
-        }
+        return operationIdGenerator.nextOperationId();
     }
 }
