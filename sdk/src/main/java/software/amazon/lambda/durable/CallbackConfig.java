@@ -41,14 +41,17 @@ public class CallbackConfig {
         return serDes;
     }
 
+    /** Creates a new builder with default values. */
     public static Builder builder() {
         return new Builder(null, null, null);
     }
 
+    /** Creates a new builder pre-populated with this config's values. */
     public Builder toBuilder() {
         return new Builder(timeout, heartbeatTimeout, serDes);
     }
 
+    /** Builder for {@link CallbackConfig}. */
     public static class Builder {
         private Duration timeout;
         private Duration heartbeatTimeout;
@@ -60,12 +63,24 @@ public class CallbackConfig {
             this.serDes = serDes;
         }
 
+        /**
+         * Sets the maximum duration to wait for the callback to complete before timing out.
+         *
+         * @param timeout the timeout duration
+         * @return this builder for method chaining
+         */
         public Builder timeout(Duration timeout) {
             ParameterValidator.validateOptionalDuration(timeout, "Callback timeout");
             this.timeout = timeout;
             return this;
         }
 
+        /**
+         * Sets the maximum duration between heartbeats before the callback is considered failed.
+         *
+         * @param heartbeatTimeout the heartbeat timeout duration
+         * @return this builder for method chaining
+         */
         public Builder heartbeatTimeout(Duration heartbeatTimeout) {
             ParameterValidator.validateOptionalDuration(heartbeatTimeout, "Heartbeat timeout");
             this.heartbeatTimeout = heartbeatTimeout;
@@ -87,6 +102,7 @@ public class CallbackConfig {
             return this;
         }
 
+        /** Builds the {@link CallbackConfig} instance. */
         public CallbackConfig build() {
             return new CallbackConfig(this);
         }
