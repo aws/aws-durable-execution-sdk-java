@@ -20,6 +20,11 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 
 class ExecutionManagerTest {
+    private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
+    private static final String EXECUTION_NAME = "exec-name";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+
     private DurableExecutionClient client;
 
     private ExecutionManager createManager(List<Operation> operations) {
@@ -27,14 +32,13 @@ class ExecutionManagerTest {
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         return new ExecutionManager(
-                new DurableExecutionInput(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState),
+                new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
     }
 
     private Operation executionOp() {
         return Operation.builder()
-                .id("0")
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build();
@@ -129,11 +133,10 @@ class ExecutionManagerTest {
                 .nextMarker("marker")
                 .build();
         var executionManager = new ExecutionManager(
-                new DurableExecutionInput(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState),
+                new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
 
         assertNotNull(executionManager.getExecutionOperation());
-        assertEquals("0", executionManager.getExecutionOperation().id());
+        assertEquals(EXECUTION_OP_ID, executionManager.getExecutionOperation().id());
     }
 }

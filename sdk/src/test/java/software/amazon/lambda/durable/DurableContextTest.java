@@ -20,9 +20,12 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class DurableContextTest {
     private static final String EXECUTION_NAME = "349beff4-a89d-4bc8-a56f-af7a8af67a5f";
-    private static final String INVOCATION_ID = "20dae574-53da-37a1-bfd5-b0e2e6ec715d";
+    private static final String EXECUTION_OP_ID = "20dae574-53da-37a1-bfd5-b0e2e6ec715d";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+
     private static final Operation EXECUTION_OP = Operation.builder()
-            .id(INVOCATION_ID)
+            .id(EXECUTION_OP_ID)
             .type(OperationType.EXECUTION)
             .status(OperationStatus.STARTED)
             .build();
@@ -41,11 +44,7 @@ class DurableContextTest {
         var initialExecutionState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
-                new DurableExecutionInput(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/"
-                                + EXECUTION_NAME + "/" + INVOCATION_ID,
-                        "test-token",
-                        initialExecutionState),
+                new DurableExecutionInput(EXECUTION_ARN, "test-token", initialExecutionState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
         var root = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
@@ -67,10 +66,7 @@ class DurableContextTest {
         var context = createTestContext();
 
         assertNotNull(context.getExecutionArn());
-        assertEquals(
-                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/" + EXECUTION_NAME + "/"
-                        + INVOCATION_ID,
-                context.getExecutionArn());
+        assertEquals(EXECUTION_ARN, context.getExecutionArn());
     }
 
     @Test

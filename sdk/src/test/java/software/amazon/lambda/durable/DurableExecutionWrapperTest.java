@@ -21,6 +21,10 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class DurableExecutionWrapperTest {
+    private static final String EXECUTION_OP_ID = "f3d7b0c0-1234-5678-90ab-cdef12345678";
+    private static final String EXECUTION_NAME = "exec-name";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
 
     static class TestInput {
         public String value;
@@ -62,7 +66,7 @@ class DurableExecutionWrapperTest {
 
         // Create input with EXECUTION operation
         var executionOp = Operation.builder()
-                .id("0")
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -71,7 +75,7 @@ class DurableExecutionWrapperTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token-1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
@@ -98,7 +102,7 @@ class DurableExecutionWrapperTest {
         var serDes = new JacksonSerDes();
 
         var executionOp = Operation.builder()
-                .id("0")
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -107,7 +111,7 @@ class DurableExecutionWrapperTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token-1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
