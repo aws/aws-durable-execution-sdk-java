@@ -13,40 +13,55 @@ public class CompletionConfig {
     private final Integer toleratedFailureCount;
     private final Double toleratedFailurePercentage;
 
-<span class="nc" id="L16">    private CompletionConfig(Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {</span>
-<span class="nc" id="L17">        this.minSuccessful = minSuccessful;</span>
-<span class="nc" id="L18">        this.toleratedFailureCount = toleratedFailureCount;</span>
-<span class="nc" id="L19">        this.toleratedFailurePercentage = toleratedFailurePercentage;</span>
-<span class="nc" id="L20">    }</span>
+<span class="fc" id="L16">    private CompletionConfig(Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {</span>
+<span class="fc" id="L17">        this.minSuccessful = minSuccessful;</span>
+<span class="fc" id="L18">        this.toleratedFailureCount = toleratedFailureCount;</span>
+<span class="fc" id="L19">        this.toleratedFailurePercentage = toleratedFailurePercentage;</span>
+<span class="fc" id="L20">    }</span>
 
     /** All items must succeed. Zero failures tolerated. */
     public static CompletionConfig allSuccessful() {
-<span class="nc" id="L24">        return new CompletionConfig(null, 0, null);</span>
+<span class="fc" id="L24">        return new CompletionConfig(null, 0, null);</span>
     }
 
     /** All items run regardless of failures. Failures captured per-item. */
     public static CompletionConfig allCompleted() {
-<span class="nc" id="L29">        return new CompletionConfig(null, null, null);</span>
+<span class="fc" id="L29">        return new CompletionConfig(null, null, null);</span>
     }
 
     /** Complete as soon as the first item succeeds. */
     public static CompletionConfig firstSuccessful() {
-<span class="nc" id="L34">        return new CompletionConfig(1, null, null);</span>
+<span class="fc" id="L34">        return new CompletionConfig(1, null, null);</span>
+    }
+
+    /** Complete when the specified number of items have succeeded. */
+    public static CompletionConfig minSuccessful(int count) {
+<span class="fc" id="L39">        return new CompletionConfig(count, null, null);</span>
+    }
+
+    /** Complete when more than the specified number of failures have occurred. */
+    public static CompletionConfig toleratedFailureCount(int count) {
+<span class="fc" id="L44">        return new CompletionConfig(null, count, null);</span>
+    }
+
+    /** Complete when the failure percentage exceeds the specified threshold (0.0 to 1.0). */
+    public static CompletionConfig toleratedFailurePercentage(double percentage) {
+<span class="fc" id="L49">        return new CompletionConfig(null, null, percentage);</span>
     }
 
     /** @return minimum number of successful items required, or null if not set */
     public Integer minSuccessful() {
-<span class="nc" id="L39">        return minSuccessful;</span>
+<span class="fc" id="L54">        return minSuccessful;</span>
     }
 
     /** @return maximum number of failures tolerated, or null if unlimited */
     public Integer toleratedFailureCount() {
-<span class="nc" id="L44">        return toleratedFailureCount;</span>
+<span class="fc" id="L59">        return toleratedFailureCount;</span>
     }
 
     /** @return maximum percentage of failures tolerated (0.0 to 1.0), or null if not set */
     public Double toleratedFailurePercentage() {
-<span class="nc" id="L49">        return toleratedFailurePercentage;</span>
+<span class="fc" id="L64">        return toleratedFailurePercentage;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

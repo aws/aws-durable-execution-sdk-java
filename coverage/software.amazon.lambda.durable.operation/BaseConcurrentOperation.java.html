@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -40,19 +42,20 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public abstract class BaseConcurrentOperation&lt;R&gt; extends BaseDurableOperation&lt;R&gt; {
 
-<span class="nc" id="L43">    private static final Logger logger = LoggerFactory.getLogger(BaseConcurrentOperation.class);</span>
+<span class="nc" id="L45">    private static final Logger logger = LoggerFactory.getLogger(BaseConcurrentOperation.class);</span>
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
-<span class="nc" id="L46">    private final List&lt;ChildContextOperation&lt;?&gt;&gt; branches = new ArrayList&lt;&gt;();</span>
-<span class="nc" id="L47">    private final Queue&lt;ChildContextOperation&lt;?&gt;&gt; pendingQueue = new ConcurrentLinkedQueue&lt;&gt;();</span>
-<span class="nc" id="L48">    private final AtomicInteger activeBranches = new AtomicInteger(0);</span>
-<span class="nc" id="L49">    private final AtomicInteger succeeded = new AtomicInteger(0);</span>
-<span class="nc" id="L50">    private final AtomicInteger failed = new AtomicInteger(0);</span>
+<span class="nc" id="L48">    private final List&lt;ChildContextOperation&lt;?&gt;&gt; branches = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L49">    private final Queue&lt;ChildContextOperation&lt;?&gt;&gt; pendingQueue = new ConcurrentLinkedQueue&lt;&gt;();</span>
+<span class="nc" id="L50">    private final Set&lt;ChildContextOperation&lt;?&gt;&gt; startedBranches = ConcurrentHashMap.newKeySet();</span>
+<span class="nc" id="L51">    private final AtomicInteger activeBranches = new AtomicInteger(0);</span>
+<span class="nc" id="L52">    private final AtomicInteger succeeded = new AtomicInteger(0);</span>
+<span class="nc" id="L53">    private final AtomicInteger failed = new AtomicInteger(0);</span>
     private final Integer maxConcurrency;
     private final CompletionConfig completionConfig;
     private final OperationSubType subType;
     private volatile CompletionReason completionReason;
-<span class="nc" id="L55">    private volatile boolean earlyTermination = false;</span>
+<span class="nc" id="L58">    private volatile boolean earlyTermination = false;</span>
     private DurableContext rootContext;
     private OperationIdGenerator operationIdGenerator;
 
@@ -65,53 +68,53 @@ public abstract class BaseConcurrentOperation&lt;R&gt; extends BaseDurableOperat
             TypeToken&lt;R&gt; resultTypeToken,
             SerDes resultSerDes,
             DurableContext durableContext) {
-<span class="nc" id="L68">        super(</span>
-<span class="nc" id="L69">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),</span>
+<span class="nc" id="L71">        super(</span>
+<span class="nc" id="L72">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),</span>
                 resultTypeToken,
                 resultSerDes,
                 durableContext);
-<span class="nc" id="L73">        this.subType = subType;</span>
-<span class="nc" id="L74">        this.maxConcurrency = maxConcurrency;</span>
-<span class="nc" id="L75">        this.completionConfig = completionConfig;</span>
-<span class="nc" id="L76">    }</span>
+<span class="nc" id="L76">        this.subType = subType;</span>
+<span class="nc" id="L77">        this.maxConcurrency = maxConcurrency;</span>
+<span class="nc" id="L78">        this.completionConfig = completionConfig;</span>
+<span class="nc" id="L79">    }</span>
 
     // ========== lifecycle ==========
 
     @Override
     protected void start() {
-<span class="nc" id="L82">        sendOperationUpdateAsync(</span>
-<span class="nc" id="L83">                OperationUpdate.builder().action(OperationAction.START).subType(subType.getValue()));</span>
-<span class="nc" id="L84">        this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
-<span class="nc" id="L85">        this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
-<span class="nc" id="L86">        startBranches();</span>
-<span class="nc" id="L87">    }</span>
+<span class="nc" id="L85">        sendOperationUpdateAsync(</span>
+<span class="nc" id="L86">                OperationUpdate.builder().action(OperationAction.START).subType(subType.getValue()));</span>
+<span class="nc" id="L87">        this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
+<span class="nc" id="L88">        this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
+<span class="nc" id="L89">        startBranches();</span>
+<span class="nc" id="L90">    }</span>
 
     @Override
     protected void replay(Operation existing) {
-<span class="nc bnc" id="L91" title="All 4 branches missed.">        switch (existing.status()) {</span>
+<span class="nc bnc" id="L94" title="All 4 branches missed.">        switch (existing.status()) {</span>
             case SUCCEEDED -&gt; {
-<span class="nc bnc" id="L93" title="All 2 branches missed.">                if (existing.contextDetails() != null</span>
-<span class="nc bnc" id="L94" title="All 2 branches missed.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">                if (existing.contextDetails() != null</span>
+<span class="nc bnc" id="L97" title="All 2 branches missed.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
                     // Large result: reconstruct by replaying child contexts
-<span class="nc" id="L96">                    this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
-<span class="nc" id="L97">                    this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
-<span class="nc" id="L98">                    startBranches();</span>
+<span class="nc" id="L99">                    this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
+<span class="nc" id="L100">                    this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
+<span class="nc" id="L101">                    startBranches();</span>
                 } else {
-<span class="nc" id="L100">                    markAlreadyCompleted();</span>
+<span class="nc" id="L103">                    markAlreadyCompleted();</span>
                 }
-<span class="nc" id="L102">            }</span>
-<span class="nc" id="L103">            case FAILED -&gt; markAlreadyCompleted();</span>
+<span class="nc" id="L105">            }</span>
+<span class="nc" id="L106">            case FAILED -&gt; markAlreadyCompleted();</span>
             case STARTED -&gt; {
                 // Interrupted mid-execution: resume from last checkpoint
-<span class="nc" id="L106">                this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
-<span class="nc" id="L107">                this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
-<span class="nc" id="L108">                startBranches();</span>
-<span class="nc" id="L109">            }</span>
+<span class="nc" id="L109">                this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
+<span class="nc" id="L110">                this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
+<span class="nc" id="L111">                startBranches();</span>
+<span class="nc" id="L112">            }</span>
             default -&gt;
-<span class="nc" id="L111">                terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="nc" id="L112">                        &quot;Unexpected concurrent operation status: &quot; + existing.status());</span>
+<span class="nc" id="L114">                terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L115">                        &quot;Unexpected concurrent operation status: &quot; + existing.status());</span>
         }
-<span class="nc" id="L114">    }</span>
+<span class="nc" id="L117">    }</span>
 
     // ========== abstract methods for subclasses ==========
 
@@ -127,174 +130,205 @@ public abstract class BaseConcurrentOperation&lt;R&gt; extends BaseDurableOperat
             TypeToken&lt;T&gt; typeToken,
             SerDes serDes,
             Function&lt;DurableContext, T&gt; function) {
-<span class="nc" id="L130">        var branchOpId = operationIdGenerator.nextOperationId();</span>
-<span class="nc" id="L131">        var branch = new ChildContextOperation&lt;&gt;(</span>
-<span class="nc" id="L132">                OperationIdentifier.of(branchOpId, branchName, OperationType.CONTEXT, branchSubType),</span>
+<span class="nc" id="L133">        var branchOpId = operationIdGenerator.nextOperationId();</span>
+<span class="nc" id="L134">        var branch = new ChildContextOperation&lt;&gt;(</span>
+<span class="nc" id="L135">                OperationIdentifier.of(branchOpId, branchName, OperationType.CONTEXT, branchSubType),</span>
                 function,
                 typeToken,
                 serDes,
                 rootContext);
-<span class="nc" id="L137">        branches.add(branch);</span>
+<span class="nc" id="L140">        branches.add(branch);</span>
 
-<span class="nc bnc" id="L139" title="All 6 branches missed.">        if (!earlyTermination &amp;&amp; (maxConcurrency == null || activeBranches.get() &lt; maxConcurrency)) {</span>
-<span class="nc" id="L140">            activeBranches.incrementAndGet();</span>
-<span class="nc" id="L141">            branch.execute();</span>
+        // Attach callback BEFORE execution starts (or before future can complete).
+        // The thenRun runs synchronously inside the synchronized(completionFuture) block
+        // when completionFuture.complete(null) is called, so it executes on the checkpoint
+        // processing thread. This callback only does lightweight work: update counters,
+        // evaluate CompletionConfig, dequeue and start next branch.
+<span class="nc" id="L147">        branch.completionFuture.thenRun(() -&gt; {</span>
+<span class="nc" id="L148">            var op = branch.getOperation();</span>
+<span class="nc bnc" id="L149" title="All 4 branches missed.">            boolean success = op != null &amp;&amp; op.status() == OperationStatus.SUCCEEDED;</span>
+<span class="nc" id="L150">            onChildContextComplete(branch, success);</span>
+<span class="nc" id="L151">        });</span>
+
+<span class="nc bnc" id="L153" title="All 6 branches missed.">        if (!earlyTermination &amp;&amp; (maxConcurrency == null || activeBranches.get() &lt; maxConcurrency)) {</span>
+<span class="nc" id="L154">            activeBranches.incrementAndGet();</span>
+<span class="nc" id="L155">            startedBranches.add(branch);</span>
+<span class="nc" id="L156">            branch.execute();</span>
         } else {
-<span class="nc" id="L143">            pendingQueue.add(branch);</span>
+<span class="nc" id="L158">            pendingQueue.add(branch);</span>
         }
-<span class="nc" id="L145">        return branch;</span>
+<span class="nc" id="L160">        return branch;</span>
     }
 
     // ========== completion callback ==========
 
+    /**
+     * Called on the checkpoint processing thread when a branch's completionFuture completes. Only does lightweight
+     * work: update counters, evaluate CompletionConfig, dequeue and start next branch. Does NOT call
+     * finalizeOperation() or checkpointResult() — those happen in get() on the context thread.
+     */
     protected void onChildContextComplete(ChildContextOperation&lt;?&gt; branch, boolean success) {
-<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (success) {</span>
-<span class="nc" id="L152">            succeeded.incrementAndGet();</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (success) {</span>
+<span class="nc" id="L172">            succeeded.incrementAndGet();</span>
         } else {
-<span class="nc" id="L154">            failed.incrementAndGet();</span>
+<span class="nc" id="L174">            failed.incrementAndGet();</span>
         }
 
         // Evaluate completion criteria
-<span class="nc bnc" id="L158" title="All 4 branches missed.">        if (!earlyTermination &amp;&amp; shouldTerminateEarly()) {</span>
-<span class="nc" id="L159">            earlyTermination = true;</span>
-<span class="nc" id="L160">            completionReason = evaluateCompletionReason();</span>
-<span class="nc" id="L161">            logger.trace(&quot;Early termination triggered for operation {}: reason={}&quot;, getOperationId(), completionReason);</span>
+<span class="nc bnc" id="L178" title="All 4 branches missed.">        if (!earlyTermination &amp;&amp; shouldTerminateEarly()) {</span>
+<span class="nc" id="L179">            earlyTermination = true;</span>
+<span class="nc" id="L180">            completionReason = evaluateCompletionReason();</span>
+<span class="nc" id="L181">            logger.trace(&quot;Early termination triggered for operation {}: reason={}&quot;, getOperationId(), completionReason);</span>
         }
 
         // Start next queued branch with correct thread ordering:
         // register new branch thread BEFORE deregistering completed branch thread
-<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (!earlyTermination) {</span>
-<span class="nc" id="L167">            var next = pendingQueue.poll();</span>
-<span class="nc bnc" id="L168" title="All 2 branches missed.">            if (next != null) {</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (!earlyTermination) {</span>
+<span class="nc" id="L187">            var next = pendingQueue.poll();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">            if (next != null) {</span>
                 // activeBranches stays the same (one completing, one starting)
-<span class="nc" id="L170">                next.execute(); // registers new thread internally via ChildContextOperation.start()</span>
+<span class="nc" id="L190">                startedBranches.add(next);</span>
+<span class="nc" id="L191">                next.execute(); // registers new thread internally via ChildContextOperation.start()</span>
             } else {
-<span class="nc" id="L172">                activeBranches.decrementAndGet();</span>
+<span class="nc" id="L193">                activeBranches.decrementAndGet();</span>
             }
-<span class="nc" id="L174">        } else {</span>
-<span class="nc" id="L175">            activeBranches.decrementAndGet();</span>
+<span class="nc" id="L195">        } else {</span>
+<span class="nc" id="L196">            activeBranches.decrementAndGet();</span>
         }
         // completed branch's thread is deregistered by ChildContextOperation's close() in BaseContext
-
-<span class="nc bnc" id="L179" title="All 4 branches missed.">        if (activeBranches.get() == 0 &amp;&amp; pendingQueue.isEmpty()) {</span>
-<span class="nc" id="L180">            finalizeOperation();</span>
-        }
-<span class="nc" id="L182">    }</span>
+<span class="nc" id="L199">    }</span>
 
     // ========== completion evaluation ==========
 
     private boolean shouldTerminateEarly() {
         // Check minSuccessful
-<span class="nc bnc" id="L188" title="All 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded.get() &gt;= completionConfig.minSuccessful()) {</span>
-<span class="nc" id="L189">            return true;</span>
+<span class="nc bnc" id="L205" title="All 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded.get() &gt;= completionConfig.minSuccessful()) {</span>
+<span class="nc" id="L206">            return true;</span>
         }
 
         // Check toleratedFailureCount
-<span class="nc bnc" id="L193" title="All 2 branches missed.">        if (completionConfig.toleratedFailureCount() != null</span>
-<span class="nc bnc" id="L194" title="All 2 branches missed.">                &amp;&amp; failed.get() &gt; completionConfig.toleratedFailureCount()) {</span>
-<span class="nc" id="L195">            return true;</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (completionConfig.toleratedFailureCount() != null</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                &amp;&amp; failed.get() &gt; completionConfig.toleratedFailureCount()) {</span>
+<span class="nc" id="L212">            return true;</span>
         }
 
         // Check toleratedFailurePercentage
-<span class="nc" id="L199">        int totalCompleted = succeeded.get() + failed.get();</span>
-<span class="nc bnc" id="L200" title="All 4 branches missed.">        if (completionConfig.toleratedFailurePercentage() != null</span>
+<span class="nc" id="L216">        int totalCompleted = succeeded.get() + failed.get();</span>
+<span class="nc bnc" id="L217" title="All 4 branches missed.">        if (completionConfig.toleratedFailurePercentage() != null</span>
                 &amp;&amp; totalCompleted &gt; 0
-<span class="nc bnc" id="L202" title="All 2 branches missed.">                &amp;&amp; ((double) failed.get() / totalCompleted) &gt; completionConfig.toleratedFailurePercentage()) {</span>
-<span class="nc" id="L203">            return true;</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">                &amp;&amp; ((double) failed.get() / totalCompleted) &gt; completionConfig.toleratedFailurePercentage()) {</span>
+<span class="nc" id="L220">            return true;</span>
         }
 
-<span class="nc" id="L206">        return false;</span>
+<span class="nc" id="L223">        return false;</span>
     }
 
-    private CompletionReason evaluateCompletionReason() {
-<span class="nc bnc" id="L210" title="All 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded.get() &gt;= completionConfig.minSuccessful()) {</span>
-<span class="nc" id="L211">            return CompletionReason.MIN_SUCCESSFUL_REACHED;</span>
+    protected CompletionReason evaluateCompletionReason() {
+<span class="nc bnc" id="L227" title="All 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded.get() &gt;= completionConfig.minSuccessful()) {</span>
+<span class="nc" id="L228">            return CompletionReason.MIN_SUCCESSFUL_REACHED;</span>
         }
-<span class="nc" id="L213">        return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;</span>
+<span class="nc" id="L230">        return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;</span>
     }
 
     private void finalizeOperation() {
-<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (completionReason == null) {</span>
-<span class="nc" id="L218">            completionReason = CompletionReason.ALL_COMPLETED;</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (completionReason == null) {</span>
+<span class="nc" id="L235">            completionReason = CompletionReason.ALL_COMPLETED;</span>
         }
 
-<span class="nc" id="L221">        R result = aggregateResults();</span>
-<span class="nc" id="L222">        checkpointResult(result);</span>
-<span class="nc" id="L223">    }</span>
+<span class="nc" id="L238">        R result = aggregateResults();</span>
+<span class="nc" id="L239">        checkpointResult(result);</span>
+<span class="nc" id="L240">    }</span>
 
-    private void checkpointResult(R result) {
-<span class="nc" id="L226">        var serialized = serializeResult(result);</span>
-<span class="nc" id="L227">        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);</span>
+    /**
+     * Checkpoints the parent concurrent operation as SUCCEEDED. Uses synchronous {@code sendOperationUpdate} because
+     * this is called from the context thread in {@code get()}, where it is safe to block.
+     *
+     * &lt;p&gt;Small results (&amp;lt;256KB) are checkpointed directly as payload. Large results are checkpointed with
+     * {@code replayChildren=true} and an empty payload, so on replay the result is reconstructed from child contexts.
+     */
+    protected void checkpointResult(R result) {
+<span class="nc" id="L250">        var serialized = serializeResult(result);</span>
+<span class="nc" id="L251">        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);</span>
 
-<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
-<span class="nc" id="L230">            sendOperationUpdateAsync(OperationUpdate.builder()</span>
-<span class="nc" id="L231">                    .action(OperationAction.SUCCEED)</span>
-<span class="nc" id="L232">                    .subType(subType.getValue())</span>
-<span class="nc" id="L233">                    .payload(serialized));</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
+<span class="nc" id="L254">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="nc" id="L255">                    .action(OperationAction.SUCCEED)</span>
+<span class="nc" id="L256">                    .subType(subType.getValue())</span>
+<span class="nc" id="L257">                    .payload(serialized));</span>
         } else {
             // Large result: checkpoint with empty payload + replayChildren flag
-<span class="nc" id="L236">            sendOperationUpdateAsync(OperationUpdate.builder()</span>
-<span class="nc" id="L237">                    .action(OperationAction.SUCCEED)</span>
-<span class="nc" id="L238">                    .subType(subType.getValue())</span>
-<span class="nc" id="L239">                    .payload(&quot;&quot;)</span>
-<span class="nc" id="L240">                    .contextOptions(</span>
-<span class="nc" id="L241">                            ContextOptions.builder().replayChildren(true).build()));</span>
+<span class="nc" id="L260">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="nc" id="L261">                    .action(OperationAction.SUCCEED)</span>
+<span class="nc" id="L262">                    .subType(subType.getValue())</span>
+<span class="nc" id="L263">                    .payload(&quot;&quot;)</span>
+<span class="nc" id="L264">                    .contextOptions(</span>
+<span class="nc" id="L265">                            ContextOptions.builder().replayChildren(true).build()));</span>
         }
-<span class="nc" id="L243">    }</span>
+<span class="nc" id="L267">    }</span>
 
     // ========== get ==========
 
     @Override
     public R get() {
-<span class="nc" id="L249">        var op = waitForOperationCompletion();</span>
+<span class="nc" id="L273">        var op = waitForOperationCompletion();</span>
 
-<span class="nc bnc" id="L251" title="All 2 branches missed.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
-<span class="nc bnc" id="L252" title="All 2 branches missed.">            if (op.contextDetails() != null</span>
-<span class="nc bnc" id="L253" title="All 2 branches missed.">                    &amp;&amp; Boolean.TRUE.equals(op.contextDetails().replayChildren())) {</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (op.contextDetails() != null</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">                    &amp;&amp; Boolean.TRUE.equals(op.contextDetails().replayChildren())) {</span>
                 // Large result was reconstructed via replay — aggregate from branches
-<span class="nc" id="L255">                return aggregateResults();</span>
+<span class="nc" id="L279">                return aggregateResults();</span>
             }
-<span class="nc" id="L257">            var contextDetails = op.contextDetails();</span>
-<span class="nc bnc" id="L258" title="All 2 branches missed.">            var result = (contextDetails != null) ? contextDetails.result() : null;</span>
-<span class="nc" id="L259">            return deserializeResult(result);</span>
-<span class="nc bnc" id="L260" title="All 2 branches missed.">        } else if (op.status() == OperationStatus.FAILED) {</span>
-<span class="nc" id="L261">            var contextDetails = op.contextDetails();</span>
-<span class="nc bnc" id="L262" title="All 2 branches missed.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
-<span class="nc" id="L263">            var original = deserializeException(errorObject);</span>
-<span class="nc bnc" id="L264" title="All 2 branches missed.">            if (original != null) {</span>
-<span class="nc" id="L265">                throw new RuntimeException(original);</span>
+<span class="nc" id="L281">            var contextDetails = op.contextDetails();</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">            var result = (contextDetails != null) ? contextDetails.result() : null;</span>
+<span class="nc" id="L283">            return deserializeResult(result);</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        } else if (op.status() == OperationStatus.FAILED) {</span>
+<span class="nc" id="L285">            var contextDetails = op.contextDetails();</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
+<span class="nc" id="L287">            var original = deserializeException(errorObject);</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            if (original != null) {</span>
+<span class="nc" id="L289">                throw new RuntimeException(original);</span>
             }
-<span class="nc" id="L267">            throw new RuntimeException(&quot;Concurrent operation failed: &quot; + getOperationId());</span>
+<span class="nc" id="L291">            throw new RuntimeException(&quot;Concurrent operation failed: &quot; + getOperationId());</span>
         } else {
-<span class="nc" id="L269">            return terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="nc" id="L270">                    &quot;Unexpected operation status after completion: &quot; + op.status());</span>
+<span class="nc" id="L293">            return terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L294">                    &quot;Unexpected operation status after completion: &quot; + op.status());</span>
         }
     }
 
     // ========== protected accessors for subclasses ==========
 
     protected List&lt;ChildContextOperation&lt;?&gt;&gt; getBranches() {
-<span class="nc" id="L277">        return Collections.unmodifiableList(branches);</span>
+<span class="nc" id="L301">        return Collections.unmodifiableList(branches);</span>
     }
 
     protected CompletionReason getCompletionReason() {
-<span class="nc" id="L281">        return completionReason;</span>
+<span class="nc" id="L305">        return completionReason;</span>
     }
 
     protected AtomicInteger getSucceeded() {
-<span class="nc" id="L285">        return succeeded;</span>
+<span class="nc" id="L309">        return succeeded;</span>
     }
 
     protected AtomicInteger getFailed() {
-<span class="nc" id="L289">        return failed;</span>
+<span class="nc" id="L313">        return failed;</span>
     }
 
     protected boolean isEarlyTermination() {
-<span class="nc" id="L293">        return earlyTermination;</span>
+<span class="nc" id="L317">        return earlyTermination;</span>
     }
 
     protected DurableContext getRootContext() {
-<span class="nc" id="L297">        return rootContext;</span>
+<span class="nc" id="L321">        return rootContext;</span>
+    }
+
+    /** Returns the pending queue of branches that have not yet been started. */
+    protected Queue&lt;ChildContextOperation&lt;?&gt;&gt; getPendingQueue() {
+<span class="nc" id="L326">        return pendingQueue;</span>
+    }
+
+    /** Returns the set of branches that have been started (had execute() called). */
+    protected Set&lt;ChildContextOperation&lt;?&gt;&gt; getStartedBranches() {
+<span class="nc" id="L331">        return startedBranches;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

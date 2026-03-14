@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -11,67 +15,85 @@ import java.util.List;
  * &lt;p&gt;Holds ordered results and errors from a batch of concurrent operations. Each index corresponds to the input item
  * at the same position. Includes the {@link CompletionReason} indicating why the operation completed.
  *
+ * &lt;p&gt;When serialized for checkpointing, only results and completionReason are included. Errors are excluded because
+ * they contain Throwable objects that are not reliably serializable. On replay from a small-result checkpoint, errors
+ * will be an empty list with null entries matching the results size.
+ *
  * @param &lt;T&gt; the result type of each item
  */
 public class BatchResult&lt;T&gt; {
+    @JsonProperty(&quot;results&quot;)
     private final List&lt;T&gt; results;
+
+    @JsonIgnore
     private final List&lt;Throwable&gt; errors;
+
+    @JsonProperty(&quot;completionReason&quot;)
     private final CompletionReason completionReason;
 
-<span class="nc" id="L21">    public BatchResult(List&lt;T&gt; results, List&lt;Throwable&gt; errors, CompletionReason completionReason) {</span>
-<span class="nc" id="L22">        this.results = results;</span>
-<span class="nc" id="L23">        this.errors = errors;</span>
-<span class="nc" id="L24">        this.completionReason = completionReason;</span>
-<span class="nc" id="L25">    }</span>
+<span class="fc" id="L34">    public BatchResult(List&lt;T&gt; results, List&lt;Throwable&gt; errors, CompletionReason completionReason) {</span>
+<span class="fc" id="L35">        this.results = results;</span>
+<span class="fc" id="L36">        this.errors = errors;</span>
+<span class="fc" id="L37">        this.completionReason = completionReason;</span>
+<span class="fc" id="L38">    }</span>
+
+    @JsonCreator
+    private BatchResult(
+            @JsonProperty(&quot;results&quot;) List&lt;T&gt; results,
+<span class="nc" id="L43">            @JsonProperty(&quot;completionReason&quot;) CompletionReason completionReason) {</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">        this.results = results != null ? results : Collections.emptyList();</span>
+<span class="nc" id="L45">        this.errors = new ArrayList&lt;&gt;(Collections.nCopies(this.results.size(), null));</span>
+<span class="nc bnc" id="L46" title="All 2 branches missed.">        this.completionReason = completionReason != null ? completionReason : CompletionReason.ALL_COMPLETED;</span>
+<span class="nc" id="L47">    }</span>
 
     /** Returns an empty BatchResult with no results and no errors. */
     public static &lt;T&gt; BatchResult&lt;T&gt; empty() {
-<span class="nc" id="L29">        return new BatchResult&lt;&gt;(Collections.emptyList(), Collections.emptyList(), CompletionReason.ALL_COMPLETED);</span>
+<span class="fc" id="L51">        return new BatchResult&lt;&gt;(Collections.emptyList(), Collections.emptyList(), CompletionReason.ALL_COMPLETED);</span>
     }
 
     /** Returns the result at the given index, or null if that item failed. */
     public T getResult(int index) {
-<span class="nc" id="L34">        return results.get(index);</span>
+<span class="fc" id="L56">        return results.get(index);</span>
     }
 
     /** Returns the error at the given index, or null if that item succeeded. */
     public Throwable getError(int index) {
-<span class="nc" id="L39">        return errors.get(index);</span>
+<span class="fc" id="L61">        return errors.get(index);</span>
     }
 
     /** Returns true if all items succeeded (no errors). */
     public boolean allSucceeded() {
-<span class="nc bnc" id="L44" title="All 2 branches missed.">        return errors.stream().noneMatch(e -&gt; e != null);</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        return errors.stream().noneMatch(e -&gt; e != null);</span>
     }
 
     /** Returns the reason the operation completed. */
     public CompletionReason completionReason() {
-<span class="nc" id="L49">        return completionReason;</span>
+<span class="fc" id="L71">        return completionReason;</span>
     }
 
     /** Returns all results as an unmodifiable list. */
     public List&lt;T&gt; results() {
-<span class="nc" id="L54">        return Collections.unmodifiableList(results);</span>
+<span class="fc" id="L76">        return Collections.unmodifiableList(results);</span>
     }
 
     /** Returns all errors as an unmodifiable list. */
     public List&lt;Throwable&gt; errors() {
-<span class="nc" id="L59">        return Collections.unmodifiableList(errors);</span>
+<span class="nc" id="L81">        return Collections.unmodifiableList(errors);</span>
     }
 
     /** Returns the number of items in this batch. */
     public int size() {
-<span class="nc" id="L64">        return results.size();</span>
+<span class="fc" id="L86">        return results.size();</span>
     }
 
     /** Returns results that succeeded (non-null results). */
     public List&lt;T&gt; succeeded() {
-<span class="nc bnc" id="L69" title="All 2 branches missed.">        return results.stream().filter(r -&gt; r != null).toList();</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        return results.stream().filter(r -&gt; r != null).toList();</span>
     }
 
     /** Returns errors that occurred (non-null errors). */
     public List&lt;Throwable&gt; failed() {
-<span class="nc bnc" id="L74" title="All 2 branches missed.">        return errors.stream().filter(e -&gt; e != null).toList();</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        return errors.stream().filter(e -&gt; e != null).toList();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

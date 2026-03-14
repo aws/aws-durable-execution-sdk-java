@@ -14,33 +14,33 @@ public class MapConfig {
     private final CompletionConfig completionConfig;
     private final SerDes serDes;
 
-<span class="nc" id="L17">    private MapConfig(Builder builder) {</span>
-<span class="nc" id="L18">        this.maxConcurrency = builder.maxConcurrency;</span>
-<span class="nc" id="L19">        this.completionConfig = builder.completionConfig;</span>
-<span class="nc" id="L20">        this.serDes = builder.serDes;</span>
-<span class="nc" id="L21">    }</span>
+<span class="fc" id="L17">    private MapConfig(Builder builder) {</span>
+<span class="fc" id="L18">        this.maxConcurrency = builder.maxConcurrency;</span>
+<span class="fc" id="L19">        this.completionConfig = builder.completionConfig;</span>
+<span class="fc" id="L20">        this.serDes = builder.serDes;</span>
+<span class="fc" id="L21">    }</span>
 
     /** @return max concurrent items, or null for unlimited */
     public Integer maxConcurrency() {
-<span class="nc" id="L25">        return maxConcurrency;</span>
+<span class="fc" id="L25">        return maxConcurrency;</span>
     }
 
     /** @return completion criteria, defaults to {@link CompletionConfig#allCompleted()} */
     public CompletionConfig completionConfig() {
-<span class="nc bnc" id="L30" title="All 2 branches missed.">        return completionConfig != null ? completionConfig : CompletionConfig.allCompleted();</span>
+<span class="fc bfc" id="L30" title="All 2 branches covered.">        return completionConfig != null ? completionConfig : CompletionConfig.allCompleted();</span>
     }
 
     /** @return the custom serializer, or null to use the default */
     public SerDes serDes() {
-<span class="nc" id="L35">        return serDes;</span>
+<span class="fc" id="L35">        return serDes;</span>
     }
 
     public static Builder builder() {
-<span class="nc" id="L39">        return new Builder(null, null, null);</span>
+<span class="fc" id="L39">        return new Builder(null, null, null);</span>
     }
 
     public Builder toBuilder() {
-<span class="nc" id="L43">        return new Builder(maxConcurrency, completionConfig, serDes);</span>
+<span class="fc" id="L43">        return new Builder(maxConcurrency, completionConfig, serDes);</span>
     }
 
     /** Builder for creating MapConfig instances. */
@@ -49,29 +49,29 @@ public class MapConfig {
         private CompletionConfig completionConfig;
         private SerDes serDes;
 
-<span class="nc" id="L52">        private Builder(Integer maxConcurrency, CompletionConfig completionConfig, SerDes serDes) {</span>
-<span class="nc" id="L53">            this.maxConcurrency = maxConcurrency;</span>
-<span class="nc" id="L54">            this.completionConfig = completionConfig;</span>
-<span class="nc" id="L55">            this.serDes = serDes;</span>
-<span class="nc" id="L56">        }</span>
+<span class="fc" id="L52">        private Builder(Integer maxConcurrency, CompletionConfig completionConfig, SerDes serDes) {</span>
+<span class="fc" id="L53">            this.maxConcurrency = maxConcurrency;</span>
+<span class="fc" id="L54">            this.completionConfig = completionConfig;</span>
+<span class="fc" id="L55">            this.serDes = serDes;</span>
+<span class="fc" id="L56">        }</span>
 
         public Builder maxConcurrency(Integer maxConcurrency) {
-<span class="nc" id="L59">            this.maxConcurrency = maxConcurrency;</span>
-<span class="nc" id="L60">            return this;</span>
+<span class="fc" id="L59">            this.maxConcurrency = maxConcurrency;</span>
+<span class="fc" id="L60">            return this;</span>
         }
 
         public Builder completionConfig(CompletionConfig completionConfig) {
-<span class="nc" id="L64">            this.completionConfig = completionConfig;</span>
-<span class="nc" id="L65">            return this;</span>
+<span class="fc" id="L64">            this.completionConfig = completionConfig;</span>
+<span class="fc" id="L65">            return this;</span>
         }
 
         public Builder serDes(SerDes serDes) {
-<span class="nc" id="L69">            this.serDes = serDes;</span>
-<span class="nc" id="L70">            return this;</span>
+<span class="fc" id="L69">            this.serDes = serDes;</span>
+<span class="fc" id="L70">            return this;</span>
         }
 
         public MapConfig build() {
-<span class="nc" id="L74">            return new MapConfig(this);</span>
+<span class="fc" id="L74">            return new MapConfig(this);</span>
         }
     }
 }

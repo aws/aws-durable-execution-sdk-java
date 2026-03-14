@@ -125,17 +125,17 @@ public final class ParameterValidator {
      * @throws IllegalArgumentException if items is null or has non-deterministic iteration order
      */
     public static void validateOrderedCollection(Collection&lt;?&gt; items) {
-<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (items == null) {</span>
-<span class="nc" id="L129">            throw new IllegalArgumentException(&quot;items cannot be null&quot;);</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        if (items == null) {</span>
+<span class="fc" id="L129">            throw new IllegalArgumentException(&quot;items cannot be null&quot;);</span>
         }
-<span class="nc bnc" id="L131" title="All 4 branches missed.">        if (items instanceof HashSet || isUnorderedMapView(items)) {</span>
-<span class="nc" id="L132">            throw new IllegalArgumentException(&quot;items must have deterministic iteration order&quot;);</span>
+<span class="fc bfc" id="L131" title="All 4 branches covered.">        if (items instanceof HashSet || isUnorderedMapView(items)) {</span>
+<span class="fc" id="L132">            throw new IllegalArgumentException(&quot;items must have deterministic iteration order&quot;);</span>
         }
-<span class="nc" id="L134">    }</span>
+<span class="fc" id="L134">    }</span>
 
     private static boolean isUnorderedMapView(Collection&lt;?&gt; collection) {
-<span class="nc" id="L137">        var enclosing = collection.getClass().getEnclosingClass();</span>
-<span class="nc bnc" id="L138" title="All 4 branches missed.">        return enclosing != null &amp;&amp; UNORDERED_MAP_TYPES.contains(enclosing);</span>
+<span class="fc" id="L137">        var enclosing = collection.getClass().getEnclosingClass();</span>
+<span class="fc bfc" id="L138" title="All 4 branches covered.">        return enclosing != null &amp;&amp; UNORDERED_MAP_TYPES.contains(enclosing);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
