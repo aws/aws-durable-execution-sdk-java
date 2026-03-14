@@ -19,6 +19,7 @@ Build resilient, long-running AWS Lambda functions that automatically checkpoint
 - **Configurable Retries** – Built-in retry strategies with exponential backoff and jitter
 - **Replay Safety** – Functions deterministically resume from checkpoints after interruptions
 - **Type Safety** – Full generic type support for step results
+- **Data-Driven Concurrency** – Apply a function across a collection with `map()`, with per-item error isolation and configurable completion criteria
 
 ## How It Works
 
@@ -30,6 +31,7 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 - `ctx.waitForCallback()` – Simplify callback handling by combining callback creation and submission in one operation
 - `ctx.invoke()` – Invoke another Lambda function and wait for the result
 - `ctx.runInChildContext()` – Run an isolated child context with its own checkpoint log
+- `ctx.map()` – Apply a function to each item in a collection concurrently
 
 ## Quick Start
 
@@ -91,6 +93,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 - [<u>Callbacks</u>](docs/core/callbacks.md) - Wait for external systems to respond
 - [<u>Invoke</u>](docs/core/invoke.md) - Call other durable functions
 - [<u>Child Contexts</u>](docs/core/child-contexts.md) - Organize complex workflows into isolated units
+- [<u>Map</u>](docs/core/map.md) - Apply a function across a collection concurrently
 
 **Examples**
 

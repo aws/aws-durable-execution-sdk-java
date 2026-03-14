@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -45,6 +47,7 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
 
     private final List<ChildContextOperation<?>> branches = new ArrayList<>();
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedQueue<>();
+    private final Set<ChildContextOperation<?>> startedBranches = ConcurrentHashMap.newKeySet();
     private final AtomicInteger activeBranches = new AtomicInteger(0);
     private final AtomicInteger succeeded = new AtomicInteger(0);
     private final AtomicInteger failed = new AtomicInteger(0);
@@ -136,8 +139,20 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
                 rootContext);
         branches.add(branch);
 
+        // Attach callback BEFORE execution starts (or before future can complete).
+        // The thenRun runs synchronously inside the synchronized(completionFuture) block
+        // when completionFuture.complete(null) is called, so it executes on the checkpoint
+        // processing thread. This callback only does lightweight work: update counters,
+        // evaluate CompletionConfig, dequeue and start next branch.
+        branch.completionFuture.thenRun(() -> {
+            var op = branch.getOperation();
+            boolean success = op != null && op.status() == OperationStatus.SUCCEEDED;
+            onChildContextComplete(branch, success);
+        });
+
         if (!earlyTermination && (maxConcurrency == null || activeBranches.get() < maxConcurrency)) {
             activeBranches.incrementAndGet();
+            startedBranches.add(branch);
             branch.execute();
         } else {
             pendingQueue.add(branch);
@@ -147,6 +162,11 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
 
     // ========== completion callback ==========
 
+    /**
+     * Called on the checkpoint processing thread when a branch's completionFuture completes. Only does lightweight
+     * work: update counters, evaluate CompletionConfig, dequeue and start next branch. Does NOT call
+     * finalizeOperation() or checkpointResult() — those happen in get() on the context thread.
+     */
     protected void onChildContextComplete(ChildContextOperation<?> branch, boolean success) {
         if (success) {
             succeeded.incrementAndGet();
@@ -167,6 +187,7 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
             var next = pendingQueue.poll();
             if (next != null) {
                 // activeBranches stays the same (one completing, one starting)
+                startedBranches.add(next);
                 next.execute(); // registers new thread internally via ChildContextOperation.start()
             } else {
                 activeBranches.decrementAndGet();
@@ -175,10 +196,6 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
             activeBranches.decrementAndGet();
         }
         // completed branch's thread is deregistered by ChildContextOperation's close() in BaseContext
-
-        if (activeBranches.get() == 0 && pendingQueue.isEmpty()) {
-            finalizeOperation();
-        }
     }
 
     // ========== completion evaluation ==========
@@ -206,7 +223,7 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
         return false;
     }
 
-    private CompletionReason evaluateCompletionReason() {
+    protected CompletionReason evaluateCompletionReason() {
         if (completionConfig.minSuccessful() != null && succeeded.get() >= completionConfig.minSuccessful()) {
             return CompletionReason.MIN_SUCCESSFUL_REACHED;
         }
@@ -222,18 +239,25 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
         checkpointResult(result);
     }
 
-    private void checkpointResult(R result) {
+    /**
+     * Checkpoints the parent concurrent operation as SUCCEEDED. Uses synchronous {@code sendOperationUpdate} because
+     * this is called from the context thread in {@code get()}, where it is safe to block.
+     *
+     * <p>Small results (&lt;256KB) are checkpointed directly as payload. Large results are checkpointed with
+     * {@code replayChildren=true} and an empty payload, so on replay the result is reconstructed from child contexts.
+     */
+    protected void checkpointResult(R result) {
         var serialized = serializeResult(result);
         var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
 
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
-            sendOperationUpdateAsync(OperationUpdate.builder()
+            sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .subType(subType.getValue())
                     .payload(serialized));
         } else {
             // Large result: checkpoint with empty payload + replayChildren flag
-            sendOperationUpdateAsync(OperationUpdate.builder()
+            sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .subType(subType.getValue())
                     .payload("")
@@ -295,5 +319,15 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
 
     protected DurableContext getRootContext() {
         return rootContext;
+    }
+
+    /** Returns the pending queue of branches that have not yet been started. */
+    protected Queue<ChildContextOperation<?>> getPendingQueue() {
+        return pendingQueue;
+    }
+
+    /** Returns the set of branches that have been started (had execute() called). */
+    protected Set<ChildContextOperation<?>> getStartedBranches() {
+        return startedBranches;
     }
 }

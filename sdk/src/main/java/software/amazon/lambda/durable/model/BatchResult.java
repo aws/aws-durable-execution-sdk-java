@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -11,17 +15,35 @@ import java.util.List;
  * <p>Holds ordered results and errors from a batch of concurrent operations. Each index corresponds to the input item
  * at the same position. Includes the {@link CompletionReason} indicating why the operation completed.
  *
+ * <p>When serialized for checkpointing, only results and completionReason are included. Errors are excluded because
+ * they contain Throwable objects that are not reliably serializable. On replay from a small-result checkpoint, errors
+ * will be an empty list with null entries matching the results size.
+ *
  * @param <T> the result type of each item
  */
 public class BatchResult<T> {
+    @JsonProperty("results")
     private final List<T> results;
+
+    @JsonIgnore
     private final List<Throwable> errors;
+
+    @JsonProperty("completionReason")
     private final CompletionReason completionReason;
 
     public BatchResult(List<T> results, List<Throwable> errors, CompletionReason completionReason) {
         this.results = results;
         this.errors = errors;
         this.completionReason = completionReason;
+    }
+
+    @JsonCreator
+    private BatchResult(
+            @JsonProperty("results") List<T> results,
+            @JsonProperty("completionReason") CompletionReason completionReason) {
+        this.results = results != null ? results : Collections.emptyList();
+        this.errors = new ArrayList<>(Collections.nCopies(this.results.size(), null));
+        this.completionReason = completionReason != null ? completionReason : CompletionReason.ALL_COMPLETED;
     }
 
     /** Returns an empty BatchResult with no results and no errors. */

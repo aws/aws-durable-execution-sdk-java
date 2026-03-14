@@ -5,6 +5,15 @@ package software.amazon.lambda.durable.validation;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 
 class ParameterValidatorTest {
@@ -289,5 +298,76 @@ class ParameterValidatorTest {
         assertDoesNotThrow(() -> ParameterValidator.validateOperationName("a"));
         assertDoesNotThrow(() -> ParameterValidator.validateOperationName("1"));
         assertDoesNotThrow(() -> ParameterValidator.validateOperationName("-"));
+    }
+
+    // ========== validateOrderedCollection ==========
+
+    @Test
+    void validateOrderedCollection_withNull_shouldThrow() {
+        var exception =
+                assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOrderedCollection(null));
+
+        assertEquals("items cannot be null", exception.getMessage());
+    }
+
+    @Test
+    void validateOrderedCollection_withList_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(List.of("a", "b")));
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(new ArrayList<>(List.of(1, 2))));
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(new LinkedList<>(List.of("x"))));
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(new CopyOnWriteArrayList<>(List.of(1))));
+    }
+
+    @Test
+    void validateOrderedCollection_withEmptyList_shouldPass() {
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(List.of()));
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(new ArrayList<>()));
+    }
+
+    @Test
+    void validateOrderedCollection_withOrderedSet_shouldPass() {
+        // TreeSet has deterministic order and does not extend HashSet
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(new TreeSet<>(List.of("a", "b"))));
+    }
+
+    @Test
+    void validateOrderedCollection_withLinkedHashSet_shouldThrow() {
+        // LinkedHashSet extends HashSet, so it's rejected even though it has deterministic order
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ParameterValidator.validateOrderedCollection(new LinkedHashSet<>(List.of("a", "b"))));
+    }
+
+    @Test
+    void validateOrderedCollection_withHashSet_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> ParameterValidator.validateOrderedCollection(new HashSet<>(List.of("a"))));
+
+        assertEquals("items must have deterministic iteration order", exception.getMessage());
+    }
+
+    @Test
+    void validateOrderedCollection_withHashMapKeySet_shouldThrow() {
+        var map = new HashMap<String, String>();
+        map.put("key", "value");
+
+        assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOrderedCollection(map.keySet()));
+    }
+
+    @Test
+    void validateOrderedCollection_withHashMapValues_shouldThrow() {
+        var map = new HashMap<String, String>();
+        map.put("key", "value");
+
+        assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOrderedCollection(map.values()));
+    }
+
+    @Test
+    void validateOrderedCollection_withConcurrentHashMapKeySet_shouldThrow() {
+        var map = new ConcurrentHashMap<String, String>();
+        map.put("key", "value");
+
+        assertThrows(IllegalArgumentException.class, () -> ParameterValidator.validateOrderedCollection(map.keySet()));
     }
 }

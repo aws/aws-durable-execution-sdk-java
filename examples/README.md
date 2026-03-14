@@ -89,6 +89,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [RetryInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/RetryInProcessExample.java) | In-process retry with concurrent operations |
 | [WaitAtLeastInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
 | [ManyAsyncStepsExample](src/main/java/com/amazonaws/lambda/durable/examples/ManyAsyncStepsExample.java) | Performance test with 500 concurrent async steps |
+| [SimpleMapExample](src/main/java/com/amazonaws/lambda/durable/examples/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
 
 ## Cleanup
 

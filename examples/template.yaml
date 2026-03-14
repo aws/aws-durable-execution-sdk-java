@@ -493,6 +493,56 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  MapErrorHandlingExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'map-error-handling-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["software.amazon.lambda.durable.examples.MapErrorHandlingExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:map-error-handling-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
+  MapConfigExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'map-config-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["software.amazon.lambda.durable.examples.MapConfigExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:map-config-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   NoopExampleFunction:
     Description: Noop Example Function ARN
@@ -645,4 +695,20 @@ Outputs:
   SimpleMapExampleFunctionName:
     Description: Simple Map Example Function Name
     Value: !Ref SimpleMapExampleFunction
+
+  MapErrorHandlingExampleFunction:
+    Description: Map Error Handling Example Function ARN
+    Value: !GetAtt MapErrorHandlingExampleFunction.Arn
+
+  MapErrorHandlingExampleFunctionName:
+    Description: Map Error Handling Example Function Name
+    Value: !Ref MapErrorHandlingExampleFunction
+
+  MapConfigExampleFunction:
+    Description: Map Config Example Function ARN
+    Value: !GetAtt MapConfigExampleFunction.Arn
+
+  MapConfigExampleFunctionName:
+    Description: Map Config Example Function Name
+    Value: !Ref MapConfigExampleFunction
 

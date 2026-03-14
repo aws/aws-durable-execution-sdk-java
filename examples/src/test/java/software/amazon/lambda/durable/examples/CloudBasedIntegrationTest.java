@@ -548,4 +548,40 @@ class CloudBasedIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("Hello, Alice! | Hello, ALICE! | Hello, alice!", result.getResult(String.class));
     }
+
+    @Test
+    void testMapErrorHandlingExample() {
+        var runner =
+                CloudDurableTestRunner.create(arn("map-error-handling-example"), GreetingRequest.class, String.class);
+        var result = runner.run(new GreetingRequest("Alice"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var output = result.getResult(String.class);
+        assertNotNull(output);
+
+        // 3 of 5 orders succeed, 2 fail
+        assertTrue(output.contains("succeeded=3"));
+        assertTrue(output.contains("failed=2"));
+        assertTrue(output.contains("Processed order-1 for Alice"));
+        assertTrue(output.contains("Processed order-3 for Alice"));
+        assertTrue(output.contains("Processed order-5 for Alice"));
+    }
+
+    @Test
+    void testMapConfigExample() {
+        var runner = CloudDurableTestRunner.create(arn("map-config-example"), GreetingRequest.class, String.class);
+        var result = runner.run(new GreetingRequest("Alice"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var output = result.getResult(String.class);
+        assertNotNull(output);
+
+        // Sequential part: all 3 items processed
+        assertTrue(output.contains("ALPHA-Alice"));
+        assertTrue(output.contains("BETA-Alice"));
+        assertTrue(output.contains("GAMMA-Alice"));
+
+        // Early termination part
+        assertTrue(output.contains("reason=MIN_SUCCESSFUL_REACHED"));
+    }
 }

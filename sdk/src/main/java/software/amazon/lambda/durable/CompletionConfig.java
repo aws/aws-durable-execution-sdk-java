@@ -34,6 +34,21 @@ public class CompletionConfig {
         return new CompletionConfig(1, null, null);
     }
 
+    /** Complete when the specified number of items have succeeded. */
+    public static CompletionConfig minSuccessful(int count) {
+        return new CompletionConfig(count, null, null);
+    }
+
+    /** Complete when more than the specified number of failures have occurred. */
+    public static CompletionConfig toleratedFailureCount(int count) {
+        return new CompletionConfig(null, count, null);
+    }
+
+    /** Complete when the failure percentage exceeds the specified threshold (0.0 to 1.0). */
+    public static CompletionConfig toleratedFailurePercentage(double percentage) {
+        return new CompletionConfig(null, null, percentage);
+    }
+
     /** @return minimum number of successful items required, or null if not set */
     public Integer minSuccessful() {
         return minSuccessful;

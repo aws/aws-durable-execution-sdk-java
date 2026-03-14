@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.MapFunction;
@@ -69,19 +70,61 @@ public class MapOperation<I, O> extends BaseConcurrentOperation<BatchResult<O>> 
     }
 
     /**
-     * Waits for all branches to complete and aggregates results. Overrides the base class get() to directly wait on
-     * each branch rather than relying on the parent operation's completion future, which avoids thread coordination
-     * issues between the checkpoint processing thread and the context thread.
+     * Waits for all branches to complete and aggregates results, then checkpoints the parent MAP operation.
+     *
+     * <p>Handles three cases:
+     *
+     * <ul>
+     *   <li>Replay with small result (parent SUCCEEDED, no replayChildren): deserialize cached BatchResult directly
+     *   <li>Replay with large result (parent SUCCEEDED + replayChildren): aggregate from child replays, no
+     *       re-checkpoint needed
+     *   <li>First execution or STARTED replay: aggregate from branches, then checkpoint parent result
+     * </ul>
      */
     @Override
-    @SuppressWarnings("unchecked")
     public BatchResult<O> get() {
+        // Check if parent operation already completed (replay with small result)
+        if (isOperationCompleted()) {
+            var op = getOperation();
+            if (op != null && op.status() == OperationStatus.SUCCEEDED) {
+                if (op.contextDetails() != null
+                        && Boolean.TRUE.equals(op.contextDetails().replayChildren())) {
+                    // Large result on replay: aggregate from child replays
+                    return aggregateResults();
+                }
+                // Small result on replay: deserialize cached BatchResult
+                var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;
+                return deserializeResult(result);
+            }
+        }
+
+        // First execution, STARTED replay, or SUCCEEDED+replayChildren replay: aggregate from branches
+        var batchResult = aggregateResults();
+
+        // Check if parent is already SUCCEEDED (replayChildren case) — skip re-checkpointing
+        var existingOp = getOperation();
+        if (existingOp == null || existingOp.status() != OperationStatus.SUCCEEDED) {
+            // First execution or STARTED: checkpoint parent result from context thread (safe to .join() here)
+            checkpointResult(batchResult);
+        }
+
+        return batchResult;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    protected BatchResult<O> aggregateResults() {
         var branches = getBranches();
+        var pendingQueue = getPendingQueue();
         var results = new ArrayList<O>(Collections.nCopies(items.size(), null));
         var errors = new ArrayList<Throwable>(Collections.nCopies(items.size(), null));
 
         for (int i = 0; i < branches.size(); i++) {
             var branch = (ChildContextOperation<O>) branches.get(i);
+            // Skip branches still in the pending queue (never started due to early termination)
+            if (pendingQueue.contains(branch)) {
+                continue;
+            }
             try {
                 results.set(i, branch.get());
             } catch (Exception e) {
@@ -89,13 +132,10 @@ public class MapOperation<I, O> extends BaseConcurrentOperation<BatchResult<O>> 
             }
         }
 
-        var reason = getCompletionReason() != null ? getCompletionReason() : CompletionReason.ALL_COMPLETED;
+        var reason = getCompletionReason();
+        if (reason == null) {
+            reason = !pendingQueue.isEmpty() ? evaluateCompletionReason() : CompletionReason.ALL_COMPLETED;
+        }
         return new BatchResult<>(results, errors, reason);
-    }
-
-    @Override
-    protected BatchResult<O> aggregateResults() {
-        // Not used — get() handles aggregation directly
-        throw new UnsupportedOperationException("aggregateResults should not be called directly");
     }
 }
