@@ -102,6 +102,14 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         }
     }
 
+    @Override
+    protected void markAlreadyCompleted() {
+        super.markAlreadyCompleted();
+        if (parentOperation != null) {
+            parentOperation.onItemComplete(this);
+        }
+    }
+
     private void executeChildContext() {
         // The operationId is already globally unique (prefixed by parent context path via
         // DurableContext.nextOperationId), so we use it directly as the contextId.
@@ -158,7 +166,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
     private void checkpointSuccess(T result) {
         // Skip checkpointing if parent ConcurrencyOperation has already completed —
-        // prevents race conditions where a child finishes after the parent has already succeeded.
+        // prevents race conditions where a child finishes after the parent has already completed.
         if (parentOperation != null && parentOperation.isOperationCompleted()) {
             this.reconstructedResult = result;
             markAlreadyCompleted();

@@ -11,7 +11,7 @@ public class ParallelContext implements AutoCloseable {
 
     private final ParallelOperation<?> parallelOperation;
     private final DurableContext durableContext;
-    private volatile boolean joined;
+    private boolean joined;
 
     /**
      * Creates a new ParallelContext.

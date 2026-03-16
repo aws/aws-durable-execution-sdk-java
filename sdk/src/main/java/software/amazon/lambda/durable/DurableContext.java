@@ -606,12 +606,12 @@ public class DurableContext extends BaseContext {
      * @param config the parallel execution configuration
      * @return a new ParallelContext for registering and executing branches
      */
-    public ParallelContext parallel(ParallelConfig config) {
+    public ParallelContext parallel(String name, ParallelConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         var operationId = nextOperationId();
 
         var parallelOp = new ParallelOperation<>(
-                OperationIdentifier.of(operationId, "parallel", OperationType.CONTEXT, OperationSubType.PARALLEL),
+                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL),
                 TypeToken.get(Void.class),
                 getDurableConfig().getSerDes(),
                 this,

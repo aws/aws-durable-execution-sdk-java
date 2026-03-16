@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.operation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
+
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -12,6 +14,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.ConcurrencyExecutionException;
+import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -84,12 +87,13 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
     }
 
     @Override
-    protected void handleFailure() {
-        List<Throwable> itemFailures = collectItemFailures();
+    protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.FAIL)
-                .subType(getSubType().getValue()));
-        throw new ConcurrencyExecutionException(getSucceededCount(), getFailedCount(), getTotalItems(), itemFailures);
+                .subType(getSubType().getValue())
+                .error(ErrorObject.builder()
+                    .errorMessage("Parallel operation failed with " + concurrencyCompletionStatus + " status")
+                    .build()));
     }
 
     @Override
@@ -101,52 +105,14 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
     @Override
     protected void replay(Operation existing) {
-        // TODO: always replay child branches for parallel
-        switch (existing.status()) {
-            case SUCCEEDED -> markAlreadyCompleted();
-            case FAILED -> markAlreadyCompleted();
-            case STARTED -> {
-                // Re-execute: branches will replay their own child contexts
-            }
-            default ->
-                terminateExecutionWithIllegalDurableOperationException(
-                        "Unexpected parallel operation status: " + existing.status());
-        }
-    }
-
-    /**
-     * Adds a branch to this parallel operation. Delegates to {@link ConcurrencyOperation#addItem}. This method is
-     * public to allow {@code ParallelContext} to register branches.
-     *
-     * @param name the branch name
-     * @param function the user function to execute
-     * @param resultType the result type token
-     * @param serDes the serializer/deserializer
-     * @param <R> the result type of the branch
-     * @return the created ChildContextOperation
-     */
-    @Override
-    public <R> ChildContextOperation<R> addItem(
-            String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
-        return super.addItem(name, function, resultType, serDes);
+        // Always replay child branches for parallel
+        start();
     }
 
     @Override
     public T get() {
-        // TODO: add execution summary
+        // TODO: implement proper return value handling
         join();
         return null;
-    }
-
-    private List<Throwable> collectItemFailures() {
-        var failures = new ArrayList<Throwable>();
-        for (var child : getChildOperations()) {
-            try {
-                child.get();
-            } catch (Exception e) {
-                failures.add(e);
-            }
-        }
-        return failures;
     }
 }

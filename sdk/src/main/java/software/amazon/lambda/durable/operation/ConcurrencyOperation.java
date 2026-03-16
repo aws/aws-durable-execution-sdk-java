@@ -4,8 +4,10 @@ package software.amazon.lambda.durable.operation;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -50,6 +52,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final AtomicBoolean isJoined = new AtomicBoolean(false);
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
     private final List<ChildContextOperation<?>> childOperations = Collections.synchronizedList(new ArrayList<>());
+    private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
     private ConcurrencyCompletionStatus completionStatus;
 
     protected ConcurrencyOperation(
@@ -116,7 +119,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     protected abstract void handleSuccess();
 
     /** Called when the concurrency operation fails. Subclasses define checkpointing and exception behavior. */
-    protected abstract void handleFailure();
+    protected abstract void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus);
 
     // ========== Concurrency control ==========
 
@@ -134,10 +137,12 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      */
     public <R> ChildContextOperation<R> addItem(
             String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
+        if (isOperationCompleted()) throw new IllegalStateException("Cannot add items to a completed operation");
         var operationId = getContext().nextOperationId();
         var childOp = createItem(operationId, name, function, resultType, serDes, getContext());
         childOperations.add(childOp);
         pendingQueue.add(childOp);
+        logger.debug("Item added {}", name);
         executeNextItemIfAllowed();
         return childOp;
     }
@@ -153,6 +158,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             var next = pendingQueue.poll();
             if (next == null) return;
             runningCount.incrementAndGet();
+            logger.debug("Executing operation {}", next.getName());
             next.execute();
         }
     }
@@ -164,14 +170,20 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @param child the child operation that completed
      */
     public void onItemComplete(ChildContextOperation<?> child) {
+        if (completedOperations.contains(child.getOperationId())) {
+            return;
+        } else {
+            completedOperations.add(child.getOperationId());
+        }
         runningCount.decrementAndGet();
-
+        logger.debug("OnItemComplete called by {}, Id: {}", child.getName(), child.getOperationId());
         try {
             child.get();
+            logger.debug("Result succeeded - {}", child.getName());
             succeededCount.incrementAndGet();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             failedCount.incrementAndGet();
-            logger.trace("Child operation {} failed: {}", child.getOperationId(), e.getMessage());
+            logger.debug("Child operation {} failed: {}", child.getOperationId(), e.getMessage());
         }
 
         if (canComplete()) {
@@ -191,7 +203,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     protected void validateItemCount() {
         int totalItems = childOperations.size();
 
-        if (minSuccessful > totalItems) {
+        if (minSuccessful > totalItems - failedCount.get()) {
             throw new IllegalArgumentException("minSuccessful (" + minSuccessful
                     + ") exceeds the number of registered items (" + totalItems + ")");
         }
@@ -237,7 +249,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         if (completionStatus.isSucceeded()) {
             handleSuccess();
         } else {
-            handleFailure();
+            handleFailure(completionStatus);
         }
         synchronized (completionFuture) {
             completionFuture.complete(null);

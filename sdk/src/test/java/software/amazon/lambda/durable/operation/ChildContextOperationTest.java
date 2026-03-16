@@ -329,4 +329,104 @@ class ChildContextOperationTest {
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
     }
+
+    // ===== onItemComplete called during replay =====
+
+    /** SUCCEEDED replay (terminal) — onItemComplete is called via markAlreadyCompleted(). */
+    @Test
+    void replaySucceeded_callsParentOnItemComplete() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1"))
+                .thenReturn(Operation.builder()
+                        .id("1")
+                        .name("test-context")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"cached\"").build())
+                        .build());
+
+        var parent = mock(ConcurrencyOperation.class);
+        when(parent.isOperationCompleted()).thenReturn(false);
+
+        var operation = createOperationWithParent(ctx -> "unused", parent);
+        operation.execute();
+
+        verify(parent).onItemComplete(operation);
+    }
+
+    /** FAILED replay (terminal) — onItemComplete is called via markAlreadyCompleted(). */
+    @Test
+    void replayFailed_callsParentOnItemComplete() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1"))
+                .thenReturn(Operation.builder()
+                        .id("1")
+                        .name("test-context")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
+                        .status(OperationStatus.FAILED)
+                        .contextDetails(ContextDetails.builder()
+                                .error(ErrorObject.builder()
+                                        .errorType("java.lang.RuntimeException")
+                                        .errorMessage("original failure")
+                                        .build())
+                                .build())
+                        .build());
+
+        var parent = mock(ConcurrencyOperation.class);
+        when(parent.isOperationCompleted()).thenReturn(false);
+
+        var operation = createOperationWithParent(ctx -> "unused", parent);
+        operation.execute();
+
+        verify(parent).onItemComplete(operation);
+    }
+
+    /** STARTED replay — child re-executes and onItemComplete is called from the finally block. */
+    @Test
+    void replayStarted_callsParentOnItemComplete() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1"))
+                .thenReturn(Operation.builder()
+                        .id("1")
+                        .name("test-context")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
+                        .status(OperationStatus.STARTED)
+                        .build());
+        when(executionManager.hasOperationsForContext("1")).thenReturn(false);
+
+        var parent = mock(ConcurrencyOperation.class);
+        when(parent.isOperationCompleted()).thenReturn(false);
+
+        var operation = createOperationWithParent(ctx -> "re-executed", parent);
+        operation.execute();
+        Thread.sleep(200);
+
+        verify(parent).onItemComplete(operation);
+    }
+
+    /** replayChildren=true — child re-executes and onItemComplete is called from the finally block. */
+    @Test
+    void replayChildren_callsParentOnItemComplete() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1"))
+                .thenReturn(Operation.builder()
+                        .id("1")
+                        .name("test-context")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.RUN_IN_CHILD_CONTEXT.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().replayChildren(true).build())
+                        .build());
+        when(executionManager.hasOperationsForContext("1")).thenReturn(false);
+
+        var parent = mock(ConcurrencyOperation.class);
+        when(parent.isOperationCompleted()).thenReturn(false);
+
+        var operation = createOperationWithParent(ctx -> "reconstructed", parent);
+        operation.execute();
+        Thread.sleep(200);
+
+        verify(parent, atLeast(1)).onItemComplete(operation);
+    }
 }
