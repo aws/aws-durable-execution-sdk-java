@@ -38,7 +38,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * &lt;p&gt;Subclasses implement {@link #startBranches()} to create branches via {@link #branchInternal} and
  * {@link #aggregateResults()} to collect branch results into the final result type.
  *
- * @param &lt;R&gt; the aggregate result type (e.g., {@code BatchResult&lt;O&gt;})
+ * @param &lt;R&gt; the aggregate result type (e.g., {@code MapResult&lt;O&gt;})
  */
 public abstract class BaseConcurrentOperation&lt;R&gt; extends BaseDurableOperation&lt;R&gt; {
 

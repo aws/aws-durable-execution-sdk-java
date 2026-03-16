@@ -10,8 +10,9 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.model.BatchResult;
 import software.amazon.lambda.durable.model.CompletionReason;
+import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.MapResultItem;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -22,7 +23,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * @param &lt;I&gt; the input item type
  * @param &lt;O&gt; the output result type per item
  */
-public class MapOperation&lt;I, O&gt; extends BaseConcurrentOperation&lt;BatchResult&lt;O&gt;&gt; {
+public class MapOperation&lt;I, O&gt; extends BaseConcurrentOperation&lt;MapResult&lt;O&gt;&gt; {
 
     private final List&lt;I&gt; items;
     private final MapFunction&lt;I, O&gt; function;
@@ -37,37 +38,37 @@ public class MapOperation&lt;I, O&gt; extends BaseConcurrentOperation&lt;BatchRe
             TypeToken&lt;O&gt; itemResultType,
             MapConfig config,
             DurableContext durableContext) {
-<span class="nc" id="L40">        super(</span>
+<span class="nc" id="L41">        super(</span>
                 operationId,
                 name,
                 OperationSubType.MAP,
-<span class="nc" id="L44">                config.maxConcurrency(),</span>
-<span class="nc" id="L45">                config.completionConfig(),</span>
-<span class="nc" id="L46">                new TypeToken&lt;&gt;() {},</span>
-<span class="nc" id="L47">                config.serDes(),</span>
+<span class="nc" id="L45">                config.maxConcurrency(),</span>
+<span class="nc" id="L46">                config.completionConfig(),</span>
+<span class="nc" id="L47">                new TypeToken&lt;&gt;() {},</span>
+<span class="nc" id="L48">                config.serDes(),</span>
                 durableContext);
-<span class="nc" id="L49">        this.items = List.copyOf(items);</span>
-<span class="nc" id="L50">        this.function = function;</span>
-<span class="nc" id="L51">        this.itemResultType = itemResultType;</span>
-<span class="nc" id="L52">        this.serDes = config.serDes();</span>
-<span class="nc" id="L53">    }</span>
+<span class="nc" id="L50">        this.items = List.copyOf(items);</span>
+<span class="nc" id="L51">        this.function = function;</span>
+<span class="nc" id="L52">        this.itemResultType = itemResultType;</span>
+<span class="nc" id="L53">        this.serDes = config.serDes();</span>
+<span class="nc" id="L54">    }</span>
 
     @Override
     protected void startBranches() {
-<span class="nc bnc" id="L57" title="All 2 branches missed.">        for (int i = 0; i &lt; items.size(); i++) {</span>
-<span class="nc" id="L58">            var index = i;</span>
-<span class="nc" id="L59">            var item = items.get(i);</span>
-<span class="nc" id="L60">            branchInternal(&quot;map-iteration-&quot; + i, OperationSubType.MAP_ITERATION, itemResultType, serDes, childCtx -&gt; {</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        for (int i = 0; i &lt; items.size(); i++) {</span>
+<span class="nc" id="L59">            var index = i;</span>
+<span class="nc" id="L60">            var item = items.get(i);</span>
+<span class="nc" id="L61">            branchInternal(&quot;map-iteration-&quot; + i, OperationSubType.MAP_ITERATION, itemResultType, serDes, childCtx -&gt; {</span>
                 try {
-<span class="nc" id="L62">                    return function.apply(childCtx, item, index);</span>
-<span class="nc" id="L63">                } catch (RuntimeException e) {</span>
-<span class="nc" id="L64">                    throw e;</span>
-<span class="nc" id="L65">                } catch (Exception e) {</span>
-<span class="nc" id="L66">                    throw new RuntimeException(e);</span>
+<span class="nc" id="L63">                    return function.apply(item, index, childCtx);</span>
+<span class="nc" id="L64">                } catch (RuntimeException e) {</span>
+<span class="nc" id="L65">                    throw e;</span>
+<span class="nc" id="L66">                } catch (Exception e) {</span>
+<span class="nc" id="L67">                    throw new RuntimeException(e);</span>
                 }
             });
         }
-<span class="nc" id="L70">    }</span>
+<span class="nc" id="L71">    }</span>
 
     /**
      * Waits for all branches to complete and aggregates results, then checkpoints the parent MAP operation.
@@ -75,68 +76,73 @@ public class MapOperation&lt;I, O&gt; extends BaseConcurrentOperation&lt;BatchRe
      * &lt;p&gt;Handles three cases:
      *
      * &lt;ul&gt;
-     *   &lt;li&gt;Replay with small result (parent SUCCEEDED, no replayChildren): deserialize cached BatchResult directly
+     *   &lt;li&gt;Replay with small result (parent SUCCEEDED, no replayChildren): deserialize cached MapResult directly
      *   &lt;li&gt;Replay with large result (parent SUCCEEDED + replayChildren): aggregate from child replays, no
      *       re-checkpoint needed
      *   &lt;li&gt;First execution or STARTED replay: aggregate from branches, then checkpoint parent result
      * &lt;/ul&gt;
      */
     @Override
-    public BatchResult&lt;O&gt; get() {
+    public MapResult&lt;O&gt; get() {
         // Check if parent operation already completed (replay with small result)
-<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (isOperationCompleted()) {</span>
-<span class="nc" id="L88">            var op = getOperation();</span>
-<span class="nc bnc" id="L89" title="All 4 branches missed.">            if (op != null &amp;&amp; op.status() == OperationStatus.SUCCEEDED) {</span>
-<span class="nc bnc" id="L90" title="All 2 branches missed.">                if (op.contextDetails() != null</span>
-<span class="nc bnc" id="L91" title="All 2 branches missed.">                        &amp;&amp; Boolean.TRUE.equals(op.contextDetails().replayChildren())) {</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        if (isOperationCompleted()) {</span>
+<span class="nc" id="L89">            var op = getOperation();</span>
+<span class="nc bnc" id="L90" title="All 4 branches missed.">            if (op != null &amp;&amp; op.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">                if (op.contextDetails() != null</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">                        &amp;&amp; Boolean.TRUE.equals(op.contextDetails().replayChildren())) {</span>
                     // Large result on replay: aggregate from child replays
-<span class="nc" id="L93">                    return aggregateResults();</span>
+<span class="nc" id="L94">                    return aggregateResults();</span>
                 }
-                // Small result on replay: deserialize cached BatchResult
-<span class="nc bnc" id="L96" title="All 2 branches missed.">                var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;</span>
-<span class="nc" id="L97">                return deserializeResult(result);</span>
+                // Small result on replay: deserialize cached MapResult
+<span class="nc bnc" id="L97" title="All 2 branches missed.">                var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;</span>
+<span class="nc" id="L98">                return deserializeResult(result);</span>
             }
         }
 
         // First execution, STARTED replay, or SUCCEEDED+replayChildren replay: aggregate from branches
-<span class="nc" id="L102">        var batchResult = aggregateResults();</span>
+<span class="nc" id="L103">        var mapResult = aggregateResults();</span>
 
         // Check if parent is already SUCCEEDED (replayChildren case) — skip re-checkpointing
-<span class="nc" id="L105">        var existingOp = getOperation();</span>
-<span class="nc bnc" id="L106" title="All 4 branches missed.">        if (existingOp == null || existingOp.status() != OperationStatus.SUCCEEDED) {</span>
+<span class="nc" id="L106">        var existingOp = getOperation();</span>
+<span class="nc bnc" id="L107" title="All 4 branches missed.">        if (existingOp == null || existingOp.status() != OperationStatus.SUCCEEDED) {</span>
             // First execution or STARTED: checkpoint parent result from context thread (safe to .join() here)
-<span class="nc" id="L108">            checkpointResult(batchResult);</span>
+<span class="nc" id="L109">            checkpointResult(mapResult);</span>
         }
 
-<span class="nc" id="L111">        return batchResult;</span>
+<span class="nc" id="L112">        return mapResult;</span>
     }
 
     @Override
     @SuppressWarnings(&quot;unchecked&quot;)
-    protected BatchResult&lt;O&gt; aggregateResults() {
-<span class="nc" id="L117">        var branches = getBranches();</span>
-<span class="nc" id="L118">        var pendingQueue = getPendingQueue();</span>
-<span class="nc" id="L119">        var results = new ArrayList&lt;O&gt;(Collections.nCopies(items.size(), null));</span>
-<span class="nc" id="L120">        var errors = new ArrayList&lt;Throwable&gt;(Collections.nCopies(items.size(), null));</span>
+    protected MapResult&lt;O&gt; aggregateResults() {
+<span class="nc" id="L118">        var branches = getBranches();</span>
+<span class="nc" id="L119">        var pendingQueue = getPendingQueue();</span>
+<span class="nc" id="L120">        var resultItems = new ArrayList&lt;MapResultItem&lt;O&gt;&gt;(Collections.nCopies(items.size(), null));</span>
 
 <span class="nc bnc" id="L122" title="All 2 branches missed.">        for (int i = 0; i &lt; branches.size(); i++) {</span>
 <span class="nc" id="L123">            var branch = (ChildContextOperation&lt;O&gt;) branches.get(i);</span>
             // Skip branches still in the pending queue (never started due to early termination)
 <span class="nc bnc" id="L125" title="All 2 branches missed.">            if (pendingQueue.contains(branch)) {</span>
-<span class="nc" id="L126">                continue;</span>
+<span class="nc" id="L126">                resultItems.set(i, MapResultItem.notStarted());</span>
+<span class="nc" id="L127">                continue;</span>
             }
             try {
-<span class="nc" id="L129">                results.set(i, branch.get());</span>
-<span class="nc" id="L130">            } catch (Exception e) {</span>
-<span class="nc" id="L131">                errors.set(i, e);</span>
-<span class="nc" id="L132">            }</span>
+<span class="nc" id="L130">                resultItems.set(i, MapResultItem.success(branch.get()));</span>
+<span class="nc" id="L131">            } catch (Exception e) {</span>
+<span class="nc" id="L132">                resultItems.set(i, MapResultItem.failure(e));</span>
+<span class="nc" id="L133">            }</span>
         }
 
-<span class="nc" id="L135">        var reason = getCompletionReason();</span>
-<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (reason == null) {</span>
-<span class="nc bnc" id="L137" title="All 2 branches missed.">            reason = !pendingQueue.isEmpty() ? evaluateCompletionReason() : CompletionReason.ALL_COMPLETED;</span>
+        // Fill any remaining null slots (items beyond branches size) with notStarted
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        for (int i = branches.size(); i &lt; items.size(); i++) {</span>
+<span class="nc" id="L138">            resultItems.set(i, MapResultItem.notStarted());</span>
         }
-<span class="nc" id="L139">        return new BatchResult&lt;&gt;(results, errors, reason);</span>
+
+<span class="nc" id="L141">        var reason = getCompletionReason();</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (reason == null) {</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            reason = !pendingQueue.isEmpty() ? evaluateCompletionReason() : CompletionReason.ALL_COMPLETED;</span>
+        }
+<span class="nc" id="L145">        return new MapResult&lt;&gt;(resultItems, reason);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
