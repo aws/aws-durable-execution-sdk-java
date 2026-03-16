@@ -10,8 +10,9 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.model.BatchResult;
 import software.amazon.lambda.durable.model.CompletionReason;
+import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.MapResultItem;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -22,7 +23,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * @param <I> the input item type
  * @param <O> the output result type per item
  */
-public class MapOperation<I, O> extends BaseConcurrentOperation<BatchResult<O>> {
+public class MapOperation<I, O> extends BaseConcurrentOperation<MapResult<O>> {
 
     private final List<I> items;
     private final MapFunction<I, O> function;
@@ -59,7 +60,7 @@ public class MapOperation<I, O> extends BaseConcurrentOperation<BatchResult<O>> 
             var item = items.get(i);
             branchInternal("map-iteration-" + i, OperationSubType.MAP_ITERATION, itemResultType, serDes, childCtx -> {
                 try {
-                    return function.apply(childCtx, item, index);
+                    return function.apply(item, index, childCtx);
                 } catch (RuntimeException e) {
                     throw e;
                 } catch (Exception e) {
@@ -75,14 +76,14 @@ public class MapOperation<I, O> extends BaseConcurrentOperation<BatchResult<O>> 
      * <p>Handles three cases:
      *
      * <ul>
-     *   <li>Replay with small result (parent SUCCEEDED, no replayChildren): deserialize cached BatchResult directly
+     *   <li>Replay with small result (parent SUCCEEDED, no replayChildren): deserialize cached MapResult directly
      *   <li>Replay with large result (parent SUCCEEDED + replayChildren): aggregate from child replays, no
      *       re-checkpoint needed
      *   <li>First execution or STARTED replay: aggregate from branches, then checkpoint parent result
      * </ul>
      */
     @Override
-    public BatchResult<O> get() {
+    public MapResult<O> get() {
         // Check if parent operation already completed (replay with small result)
         if (isOperationCompleted()) {
             var op = getOperation();
@@ -92,50 +93,55 @@ public class MapOperation<I, O> extends BaseConcurrentOperation<BatchResult<O>> 
                     // Large result on replay: aggregate from child replays
                     return aggregateResults();
                 }
-                // Small result on replay: deserialize cached BatchResult
+                // Small result on replay: deserialize cached MapResult
                 var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;
                 return deserializeResult(result);
             }
         }
 
         // First execution, STARTED replay, or SUCCEEDED+replayChildren replay: aggregate from branches
-        var batchResult = aggregateResults();
+        var mapResult = aggregateResults();
 
         // Check if parent is already SUCCEEDED (replayChildren case) — skip re-checkpointing
         var existingOp = getOperation();
         if (existingOp == null || existingOp.status() != OperationStatus.SUCCEEDED) {
             // First execution or STARTED: checkpoint parent result from context thread (safe to .join() here)
-            checkpointResult(batchResult);
+            checkpointResult(mapResult);
         }
 
-        return batchResult;
+        return mapResult;
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    protected BatchResult<O> aggregateResults() {
+    protected MapResult<O> aggregateResults() {
         var branches = getBranches();
         var pendingQueue = getPendingQueue();
-        var results = new ArrayList<O>(Collections.nCopies(items.size(), null));
-        var errors = new ArrayList<Throwable>(Collections.nCopies(items.size(), null));
+        var resultItems = new ArrayList<MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
         for (int i = 0; i < branches.size(); i++) {
             var branch = (ChildContextOperation<O>) branches.get(i);
             // Skip branches still in the pending queue (never started due to early termination)
             if (pendingQueue.contains(branch)) {
+                resultItems.set(i, MapResultItem.notStarted());
                 continue;
             }
             try {
-                results.set(i, branch.get());
+                resultItems.set(i, MapResultItem.success(branch.get()));
             } catch (Exception e) {
-                errors.set(i, e);
+                resultItems.set(i, MapResultItem.failure(e));
             }
+        }
+
+        // Fill any remaining null slots (items beyond branches size) with notStarted
+        for (int i = branches.size(); i < items.size(); i++) {
+            resultItems.set(i, MapResultItem.notStarted());
         }
 
         var reason = getCompletionReason();
         if (reason == null) {
             reason = !pendingQueue.isEmpty() ? evaluateCompletionReason() : CompletionReason.ALL_COMPLETED;
         }
-        return new BatchResult<>(results, errors, reason);
+        return new MapResult<>(resultItems, reason);
     }
 }

@@ -1,11 +1,11 @@
 ## map() – Data-Driven Concurrent Execution
 
-`map()` applies a function to each item in a collection concurrently, with each item running in its own child context. Results are collected into a `BatchResult<T>` that maintains input order.
+`map()` applies a function to each item in a collection concurrently, with each item running in its own child context. Results are collected into a `MapResult<T>` that maintains input order.
 
 ```java
 // Basic map: process items concurrently
 var items = List.of("order-1", "order-2", "order-3");
-var result = ctx.map("process-orders", items, OrderResult.class, (childCtx, orderId, index) -> {
+var result = ctx.map("process-orders", items, OrderResult.class, (orderId, index, childCtx) -> {
     return childCtx.step("fetch-" + index, OrderResult.class, 
         stepCtx -> orderService.process(orderId));
 });
@@ -20,10 +20,10 @@ Each item's function receives its own `DurableContext`, so you can use any durab
 
 ### mapAsync() – Non-Blocking Map
 
-`mapAsync()` starts the map operation without blocking, returning a `DurableFuture<BatchResult<T>>`:
+`mapAsync()` starts the map operation without blocking, returning a `DurableFuture<MapResult<T>>`:
 
 ```java
-var future = ctx.mapAsync("process-orders", items, OrderResult.class, (childCtx, orderId, index) -> {
+var future = ctx.mapAsync("process-orders", items, OrderResult.class, (orderId, index, childCtx) -> {
     return childCtx.step("process-" + index, OrderResult.class, stepCtx -> process(orderId));
 });
 
@@ -31,30 +31,42 @@ var future = ctx.mapAsync("process-orders", items, OrderResult.class, (childCtx,
 var otherResult = ctx.step("other-work", String.class, stepCtx -> doOtherWork());
 
 // Block when you need the results
-BatchResult<OrderResult> result = future.get();
+MapResult<OrderResult> result = future.get();
 ```
 
-### BatchResult
+### MapResult
 
-`BatchResult<T>` holds ordered results and errors from the map operation:
+`MapResult<T>` holds ordered results from the map operation. Each item is represented as a `MapResultItem<T>` containing its status, result, and error:
 
 | Method | Description |
 |--------|-------------|
 | `getResult(i)` | Result at index `i`, or `null` if that item failed |
 | `getError(i)` | Error at index `i`, or `null` if that item succeeded |
+| `getItem(i)` | The `MapResultItem` at index `i` with status, result, and error |
 | `allSucceeded()` | `true` if every item succeeded |
-| `size()` | Number of items in the batch |
-| `results()` | All results as an unmodifiable list |
+| `size()` | Number of items in the result |
+| `items()` | All result items as an unmodifiable list |
+| `results()` | All results as an unmodifiable list (nulls for failed items) |
 | `succeeded()` | Only the non-null (successful) results |
 | `failed()` | Only the non-null errors |
 | `completionReason()` | Why the operation completed (`ALL_COMPLETED`, `MIN_SUCCESSFUL_REACHED`, `FAILURE_TOLERANCE_EXCEEDED`) |
 
+### MapResultItem
+
+Each `MapResultItem<T>` contains:
+
+| Field | Description |
+|-------|-------------|
+| `status()` | `SUCCEEDED`, `FAILED`, or `null` (not started) |
+| `result()` | The result value, or `null` if failed/not started |
+| `error()` | The error, or `null` if succeeded/not started |
+
 ### Error Isolation
 
-One item's failure does not prevent other items from completing. Failed items are captured in the `BatchResult` at their corresponding index:
+One item's failure does not prevent other items from completing. Failed items are captured in the `MapResult` at their corresponding index:
 
 ```java
-var result = ctx.map("risky-work", items, String.class, (childCtx, item, index) -> {
+var result = ctx.map("risky-work", items, String.class, (item, index, childCtx) -> {
     if (item.equals("bad")) throw new RuntimeException("failed");
     return item.toUpperCase();
 });
@@ -75,7 +87,7 @@ var config = MapConfig.builder()
     .build();
 
 var result = ctx.map("process-orders", items, OrderResult.class, 
-    (childCtx, orderId, index) -> process(childCtx, orderId), config);
+    (orderId, index, childCtx) -> process(childCtx, orderId), config);
 ```
 
 #### Concurrency Limiting
@@ -114,7 +126,7 @@ var result = ctx.map("find-two", items, String.class, fn, config);
 assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
 ```
 
-When early termination triggers, items that were never started have `null` for both result and error in the `BatchResult`.
+When early termination triggers, items that were never started have `null` for both result and error in the `MapResult`.
 
 ### Checkpoint-and-Replay
 
@@ -146,7 +158,7 @@ The function passed to `map()` is a `MapFunction<I, O>`:
 ```java
 @FunctionalInterface
 public interface MapFunction<I, O> {
-    O apply(DurableContext context, I item, int index) throws Exception;
+    O apply(I item, int index, DurableContext context) throws Exception;
 }
 ```
 

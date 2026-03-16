@@ -28,7 +28,7 @@ public class SimpleMapExample extends DurableHandler<GreetingRequest, String> {
         var names = List.of(name, name.toUpperCase(), name.toLowerCase());
 
         // Map over each name concurrently — each iteration runs in its own child context
-        var result = context.map("greet-all", names, String.class, (ctx, item, index) -> {
+        var result = context.map("greet-all", names, String.class, (item, index, ctx) -> {
             return ctx.step("greet-" + index, String.class, stepCtx -> "Hello, " + item + "!");
         });
 

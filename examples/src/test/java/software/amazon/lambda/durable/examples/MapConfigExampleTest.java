@@ -20,12 +20,9 @@ class MapConfigExampleTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         var output = result.getResult(String.class);
 
-        // Sequential part: all 3 items processed
         assertTrue(output.contains("ALPHA-Alice"));
         assertTrue(output.contains("BETA-Alice"));
         assertTrue(output.contains("GAMMA-Alice"));
-
-        // Early termination part: only 2 servers needed
         assertTrue(output.contains("reason=MIN_SUCCESSFUL_REACHED"));
         assertTrue(output.contains("server-1:healthy"));
         assertTrue(output.contains("server-2:healthy"));
@@ -40,7 +37,7 @@ class MapConfigExampleTest {
         var result1 = runner.runUntilComplete(input);
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
 
-        // Replay — should return same results
+        // Replay — should use cached results
         var result2 = runner.runUntilComplete(input);
         assertEquals(result1.getResult(String.class), result2.getResult(String.class));
     }

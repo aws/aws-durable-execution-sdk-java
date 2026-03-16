@@ -18,7 +18,7 @@ class MapIntegrationTest {
     void testSimpleMap() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("a", "b", "c");
-            var result = context.map("process-items", items, String.class, (ctx, item, index) -> {
+            var result = context.map("process-items", items, String.class, (item, index, ctx) -> {
                 return item.toUpperCase();
             });
 
@@ -40,7 +40,7 @@ class MapIntegrationTest {
     void testMapWithStepsInsideBranches() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("hello", "world");
-            var result = context.map("map-with-steps", items, String.class, (ctx, item, index) -> {
+            var result = context.map("map-with-steps", items, String.class, (item, index, ctx) -> {
                 return ctx.step("process-" + index, String.class, stepCtx -> item.toUpperCase());
             });
 
@@ -57,7 +57,7 @@ class MapIntegrationTest {
     void testMapPartialFailure_failedItemDoesNotPreventOthers() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("a", "FAIL", "c");
-            var result = context.map("partial-fail", items, String.class, (ctx, item, index) -> {
+            var result = context.map("partial-fail", items, String.class, (item, index, ctx) -> {
                 if ("FAIL".equals(item)) {
                     throw new RuntimeException("item failed");
                 }
@@ -92,7 +92,7 @@ class MapIntegrationTest {
     void testMapMultipleFailures_allCapturedAtCorrectIndices() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("ok", "bad1", "ok2", "bad2");
-            var result = context.map("multi-fail", items, String.class, (ctx, item, index) -> {
+            var result = context.map("multi-fail", items, String.class, (item, index, ctx) -> {
                 if (item.startsWith("bad")) {
                     throw new IllegalArgumentException("invalid: " + item);
                 }
@@ -130,7 +130,7 @@ class MapIntegrationTest {
     void testMapAllItemsFail() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("x", "y");
-            var result = context.map("all-fail", items, String.class, (ctx, item, index) -> {
+            var result = context.map("all-fail", items, String.class, (item, index, ctx) -> {
                 throw new RuntimeException("fail-" + item);
             });
 
@@ -165,7 +165,7 @@ class MapIntegrationTest {
                     "sequential-map",
                     items,
                     String.class,
-                    (ctx, item, index) -> {
+                    (item, index, ctx) -> {
                         var concurrent = currentConcurrency.incrementAndGet();
                         peakConcurrency.updateAndGet(peak -> Math.max(peak, concurrent));
                         // Simulate some work via a durable step
@@ -204,7 +204,7 @@ class MapIntegrationTest {
                     "limited-map",
                     items,
                     String.class,
-                    (ctx, item, index) -> {
+                    (item, index, ctx) -> {
                         var concurrent = currentConcurrency.incrementAndGet();
                         peakConcurrency.updateAndGet(peak -> Math.max(peak, concurrent));
                         var stepResult = ctx.step("process-" + index, String.class, stepCtx -> item.toUpperCase());
@@ -227,7 +227,6 @@ class MapIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("A,B,C,D,E", result.getResult(String.class));
-        // With maxConcurrency=2, at most 2 branches should run at a time
         assertTrue(peakConcurrency.get() <= 2, "Expected peak concurrency <= 2 but was " + peakConcurrency.get());
     }
 
@@ -235,8 +234,7 @@ class MapIntegrationTest {
     void testMapWithMaxConcurrencyNull_unlimitedConcurrency() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("a", "b", "c");
-            // Default config has null maxConcurrency (unlimited)
-            var result = context.map("unlimited-map", items, String.class, (ctx, item, index) -> {
+            var result = context.map("unlimited-map", items, String.class, (item, index, ctx) -> {
                 return item.toUpperCase();
             });
 
@@ -263,7 +261,7 @@ class MapIntegrationTest {
                     "sequential-partial-fail",
                     items,
                     String.class,
-                    (ctx, item, index) -> {
+                    (item, index, ctx) -> {
                         if ("FAIL".equals(item)) {
                             throw new RuntimeException("item failed");
                         }
@@ -288,8 +286,6 @@ class MapIntegrationTest {
     @Test
     void testMapWithToleratedFailureCount_earlyTermination() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            // 5 items, maxConcurrency=1 so they run sequentially: ok, FAIL1, FAIL2, ok2, ok3
-            // toleratedFailureCount=1 means we stop after the 2nd failure
             var items = List.of("ok", "FAIL1", "FAIL2", "ok2", "ok3");
             var config = MapConfig.builder()
                     .maxConcurrency(1)
@@ -299,7 +295,7 @@ class MapIntegrationTest {
                     "tolerated-fail",
                     items,
                     String.class,
-                    (ctx, item, index) -> {
+                    (item, index, ctx) -> {
                         if (item.startsWith("FAIL")) {
                             throw new RuntimeException("failed: " + item);
                         }
@@ -309,7 +305,6 @@ class MapIntegrationTest {
 
             assertEquals(CompletionReason.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
             assertFalse(result.allSucceeded());
-            // Items after early termination should not have been executed
             assertEquals(5, result.size());
             assertEquals("OK", result.getResult(0));
             assertNull(result.getResult(1));
@@ -327,18 +322,15 @@ class MapIntegrationTest {
     @Test
     void testMapWithMinSuccessful_earlyTermination() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            // 5 items, maxConcurrency=1 so they run sequentially
-            // minSuccessful=2 means we stop after 2 successes
             var items = List.of("a", "b", "c", "d", "e");
             var config = MapConfig.builder()
                     .maxConcurrency(1)
                     .completionConfig(CompletionConfig.minSuccessful(2))
                     .build();
             var result = context.map(
-                    "min-successful", items, String.class, (ctx, item, index) -> item.toUpperCase(), config);
+                    "min-successful", items, String.class, (item, index, ctx) -> item.toUpperCase(), config);
 
             assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
-            // First 2 items should have results, remaining should be null (never started)
             assertEquals(5, result.size());
             assertEquals("A", result.getResult(0));
             assertEquals("B", result.getResult(1));
@@ -359,12 +351,11 @@ class MapIntegrationTest {
                     .completionConfig(CompletionConfig.firstSuccessful())
                     .build();
             var result = context.map(
-                    "first-successful", items, String.class, (ctx, item, index) -> item.toUpperCase(), config);
+                    "first-successful", items, String.class, (item, index, ctx) -> item.toUpperCase(), config);
 
             assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
             assertEquals(3, result.size());
             assertEquals("A", result.getResult(0));
-            // Remaining items should not have been started
             assertNull(result.getResult(1));
             assertNull(result.getResult(2));
 
@@ -381,7 +372,7 @@ class MapIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("a", "b", "c");
-            var result = context.map("replay-map", items, String.class, (ctx, item, index) -> {
+            var result = context.map("replay-map", items, String.class, (item, index, ctx) -> {
                 executionCounts.incrementAndGet();
                 return item.toUpperCase();
             });
@@ -395,14 +386,12 @@ class MapIntegrationTest {
             return String.join(",", result.results());
         });
 
-        // First execution — all items execute
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
         assertEquals("A,B,C", result1.getResult(String.class));
         var firstRunCount = executionCounts.get();
         assertTrue(firstRunCount >= 3, "Expected at least 3 executions on first run but got " + firstRunCount);
 
-        // Second execution — replay should return cached results without re-executing
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals("A,B,C", result2.getResult(String.class));
@@ -415,7 +404,7 @@ class MapIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("hello", "world");
-            var result = context.map("replay-steps-map", items, String.class, (ctx, item, index) -> {
+            var result = context.map("replay-steps-map", items, String.class, (item, index, ctx) -> {
                 return ctx.step("step-" + index, String.class, stepCtx -> {
                     stepExecutionCount.incrementAndGet();
                     return item.toUpperCase();
@@ -426,14 +415,12 @@ class MapIntegrationTest {
             return String.join(" ", result.results());
         });
 
-        // First execution
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
         assertEquals("HELLO WORLD", result1.getResult(String.class));
         var firstRunStepCount = stepExecutionCount.get();
         assertTrue(firstRunStepCount >= 2, "Expected at least 2 step executions but got " + firstRunStepCount);
 
-        // Replay — steps should not re-execute
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals("HELLO WORLD", result2.getResult(String.class));
@@ -444,14 +431,13 @@ class MapIntegrationTest {
     void testNestedMap_mapInsideMapBranch() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var outerItems = List.of("group1", "group2");
-            var outerResult = context.map("outer-map", outerItems, String.class, (outerCtx, group, outerIndex) -> {
-                // Each outer item runs an inner map
+            var outerResult = context.map("outer-map", outerItems, String.class, (group, outerIndex, outerCtx) -> {
                 var innerItems = List.of(group + "-a", group + "-b");
                 var innerResult = outerCtx.map(
                         "inner-map-" + outerIndex,
                         innerItems,
                         String.class,
-                        (innerCtx, item, innerIndex) -> item.toUpperCase());
+                        (item, innerIndex, innerCtx) -> item.toUpperCase());
 
                 assertTrue(innerResult.allSucceeded());
                 return String.join("+", innerResult.results());

@@ -12,14 +12,14 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 /**
  * Example demonstrating error handling with the map operation.
  *
- * <p>Shows how individual item failures are isolated and captured in the {@code BatchResult}, while other items
- * continue to succeed. Demonstrates inspecting partial results using {@code allSucceeded()}, {@code getError()},
+ * <p>Shows how individual item failures are isolated and captured in the {@code MapResult}, while other items continue
+ * to succeed. Demonstrates inspecting partial results using {@code allSucceeded()}, {@code getError()},
  * {@code succeeded()}, and {@code failed()}.
  *
  * <ol>
  *   <li>Map over a list of order IDs concurrently
  *   <li>Some orders intentionally fail to simulate real-world partial failures
- *   <li>Inspect the BatchResult to handle successes and failures separately
+ *   <li>Inspect the MapResult to handle successes and failures separately
  * </ol>
  */
 public class MapErrorHandlingExample extends DurableHandler<GreetingRequest, String> {
@@ -32,7 +32,7 @@ public class MapErrorHandlingExample extends DurableHandler<GreetingRequest, Str
         var orderIds = List.of("order-1", "order-INVALID", "order-3", "order-ERROR", "order-5");
 
         // Map over orders — some will fail, but others continue processing
-        var result = context.map("process-orders", orderIds, String.class, (ctx, orderId, index) -> {
+        var result = context.map("process-orders", orderIds, String.class, (orderId, index, ctx) -> {
             return ctx.step(
                     "process-" + index,
                     String.class,

@@ -16,7 +16,7 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
-import software.amazon.lambda.durable.model.BatchResult;
+import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.CallbackOperation;
@@ -522,8 +522,7 @@ public class DurableContext extends BaseContext {
 
     // ========== map methods ==========
 
-    public <I, O> BatchResult<O> map(
-            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
+    public <I, O> MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
         return mapAsync(
                         name,
                         items,
@@ -533,24 +532,24 @@ public class DurableContext extends BaseContext {
                 .get();
     }
 
-    public <I, O> BatchResult<O> map(
+    public <I, O> MapResult<O> map(
             String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
         return mapAsync(name, items, TypeToken.get(resultType), function, config)
                 .get();
     }
 
-    public <I, O> BatchResult<O> map(
+    public <I, O> MapResult<O> map(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
         return mapAsync(name, items, resultType, function, MapConfig.builder().build())
                 .get();
     }
 
-    public <I, O> BatchResult<O> map(
+    public <I, O> MapResult<O> map(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
         return mapAsync(name, items, resultType, function, config).get();
     }
 
-    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+    public <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
         return mapAsync(
                 name,
@@ -560,17 +559,17 @@ public class DurableContext extends BaseContext {
                 MapConfig.builder().build());
     }
 
-    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+    public <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
         return mapAsync(name, items, TypeToken.get(resultType), function, config);
     }
 
-    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+    public <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
         return mapAsync(name, items, resultType, function, MapConfig.builder().build());
     }
 
-    public <I, O> DurableFuture<BatchResult<O>> mapAsync(
+    public <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
         Objects.requireNonNull(items, "items cannot be null");
         Objects.requireNonNull(function, "function cannot be null");
@@ -585,7 +584,7 @@ public class DurableContext extends BaseContext {
 
         // Short-circuit for empty collections — no checkpoint overhead
         if (items.isEmpty()) {
-            return new CompletedDurableFuture<>(BatchResult.empty());
+            return new CompletedDurableFuture<>(MapResult.empty());
         }
 
         // Convert to List for deterministic index-based access

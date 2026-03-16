@@ -15,38 +15,38 @@ class MapFunctionTest {
 
     @Test
     void canBeUsedAsLambda() throws Exception {
-        MapFunction<String, String> fn = (ctx, item, index) -> item.toUpperCase();
+        MapFunction<String, String> fn = (item, index, ctx) -> item.toUpperCase();
 
-        var result = fn.apply(null, "hello", 0);
+        var result = fn.apply("hello", 0, null);
 
         assertEquals("HELLO", result);
     }
 
     @Test
     void receivesCorrectIndex() throws Exception {
-        MapFunction<String, Integer> fn = (ctx, item, index) -> index;
+        MapFunction<String, Integer> fn = (item, index, ctx) -> index;
 
-        assertEquals(0, fn.apply(null, "a", 0));
-        assertEquals(5, fn.apply(null, "b", 5));
+        assertEquals(0, fn.apply("a", 0, null));
+        assertEquals(5, fn.apply("b", 5, null));
     }
 
     @Test
     void canThrowCheckedException() {
-        MapFunction<String, String> fn = (ctx, item, index) -> {
+        MapFunction<String, String> fn = (item, index, ctx) -> {
             throw new Exception("checked");
         };
 
-        var ex = assertThrows(Exception.class, () -> fn.apply(null, "x", 0));
+        var ex = assertThrows(Exception.class, () -> fn.apply("x", 0, null));
         assertEquals("checked", ex.getMessage());
     }
 
     @Test
     void canThrowRuntimeException() {
-        MapFunction<String, String> fn = (ctx, item, index) -> {
+        MapFunction<String, String> fn = (item, index, ctx) -> {
             throw new IllegalArgumentException("bad input");
         };
 
-        var ex = assertThrows(IllegalArgumentException.class, () -> fn.apply(null, "x", 0));
+        var ex = assertThrows(IllegalArgumentException.class, () -> fn.apply("x", 0, null));
         assertEquals("bad input", ex.getMessage());
     }
 }

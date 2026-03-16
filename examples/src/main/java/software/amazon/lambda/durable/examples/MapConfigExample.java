@@ -34,7 +34,7 @@ public class MapConfigExample extends DurableHandler<GreetingRequest, String> {
                 "sequential-processing",
                 items,
                 String.class,
-                (ctx, item, index) -> {
+                (item, index, ctx) -> {
                     return ctx.step("transform-" + index, String.class, stepCtx -> item.toUpperCase() + "-" + name);
                 },
                 sequentialConfig);
@@ -53,7 +53,7 @@ public class MapConfigExample extends DurableHandler<GreetingRequest, String> {
                 "find-healthy-servers",
                 candidates,
                 String.class,
-                (ctx, server, index) -> {
+                (server, index, ctx) -> {
                     return ctx.step("health-check-" + index, String.class, stepCtx -> server + ":healthy");
                 },
                 earlyTermConfig);
