@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -54,6 +55,8 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final List<ChildContextOperation<?>> childOperations = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
     private ConcurrencyCompletionStatus completionStatus;
+    private OperationIdGenerator operationIdGenerator;
+
 
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
@@ -69,6 +72,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         this.minSuccessful = minSuccessful;
         this.toleratedFailureCount = toleratedFailureCount;
         this.failureRateThreshold = failureRateThreshold;
+        this.operationIdGenerator = new OperationIdGenerator(getOperationId());
     }
 
     protected ConcurrencyOperation(
@@ -138,7 +142,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     public <R> ChildContextOperation<R> addItem(
             String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
         if (isOperationCompleted()) throw new IllegalStateException("Cannot add items to a completed operation");
-        var operationId = getContext().nextOperationId();
+        var operationId = this.operationIdGenerator.nextOperationId();
         var childOp = createItem(operationId, name, function, resultType, serDes, getContext());
         childOperations.add(childOp);
         pendingQueue.add(childOp);

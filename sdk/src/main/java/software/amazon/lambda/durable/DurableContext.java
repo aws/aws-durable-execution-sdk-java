@@ -791,7 +791,7 @@ public class DurableContext extends BaseContext {
      * prefixed with the parent hashed contextId (e.g. "<hash>-1", "<hash>-2" inside parent context <hash>). This
      * matches the Python SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
-    public String nextOperationId() {
+    private String nextOperationId() {
         return operationIdGenerator.nextOperationId();
     }
 }
