@@ -60,15 +60,15 @@ DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeTo
 DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config)
 
 // Map
-BatchResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function)
-BatchResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config)
-BatchResult<O> map(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function)
-BatchResult<O> map(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config)
+MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function)
+MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config)
+MapResult<O> map(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function)
+MapResult<O> map(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config)
 
-DurableFuture<BatchResult<O>> mapAsync(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function)
-DurableFuture<BatchResult<O>> mapAsync(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config)
-DurableFuture<BatchResult<O>> mapAsync(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function)
-DurableFuture<BatchResult<O>> mapAsync(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config)
+DurableFuture<MapResult<O>> mapAsync(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function)
+DurableFuture<MapResult<O>> mapAsync(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config)
+DurableFuture<MapResult<O>> mapAsync(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function)
+DurableFuture<MapResult<O>> mapAsync(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config)
 
 // Lambda context access
 Context getLambdaContext()

@@ -16,7 +16,7 @@ class MapInputValidationTest {
     @Test
     void mapWithNullCollection_throwsNullPointerException() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            context.<String, String>map("test", null, String.class, (ctx, item, index) -> item);
+            context.<String, String>map("test", null, String.class, (item, index, ctx) -> item);
             return "done";
         });
 
@@ -39,7 +39,7 @@ class MapInputValidationTest {
     void mapWithHashSet_throwsIllegalArgumentException() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = new HashSet<>(List.of("a", "b"));
-            context.map("test", items, String.class, (ctx, item, index) -> item);
+            context.map("test", items, String.class, (item, index, ctx) -> item);
             return "done";
         });
 
@@ -48,9 +48,9 @@ class MapInputValidationTest {
     }
 
     @Test
-    void mapWithEmptyCollection_returnsEmptyBatchResult() {
+    void mapWithEmptyCollection_returnsEmptyMapResult() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var result = context.map("empty-map", List.<String>of(), String.class, (ctx, item, index) -> item);
+            var result = context.map("empty-map", List.<String>of(), String.class, (item, index, ctx) -> item);
 
             assertEquals(0, result.size());
             assertTrue(result.allSucceeded());
