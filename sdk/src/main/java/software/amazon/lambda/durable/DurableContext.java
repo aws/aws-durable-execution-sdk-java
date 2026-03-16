@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
 import software.amazon.lambda.durable.operation.MapOperation;
+import software.amazon.lambda.durable.operation.ParallelOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.validation.ParameterValidator;
@@ -594,6 +595,32 @@ public class DurableContext extends BaseContext {
         var operation = new MapOperation<>(operationId, name, itemList, function, resultType, config, this);
         operation.execute();
         return operation;
+    }
+
+    // ========== parallel methods ==========
+
+    /**
+     * Creates a {@link ParallelContext} for executing multiple branches concurrently.
+     *
+     * @param config the parallel execution configuration
+     * @return a new ParallelContext for registering and executing branches
+     */
+    public ParallelContext parallel(String name, ParallelConfig config) {
+        Objects.requireNonNull(config, "config cannot be null");
+        var operationId = nextOperationId();
+
+        var parallelOp = new ParallelOperation<>(
+                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL),
+                TypeToken.get(Void.class),
+                getDurableConfig().getSerDes(),
+                this,
+                config.maxConcurrency(),
+                config.minSuccessful(),
+                config.toleratedFailureCount());
+
+        parallelOp.execute();
+
+        return new ParallelContext(parallelOp, this);
     }
 
     // ========= waitForCallback methods =============

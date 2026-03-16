@@ -35,6 +35,10 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  *
  * <p>A child context runs a user function in a separate thread with its own operation counter and checkpoint log.
  * Operations within the child context use the child's context ID as their parentId.
+ *
+ * <p>When created as part of a {@link ConcurrencyOperation} (e.g., parallel execution), the child notifies its parent
+ * on completion via {@code onItemComplete()} BEFORE closing its own child context. It also skips checkpointing if the
+ * parent operation has already succeeded.
  */
 public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
@@ -42,6 +46,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
     private final Function<DurableContext, T> function;
     private final ExecutorService userExecutor;
+    private final ConcurrencyOperation<?> parentOperation;
     private boolean replayChildContext;
     private T reconstructedResult;
 
@@ -51,9 +56,20 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContext durableContext) {
+        this(operationIdentifier, function, resultTypeToken, resultSerDes, durableContext, null);
+    }
+
+    public ChildContextOperation(
+            OperationIdentifier operationIdentifier,
+            Function<DurableContext, T> function,
+            TypeToken<T> resultTypeToken,
+            SerDes resultSerDes,
+            DurableContext durableContext,
+            ConcurrencyOperation<?> parentOperation) {
         super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.function = function;
         this.userExecutor = getContext().getDurableConfig().getExecutorService();
+        this.parentOperation = parentOperation;
     }
 
     /** Starts the operation. */
@@ -86,6 +102,14 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         }
     }
 
+    @Override
+    protected void markAlreadyCompleted() {
+        super.markAlreadyCompleted();
+        if (parentOperation != null) {
+            parentOperation.onItemComplete(this);
+        }
+    }
+
     private void executeChildContext() {
         // The operationId is already globally unique (prefixed by parent context path via
         // DurableContext.nextOperationId), so we use it directly as the contextId.
@@ -106,6 +130,10 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             // use a try-with-resources to
             // - add thread id/type to thread local when the step starts
             // - clear logger properties when the step finishes
+            //
+            // When this child is part of a ConcurrencyOperation (parentOperation != null),
+            // we notify the parent BEFORE closing the child context. This ensures the parent
+            // can trigger the next queued branch while the current child context is still valid.
             try (var childContext = getContext().createChildContext(contextId, getName())) {
                 try {
                     T result = function.apply(childContext);
@@ -113,6 +141,10 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                     handleChildContextSuccess(result);
                 } catch (Throwable e) {
                     handleChildContextFailure(e);
+                } finally {
+                    if (parentOperation != null) {
+                        parentOperation.onItemComplete(this);
+                    }
                 }
             }
         };
@@ -133,6 +165,14 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void checkpointSuccess(T result) {
+        // Skip checkpointing if parent ConcurrencyOperation has already completed —
+        // prevents race conditions where a child finishes after the parent has already completed.
+        if (parentOperation != null && parentOperation.isOperationCompleted()) {
+            this.reconstructedResult = result;
+            markAlreadyCompleted();
+            return;
+        }
+
         var serialized = serializeResult(result);
         var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
 
@@ -159,6 +199,13 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         }
         if (exception instanceof UnrecoverableDurableExecutionException) {
             terminateExecution((UnrecoverableDurableExecutionException) exception);
+        }
+
+        // Skip checkpointing if parent ConcurrencyOperation has already completed —
+        // prevents race conditions where a child finishes after the parent has already succeeded.
+        if (parentOperation != null && parentOperation.isOperationCompleted()) {
+            markAlreadyCompleted();
+            return;
         }
 
         final ErrorObject errorObject;
@@ -199,6 +246,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                 case MAP -> throw new ChildContextFailedException(op);
                 case MAP_ITERATION -> throw new ChildContextFailedException(op);
                 case PARALLEL -> throw new ChildContextFailedException(op);
+                case PARALLEL_BRANCH -> throw new ChildContextFailedException(op);
                 case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
             };
         }

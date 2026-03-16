@@ -13,6 +13,7 @@ public enum OperationSubType {
     MAP("Map"),
     MAP_ITERATION("MapIteration"),
     PARALLEL("Parallel"),
+    PARALLEL_BRANCH("ParallelBranch"),
     WAIT_FOR_CALLBACK("WaitForCallback");
 
     private final String value;
