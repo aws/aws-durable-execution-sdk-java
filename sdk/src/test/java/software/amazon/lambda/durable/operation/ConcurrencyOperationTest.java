@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -20,6 +21,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -37,6 +39,7 @@ class ConcurrencyOperationTest {
     private DurableContext durableContext;
     private ExecutionManager executionManager;
     private AtomicInteger operationIdCounter;
+    private OperationIdGenerator mockIdGenerator;
 
     @BeforeEach
     void setUp() {
@@ -50,13 +53,15 @@ class ConcurrencyOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
-        when(durableContext.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
+        mockIdGenerator = mock(OperationIdGenerator.class);
+        when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         // All child operations are NOT in replay
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
     }
 
-    private TestConcurrencyOperation createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount) {
-        return new TestConcurrencyOperation(
+    private TestConcurrencyOperation createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount)
+            throws Exception {
+        TestConcurrencyOperation testConcurrencyOperation = new TestConcurrencyOperation(
                 OperationIdentifier.of(
                         OPERATION_ID, "test-concurrency", OperationType.CONTEXT, OperationSubType.PARALLEL),
                 RESULT_TYPE,
@@ -65,6 +70,15 @@ class ConcurrencyOperationTest {
                 maxConcurrency,
                 minSuccessful,
                 toleratedFailureCount);
+        setOperationIdGenerator(testConcurrencyOperation, mockIdGenerator);
+        return testConcurrencyOperation;
+    }
+
+    private void setOperationIdGenerator(ConcurrencyOperation<?> op, OperationIdGenerator mockGenerator)
+            throws Exception {
+        Field field = ConcurrencyOperation.class.getDeclaredField("operationIdGenerator");
+        field.setAccessible(true);
+        field.set(op, mockGenerator);
     }
 
     // ===== Callback cycle tests =====
@@ -78,7 +92,8 @@ class ConcurrencyOperationTest {
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
                         .status(OperationStatus.SUCCEEDED)
-                        .contextDetails(ContextDetails.builder().result("\"result-1\"").build())
+                        .contextDetails(
+                                ContextDetails.builder().result("\"result-1\"").build())
                         .build());
         when(executionManager.getOperationAndUpdateReplayState("child-2"))
                 .thenReturn(Operation.builder()
@@ -87,13 +102,28 @@ class ConcurrencyOperationTest {
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
                         .status(OperationStatus.SUCCEEDED)
-                        .contextDetails(ContextDetails.builder().result("\"result-2\"").build())
+                        .contextDetails(
+                                ContextDetails.builder().result("\"result-2\"").build())
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
         var op = createOperation(-1, -1, 0);
-        op.addItem("branch-1", ctx -> { functionCalled.set(true); return "result-1"; }, TypeToken.get(String.class), SER_DES);
-        op.addItem("branch-2", ctx -> { functionCalled.set(true); return "result-2"; }, TypeToken.get(String.class), SER_DES);
+        op.addItem(
+                "branch-1",
+                ctx -> {
+                    functionCalled.set(true);
+                    return "result-1";
+                },
+                TypeToken.get(String.class),
+                SER_DES);
+        op.addItem(
+                "branch-2",
+                ctx -> {
+                    functionCalled.set(true);
+                    return "result-2";
+                },
+                TypeToken.get(String.class),
+                SER_DES);
 
         runJoin(op);
 
@@ -113,12 +143,20 @@ class ConcurrencyOperationTest {
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
                         .status(OperationStatus.SUCCEEDED)
-                        .contextDetails(ContextDetails.builder().result("\"done\"").build())
+                        .contextDetails(
+                                ContextDetails.builder().result("\"done\"").build())
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
         var op = createOperation(-1, 1, 0);
-        op.addItem("only-branch", ctx -> { functionCalled.set(true); return "done"; }, TypeToken.get(String.class), SER_DES);
+        op.addItem(
+                "only-branch",
+                ctx -> {
+                    functionCalled.set(true);
+                    return "done";
+                },
+                TypeToken.get(String.class),
+                SER_DES);
 
         runJoin(op);
 

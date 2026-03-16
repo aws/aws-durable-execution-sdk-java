@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.function.Function;
-
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -92,8 +89,8 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
                 .action(OperationAction.FAIL)
                 .subType(getSubType().getValue())
                 .error(ErrorObject.builder()
-                    .errorMessage("Parallel operation failed with " + concurrencyCompletionStatus + " status")
-                    .build()));
+                        .errorMessage("Parallel operation failed with " + concurrencyCompletionStatus + " status")
+                        .build()));
     }
 
     @Override

@@ -3,10 +3,12 @@
 package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,8 +21,8 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.exception.ConcurrencyExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -37,6 +39,7 @@ class ParallelOperationTest {
     private DurableContext durableContext;
     private ExecutionManager executionManager;
     private AtomicInteger operationIdCounter;
+    private OperationIdGenerator mockIdGenerator;
 
     @BeforeEach
     void setUp() {
@@ -49,24 +52,29 @@ class ParallelOperationTest {
                 .thenReturn(DurableConfig.builder()
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
-        when(executionManager.getCurrentThreadContext())
-                .thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
-        when(durableContext.nextOperationId())
-                .thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         // Default: no existing operations (fresh execution)
+        mockIdGenerator = mock(OperationIdGenerator.class);
+        when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
     }
 
     private ParallelOperation<Void> createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount) {
         return new ParallelOperation<>(
-                OperationIdentifier.of(
-                        OPERATION_ID, "test-parallel", OperationType.CONTEXT, OperationSubType.PARALLEL),
+                OperationIdentifier.of(OPERATION_ID, "test-parallel", OperationType.CONTEXT, OperationSubType.PARALLEL),
                 RESULT_TYPE,
                 SER_DES,
                 durableContext,
                 maxConcurrency,
                 minSuccessful,
                 toleratedFailureCount);
+    }
+
+    private void setOperationIdGenerator(ConcurrencyOperation<?> op, OperationIdGenerator mockGenerator)
+            throws Exception {
+        Field field = ConcurrencyOperation.class.getDeclaredField("operationIdGenerator");
+        field.setAccessible(true);
+        field.set(op, mockGenerator);
     }
 
     // ===== Branch creation delegates to ConcurrencyOperation =====
@@ -116,7 +124,8 @@ class ParallelOperationTest {
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
                         .status(OperationStatus.SUCCEEDED)
-                        .contextDetails(ContextDetails.builder().result("\"r1\"").build())
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r1\"").build())
                         .build());
         when(executionManager.getOperationAndUpdateReplayState("child-2"))
                 .thenReturn(Operation.builder()
@@ -125,17 +134,18 @@ class ParallelOperationTest {
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
                         .status(OperationStatus.SUCCEEDED)
-                        .contextDetails(ContextDetails.builder().result("\"r2\"").build())
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r2\"").build())
                         .build());
 
         var op = createOperation(-1, -1, 0);
+        setOperationIdGenerator(op, mockIdGenerator);
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
 
         runJoin(op);
 
-        verify(executionManager)
-                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+        verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
     }
 
     // ===== MinSuccessful satisfaction =====
@@ -150,11 +160,12 @@ class ParallelOperationTest {
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
                         .status(OperationStatus.SUCCEEDED)
-                        .contextDetails(ContextDetails.builder().result("\"r1\"").build())
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r1\"").build())
                         .build());
 
-
         var op = createOperation(-1, 1, 0);
+        setOperationIdGenerator(op, mockIdGenerator);
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
 
         // Should not throw

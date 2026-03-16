@@ -57,7 +57,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private ConcurrencyCompletionStatus completionStatus;
     private OperationIdGenerator operationIdGenerator;
 
-
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
