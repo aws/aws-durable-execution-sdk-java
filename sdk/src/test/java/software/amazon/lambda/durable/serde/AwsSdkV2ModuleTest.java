@@ -13,7 +13,6 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -22,7 +21,7 @@ class AwsSdkV2ModuleTest {
 
     @Test
     void testDurableExecutionInputDeserializationIncludingSdkV2Operation() throws Exception {
-        ObjectMapper mapper = DurableHandler.createObjectMapper();
+        ObjectMapper mapper = DurableInputOutputSerDes.createObjectMapper();
 
         String json = """
                 {
@@ -127,7 +126,7 @@ class AwsSdkV2ModuleTest {
 
     @Test
     void testErrorObjectSerializationAndDeserialization() throws Exception {
-        ObjectMapper mapper = DurableHandler.createObjectMapper();
+        ObjectMapper mapper = DurableInputOutputSerDes.createObjectMapper();
 
         // Create an ErrorObject using the builder
         var errorObject = ErrorObject.builder()
@@ -167,7 +166,7 @@ class AwsSdkV2ModuleTest {
 
     @Test
     void testActualAWSLambdaPayload() throws Exception {
-        var mapper = DurableHandler.createObjectMapper();
+        var mapper = DurableInputOutputSerDes.createObjectMapper();
         var json = """
                 {
                     "DurableExecutionArn": "c581e164-d7da-4108-8b35-109facaf1cc7",
@@ -199,7 +198,7 @@ class AwsSdkV2ModuleTest {
 
     @Test
     void testErrorObjectRoundTripWithNullFields() throws Exception {
-        ObjectMapper mapper = DurableHandler.createObjectMapper();
+        ObjectMapper mapper = DurableInputOutputSerDes.createObjectMapper();
 
         // Create an ErrorObject with minimal fields
         var errorObject = ErrorObject.builder()

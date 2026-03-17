@@ -36,10 +36,15 @@ public class JacksonSerDes implements SerDes {
 
     /** Creates a new JacksonSerDes with default ObjectMapper configuration. */
     public JacksonSerDes() {
-        this.mapper = new ObjectMapper()
+        this(new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES));
+    }
+
+    /** Creates a new JacksonSerDes with a custom ObjectMapper configuration. */
+    public JacksonSerDes(ObjectMapper objectMapper) {
+        this.mapper = objectMapper;
         this.typeFactory = mapper.getTypeFactory();
         this.typeCache = new ConcurrentHashMap<>();
     }

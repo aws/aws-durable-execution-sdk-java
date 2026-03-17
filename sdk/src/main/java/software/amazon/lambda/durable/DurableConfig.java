@@ -92,6 +92,8 @@ public final class DurableConfig {
         this.pollingStrategy =
                 builder.pollingStrategy != null ? builder.pollingStrategy : PollingStrategies.Presets.DEFAULT;
         this.checkpointDelay = builder.checkpointDelay != null ? builder.checkpointDelay : Duration.ofSeconds(0);
+
+        validateConfiguration();
     }
 
     /**
@@ -164,6 +166,18 @@ public final class DurableConfig {
      */
     public Duration getCheckpointDelay() {
         return checkpointDelay;
+    }
+
+    public void validateConfiguration() {
+        if (getDurableExecutionClient() == null) {
+            throw new IllegalStateException("DurableExecutionClient configuration failed");
+        }
+        if (getSerDes() == null) {
+            throw new IllegalStateException("SerDes configuration failed");
+        }
+        if (getExecutorService() == null) {
+            throw new IllegalStateException("ExecutorService configuration failed");
+        }
     }
 
     /**
@@ -317,7 +331,7 @@ public final class DurableConfig {
          * will be created.
          *
          * <p>This executor is used exclusively for running user-defined operations. Internal SDK coordination (polling,
-         * checkpointing) uses the common ForkJoinPool and is not affected by this setting.
+         * checkpointing) uses the SDK InternalExecutor thread pool and is not affected by this setting.
          *
          * @param executorService Custom ExecutorService instance
          * @return This builder
@@ -351,8 +365,8 @@ public final class DurableConfig {
         }
 
         /**
-         * Sets how often the SDK checkpoints updates to backend. If not set, defaults to 0, which disables checkpoint
-         * batching.
+         * Sets how often the SDK checkpoints updates to backend. If not set, defaults to 0, SDK will checkpoint the
+         * updates as soon as possible.
          *
          * @param duration the checkpoint delay in Duration
          * @return This builder
