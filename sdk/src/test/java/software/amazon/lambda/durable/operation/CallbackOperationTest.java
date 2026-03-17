@@ -15,9 +15,9 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.SerDesException;
@@ -36,11 +36,11 @@ class CallbackOperationTest {
     private static final OperationIdentifier OPERATION_IDENTIFIER =
             OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.CALLBACK);
 
-    private DurableContext durableContext;
+    private DurableContextImpl durableContext;
 
     @BeforeEach
     void setUp() {
-        durableContext = mock(DurableContext.class);
+        durableContext = mock(DurableContextImpl.class);
     }
 
     /** Custom SerDes that tracks deserialization calls. */

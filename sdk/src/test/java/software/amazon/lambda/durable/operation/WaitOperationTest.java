@@ -14,7 +14,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
-import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -27,12 +27,12 @@ class WaitOperationTest {
     private static final OperationIdentifier OPERATION_IDENTIFIER =
             OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.WAIT);
     private ExecutionManager executionManager;
-    private DurableContext durableContext;
+    private DurableContextImpl durableContext;
 
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
-        durableContext = mock(DurableContext.class);
+        durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
     }
 

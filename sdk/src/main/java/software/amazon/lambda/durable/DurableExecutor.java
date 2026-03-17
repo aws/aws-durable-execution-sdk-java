@@ -14,6 +14,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -49,7 +50,8 @@ public class DurableExecutor {
                         var userInput = extractUserInput(
                                 executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                         // use try-with-resources to clear logger properties
-                        try (var context = DurableContext.createRootContext(executionManager, config, lambdaContext)) {
+                        try (var context =
+                                DurableContextImpl.createRootContext(executionManager, config, lambdaContext)) {
                             return handler.apply(userInput, context);
                         }
                     },

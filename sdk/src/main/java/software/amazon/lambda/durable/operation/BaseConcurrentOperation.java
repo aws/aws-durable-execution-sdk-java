@@ -23,6 +23,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.model.CompletionReason;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -56,7 +57,7 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
     private final OperationSubType subType;
     private volatile CompletionReason completionReason;
     private volatile boolean earlyTermination = false;
-    private DurableContext rootContext;
+    private DurableContextImpl rootContext;
     private OperationIdGenerator operationIdGenerator;
 
     protected BaseConcurrentOperation(
@@ -67,7 +68,7 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
             CompletionConfig completionConfig,
             TypeToken<R> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
         super(
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),
                 resultTypeToken,

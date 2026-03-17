@@ -17,6 +17,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackSubmitterException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
@@ -55,7 +56,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
         this(operationIdentifier, function, resultTypeToken, resultSerDes, durableContext, null);
     }
 
@@ -64,7 +65,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext,
+            DurableContextImpl durableContext,
             ConcurrencyOperation<?> parentOperation) {
         super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.function = function;

@@ -19,8 +19,8 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadContext;
@@ -36,14 +36,14 @@ class ParallelOperationTest {
     private static final String OPERATION_ID = "parallel-op-1";
     private static final TypeToken<Void> RESULT_TYPE = TypeToken.get(Void.class);
 
-    private DurableContext durableContext;
+    private DurableContextImpl durableContext;
     private ExecutionManager executionManager;
     private AtomicInteger operationIdCounter;
     private OperationIdGenerator mockIdGenerator;
 
     @BeforeEach
     void setUp() {
-        durableContext = mock(DurableContext.class);
+        durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
         operationIdCounter = new AtomicInteger(0);
 

@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ConcurrencyExecutionException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -45,7 +46,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext,
+            DurableContextImpl durableContext,
             int maxConcurrency,
             int minSuccessful,
             int toleratedFailureCount) {
@@ -66,7 +67,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
             Function<DurableContext, R> function,
             TypeToken<R> resultType,
             SerDes serDes,
-            DurableContext parentContext) {
+            DurableContextImpl parentContext) {
         return new ChildContextOperation<>(
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),
                 function,

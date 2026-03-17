@@ -85,9 +85,9 @@ public class TestOperation {
         return details != null ? details.error() : null;
     }
 
-    /** Returns the current retry attempt number (1-based), defaulting to 1 if not available. */
+    /** Returns the current retry attempt number (0-based), defaulting to 0 if not available. */
     public int getAttempt() {
         var details = operation.stepDetails();
-        return details != null && details.attempt() != null ? details.attempt() : 1;
+        return details != null && details.attempt() != null ? details.attempt() : 0;
     }
 }

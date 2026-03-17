@@ -6,9 +6,9 @@ import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
@@ -34,7 +34,7 @@ public class InvokeOperation<T, U> extends BaseDurableOperation<T> {
             U payload,
             TypeToken<T> resultTypeToken,
             InvokeConfig config,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 
         this.functionName = functionName;

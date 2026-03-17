@@ -11,8 +11,8 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.NoopSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -30,7 +30,8 @@ public class WaitOperation extends BaseDurableOperation<Void> {
 
     private final Duration duration;
 
-    public WaitOperation(OperationIdentifier operationIdentifier, Duration duration, DurableContext durableContext) {
+    public WaitOperation(
+            OperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
         super(operationIdentifier, TypeToken.get(Void.class), NOOP_SER_DES, durableContext);
         this.duration = duration;
     }

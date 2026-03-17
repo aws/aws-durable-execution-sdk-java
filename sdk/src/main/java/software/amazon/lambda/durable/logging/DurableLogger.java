@@ -4,9 +4,9 @@ package software.amazon.lambda.durable.logging;
 
 import org.slf4j.Logger;
 import org.slf4j.MDC;
-import software.amazon.lambda.durable.BaseContext;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.StepContext;
+import software.amazon.lambda.durable.context.BaseContextImpl;
 
 /**
  * Logger wrapper that adds durable execution context to log entries via MDC and optionally suppresses logs during
@@ -22,7 +22,7 @@ public class DurableLogger {
     static final String MDC_ATTEMPT = "attempt";
 
     private final Logger delegate;
-    private final BaseContext context;
+    private final BaseContextImpl context;
 
     /**
      * Creates a DurableLogger wrapping the given SLF4J logger with execution context MDC entries.
@@ -30,12 +30,12 @@ public class DurableLogger {
      * @param delegate the SLF4J logger to wrap
      * @param context the durable execution context providing MDC values
      */
-    public DurableLogger(Logger delegate, BaseContext context) {
+    public DurableLogger(Logger delegate, BaseContextImpl context) {
         this.delegate = delegate;
         this.context = context;
 
         // execution arn
-        MDC.put(MDC_EXECUTION_ARN, context.getExecutionContext().getDurableExecutionArn());
+        MDC.put(MDC_EXECUTION_ARN, context.getExecutionArn());
 
         // lambda request id
         var requestId =

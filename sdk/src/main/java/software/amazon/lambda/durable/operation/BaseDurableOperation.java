@@ -12,9 +12,9 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.SerDesException;
@@ -53,7 +53,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     private final TypeToken<T> resultTypeToken;
     private final SerDes resultSerDes;
     protected final CompletableFuture<Void> completionFuture;
-    private final DurableContext durableContext;
+    private final DurableContextImpl durableContext;
 
     /**
      * Constructs a new durable operation.
@@ -67,7 +67,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
         this.operationIdentifier = operationIdentifier;
         this.durableContext = durableContext;
         this.executionManager = durableContext.getExecutionManager();
@@ -96,7 +96,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     /** Gets the parent context. */
-    protected DurableContext getContext() {
+    protected DurableContextImpl getContext() {
         return durableContext;
     }
 
@@ -116,6 +116,9 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             validateReplay(existing);
             replay(existing);
         } else {
+            if (durableContext.isReplaying()) {
+                this.durableContext.setExecutionMode();
+            }
             start();
         }
     }

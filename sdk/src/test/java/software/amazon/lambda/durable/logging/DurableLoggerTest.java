@@ -10,8 +10,8 @@ import org.mockito.MockedStatic;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TestContext;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 
 class DurableLoggerTest {
@@ -44,8 +44,8 @@ class DurableLoggerTest {
         return new DurableLogger(mockLogger, createDurableContext(REQUEST_ID, suppression));
     }
 
-    private DurableContext createDurableContext(String requestId, Suppression suppression) {
-        return DurableContext.createRootContext(
+    private DurableContextImpl createDurableContext(String requestId, Suppression suppression) {
+        return DurableContextImpl.createRootContext(
                 mockExecutionManager,
                 DurableConfig.builder()
                         .withLoggerConfig(new LoggerConfig(suppression == Suppression.ENABLED))

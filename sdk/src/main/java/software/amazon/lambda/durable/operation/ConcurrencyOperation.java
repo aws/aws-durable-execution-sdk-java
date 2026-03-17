@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -61,7 +62,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext,
+            DurableContextImpl durableContext,
             int maxConcurrency,
             int minSuccessful,
             int toleratedFailureCount,
@@ -78,7 +79,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
-            DurableContext durableContext,
+            DurableContextImpl durableContext,
             int maxConcurrency,
             int minSuccessful,
             int toleratedFailureCount) {
@@ -113,7 +114,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             Function<DurableContext, R> function,
             TypeToken<R> resultType,
             SerDes serDes,
-            DurableContext parentContext);
+            DurableContextImpl parentContext);
 
     /**
      * Called when the concurrency operation succeeds (minSuccessful threshold met). Subclasses define checkpointing
@@ -134,7 +135,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @param function the user function to execute
      * @param resultType the result type token
      * @param serDes the serializer/deserializer
-     * @param parentContext the parent durable context for creating child operations
      * @param <R> the result type of the child operation
      * @return the created ChildContextOperation
      */

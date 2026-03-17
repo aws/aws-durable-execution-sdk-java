@@ -13,11 +13,11 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.StepConfig;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.StepSemantics;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
@@ -46,7 +46,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             Function<StepContext, T> function,
             TypeToken<T> resultTypeToken,
             StepConfig config,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 
         this.function = function;

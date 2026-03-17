@@ -16,10 +16,10 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.WaitForConditionConfig;
 import software.amazon.lambda.durable.WaitForConditionDecision;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -34,12 +34,12 @@ class WaitForConditionOperationTest {
     private static final JacksonSerDes SERDES = new JacksonSerDes();
 
     private ExecutionManager executionManager;
-    private DurableContext durableContext;
+    private DurableContextImpl durableContext;
 
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
-        durableContext = mock(DurableContext.class);
+        durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("handler", ThreadType.CONTEXT));
         when(durableContext.getDurableConfig())

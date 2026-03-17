@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -34,12 +35,12 @@ class ChildContextOperationTest {
 
     private static final JacksonSerDes SERDES = new JacksonSerDes();
 
-    private DurableContext durableContext;
+    private DurableContextImpl durableContext;
     private ExecutionManager executionManager;
 
     @BeforeEach
     void setUp() {
-        durableContext = mock(DurableContext.class);
+        durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));

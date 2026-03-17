@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable;
+package software.amazon.lambda.durable.util;
+
+import software.amazon.lambda.durable.DurableFuture;
 
 /**
  * A {@link DurableFuture} that is already completed with a value.
@@ -9,10 +11,10 @@ package software.amazon.lambda.durable;
  *
  * @param <T> the result type
  */
-class CompletedDurableFuture<T> implements DurableFuture<T> {
+public class CompletedDurableFuture<T> implements DurableFuture<T> {
     private final T value;
 
-    CompletedDurableFuture(T value) {
+    public CompletedDurableFuture(T value) {
         this.value = value;
     }
 

@@ -76,7 +76,7 @@ public interface WaitForConditionWaitStrategy<T> {
 ```
 
 - `state`: the current state returned by the check function
-- `attempt`: 1-based attempt number (first check is attempt 1)
+- `attempt`: 0-based attempt number (first check is attempt 0)
 - Returns a `WaitForConditionDecision` indicating whether to continue or stop
 
 ### WaitForConditionDecision

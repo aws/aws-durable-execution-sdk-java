@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
@@ -42,7 +43,7 @@ class ReplayValidationTest {
                 new DurableExecutionInput(
                         "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialExecutionState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
-        var context = DurableContext.createRootContext(
+        var context = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
         executionManager.setCurrentThreadContext(new ThreadContext(INVOCATION_ID + "-execution", ThreadType.CONTEXT));
 

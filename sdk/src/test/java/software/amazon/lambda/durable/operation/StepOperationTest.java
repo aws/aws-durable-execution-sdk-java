@@ -15,9 +15,9 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.StepConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -34,12 +34,12 @@ class StepOperationTest {
     private static final OperationIdentifier OPERATION_IDENTIFIER =
             OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.STEP);
     private ExecutionManager executionManager;
-    private DurableContext durableContext;
+    private DurableContextImpl durableContext;
 
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
-        durableContext = mock(DurableContext.class);
+        durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("handler", ThreadType.CONTEXT));
         when(durableContext.getDurableConfig())

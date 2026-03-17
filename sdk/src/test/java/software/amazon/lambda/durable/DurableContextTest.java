@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
@@ -46,7 +47,7 @@ class DurableContextTest {
                         "test-token",
                         initialExecutionState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
-        var root = DurableContext.createRootContext(
+        var root = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
         executionManager.registerActiveThread(null);
         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -65,14 +66,11 @@ class DurableContextTest {
     void testGetExecutionContext() {
         var context = createTestContext();
 
-        var executionContext = context.getExecutionContext();
-
-        assertNotNull(executionContext);
-        assertNotNull(executionContext.getDurableExecutionArn());
+        assertNotNull(context.getExecutionArn());
         assertEquals(
                 "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/" + EXECUTION_NAME + "/"
                         + INVOCATION_ID,
-                executionContext.getDurableExecutionArn());
+                context.getExecutionArn());
     }
 
     @Test

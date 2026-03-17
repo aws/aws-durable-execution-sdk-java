@@ -6,10 +6,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.CompletionReason;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.MapResultItem;
@@ -37,7 +37,7 @@ public class MapOperation<I, O> extends BaseConcurrentOperation<MapResult<O>> {
             MapFunction<I, O> function,
             TypeToken<O> itemResultType,
             MapConfig config,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
         super(
                 operationId,
                 name,
