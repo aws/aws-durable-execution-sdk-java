@@ -11,11 +11,11 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.WaitForConditionConfig;
 import software.amazon.lambda.durable.WaitForConditionDecision;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionException;
@@ -45,7 +45,7 @@ public class WaitForConditionOperation&lt;T&gt; extends BaseDurableOperation&lt;
             BiFunction&lt;T, StepContext, T&gt; checkFunc,
             TypeToken&lt;T&gt; resultTypeToken,
             WaitForConditionConfig&lt;T&gt; config,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
 <span class="fc" id="L49">        super(</span>
 <span class="fc" id="L50">                OperationIdentifier.of(operationId, name, OperationType.STEP, OperationSubType.WAIT_FOR_CONDITION),</span>
                 resultTypeToken,

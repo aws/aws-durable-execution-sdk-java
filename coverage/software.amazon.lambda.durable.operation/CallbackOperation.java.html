@@ -8,8 +8,8 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableCallbackFuture;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -25,7 +25,7 @@ public class CallbackOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt; im
             OperationIdentifier operationIdentifier,
             TypeToken&lt;T&gt; resultTypeToken,
             CallbackConfig config,
-            DurableContext durableContext) {
+            DurableContextImpl durableContext) {
 <span class="fc" id="L29">        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);</span>
 <span class="fc" id="L30">        this.config = config;</span>
 <span class="fc" id="L31">    }</span>
