@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WaitStrategies.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">WaitStrategies.java</span></div><h1>WaitStrategies.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import java.time.Duration;
+import java.util.function.Predicate;
+import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.retry.JitterStrategy;
+import software.amazon.lambda.durable.validation.ParameterValidator;
+
+/**
+ * Factory class for creating common {@link WaitForConditionWaitStrategy} implementations.
+ *
+ * &lt;p&gt;Provides a builder for creating strategies with exponential backoff, jitter, and max attempts. Default values:
+ * maxAttempts=60, initialDelay=5s, maxDelay=300s, backoffRate=1.5, jitter=FULL.
+ */
+public final class WaitStrategies {
+
+    private WaitStrategies() {
+        // Utility class - prevent instantiation
+    }
+
+    /**
+     * Creates a builder for a wait strategy that uses a predicate to determine when to stop polling.
+     *
+     * @param shouldContinuePolling predicate that returns true if polling should continue
+     * @param &lt;T&gt; the type of state being polled
+     * @return a new builder
+     */
+    public static &lt;T&gt; Builder&lt;T&gt; builder(Predicate&lt;T&gt; shouldContinuePolling) {
+<span class="fc bfc" id="L31" title="All 2 branches covered.">        if (shouldContinuePolling == null) {</span>
+<span class="fc" id="L32">            throw new IllegalArgumentException(&quot;shouldContinuePolling cannot be null&quot;);</span>
+        }
+<span class="fc" id="L34">        return new Builder&lt;&gt;(shouldContinuePolling);</span>
+    }
+
+    public static class Builder&lt;T&gt; {
+        private final Predicate&lt;T&gt; shouldContinuePolling; // Function to determine if polling should continue
+<span class="fc" id="L39">        private int maxAttempts = 60; // Maximum number of attempts</span>
+<span class="fc" id="L40">        private Duration initialDelay = Duration.ofSeconds(5); // Initial delay before first retry</span>
+<span class="fc" id="L41">        private Duration maxDelay = Duration.ofSeconds(300); // Maximum delay between retries</span>
+<span class="fc" id="L42">        private double backoffRate = 1.5; // Multiplier for each subsequent retry</span>
+<span class="fc" id="L43">        private JitterStrategy jitter = JitterStrategy.FULL; // Jitter strategy to apply to retry delays</span>
+
+<span class="fc" id="L45">        private Builder(Predicate&lt;T&gt; shouldContinuePolling) {</span>
+<span class="fc" id="L46">            this.shouldContinuePolling = shouldContinuePolling;</span>
+<span class="fc" id="L47">        }</span>
+
+        public Builder&lt;T&gt; maxAttempts(int maxAttempts) {
+<span class="fc" id="L50">            this.maxAttempts = maxAttempts;</span>
+<span class="fc" id="L51">            return this;</span>
+        }
+
+        public Builder&lt;T&gt; initialDelay(Duration initialDelay) {
+<span class="fc" id="L55">            this.initialDelay = initialDelay;</span>
+<span class="fc" id="L56">            return this;</span>
+        }
+
+        public Builder&lt;T&gt; maxDelay(Duration maxDelay) {
+<span class="fc" id="L60">            this.maxDelay = maxDelay;</span>
+<span class="fc" id="L61">            return this;</span>
+        }
+
+        public Builder&lt;T&gt; backoffRate(double backoffRate) {
+<span class="fc" id="L65">            this.backoffRate = backoffRate;</span>
+<span class="fc" id="L66">            return this;</span>
+        }
+
+        public Builder&lt;T&gt; jitter(JitterStrategy jitter) {
+<span class="fc" id="L70">            this.jitter = jitter;</span>
+<span class="fc" id="L71">            return this;</span>
+        }
+
+        /**
+         * Builds the wait strategy.
+         *
+         * @return a {@link WaitForConditionWaitStrategy} implementing exponential backoff with jitter
+         */
+        public WaitForConditionWaitStrategy&lt;T&gt; build() {
+<span class="fc" id="L80">            ParameterValidator.validatePositiveInteger(maxAttempts, &quot;maxAttempts&quot;);</span>
+<span class="fc" id="L81">            ParameterValidator.validateDuration(initialDelay, &quot;initialDelay&quot;);</span>
+<span class="fc" id="L82">            ParameterValidator.validateDuration(maxDelay, &quot;maxDelay&quot;);</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">            if (backoffRate &lt; 1.0) {</span>
+<span class="fc" id="L84">                throw new IllegalArgumentException(&quot;backoffRate must be &gt;= 1.0, got: &quot; + backoffRate);</span>
+            }
+<span class="fc bfc" id="L86" title="All 2 branches covered.">            if (jitter == null) {</span>
+<span class="fc" id="L87">                throw new IllegalArgumentException(&quot;jitter cannot be null&quot;);</span>
+            }
+
+<span class="fc" id="L90">            return (state, attempt) -&gt; {</span>
+                // Check if condition is met
+<span class="fc bfc" id="L92" title="All 2 branches covered.">                if (!shouldContinuePolling.test(state)) {</span>
+<span class="fc" id="L93">                    return WaitForConditionDecision.stopPolling();</span>
+                }
+
+                // Check if we've exceeded max attempts
+<span class="fc bfc" id="L97" title="All 2 branches covered.">                if (attempt + 1 &gt;= maxAttempts) {</span>
+<span class="fc" id="L98">                    throw new WaitForConditionException(</span>
+                            &quot;waitForCondition exceeded maximum attempts (&quot; + maxAttempts + &quot;)&quot;);
+                }
+
+                // Calculate delay with exponential backoff
+<span class="fc" id="L103">                var initialDelaySeconds = initialDelay.toSeconds();</span>
+<span class="fc" id="L104">                var maxDelaySeconds = maxDelay.toSeconds();</span>
+
+<span class="fc" id="L106">                double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt), maxDelaySeconds);</span>
+
+                // Apply jitter
+<span class="fc" id="L109">                double delayWithJitter =</span>
+<span class="fc bfc" id="L110" title="All 3 branches covered.">                        switch (jitter) {</span>
+<span class="fc" id="L111">                            case NONE -&gt; baseDelay;</span>
+<span class="fc" id="L112">                            case FULL -&gt; Math.random() * baseDelay; // Random between 0 and delay</span>
+                            case HALF -&gt;
+<span class="fc" id="L114">                                baseDelay / 2 + Math.random() * (baseDelay / 2); // Random between delay/2 and delay</span>
+                        };
+
+                // Ensure delay is an integer &gt;= 1
+<span class="fc" id="L118">                long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));</span>
+
+<span class="fc" id="L120">                return WaitForConditionDecision.continuePolling(Duration.ofSeconds(finalDelaySeconds));</span>
+            };
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

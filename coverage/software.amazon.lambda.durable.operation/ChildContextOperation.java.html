@@ -241,50 +241,51 @@ public class ChildContextOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt
             }
 
             // throw a general failed exception if a user exception is not reconstructed
-<span class="pc bpc" id="L244" title="5 of 6 branches missed.">            return switch (getSubType()) {</span>
+<span class="pc bpc" id="L244" title="6 of 7 branches missed.">            return switch (getSubType()) {</span>
 <span class="nc" id="L245">                case WAIT_FOR_CALLBACK -&gt; handleWaitForCallbackFailure(op);</span>
 <span class="nc" id="L246">                case MAP -&gt; throw new ChildContextFailedException(op);</span>
 <span class="nc" id="L247">                case MAP_ITERATION -&gt; throw new ChildContextFailedException(op);</span>
 <span class="nc" id="L248">                case PARALLEL -&gt; throw new ChildContextFailedException(op);</span>
 <span class="nc" id="L249">                case PARALLEL_BRANCH -&gt; throw new ChildContextFailedException(op);</span>
 <span class="fc" id="L250">                case RUN_IN_CHILD_CONTEXT -&gt; throw new ChildContextFailedException(op);</span>
+<span class="nc" id="L251">                case WAIT_FOR_CONDITION -&gt; throw new ChildContextFailedException(op);</span>
             };
         }
     }
 
     private T handleWaitForCallbackFailure(Operation op) {
-<span class="nc" id="L256">        var childrenOps = getChildOperations(op.id());</span>
-<span class="nc" id="L257">        var callbackOp = childrenOps.stream()</span>
-<span class="nc bnc" id="L258" title="All 2 branches missed.">                .filter(o -&gt; o.type() == OperationType.CALLBACK)</span>
-<span class="nc" id="L259">                .findFirst()</span>
-<span class="nc" id="L260">                .orElse(null);</span>
-<span class="nc" id="L261">        var submitterOp = childrenOps.stream()</span>
-<span class="nc bnc" id="L262" title="All 2 branches missed.">                .filter(o -&gt; o.type() == OperationType.STEP)</span>
-<span class="nc" id="L263">                .findFirst()</span>
-<span class="nc" id="L264">                .orElse(null);</span>
-<span class="nc bnc" id="L265" title="All 2 branches missed.">        if (callbackOp != null) {</span>
+<span class="nc" id="L257">        var childrenOps = getChildOperations(op.id());</span>
+<span class="nc" id="L258">        var callbackOp = childrenOps.stream()</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">                .filter(o -&gt; o.type() == OperationType.CALLBACK)</span>
+<span class="nc" id="L260">                .findFirst()</span>
+<span class="nc" id="L261">                .orElse(null);</span>
+<span class="nc" id="L262">        var submitterOp = childrenOps.stream()</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">                .filter(o -&gt; o.type() == OperationType.STEP)</span>
+<span class="nc" id="L264">                .findFirst()</span>
+<span class="nc" id="L265">                .orElse(null);</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">        if (callbackOp != null) {</span>
             // if callback failed
-<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (isTerminalStatus(callbackOp.status())) {</span>
-<span class="nc bnc" id="L268" title="All 3 branches missed.">                switch (callbackOp.status()) {</span>
-<span class="nc" id="L269">                    case FAILED -&gt; throw new CallbackFailedException(callbackOp);</span>
-<span class="nc" id="L270">                    case TIMED_OUT -&gt; throw new CallbackTimeoutException(callbackOp);</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">            if (isTerminalStatus(callbackOp.status())) {</span>
+<span class="nc bnc" id="L269" title="All 3 branches missed.">                switch (callbackOp.status()) {</span>
+<span class="nc" id="L270">                    case FAILED -&gt; throw new CallbackFailedException(callbackOp);</span>
+<span class="nc" id="L271">                    case TIMED_OUT -&gt; throw new CallbackTimeoutException(callbackOp);</span>
                 }
             }
 
             // if submitter failed
-<span class="nc bnc" id="L275" title="All 2 branches missed.">            if (submitterOp != null</span>
-<span class="nc bnc" id="L276" title="All 2 branches missed.">                    &amp;&amp; isTerminalStatus(submitterOp.status())</span>
-<span class="nc bnc" id="L277" title="All 2 branches missed.">                    &amp;&amp; submitterOp.status() != OperationStatus.SUCCEEDED) {</span>
-<span class="nc" id="L278">                var stepError = submitterOp.stepDetails().error();</span>
-<span class="nc bnc" id="L279" title="All 2 branches missed.">                if (StepInterruptedException.isStepInterruptedException(stepError)) {</span>
-<span class="nc" id="L280">                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (submitterOp != null</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">                    &amp;&amp; isTerminalStatus(submitterOp.status())</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                    &amp;&amp; submitterOp.status() != OperationStatus.SUCCEEDED) {</span>
+<span class="nc" id="L279">                var stepError = submitterOp.stepDetails().error();</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">                if (StepInterruptedException.isStepInterruptedException(stepError)) {</span>
+<span class="nc" id="L281">                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));</span>
                 } else {
-<span class="nc" id="L282">                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));</span>
+<span class="nc" id="L283">                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));</span>
                 }
             }
         }
 
-<span class="nc" id="L287">        throw new IllegalStateException(&quot;Unknown waitForCallback status&quot;);</span>
+<span class="nc" id="L288">        throw new IllegalStateException(&quot;Unknown waitForCallback status&quot;);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WaitForConditionConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">WaitForConditionConfig.java</span></div><h1>WaitForConditionConfig.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import software.amazon.lambda.durable.serde.SerDes;
+
+/**
+ * Configuration for {@code waitForCondition} operations.
+ *
+ * &lt;p&gt;Bundles the wait strategy, initial state, and optional SerDes for a waitForCondition call. Use
+ * {@link #builder(WaitForConditionWaitStrategy, Object)} to create instances.
+ *
+ * @param &lt;T&gt; the type of state being polled
+ */
+public class WaitForConditionConfig&lt;T&gt; {
+    private final WaitForConditionWaitStrategy&lt;T&gt; waitStrategy;
+    private final T initialState;
+    private final SerDes serDes;
+
+<span class="fc" id="L20">    private WaitForConditionConfig(Builder&lt;T&gt; builder) {</span>
+<span class="fc" id="L21">        this.waitStrategy = builder.waitStrategy;</span>
+<span class="fc" id="L22">        this.initialState = builder.initialState;</span>
+<span class="fc" id="L23">        this.serDes = builder.serDes;</span>
+<span class="fc" id="L24">    }</span>
+
+    /** Returns the wait strategy that controls polling behavior. */
+    public WaitForConditionWaitStrategy&lt;T&gt; waitStrategy() {
+<span class="fc" id="L28">        return waitStrategy;</span>
+    }
+
+    /** Returns the initial state passed to the first check function invocation. */
+    public T initialState() {
+<span class="fc" id="L33">        return initialState;</span>
+    }
+
+    /** Returns the custom serializer, or null if not specified (uses default SerDes). */
+    public SerDes serDes() {
+<span class="fc" id="L38">        return serDes;</span>
+    }
+
+    /**
+     * Creates a new builder with the required wait strategy and initial state.
+     *
+     * @param waitStrategy the strategy controlling polling intervals and termination
+     * @param initialState the initial state for the first check invocation
+     * @param &lt;T&gt; the type of state being polled
+     * @return a new builder instance
+     * @throws IllegalArgumentException if waitStrategy or initialState is null
+     */
+    public static &lt;T&gt; Builder&lt;T&gt; builder(WaitForConditionWaitStrategy&lt;T&gt; waitStrategy, T initialState) {
+<span class="fc bfc" id="L51" title="All 2 branches covered.">        if (waitStrategy == null) {</span>
+<span class="fc" id="L52">            throw new IllegalArgumentException(&quot;waitStrategy must not be null&quot;);</span>
+        }
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (initialState == null) {</span>
+<span class="fc" id="L55">            throw new IllegalArgumentException(&quot;initialState must not be null&quot;);</span>
+        }
+<span class="fc" id="L57">        return new Builder&lt;&gt;(waitStrategy, initialState);</span>
+    }
+
+    public static class Builder&lt;T&gt; {
+        private final WaitForConditionWaitStrategy&lt;T&gt; waitStrategy;
+        private final T initialState;
+        private SerDes serDes;
+
+<span class="fc" id="L65">        private Builder(WaitForConditionWaitStrategy&lt;T&gt; waitStrategy, T initialState) {</span>
+<span class="fc" id="L66">            this.waitStrategy = waitStrategy;</span>
+<span class="fc" id="L67">            this.initialState = initialState;</span>
+<span class="fc" id="L68">        }</span>
+
+        /**
+         * Sets a custom serializer for the waitForCondition operation.
+         *
+         * &lt;p&gt;If not specified, the operation will use the default SerDes configured for the handler.
+         *
+         * @param serDes the custom serializer to use, or null to use the default
+         * @return this builder for method chaining
+         */
+        public Builder&lt;T&gt; serDes(SerDes serDes) {
+<span class="fc" id="L79">            this.serDes = serDes;</span>
+<span class="fc" id="L80">            return this;</span>
+        }
+
+        public WaitForConditionConfig&lt;T&gt; build() {
+<span class="fc" id="L84">            return new WaitForConditionConfig&lt;&gt;(this);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

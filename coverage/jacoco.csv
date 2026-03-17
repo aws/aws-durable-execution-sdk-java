@@ -6,6 +6,7 @@ AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,Executi
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,MapConfig.Builder,0,32,0,0,0,12,0,5,0,5
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,InvokeConfig.Builder,10,22,0,0,4,8,2,3,2,3
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,BaseContext,8,68,0,2,4,21,2,9,2,8
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,WaitForConditionDecision,5,23,1,1,1,4,1,3,0,3
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,ParallelConfig.Builder,0,67,0,8,0,17,0,9,0,5
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,DurableFuture,0,12,0,0,0,2,0,2,0,2
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,DurableHandler.new JsonDeserializer() {...},11,3,0,0,2,1,1,1,1,1
@@ -16,23 +17,27 @@ AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,StepCon
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,StepSemantics,0,15,0,0,0,3,0,1,0,1
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,ParallelContext,56,0,4,0,16,0,7,0,5,0
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,StepConfig.Builder,0,32,0,0,0,12,0,5,0,5
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,WaitForConditionConfig,0,44,0,4,0,13,0,7,0,5
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,WaitStrategies,0,12,0,2,0,3,0,2,0,1
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,TypeToken.new TypeToken() {...},0,4,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,TypeToken.new TypeToken() {...},0,4,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,ParallelConfig,0,28,0,0,0,9,0,5,0,5
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,DurableHandler,52,130,3,5,10,29,5,6,2,5
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,CompletedDurableFuture,9,0,0,0,4,0,2,0,2,0
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,WaitForCallbackConfig.Builder,0,15,0,0,0,5,0,3,0,3
-AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,DurableContext,497,326,15,5,112,78,50,23,41,22
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,DurableContext,563,326,17,5,127,78,55,23,45,22
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,DurableConfig.Builder,0,59,0,0,0,18,0,8,0,8
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,MapConfig,0,46,0,2,0,10,0,7,0,6
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,CompletionConfig,0,68,0,0,0,14,0,10,0,10
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,CallbackConfig.Builder,0,38,0,0,0,14,0,5,0,5
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,WaitForConditionConfig.Builder,0,19,0,0,0,7,0,3,0,3
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,CallbackConfig,0,41,0,0,0,10,0,6,0,6
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,WaitForCallbackConfig,0,43,0,4,0,9,0,7,0,5
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,TypeToken,4,66,2,4,0,18,2,9,0,8
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable,WaitStrategies.Builder,0,155,0,11,0,40,0,14,0,8
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,OperationIdentifier,0,31,0,0,0,3,0,3,0,3
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,MapResultItem,12,42,0,0,4,11,4,7,4,7
-AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,OperationSubType,3,56,0,0,1,11,1,3,1,3
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,OperationSubType,3,63,0,0,1,12,1,3,1,3
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,MapResult,11,103,2,8,3,16,5,18,3,15
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,DurableExecutionInput,0,12,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,ExecutionStatus,0,24,0,0,0,5,0,2,0,2
@@ -43,10 +48,11 @@ AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.model,C
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.validation,ParameterValidator,0,166,0,38,0,37,0,28,0,9
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,ConcurrencyOperation,56,330,18,26,12,77,18,18,1,13
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,WaitOperation,24,65,5,1,5,21,3,5,0,5
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,WaitForConditionOperation,152,184,19,15,40,48,21,11,7,7
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,StepOperation,174,156,27,12,42,43,22,12,4,9
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,CallbackOperation,18,111,4,9,6,26,4,10,0,6
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,MapOperation,219,0,28,0,50,0,19,0,5,0
-AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,ChildContextOperation,168,254,33,32,39,76,27,23,3,11
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,ChildContextOperation,173,254,34,32,40,76,28,23,3,11
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,BaseDurableOperation,72,434,5,31,8,106,7,40,2,27
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,MapOperation.new TypeToken() {...},3,0,0,0,1,0,1,0,1,0
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.operation,InvokeOperation,55,67,5,7,18,15,7,6,3,2
@@ -76,6 +82,7 @@ AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.excepti
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.exception,InvokeFailedException,0,4,0,0,0,2,0,1,0,1
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.exception,ChildContextFailedException,3,34,2,2,1,6,2,3,0,3
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.exception,IllegalDurableOperationException,0,11,0,0,0,5,0,1,0,1
+AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.exception,WaitForConditionException,1,17,1,1,0,5,1,2,0,2
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.exception,StepFailedException,0,30,0,2,0,8,0,3,0,2
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.exception,UnrecoverableDurableExecutionException,0,11,0,0,0,4,0,2,0,2
 AWS Lambda Durable Execution SDK for Java,software.amazon.lambda.durable.exception,NonDeterministicExecutionException,0,11,0,0,0,5,0,1,0,1
