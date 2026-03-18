@@ -197,6 +197,38 @@ class ParallelOperationTest {
         assertNotNull(childOp);
     }
 
+    // ===== handleFailure still sends SUCCEED =====
+
+    @Test
+    void handleFailure_sendsSucceedCheckpointEvenWhenFailureToleranceExceeded() throws Exception {
+        // toleratedFailureCount=0, so the first failure triggers handleFailure
+        // ParallelOperation.handleFailure() delegates to handleSuccess(), so SUCCEED must be sent
+        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+                .thenReturn(Operation.builder()
+                        .id("child-1")
+                        .name("branch-1")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.FAILED)
+                        .build());
+
+        var op = createOperation(-1, -1, 0);
+        setOperationIdGenerator(op, mockIdGenerator);
+        op.addItem(
+                "branch-1",
+                ctx -> {
+                    throw new RuntimeException("branch failed");
+                },
+                TypeToken.get(String.class),
+                SER_DES);
+
+        runJoin(op);
+
+        verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
+    }
+
     // ===== Helpers =====
 
     private void runJoin(ParallelOperation<?> op) throws InterruptedException {

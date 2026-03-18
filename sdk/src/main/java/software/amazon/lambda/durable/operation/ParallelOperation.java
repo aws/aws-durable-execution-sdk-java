@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.operation;
 
 import java.util.function.Function;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -86,12 +85,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
     @Override
     protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        sendOperationUpdate(OperationUpdate.builder()
-                .action(OperationAction.FAIL)
-                .subType(getSubType().getValue())
-                .error(ErrorObject.builder()
-                        .errorMessage("Parallel operation failed with " + concurrencyCompletionStatus + " status")
-                        .build()));
+        handleSuccess();
     }
 
     @Override
