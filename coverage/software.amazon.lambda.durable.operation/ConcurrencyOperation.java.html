@@ -186,9 +186,9 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
 <span class="fc" id="L186">            child.get();</span>
 <span class="fc" id="L187">            logger.debug(&quot;Result succeeded - {}&quot;, child.getName());</span>
 <span class="fc" id="L188">            succeededCount.incrementAndGet();</span>
-<span class="nc" id="L189">        } catch (Throwable e) {</span>
-<span class="nc" id="L190">            failedCount.incrementAndGet();</span>
-<span class="nc" id="L191">            logger.debug(&quot;Child operation {} failed: {}&quot;, child.getOperationId(), e.getMessage());</span>
+<span class="fc" id="L189">        } catch (Throwable e) {</span>
+<span class="fc" id="L190">            failedCount.incrementAndGet();</span>
+<span class="fc" id="L191">            logger.debug(&quot;Child operation {} failed: {}&quot;, child.getOperationId(), e.getMessage());</span>
 <span class="fc" id="L192">        }</span>
 
 <span class="fc bfc" id="L194" title="All 2 branches covered.">        if (canComplete()) {</span>
@@ -231,11 +231,11 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
         }
 
         // If we've exceeded the failure tolerance, we're done
-<span class="pc bpc" id="L234" title="4 of 8 branches missed.">        if ((minSuccessful == -1 &amp;&amp; failed &gt; 0)</span>
+<span class="pc bpc" id="L234" title="3 of 8 branches missed.">        if ((minSuccessful == -1 &amp;&amp; failed &gt; 0)</span>
                 || failed &gt; toleratedFailureCount
                 || (double) failed / totalItems &gt; failureRateThreshold) {
-<span class="nc" id="L237">            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
-<span class="nc" id="L238">            return true;</span>
+<span class="fc" id="L237">            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
+<span class="fc" id="L238">            return true;</span>
         }
 
         // This will only happens when minSuccessful == -1 and user calls join()
@@ -251,10 +251,10 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
 <span class="fc bfc" id="L251" title="All 2 branches covered.">        if (isOperationCompleted()) {</span>
 <span class="fc" id="L252">            return;</span>
         }
-<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        if (completionStatus.isSucceeded()) {</span>
+<span class="fc bfc" id="L254" title="All 2 branches covered.">        if (completionStatus.isSucceeded()) {</span>
 <span class="fc" id="L255">            handleSuccess();</span>
         } else {
-<span class="nc" id="L257">            handleFailure(completionStatus);</span>
+<span class="fc" id="L257">            handleFailure(completionStatus);</span>
         }
 <span class="fc" id="L259">        synchronized (completionFuture) {</span>
 <span class="fc" id="L260">            completionFuture.complete(null);</span>

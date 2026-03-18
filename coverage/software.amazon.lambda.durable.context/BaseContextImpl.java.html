@@ -124,7 +124,7 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
             // deregister the context's thread from the execution manager
             try {
 <span class="fc" id="L126">                executionManager.deregisterActiveThread(getContextId());</span>
-<span class="fc" id="L127">            } catch (SuspendExecutionException e) {</span>
+<span class="nc" id="L127">            } catch (SuspendExecutionException e) {</span>
                 // Expected when this is the last active thread. Must catch here because:
                 // 1/ This runs in a worker thread detached from handlerFuture
                 // 2/ Uncaught exception would prevent stepAsync().get() from resume

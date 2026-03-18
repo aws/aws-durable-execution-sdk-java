@@ -371,8 +371,8 @@ public abstract class BaseDurableOperation&lt;T&gt; implements DurableFuture&lt;
      */
     protected Throwable deserializeException(ErrorObject errorObject) {
 <span class="fc" id="L373">        Throwable original = null;</span>
-<span class="pc bpc" id="L374" title="1 of 2 branches missed.">        if (errorObject == null) {</span>
-<span class="nc" id="L375">            return original;</span>
+<span class="fc bfc" id="L374" title="All 2 branches covered.">        if (errorObject == null) {</span>
+<span class="fc" id="L375">            return original;</span>
         }
 <span class="fc" id="L377">        var errorType = errorObject.errorType();</span>
 <span class="fc" id="L378">        var errorData = errorObject.errorData();</span>

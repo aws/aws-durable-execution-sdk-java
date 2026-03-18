@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.operation;
 
 import java.util.function.Function;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -50,7 +49,7 @@ public class ParallelOperation&lt;T&gt; extends ConcurrencyOperation&lt;T&gt; {
             int maxConcurrency,
             int minSuccessful,
             int toleratedFailureCount) {
-<span class="fc" id="L53">        super(</span>
+<span class="fc" id="L52">        super(</span>
                 operationIdentifier,
                 resultTypeToken,
                 resultSerDes,
@@ -58,7 +57,7 @@ public class ParallelOperation&lt;T&gt; extends ConcurrencyOperation&lt;T&gt; {
                 maxConcurrency,
                 minSuccessful,
                 toleratedFailureCount);
-<span class="fc" id="L61">    }</span>
+<span class="fc" id="L60">    }</span>
 
     @Override
     protected &lt;R&gt; ChildContextOperation&lt;R&gt; createItem(
@@ -68,8 +67,8 @@ public class ParallelOperation&lt;T&gt; extends ConcurrencyOperation&lt;T&gt; {
             TypeToken&lt;R&gt; resultType,
             SerDes serDes,
             DurableContextImpl parentContext) {
-<span class="fc" id="L71">        return new ChildContextOperation&lt;&gt;(</span>
-<span class="fc" id="L72">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),</span>
+<span class="fc" id="L70">        return new ChildContextOperation&lt;&gt;(</span>
+<span class="fc" id="L71">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),</span>
                 function,
                 resultType,
                 serDes,
@@ -79,39 +78,34 @@ public class ParallelOperation&lt;T&gt; extends ConcurrencyOperation&lt;T&gt; {
 
     @Override
     protected void handleSuccess() {
-<span class="fc" id="L82">        sendOperationUpdate(OperationUpdate.builder()</span>
-<span class="fc" id="L83">                .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L84">                .subType(getSubType().getValue()));</span>
-<span class="fc" id="L85">    }</span>
+<span class="fc" id="L81">        sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L82">                .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L83">                .subType(getSubType().getValue()));</span>
+<span class="fc" id="L84">    }</span>
 
     @Override
     protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-<span class="nc" id="L89">        sendOperationUpdate(OperationUpdate.builder()</span>
-<span class="nc" id="L90">                .action(OperationAction.FAIL)</span>
-<span class="nc" id="L91">                .subType(getSubType().getValue())</span>
-<span class="nc" id="L92">                .error(ErrorObject.builder()</span>
-<span class="nc" id="L93">                        .errorMessage(&quot;Parallel operation failed with &quot; + concurrencyCompletionStatus + &quot; status&quot;)</span>
-<span class="nc" id="L94">                        .build()));</span>
-<span class="nc" id="L95">    }</span>
+<span class="fc" id="L88">        handleSuccess();</span>
+<span class="fc" id="L89">    }</span>
 
     @Override
     protected void start() {
-<span class="nc" id="L99">        sendOperationUpdateAsync(OperationUpdate.builder()</span>
-<span class="nc" id="L100">                .action(OperationAction.START)</span>
-<span class="nc" id="L101">                .subType(getSubType().getValue()));</span>
-<span class="nc" id="L102">    }</span>
+<span class="nc" id="L93">        sendOperationUpdateAsync(OperationUpdate.builder()</span>
+<span class="nc" id="L94">                .action(OperationAction.START)</span>
+<span class="nc" id="L95">                .subType(getSubType().getValue()));</span>
+<span class="nc" id="L96">    }</span>
 
     @Override
     protected void replay(Operation existing) {
         // Always replay child branches for parallel
-<span class="nc" id="L107">        start();</span>
-<span class="nc" id="L108">    }</span>
+<span class="nc" id="L101">        start();</span>
+<span class="nc" id="L102">    }</span>
 
     @Override
     public T get() {
         // TODO: implement proper return value handling
-<span class="nc" id="L113">        join();</span>
-<span class="nc" id="L114">        return null;</span>
+<span class="nc" id="L107">        join();</span>
+<span class="nc" id="L108">        return null;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -233,7 +233,7 @@ public class ChildContextOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt
 <span class="fc" id="L233">            return deserializeResult(result);</span>
         } else {
 <span class="fc" id="L235">            var contextDetails = op.contextDetails();</span>
-<span class="pc bpc" id="L236" title="1 of 2 branches missed.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
 
             // Attempt to reconstruct and throw the original exception
 <span class="fc" id="L239">            Throwable original = deserializeException(errorObject);</span>
@@ -242,12 +242,12 @@ public class ChildContextOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt
             }
 
             // throw a general failed exception if a user exception is not reconstructed
-<span class="pc bpc" id="L245" title="6 of 7 branches missed.">            return switch (getSubType()) {</span>
+<span class="pc bpc" id="L245" title="5 of 7 branches missed.">            return switch (getSubType()) {</span>
 <span class="nc" id="L246">                case WAIT_FOR_CALLBACK -&gt; handleWaitForCallbackFailure(op);</span>
 <span class="nc" id="L247">                case MAP -&gt; throw new ChildContextFailedException(op);</span>
 <span class="nc" id="L248">                case MAP_ITERATION -&gt; throw new ChildContextFailedException(op);</span>
 <span class="nc" id="L249">                case PARALLEL -&gt; throw new ChildContextFailedException(op);</span>
-<span class="nc" id="L250">                case PARALLEL_BRANCH -&gt; throw new ChildContextFailedException(op);</span>
+<span class="fc" id="L250">                case PARALLEL_BRANCH -&gt; throw new ChildContextFailedException(op);</span>
 <span class="fc" id="L251">                case RUN_IN_CHILD_CONTEXT -&gt; throw new ChildContextFailedException(op);</span>
 <span class="nc" id="L252">                case WAIT_FOR_CONDITION -&gt; throw new ChildContextFailedException(op);</span>
             };
