@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.operation;
 
 import java.util.function.Function;
+import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -80,7 +81,8 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
     protected void handleSuccess() {
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.SUCCEED)
-                .subType(getSubType().getValue()));
+                .subType(getSubType().getValue())
+                .contextOptions(ContextOptions.builder().replayChildren(true).build()));
     }
 
     @Override

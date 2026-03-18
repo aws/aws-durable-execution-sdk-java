@@ -63,6 +63,8 @@ class ConcurrencyOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
+        when(durableContext.createChildContextWithoutSettingThreadContext(anyString(), anyString()))
+                .thenReturn(childContext);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         mockIdGenerator = mock(OperationIdGenerator.class);
         when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
