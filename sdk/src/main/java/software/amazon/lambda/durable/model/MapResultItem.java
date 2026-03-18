@@ -2,37 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.model;
 
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+
 /**
  * Represents the outcome of a single item in a map operation.
  *
- * <p>Each item either succeeds with a result or fails with an error. The status field indicates which case applies.
+ * <p>Each item either succeeds with a result, fails with an error, or was never started. The status field indicates
+ * which case applies.
  *
- * <p>When serialized for checkpointing, only status and result are included. The error field is transient because
- * Throwable objects are not reliably serializable across different serializers. On replay from a small-result
- * checkpoint, errors will be null; on replay from a large-result checkpoint (replayChildren), errors are reconstructed
- * from individual child context checkpoints.
+ * <p>Errors are stored as {@link ErrorObject} (errorType, errorMessage, stackTrace) rather than raw Throwable, so they
+ * survive serialization across checkpoint-and-replay cycles.
  *
+ * @param status the status of this item
+ * @param result the result value, or null if failed/not started
+ * @param error the error details, or null if succeeded/not started
  * @param <T> the result type
  */
-public class MapResultItem<T> {
+public record MapResultItem<T>(Status status, T result, ErrorObject error) {
 
     /** Status of an individual map item. */
     public enum Status {
         SUCCEEDED,
-        FAILED
-    }
-
-    private Status status;
-    private T result;
-    private transient Throwable error;
-
-    /** Default constructor for deserialization. */
-    public MapResultItem() {}
-
-    private MapResultItem(Status status, T result, Throwable error) {
-        this.status = status;
-        this.result = result;
-        this.error = error;
+        FAILED,
+        NOT_STARTED
     }
 
     /** Creates a successful result item. */
@@ -41,44 +33,12 @@ public class MapResultItem<T> {
     }
 
     /** Creates a failed result item. */
-    public static <T> MapResultItem<T> failure(Throwable error) {
+    public static <T> MapResultItem<T> failure(ErrorObject error) {
         return new MapResultItem<>(Status.FAILED, null, error);
     }
 
-    /** Creates an empty (not started) result item. */
+    /** Creates a not-started result item. */
     public static <T> MapResultItem<T> notStarted() {
-        return new MapResultItem<>(null, null, null);
-    }
-
-    /** Returns the status of this item, or null if the item was never started. */
-    public Status getStatus() {
-        return status;
-    }
-
-    /** Returns the result, or null if the item failed or was not started. */
-    public T getResult() {
-        return result;
-    }
-
-    /** Returns the error, or null if the item succeeded or was not started. */
-    public Throwable getError() {
-        return error;
-    }
-
-    // Convenience accessors matching the original API style
-
-    /** Returns the status of this item, or null if the item was never started. */
-    public Status status() {
-        return status;
-    }
-
-    /** Returns the result, or null if the item failed or was not started. */
-    public T result() {
-        return result;
-    }
-
-    /** Returns the error, or null if the item succeeded or was not started. */
-    public Throwable error() {
-        return error;
+        return new MapResultItem<>(Status.NOT_STARTED, null, null);
     }
 }

@@ -5,12 +5,12 @@ package software.amazon.lambda.durable.operation;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.model.CompletionReason;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -46,17 +47,21 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
     private static final Logger logger = LoggerFactory.getLogger(BaseConcurrentOperation.class);
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
+    // All mutable state below is guarded by `lock`.
+    protected final Object lock = new Object();
     private final List<ChildContextOperation<?>> branches = new ArrayList<>();
-    private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedQueue<>();
+    private final Queue<ChildContextOperation<?>> pendingQueue = new LinkedList<>();
     private final Set<ChildContextOperation<?>> startedBranches = ConcurrentHashMap.newKeySet();
-    private final AtomicInteger activeBranches = new AtomicInteger(0);
-    private final AtomicInteger succeeded = new AtomicInteger(0);
-    private final AtomicInteger failed = new AtomicInteger(0);
+    private int activeBranches;
+    private int succeeded;
+    private int failed;
+    private CompletionReason completionReason;
+    private boolean earlyTermination;
+    private final Set<String> completedBranchIds = new HashSet<>();
+
     private final Integer maxConcurrency;
     private final CompletionConfig completionConfig;
     private final OperationSubType subType;
-    private volatile CompletionReason completionReason;
-    private volatile boolean earlyTermination = false;
     private DurableContextImpl rootContext;
     private OperationIdGenerator operationIdGenerator;
 
@@ -85,9 +90,12 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
     protected void start() {
         sendOperationUpdateAsync(
                 OperationUpdate.builder().action(OperationAction.START).subType(subType.getValue()));
+        var parentThreadContext = getCurrentThreadContext();
         this.rootContext = getContext().createChildContext(getOperationId(), getName());
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
         startBranches();
+        processAlreadyCompletedBranches();
+        getContext().getExecutionManager().setCurrentThreadContext(parentThreadContext);
     }
 
     @Override
@@ -96,20 +104,23 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
             case SUCCEEDED -> {
                 if (existing.contextDetails() != null
                         && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
-                    // Large result: reconstruct by replaying child contexts
+                    var parentThreadContext = getCurrentThreadContext();
                     this.rootContext = getContext().createChildContext(getOperationId(), getName());
                     this.operationIdGenerator = new OperationIdGenerator(getOperationId());
                     startBranches();
+                    processAlreadyCompletedBranches();
+                    getContext().getExecutionManager().setCurrentThreadContext(parentThreadContext);
                 } else {
                     markAlreadyCompleted();
                 }
             }
-            case FAILED -> markAlreadyCompleted();
             case STARTED -> {
-                // Interrupted mid-execution: resume from last checkpoint
+                var parentThreadContext = getCurrentThreadContext();
                 this.rootContext = getContext().createChildContext(getOperationId(), getName());
                 this.operationIdGenerator = new OperationIdGenerator(getOperationId());
                 startBranches();
+                processAlreadyCompletedBranches();
+                getContext().getExecutionManager().setCurrentThreadContext(parentThreadContext);
             }
             default ->
                 terminateExecutionWithIllegalDurableOperationException(
@@ -122,6 +133,31 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
     protected abstract void startBranches();
 
     protected abstract R aggregateResults();
+
+    // ========== post-startBranches processing ==========
+
+    /**
+     * Processes branches that completed synchronously during {@code startBranches()} via {@code markAlreadyCompleted()}
+     * (replay of SUCCEEDED/FAILED branches). These branches don't go through {@code executeChildContext()}, so their
+     * {@code onCompleteCallback} doesn't fire. We process them here, after all branches have been created, to avoid
+     * re-entrant issues during {@code startBranches()}.
+     */
+    private void processAlreadyCompletedBranches() {
+        // Take a snapshot of branches that are already completed
+        List<ChildContextOperation<?>> alreadyCompleted;
+        synchronized (lock) {
+            alreadyCompleted =
+                    branches.stream().filter(b -> b.completionFuture.isDone()).toList();
+        }
+
+        for (var branch : alreadyCompleted) {
+            var op = branch.getOperation();
+            if (op != null) {
+                boolean success = op.status() == OperationStatus.SUCCEEDED;
+                onChildContextComplete(branch, success);
+            }
+        }
+    }
 
     // ========== branch creation ==========
 
@@ -138,25 +174,36 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
                 typeToken,
                 serDes,
                 rootContext);
-        branches.add(branch);
 
-        // Attach callback BEFORE execution starts (or before future can complete).
-        // The thenRun runs synchronously inside the synchronized(completionFuture) block
-        // when completionFuture.complete(null) is called, so it executes on the checkpoint
-        // processing thread. This callback only does lightweight work: update counters,
-        // evaluate CompletionConfig, dequeue and start next branch.
-        branch.completionFuture.thenRun(() -> {
+        // Only use onCompleteCallback (finally block of executeChildContext) for branches that
+        // actually execute. For branches that replay as SUCCEEDED/FAILED via markAlreadyCompleted(),
+        // we process them after startBranches() completes — see processCompletedBranches().
+        branch.setOnCompleteCallback(() -> {
             var op = branch.getOperation();
-            boolean success = op != null && op.status() == OperationStatus.SUCCEEDED;
-            onChildContextComplete(branch, success);
+            if (op != null && ExecutionManager.isTerminalStatus(op.status())) {
+                boolean success = op.status() == OperationStatus.SUCCEEDED;
+                onChildContextComplete(branch, success);
+            } else {
+                // Branch suspended (op is null or STARTED) — decrement active count.
+                onChildContextSuspended();
+            }
         });
 
-        if (!earlyTermination && (maxConcurrency == null || activeBranches.get() < maxConcurrency)) {
-            activeBranches.incrementAndGet();
+        boolean shouldStart;
+        synchronized (lock) {
+            branches.add(branch);
+            if (!earlyTermination && (maxConcurrency == null || activeBranches < maxConcurrency)) {
+                activeBranches++;
+                shouldStart = true;
+            } else {
+                pendingQueue.add(branch);
+                shouldStart = false;
+            }
+        }
+
+        if (shouldStart) {
             startedBranches.add(branch);
             branch.execute();
-        } else {
-            pendingQueue.add(branch);
         }
         return branch;
     }
@@ -164,80 +211,122 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
     // ========== completion callback ==========
 
     /**
-     * Called on the checkpoint processing thread when a branch's completionFuture completes. Only does lightweight
-     * work: update counters, evaluate CompletionConfig, dequeue and start next branch. Does NOT call
-     * finalizeOperation() or checkpointResult() — those happen in get() on the context thread.
+     * Called on the checkpoint processing thread when a branch's completionFuture completes. Updates counters,
+     * evaluates completion criteria, and either starts the next queued branch or finalizes the operation.
+     *
+     * <p>When all branches have completed (or early termination criteria are met with no pending/active branches), this
+     * method aggregates results, checkpoints the parent operation, and completes the parent's {@code completionFuture}
+     * — allowing {@code get()} to unblock via {@code waitForOperationCompletion()}.
+     *
+     * <p>All mutable state updates are synchronized via {@code lock} to prevent races with {@link #branchInternal}
+     * (which runs on the parent context thread) and with other concurrent completion callbacks.
      */
     protected void onChildContextComplete(ChildContextOperation<?> branch, boolean success) {
-        if (success) {
-            succeeded.incrementAndGet();
-        } else {
-            failed.incrementAndGet();
-        }
+        ChildContextOperation<?> nextToStart = null;
+        boolean shouldFinalize = false;
 
-        // Evaluate completion criteria
-        if (!earlyTermination && shouldTerminateEarly()) {
-            earlyTermination = true;
-            completionReason = evaluateCompletionReason();
-            logger.trace("Early termination triggered for operation {}: reason={}", getOperationId(), completionReason);
-        }
-
-        // Start next queued branch with correct thread ordering:
-        // register new branch thread BEFORE deregistering completed branch thread
-        if (!earlyTermination) {
-            var next = pendingQueue.poll();
-            if (next != null) {
-                // activeBranches stays the same (one completing, one starting)
-                startedBranches.add(next);
-                next.execute(); // registers new thread internally via ChildContextOperation.start()
-            } else {
-                activeBranches.decrementAndGet();
+        synchronized (lock) {
+            // Idempotency: both onCompleteCallback (finally block) and completionFuture.thenRun
+            // may fire for the same branch. Skip if already counted.
+            if (!completedBranchIds.add(branch.getOperationId())) {
+                return;
             }
-        } else {
-            activeBranches.decrementAndGet();
+
+            if (success) {
+                succeeded++;
+            } else {
+                failed++;
+            }
+
+            // Evaluate completion criteria
+            if (!earlyTermination && shouldTerminateEarly()) {
+                earlyTermination = true;
+                completionReason = evaluateCompletionReason();
+                logger.trace(
+                        "Early termination triggered for operation {}: reason={}", getOperationId(), completionReason);
+            }
+
+            // Start next queued branch with correct thread ordering:
+            // register new branch thread BEFORE deregistering completed branch thread
+            if (!earlyTermination) {
+                nextToStart = pendingQueue.poll();
+                if (nextToStart == null) {
+                    activeBranches--;
+                }
+                // else activeBranches stays the same (one completing, one starting)
+            } else {
+                activeBranches--;
+            }
+
+            // Check if all work is done: no active branches and either no pending branches
+            // or early termination (pending branches won't be started)
+            if (activeBranches == 0 && (pendingQueue.isEmpty() || earlyTermination)) {
+                shouldFinalize = true;
+                if (completionReason == null) {
+                    completionReason = CompletionReason.ALL_COMPLETED;
+                }
+            }
+        }
+
+        // Execute outside the lock — branch.execute() submits to the executor and may trigger
+        // further callbacks; holding the lock here would risk deadlock.
+        if (nextToStart != null) {
+            startedBranches.add(nextToStart);
+            nextToStart.execute();
+        }
+
+        // Finalize outside the lock — checkpointing is blocking I/O.
+        if (shouldFinalize) {
+            R result = aggregateResults();
+            checkpointResult(result);
         }
         // completed branch's thread is deregistered by ChildContextOperation's close() in BaseContext
     }
 
+    /**
+     * Called when a branch suspends (e.g., due to a wait() operation). Decrements the active branch count so that the
+     * finalization check in {@link #onChildContextComplete} can detect when all branches are either completed or
+     * suspended. Does NOT start the next queued branch — suspended branches will resume on re-invocation.
+     */
+    private void onChildContextSuspended() {
+        synchronized (lock) {
+            activeBranches--;
+            // Don't start next branch — this branch suspended, it will resume on re-invocation.
+            // Don't finalize — suspended branches haven't produced results yet.
+        }
+    }
+
     // ========== completion evaluation ==========
 
+    /** Must be called while holding {@code lock}. */
     private boolean shouldTerminateEarly() {
         // Check minSuccessful
-        if (completionConfig.minSuccessful() != null && succeeded.get() >= completionConfig.minSuccessful()) {
+        if (completionConfig.minSuccessful() != null && succeeded >= completionConfig.minSuccessful()) {
             return true;
         }
 
         // Check toleratedFailureCount
-        if (completionConfig.toleratedFailureCount() != null
-                && failed.get() > completionConfig.toleratedFailureCount()) {
+        if (completionConfig.toleratedFailureCount() != null && failed > completionConfig.toleratedFailureCount()) {
             return true;
         }
 
         // Check toleratedFailurePercentage
-        int totalCompleted = succeeded.get() + failed.get();
+        int totalCompleted = succeeded + failed;
         if (completionConfig.toleratedFailurePercentage() != null
                 && totalCompleted > 0
-                && ((double) failed.get() / totalCompleted) > completionConfig.toleratedFailurePercentage()) {
+                && ((double) failed / totalCompleted) > completionConfig.toleratedFailurePercentage()) {
             return true;
         }
 
         return false;
     }
 
+    /** Must be called while holding {@code lock}. */
     protected CompletionReason evaluateCompletionReason() {
-        if (completionConfig.minSuccessful() != null && succeeded.get() >= completionConfig.minSuccessful()) {
+        if (completionConfig.minSuccessful() != null && succeeded >= completionConfig.minSuccessful()) {
             return CompletionReason.MIN_SUCCESSFUL_REACHED;
         }
         return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;
-    }
-
-    private void finalizeOperation() {
-        if (completionReason == null) {
-            completionReason = CompletionReason.ALL_COMPLETED;
-        }
-
-        R result = aggregateResults();
-        checkpointResult(result);
     }
 
     /**
@@ -271,25 +360,32 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
 
     @Override
     public R get() {
-        var op = waitForOperationCompletion();
+        var executionManager = getContext().getExecutionManager();
+        var threadContext = getCurrentThreadContext();
+
+        synchronized (completionFuture) {
+            if (!isOperationCompleted()) {
+                completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
+                executionManager.deregisterActiveThread(threadContext.threadId());
+            }
+        }
+
+        // Race completionFuture against executionExceptionFuture.
+        // If branches suspend, executionExceptionFuture completes with SuspendExecutionException,
+        // which propagates up through the handler to DurableExecutor → returns PENDING.
+        // If branches complete, completionFuture completes and we proceed to read the result.
+        executionManager.runUntilCompleteOrSuspend(completionFuture).join();
+
+        var op = getOperation();
 
         if (op.status() == OperationStatus.SUCCEEDED) {
             if (op.contextDetails() != null
                     && Boolean.TRUE.equals(op.contextDetails().replayChildren())) {
-                // Large result was reconstructed via replay — aggregate from branches
                 return aggregateResults();
             }
             var contextDetails = op.contextDetails();
             var result = (contextDetails != null) ? contextDetails.result() : null;
             return deserializeResult(result);
-        } else if (op.status() == OperationStatus.FAILED) {
-            var contextDetails = op.contextDetails();
-            var errorObject = (contextDetails != null) ? contextDetails.error() : null;
-            var original = deserializeException(errorObject);
-            if (original != null) {
-                throw new RuntimeException(original);
-            }
-            throw new RuntimeException("Concurrent operation failed: " + getOperationId());
         } else {
             return terminateExecutionWithIllegalDurableOperationException(
                     "Unexpected operation status after completion: " + op.status());
@@ -299,32 +395,44 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
     // ========== protected accessors for subclasses ==========
 
     protected List<ChildContextOperation<?>> getBranches() {
-        return Collections.unmodifiableList(branches);
+        synchronized (lock) {
+            return Collections.unmodifiableList(new ArrayList<>(branches));
+        }
     }
 
     protected CompletionReason getCompletionReason() {
-        return completionReason;
+        synchronized (lock) {
+            return completionReason;
+        }
     }
 
-    protected AtomicInteger getSucceeded() {
-        return succeeded;
+    protected int getSucceeded() {
+        synchronized (lock) {
+            return succeeded;
+        }
     }
 
-    protected AtomicInteger getFailed() {
-        return failed;
+    protected int getFailed() {
+        synchronized (lock) {
+            return failed;
+        }
     }
 
     protected boolean isEarlyTermination() {
-        return earlyTermination;
+        synchronized (lock) {
+            return earlyTermination;
+        }
     }
 
     protected DurableContext getRootContext() {
         return rootContext;
     }
 
-    /** Returns the pending queue of branches that have not yet been started. */
+    /** Returns a snapshot of the pending queue of branches that have not yet been started. */
     protected Queue<ChildContextOperation<?>> getPendingQueue() {
-        return pendingQueue;
+        synchronized (lock) {
+            return new LinkedList<>(pendingQueue);
+        }
     }
 
     /** Returns the set of branches that have been started (had execute() called). */

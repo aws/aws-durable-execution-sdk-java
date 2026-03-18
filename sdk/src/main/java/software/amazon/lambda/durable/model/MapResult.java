@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.model;
 
 import java.util.Collections;
 import java.util.List;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 
 /**
  * Result container for map operations.
@@ -12,24 +13,19 @@ import java.util.List;
  * item is represented as a {@link MapResultItem} containing its status, result, and error. Includes the
  * {@link CompletionReason} indicating why the operation completed.
  *
- * <p>When serialized for checkpointing, only status and result fields of each item are included. Error fields are
- * transient because Throwable objects are not reliably serializable. On replay from a small-result checkpoint, errors
- * will be null; on replay from a large-result checkpoint (replayChildren), errors are reconstructed from individual
- * child context checkpoints.
+ * <p>Errors are stored as {@link ErrorObject} rather than raw Throwable, so they survive serialization across
+ * checkpoint-and-replay cycles.
  *
+ * @param items ordered result items from the map operation
+ * @param completionReason why the operation completed
  * @param <T> the result type of each item
  */
-public class MapResult<T> {
+public record MapResult<T>(List<MapResultItem<T>> items, CompletionReason completionReason) {
 
-    private List<MapResultItem<T>> items;
-    private CompletionReason completionReason;
-
-    /** Default constructor for deserialization. */
-    public MapResult() {}
-
-    public MapResult(List<MapResultItem<T>> items, CompletionReason completionReason) {
-        this.items = items != null ? List.copyOf(items) : Collections.emptyList();
-        this.completionReason = completionReason != null ? completionReason : CompletionReason.ALL_COMPLETED;
+    /** Compact constructor that applies defensive copy and defaults. */
+    public MapResult {
+        items = items != null ? List.copyOf(items) : Collections.emptyList();
+        completionReason = completionReason != null ? completionReason : CompletionReason.ALL_COMPLETED;
     }
 
     /** Returns an empty MapResult with no items. */
@@ -48,7 +44,7 @@ public class MapResult<T> {
     }
 
     /** Returns the error at the given index, or null if that item succeeded or was not started. */
-    public Throwable getError(int index) {
+    public ErrorObject getError(int index) {
         return items.get(index).error();
     }
 
@@ -57,31 +53,9 @@ public class MapResult<T> {
         return items.stream().noneMatch(item -> item.error() != null);
     }
 
-    /** Returns the reason the operation completed. */
-    public CompletionReason getCompletionReason() {
-        return completionReason;
-    }
-
-    /** Returns all result items as an unmodifiable list. */
-    public List<MapResultItem<T>> getItems() {
-        return items;
-    }
-
     /** Returns the number of items in this result. */
     public int size() {
         return items.size();
-    }
-
-    // Convenience accessors matching the original API style
-
-    /** Returns the reason the operation completed. */
-    public CompletionReason completionReason() {
-        return completionReason;
-    }
-
-    /** Returns all result items as an unmodifiable list. */
-    public List<MapResultItem<T>> items() {
-        return items;
     }
 
     /** Returns all results as an unmodifiable list (nulls for failed/not-started items). */
@@ -96,7 +70,7 @@ public class MapResult<T> {
     }
 
     /** Returns errors that occurred (non-null errors). */
-    public List<Throwable> failed() {
+    public List<ErrorObject> failed() {
         return items.stream().map(MapResultItem::error).filter(e -> e != null).toList();
     }
 }

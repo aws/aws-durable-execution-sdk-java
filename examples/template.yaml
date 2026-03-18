@@ -493,16 +493,16 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
-  MapErrorHandlingExampleFunction:
+  ComplexMapExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
       FunctionName: !Join
         - ''
-        - - 'map-error-handling-example'
+        - - 'complex-map-example'
           - !Ref FunctionNameSuffix
       ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.MapErrorHandlingExample::handleRequest"]
+        Command: ["software.amazon.lambda.durable.examples.ComplexMapExample::handleRequest"]
       DurableConfig:
         ExecutionTimeout: 300
         RetentionPeriodInDays: 7
@@ -512,32 +512,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:map-error-handling-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
-
-  MapConfigExampleFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      PackageType: Image
-      FunctionName: !Join
-        - ''
-        - - 'map-config-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.MapConfigExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - lambda:CheckpointDurableExecutions
-                - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:map-config-example${FunctionNameSuffix}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:complex-map-example${FunctionNameSuffix}"
     Metadata:
       Dockerfile: !Ref DockerFile
       DockerContext: ../
@@ -696,19 +671,11 @@ Outputs:
     Description: Simple Map Example Function Name
     Value: !Ref SimpleMapExampleFunction
 
-  MapErrorHandlingExampleFunction:
-    Description: Map Error Handling Example Function ARN
-    Value: !GetAtt MapErrorHandlingExampleFunction.Arn
+  ComplexMapExampleFunction:
+    Description: Complex Map Example Function ARN
+    Value: !GetAtt ComplexMapExampleFunction.Arn
 
-  MapErrorHandlingExampleFunctionName:
-    Description: Map Error Handling Example Function Name
-    Value: !Ref MapErrorHandlingExampleFunction
-
-  MapConfigExampleFunction:
-    Description: Map Config Example Function ARN
-    Value: !GetAtt MapConfigExampleFunction.Arn
-
-  MapConfigExampleFunctionName:
-    Description: Map Config Example Function Name
-    Value: !Ref MapConfigExampleFunction
+  ComplexMapExampleFunctionName:
+    Description: Complex Map Example Function Name
+    Value: !Ref ComplexMapExampleFunction
 

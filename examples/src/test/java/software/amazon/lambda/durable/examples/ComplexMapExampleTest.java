@@ -8,11 +8,11 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
-class MapConfigExampleTest {
+class ComplexMapExampleTest {
 
     @Test
-    void testSequentialAndEarlyTermination() {
-        var handler = new MapConfigExample();
+    void testComplexMapExample() {
+        var handler = new ComplexMapExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 
         var result = runner.runUntilComplete(new GreetingRequest("Alice"));
@@ -20,17 +20,19 @@ class MapConfigExampleTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         var output = result.getResult(String.class);
 
-        assertTrue(output.contains("ALPHA-Alice"));
-        assertTrue(output.contains("BETA-Alice"));
-        assertTrue(output.contains("GAMMA-Alice"));
+        // Part 1: all 3 orders processed with step + wait + step
+        assertTrue(output.contains("done:validated:order-1:Alice"));
+        assertTrue(output.contains("done:validated:order-2:Alice"));
+        assertTrue(output.contains("done:validated:order-3:Alice"));
+
+        // Part 2: early termination after 2 healthy servers
         assertTrue(output.contains("reason=MIN_SUCCESSFUL_REACHED"));
-        assertTrue(output.contains("server-1:healthy"));
-        assertTrue(output.contains("server-2:healthy"));
+        assertTrue(output.contains("healthy"));
     }
 
     @Test
     void testReplay() {
-        var handler = new MapConfigExample();
+        var handler = new ComplexMapExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 
         var input = new GreetingRequest("Bob");

@@ -41,14 +41,14 @@ MapResult<OrderResult> result = future.get();
 | Method | Description |
 |--------|-------------|
 | `getResult(i)` | Result at index `i`, or `null` if that item failed |
-| `getError(i)` | Error at index `i`, or `null` if that item succeeded |
+| `getError(i)` | `ErrorObject` at index `i`, or `null` if that item succeeded |
 | `getItem(i)` | The `MapResultItem` at index `i` with status, result, and error |
 | `allSucceeded()` | `true` if every item succeeded |
 | `size()` | Number of items in the result |
 | `items()` | All result items as an unmodifiable list |
 | `results()` | All results as an unmodifiable list (nulls for failed items) |
 | `succeeded()` | Only the non-null (successful) results |
-| `failed()` | Only the non-null errors |
+| `failed()` | Only the non-null `ErrorObject`s |
 | `completionReason()` | Why the operation completed (`ALL_COMPLETED`, `MIN_SUCCESSFUL_REACHED`, `FAILURE_TOLERANCE_EXCEEDED`) |
 
 ### MapResultItem
@@ -57,9 +57,9 @@ Each `MapResultItem<T>` contains:
 
 | Field | Description |
 |-------|-------------|
-| `status()` | `SUCCEEDED`, `FAILED`, or `null` (not started) |
+| `status()` | `SUCCEEDED`, `FAILED`, or `NOT_STARTED` |
 | `result()` | The result value, or `null` if failed/not started |
-| `error()` | The error, or `null` if succeeded/not started |
+| `error()` | The error details as `ErrorObject`, or `null` if succeeded/not started |
 
 ### Error Isolation
 
@@ -126,7 +126,7 @@ var result = ctx.map("find-two", items, String.class, fn, config);
 assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
 ```
 
-When early termination triggers, items that were never started have `null` for both result and error in the `MapResult`.
+When early termination triggers, items that were never started have `NOT_STARTED` status with `null` for both result and error in the `MapResult`.
 
 ### Checkpoint-and-Replay
 
