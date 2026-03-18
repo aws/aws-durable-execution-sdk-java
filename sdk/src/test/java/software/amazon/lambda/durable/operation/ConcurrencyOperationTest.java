@@ -38,6 +38,7 @@ class ConcurrencyOperationTest {
     private static final TypeToken<Void> RESULT_TYPE = TypeToken.get(Void.class);
 
     private DurableContextImpl durableContext;
+    private DurableContextImpl childContext;
     private ExecutionManager executionManager;
     private AtomicInteger operationIdCounter;
     private OperationIdGenerator mockIdGenerator;
@@ -48,11 +49,20 @@ class ConcurrencyOperationTest {
         executionManager = mock(ExecutionManager.class);
         operationIdCounter = new AtomicInteger(0);
 
+        var childContext = mock(DurableContextImpl.class);
+        this.childContext = childContext;
+        when(childContext.getExecutionManager()).thenReturn(executionManager);
+        when(childContext.getDurableConfig())
+                .thenReturn(DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
+
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(durableContext.getDurableConfig())
                 .thenReturn(DurableConfig.builder()
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
+        when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         mockIdGenerator = mock(OperationIdGenerator.class);
         when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
@@ -167,6 +177,18 @@ class ConcurrencyOperationTest {
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
     }
 
+    @Test
+    void addItem_usesRootChildContextAsParent() throws Exception {
+        var op = createOperation(-1, -1, 0);
+
+        op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES);
+
+        // rootContext is created via durableContext.createChildContext(...) in the constructor,
+        // so the parentContext passed to createItem must be that child context, not durableContext itself
+        assertNotSame(durableContext, op.getLastParentContext());
+        assertSame(childContext, op.getLastParentContext());
+    }
+
     // ===== Helpers =====
 
     private void runJoin(TestConcurrencyOperation op) throws InterruptedException {
@@ -182,6 +204,7 @@ class ConcurrencyOperationTest {
         private boolean successHandled = false;
         private boolean failureHandled = false;
         private final AtomicInteger executingCount = new AtomicInteger(0);
+        private DurableContextImpl lastParentContext;
 
         TestConcurrencyOperation(
                 OperationIdentifier operationIdentifier,
@@ -209,6 +232,7 @@ class ConcurrencyOperationTest {
                 TypeToken<R> resultType,
                 SerDes serDes,
                 DurableContextImpl parentContext) {
+            lastParentContext = parentContext;
             return new ChildContextOperation<R>(
                     OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),
                     function,
@@ -259,6 +283,10 @@ class ConcurrencyOperationTest {
 
         boolean isFailureHandled() {
             return failureHandled;
+        }
+
+        DurableContextImpl getLastParentContext() {
+            return lastParentContext;
         }
     }
 }

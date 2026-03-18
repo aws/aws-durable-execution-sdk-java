@@ -57,6 +57,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
     private ConcurrencyCompletionStatus completionStatus;
     private OperationIdGenerator operationIdGenerator;
+    private final DurableContextImpl rootContext;
 
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
@@ -73,6 +74,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         this.toleratedFailureCount = toleratedFailureCount;
         this.failureRateThreshold = failureRateThreshold;
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
+        this.rootContext = durableContext.createChildContext(getOperationId(), getName());
     }
 
     protected ConcurrencyOperation(
@@ -142,7 +144,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
         if (isOperationCompleted()) throw new IllegalStateException("Cannot add items to a completed operation");
         var operationId = this.operationIdGenerator.nextOperationId();
-        var childOp = createItem(operationId, name, function, resultType, serDes, getContext());
+        var childOp = createItem(operationId, name, function, resultType, serDes, this.rootContext);
         childOperations.add(childOp);
         pendingQueue.add(childOp);
         logger.debug("Item added {}", name);

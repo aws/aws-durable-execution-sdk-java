@@ -47,11 +47,19 @@ class ParallelOperationTest {
         executionManager = mock(ExecutionManager.class);
         operationIdCounter = new AtomicInteger(0);
 
+        var childContext = mock(DurableContextImpl.class);
+        when(childContext.getExecutionManager()).thenReturn(executionManager);
+        when(childContext.getDurableConfig())
+                .thenReturn(DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
+
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(durableContext.getDurableConfig())
                 .thenReturn(DurableConfig.builder()
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
+        when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         // Default: no existing operations (fresh execution)
         mockIdGenerator = mock(OperationIdGenerator.class);
