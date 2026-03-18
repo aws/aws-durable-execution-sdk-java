@@ -2,6 +2,7 @@ software.amazon.lambda.durable
 software.amazon.lambda.durable.client
 software.amazon.lambda.durable.context
 software.amazon.lambda.durable.examples
+software.amazon.lambda.durable.examples.parallel
 software.amazon.lambda.durable.exception
 software.amazon.lambda.durable.execution
 software.amazon.lambda.durable.logging
