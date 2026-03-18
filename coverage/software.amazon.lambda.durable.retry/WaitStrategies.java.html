@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WaitStrategies.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">AWS Lambda Durable Execution SDK for Java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.retry</a> &gt; <span class="el_source">WaitStrategies.java</span></div><h1>WaitStrategies.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.retry;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.validation.ParameterValidator;
+
+/**
+ * Factory class for creating common {@link WaitForConditionWaitStrategy} implementations.
+ *
+ * &lt;p&gt;Provides preset strategies for common use cases, as well as factory methods for creating custom strategies with
+ * exponential backoff and jitter.
+ *
+ * &lt;p&gt;Built-in strategies compute delays based solely on the attempt number, ignoring the state parameter. Custom
+ * strategies may use the state parameter to vary delays.
+ */
+public final class WaitStrategies {
+
+    private WaitStrategies() {
+        // Utility class - prevent instantiation
+    }
+
+    /** Preset wait strategies for common use cases. */
+<span class="nc" id="L25">    public static class Presets {</span>
+
+        /**
+         * Default wait strategy: exponential backoff with 60 max attempts, 5s initial delay, 300s max delay, 1.5x
+         * backoff rate, and FULL jitter.
+         */
+        @SuppressWarnings(&quot;rawtypes&quot;)
+<span class="fc" id="L32">        public static final WaitForConditionWaitStrategy DEFAULT =</span>
+<span class="fc" id="L33">                exponentialBackoff(60, Duration.ofSeconds(5), Duration.ofSeconds(300), 1.5, JitterStrategy.FULL);</span>
+    }
+
+    /**
+     * Returns the default wait strategy: exponential backoff with 60 max attempts, 5s initial delay, 300s max delay,
+     * 1.5x backoff rate, and FULL jitter.
+     *
+     * @param &lt;T&gt; the type of state being polled
+     * @return the default wait strategy
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public static &lt;T&gt; WaitForConditionWaitStrategy&lt;T&gt; defaultStrategy() {
+<span class="fc" id="L45">        return Presets.DEFAULT;</span>
+    }
+
+    /**
+     * Creates an exponential backoff wait strategy.
+     *
+     * &lt;p&gt;The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^attempt, maxDelay)
+     *
+     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionException}
+     * @param initialDelay initial delay before first retry
+     * @param maxDelay maximum delay between retries
+     * @param backoffRate multiplier for exponential backoff (must be &gt;= 1.0)
+     * @param jitter jitter strategy to apply to delays
+     * @param &lt;T&gt; the type of state being polled
+     * @return a {@link WaitForConditionWaitStrategy} implementing exponential backoff with jitter
+     */
+    public static &lt;T&gt; WaitForConditionWaitStrategy&lt;T&gt; exponentialBackoff(
+            int maxAttempts, Duration initialDelay, Duration maxDelay, double backoffRate, JitterStrategy jitter) {
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        if (maxAttempts &lt;= 0) {</span>
+<span class="fc" id="L64">            throw new IllegalArgumentException(&quot;maxAttempts must be positive, got: &quot; + maxAttempts);</span>
+        }
+<span class="fc" id="L66">        ParameterValidator.validateDuration(initialDelay, &quot;initialDelay&quot;);</span>
+<span class="fc" id="L67">        ParameterValidator.validateDuration(maxDelay, &quot;maxDelay&quot;);</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        if (backoffRate &lt; 1.0) {</span>
+<span class="fc" id="L69">            throw new IllegalArgumentException(&quot;backoffRate must be &gt;= 1.0, got: &quot; + backoffRate);</span>
+        }
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (jitter == null) {</span>
+<span class="fc" id="L72">            throw new IllegalArgumentException(&quot;jitter cannot be null&quot;);</span>
+        }
+
+<span class="fc" id="L75">        return (state, attempt) -&gt; {</span>
+<span class="fc bfc" id="L76" title="All 2 branches covered.">            if (attempt + 1 &gt;= maxAttempts) {</span>
+<span class="fc" id="L77">                throw new WaitForConditionException(&quot;waitForCondition exceeded maximum attempts (&quot; + maxAttempts + &quot;)&quot;);</span>
+            }
+
+<span class="fc" id="L80">            double initialDelaySeconds = initialDelay.toSeconds();</span>
+<span class="fc" id="L81">            double maxDelaySeconds = maxDelay.toSeconds();</span>
+<span class="fc" id="L82">            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt), maxDelaySeconds);</span>
+<span class="fc" id="L83">            double delayWithJitter = jitter.apply(baseDelay);</span>
+<span class="fc" id="L84">            long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));</span>
+
+<span class="fc" id="L86">            return Duration.ofSeconds(finalDelaySeconds);</span>
+        };
+    }
+
+    /**
+     * Creates a fixed delay wait strategy that returns a constant delay regardless of attempt number or state.
+     *
+     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionException}
+     * @param fixedDelay the constant delay between polling attempts
+     * @param &lt;T&gt; the type of state being polled
+     * @return a {@link WaitForConditionWaitStrategy} with fixed delay
+     */
+    public static &lt;T&gt; WaitForConditionWaitStrategy&lt;T&gt; fixedDelay(int maxAttempts, Duration fixedDelay) {
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        if (maxAttempts &lt;= 0) {</span>
+<span class="nc" id="L100">            throw new IllegalArgumentException(&quot;maxAttempts must be positive, got: &quot; + maxAttempts);</span>
+        }
+<span class="fc" id="L102">        ParameterValidator.validateDuration(fixedDelay, &quot;fixedDelay&quot;);</span>
+
+<span class="fc" id="L104">        return (state, attempt) -&gt; {</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">            if (attempt + 1 &gt;= maxAttempts) {</span>
+<span class="fc" id="L106">                throw new WaitForConditionException(&quot;waitForCondition exceeded maximum attempts (&quot; + maxAttempts + &quot;)&quot;);</span>
+            }
+<span class="fc" id="L108">            return fixedDelay;</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
