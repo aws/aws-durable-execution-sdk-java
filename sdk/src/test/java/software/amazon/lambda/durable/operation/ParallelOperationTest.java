@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +68,26 @@ class ParallelOperationTest {
         mockIdGenerator = mock(OperationIdGenerator.class);
         when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
+
+        // Simulate the real backend: when a SUCCEED checkpoint is sent for the parallel op,
+        // make getOperationAndUpdateReplayState return a SUCCEEDED operation so waitForOperationCompletion() can find
+        // it.
+        var succeededParallelOp = Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-parallel")
+                .type(OperationType.CONTEXT)
+                .subType(OperationSubType.PARALLEL.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .build();
+        when(executionManager.sendOperationUpdate(argThat(u -> u != null
+                        && u.id() != null
+                        && u.id().equals(OPERATION_ID)
+                        && u.action() == OperationAction.SUCCEED)))
+                .thenAnswer(inv -> {
+                    when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                            .thenReturn(succeededParallelOp);
+                    return CompletableFuture.completedFuture(null);
+                });
     }
 
     private ParallelOperation<Void> createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount) {
@@ -153,7 +174,7 @@ class ParallelOperationTest {
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
 
-        runJoin(op);
+        op.get();
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
     }
@@ -179,7 +200,7 @@ class ParallelOperationTest {
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
 
         // Should not throw
-        assertDoesNotThrow(() -> runJoin(op));
+        op.get();
         assertEquals(1, op.getSucceededCount());
     }
 
@@ -197,6 +218,100 @@ class ParallelOperationTest {
         // (BaseDurableOperation constructor calls executionManager.registerOperation)
         verify(executionManager, atLeastOnce()).registerOperation(any());
         assertNotNull(childOp);
+    }
+
+    // ===== Replay =====
+
+    @Test
+    void replay_doesNotSendStartCheckpoint() throws Exception {
+        // Simulate the parallel operation already existing in the service (STARTED status)
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .id(OPERATION_ID)
+                        .name("test-parallel")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL.getValue())
+                        .status(OperationStatus.STARTED)
+                        .build());
+        // Both branches already succeeded
+        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+                .thenReturn(Operation.builder()
+                        .id("child-1")
+                        .name("branch-1")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r1\"").build())
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+                .thenReturn(Operation.builder()
+                        .id("child-2")
+                        .name("branch-2")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r2\"").build())
+                        .build());
+
+        var op = createOperation(-1, -1, 0);
+        setOperationIdGenerator(op, mockIdGenerator);
+        op.execute();
+        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
+        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
+
+        op.get();
+
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
+        verify(executionManager, times(1))
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+    }
+
+    @Test
+    void replay_doesNotSendSucceedCheckpointWhenParallelAlreadySucceeded() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .id(OPERATION_ID)
+                        .name("test-parallel")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+                .thenReturn(Operation.builder()
+                        .id("child-1")
+                        .name("branch-1")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r1\"").build())
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+                .thenReturn(Operation.builder()
+                        .id("child-2")
+                        .name("branch-2")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r2\"").build())
+                        .build());
+
+        var op = createOperation(-1, -1, 0);
+        setOperationIdGenerator(op, mockIdGenerator);
+        op.execute();
+        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
+        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
+
+        op.get();
+
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
     }
 
     // ===== handleFailure still sends SUCCEED =====
@@ -224,22 +339,10 @@ class ParallelOperationTest {
                 TypeToken.get(String.class),
                 SER_DES);
 
-        runJoin(op);
+        op.get();
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
-    }
-
-    // ===== Helpers =====
-
-    private void runJoin(ParallelOperation<?> op) throws InterruptedException {
-        var t = new Thread(op::get);
-        t.start();
-        t.join(2000);
-        if (t.isAlive()) {
-            t.interrupt();
-            fail("join() did not complete within 2 seconds");
-        }
     }
 }

@@ -62,6 +62,8 @@ public class ParallelWithWaitExample
 
         var deliveries = futures.stream().map(DurableFuture::get).toList();
         logger.info("All {} notifications delivered", deliveries.size());
+        // Test replay
+        context.wait("wait for finalization", Duration.ofSeconds(5));
         return new Output(deliveries);
     }
 }
