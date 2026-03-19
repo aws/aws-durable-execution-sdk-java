@@ -36,8 +36,8 @@ public abstract class TypeToken&lt;T&gt; {
      */
 <span class="fc" id="L37">    protected TypeToken() {</span>
 <span class="fc" id="L38">        Type superClass = getClass().getGenericSuperclass();</span>
-<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (superClass instanceof ParameterizedType) {</span>
-<span class="fc" id="L40">            this.type = ((ParameterizedType) superClass).getActualTypeArguments()[0];</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (superClass instanceof ParameterizedType parameterizedType) {</span>
+<span class="fc" id="L40">            this.type = parameterizedType.getActualTypeArguments()[0];</span>
         } else {
 <span class="fc" id="L42">            throw new IllegalStateException(&quot;TypeToken must be created as an anonymous subclass with a type parameter. &quot;</span>
                     + &quot;Example: new TypeToken&lt;List&lt;String&gt;&gt;() {}&quot;);
@@ -74,20 +74,23 @@ public abstract class TypeToken&lt;T&gt; {
 
     @Override
     public boolean equals(Object obj) {
-<span class="pc bpc" id="L77" title="1 of 2 branches missed.">        if (this == obj) return true;</span>
-<span class="pc bpc" id="L78" title="1 of 2 branches missed.">        if (!(obj instanceof TypeToken)) return false;</span>
-<span class="fc" id="L79">        TypeToken&lt;?&gt; other = (TypeToken&lt;?&gt;) obj;</span>
-<span class="fc" id="L80">        return type.equals(other.type);</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">        if (this == obj) {</span>
+<span class="nc" id="L78">            return true;</span>
+        }
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">        if (obj instanceof TypeToken&lt;?&gt; other) {</span>
+<span class="fc" id="L81">            return type.equals(other.type);</span>
+        }
+<span class="nc" id="L83">        return false;</span>
     }
 
     @Override
     public int hashCode() {
-<span class="fc" id="L85">        return type.hashCode();</span>
+<span class="fc" id="L88">        return type.hashCode();</span>
     }
 
     @Override
     public String toString() {
-<span class="fc" id="L90">        return &quot;TypeToken&lt;&quot; + type.getTypeName() + &quot;&gt;&quot;;</span>
+<span class="fc" id="L93">        return &quot;TypeToken&lt;&quot; + type.getTypeName() + &quot;&gt;&quot;;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

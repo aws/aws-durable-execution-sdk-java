@@ -20,18 +20,18 @@ import software.amazon.lambda.durable.serde.SerDes;
  * Durable operation that invokes another Lambda function and waits for its result.
  *
  * @param &lt;T&gt; the result type from the invoked function
- * @param &lt;U&gt; the payload type sent to the invoked function
+ * @param &lt;I&gt; the payload type sent to the invoked function
  */
-public class InvokeOperation&lt;T, U&gt; extends BaseDurableOperation&lt;T&gt; {
+public class InvokeOperation&lt;T, I&gt; extends BaseDurableOperation&lt;T&gt; {
     private final String functionName;
-    private final U payload;
+    private final I payload;
     private final InvokeConfig invokeConfig;
     private final SerDes payloadSerDes;
 
     public InvokeOperation(
             OperationIdentifier operationIdentifier,
             String functionName,
-            U payload,
+            I payload,
             TypeToken&lt;T&gt; resultTypeToken,
             InvokeConfig config,
             DurableContextImpl durableContext) {

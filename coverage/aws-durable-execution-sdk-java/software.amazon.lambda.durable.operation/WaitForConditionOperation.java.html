@@ -178,8 +178,8 @@ public class WaitForConditionOperation&lt;T&gt; extends BaseDurableOperation&lt;
 
     private void handleCheckFailure(Throwable exception) {
 <span class="fc" id="L180">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
-<span class="pc bpc" id="L181" title="1 of 2 branches missed.">        if (exception instanceof SuspendExecutionException) {</span>
-<span class="nc" id="L182">            ExceptionHelper.sneakyThrow(exception);</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">        if (exception instanceof SuspendExecutionException suspendExecutionException) {</span>
+<span class="nc" id="L182">            throw suspendExecutionException;</span>
         }
 <span class="pc bpc" id="L184" title="1 of 2 branches missed.">        if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {</span>
 <span class="nc" id="L185">            terminateExecution(unrecoverable);</span>

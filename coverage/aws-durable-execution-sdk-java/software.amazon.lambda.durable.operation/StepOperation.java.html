@@ -150,17 +150,17 @@ public class StepOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt; {
 
     private void handleStepFailure(Throwable exception, int attempt) {
 <span class="fc" id="L152">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
-<span class="pc bpc" id="L153" title="1 of 2 branches missed.">        if (exception instanceof SuspendExecutionException) {</span>
-<span class="nc" id="L154">            ExceptionHelper.sneakyThrow(exception);</span>
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">        if (exception instanceof SuspendExecutionException suspendExecutionException) {</span>
+<span class="nc" id="L154">            throw suspendExecutionException;</span>
         }
-<span class="fc bfc" id="L156" title="All 2 branches covered.">        if (exception instanceof UnrecoverableDurableExecutionException) {</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">        if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {</span>
             // terminate the execution and throw the exception if it's not recoverable
-<span class="nc" id="L158">            terminateExecution((UnrecoverableDurableExecutionException) exception);</span>
+<span class="nc" id="L158">            terminateExecution(unrecoverableDurableExecutionException);</span>
         }
 
         final ErrorObject errorObject;
-<span class="fc bfc" id="L162" title="All 2 branches covered.">        if (exception instanceof DurableOperationException) {</span>
-<span class="fc" id="L163">            errorObject = ((DurableOperationException) exception).getErrorObject();</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">        if (exception instanceof DurableOperationException durableOperationException) {</span>
+<span class="fc" id="L163">            errorObject = durableOperationException.getErrorObject();</span>
         } else {
 <span class="fc" id="L165">            errorObject = serializeException(exception);</span>
         }

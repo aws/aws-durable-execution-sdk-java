@@ -39,46 +39,48 @@ public class WaitOperation extends BaseDurableOperation&lt;Void&gt; {
     /** Starts the operation. */
     @Override
     protected void start() {
-<span class="fc" id="L42">        Duration remainingWaitTime = duration;</span>
-
         // First execution - checkpoint with full duration
-<span class="fc" id="L45">        var update = OperationUpdate.builder()</span>
-<span class="fc" id="L46">                .action(OperationAction.START)</span>
-<span class="fc" id="L47">                .waitOptions(WaitOptions.builder()</span>
-<span class="fc" id="L48">                        .waitSeconds((int) duration.toSeconds())</span>
-<span class="fc" id="L49">                        .build());</span>
+<span class="fc" id="L43">        var update = OperationUpdate.builder()</span>
+<span class="fc" id="L44">                .action(OperationAction.START)</span>
+<span class="fc" id="L45">                .waitOptions(WaitOptions.builder()</span>
+<span class="fc" id="L46">                        .waitSeconds((int) duration.toSeconds())</span>
+<span class="fc" id="L47">                        .build());</span>
 
-<span class="fc" id="L51">        sendOperationUpdate(update);</span>
-<span class="fc" id="L52">        logger.debug(&quot;Remaining wait time: {} seconds&quot;, remainingWaitTime.getSeconds());</span>
-<span class="fc" id="L53">        pollForOperationUpdates(remainingWaitTime);</span>
-<span class="fc" id="L54">    }</span>
+<span class="fc" id="L49">        sendOperationUpdate(update);</span>
+<span class="fc" id="L50">        pollForWaitExpiration();</span>
+<span class="fc" id="L51">    }</span>
 
     /** Replays the operation. */
     @Override
     protected void replay(Operation existing) {
-<span class="fc" id="L59">        Duration remainingWaitTime = duration;</span>
-
-<span class="fc bfc" id="L61" title="All 2 branches covered.">        if (existing.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (existing.status() == OperationStatus.SUCCEEDED) {</span>
             // Wait already completed
-<span class="fc" id="L63">            markAlreadyCompleted();</span>
-<span class="fc" id="L64">            return;</span>
+<span class="fc" id="L58">            markAlreadyCompleted();</span>
+<span class="fc" id="L59">            return;</span>
         }
-        // Replay - calculate remaining time from scheduledEndTimestamp
-        // TODO: if the checkpoint is slow remaining wait time might be off. Track
-        // endTimestamp instead and move calculation in front of polling start.
-<span class="pc bpc" id="L69" title="2 of 4 branches missed.">        if (existing.waitDetails() != null &amp;&amp; existing.waitDetails().scheduledEndTimestamp() != null) {</span>
+
+<span class="fc" id="L62">        pollForWaitExpiration();</span>
+<span class="fc" id="L63">    }</span>
+
+    private void pollForWaitExpiration() {
+        // Always calculate remaining time from scheduledEndTimestamp if scheduledEndTimestamp exists
+<span class="fc" id="L67">        var remainingWaitTime = duration;</span>
+<span class="fc" id="L68">        var existing = getOperation();</span>
+<span class="pc bpc" id="L69" title="1 of 2 branches missed.">        if (existing != null</span>
+<span class="fc bfc" id="L70" title="All 2 branches covered.">                &amp;&amp; existing.waitDetails() != null</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">                &amp;&amp; existing.waitDetails().scheduledEndTimestamp() != null) {</span>
             remainingWaitTime =
-<span class="fc" id="L71">                    Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());</span>
+<span class="fc" id="L73">                    Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());</span>
         }
-<span class="fc" id="L73">        logger.debug(&quot;Remaining wait time: {} seconds&quot;, remainingWaitTime.getSeconds());</span>
-<span class="fc" id="L74">        pollForOperationUpdates(remainingWaitTime);</span>
-<span class="fc" id="L75">    }</span>
+<span class="fc" id="L75">        logger.debug(&quot;Remaining wait time: {} ms&quot;, remainingWaitTime.toMillis());</span>
+<span class="fc" id="L76">        pollForOperationUpdates(remainingWaitTime);</span>
+<span class="fc" id="L77">    }</span>
 
     @Override
     public Void get() {
-<span class="fc" id="L79">        waitForOperationCompletion();</span>
+<span class="fc" id="L81">        waitForOperationCompletion();</span>
 
-<span class="fc" id="L81">        return null;</span>
+<span class="fc" id="L83">        return null;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

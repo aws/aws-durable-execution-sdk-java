@@ -45,18 +45,31 @@ public class WaitForCallbackConfig {
 
         private Builder() {}
 
+        /**
+         * Sets the step configuration for the composite operation.
+         *
+         * @param stepConfig the step configuration
+         * @return this builder for method chaining
+         */
         public Builder stepConfig(StepConfig stepConfig) {
-<span class="fc" id="L49">            this.stepConfig = stepConfig;</span>
-<span class="fc" id="L50">            return this;</span>
+<span class="fc" id="L55">            this.stepConfig = stepConfig;</span>
+<span class="fc" id="L56">            return this;</span>
         }
 
+        /**
+         * Sets the callback configuration for the composite operation.
+         *
+         * @param callbackConfig the callback configuration
+         * @return this builder for method chaining
+         */
         public Builder callbackConfig(CallbackConfig callbackConfig) {
-<span class="fc" id="L54">            this.callbackConfig = callbackConfig;</span>
-<span class="fc" id="L55">            return this;</span>
+<span class="fc" id="L66">            this.callbackConfig = callbackConfig;</span>
+<span class="fc" id="L67">            return this;</span>
         }
 
+        /** Builds the WaitForCallbackConfig instance. */
         public WaitForCallbackConfig build() {
-<span class="fc" id="L59">            return new WaitForCallbackConfig(this);</span>
+<span class="fc" id="L72">            return new WaitForCallbackConfig(this);</span>
         }
     }
 }

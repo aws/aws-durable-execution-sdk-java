@@ -52,9 +52,18 @@ public class InvokeConfig {
 <span class="fc" id="L52">            this.tenantId = tenantId;</span>
 <span class="fc" id="L53">        }</span>
 
+        /**
+         * Sets the tenant ID for the invoke operation.
+         *
+         * &lt;p&gt;The tenant ID is used to isolate execution state for different tenants. It's required when invoking
+         * multi-tenant functions.
+         *
+         * @param tenantId the tenant ID to use
+         * @return this builder for method chaining
+         */
         public Builder tenantId(String tenantId) {
-<span class="nc" id="L56">            this.tenantId = tenantId;</span>
-<span class="nc" id="L57">            return this;</span>
+<span class="nc" id="L65">            this.tenantId = tenantId;</span>
+<span class="nc" id="L66">            return this;</span>
         }
 
         /**
@@ -68,8 +77,8 @@ public class InvokeConfig {
          * @return this builder for method chaining
          */
         public Builder payloadSerDes(SerDes payloadSerDes) {
-<span class="fc" id="L71">            this.payloadSerDes = payloadSerDes;</span>
-<span class="fc" id="L72">            return this;</span>
+<span class="fc" id="L80">            this.payloadSerDes = payloadSerDes;</span>
+<span class="fc" id="L81">            return this;</span>
         }
 
         /**
@@ -83,8 +92,8 @@ public class InvokeConfig {
          * @return this builder for method chaining
          */
         public Builder serDes(SerDes resultSerDes) {
-<span class="fc" id="L86">            this.resultSerDes = resultSerDes;</span>
-<span class="fc" id="L87">            return this;</span>
+<span class="fc" id="L95">            this.resultSerDes = resultSerDes;</span>
+<span class="fc" id="L96">            return this;</span>
         }
 
         /**
@@ -93,7 +102,7 @@ public class InvokeConfig {
          * @return a new InvokeConfig with the configured options
          */
         public InvokeConfig build() {
-<span class="fc" id="L96">            return new InvokeConfig(this);</span>
+<span class="fc" id="L105">            return new InvokeConfig(this);</span>
         }
     }
 }
