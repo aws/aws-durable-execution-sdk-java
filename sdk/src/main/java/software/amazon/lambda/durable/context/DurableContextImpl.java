@@ -540,7 +540,13 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var itemList = List.copyOf(items);
         var operationId = nextOperationId();
 
-        var operation = new MapOperation<>(operationId, name, itemList, function, resultType, config, this);
+        var operation = new MapOperation<>(
+                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP),
+                itemList,
+                function,
+                resultType,
+                config,
+                this);
         operation.execute();
         return operation;
     }

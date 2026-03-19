@@ -2,23 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.model;
 
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
-
 /**
  * Represents the outcome of a single item in a map operation.
  *
  * <p>Each item either succeeds with a result, fails with an error, or was never started. The status field indicates
  * which case applies.
  *
- * <p>Errors are stored as {@link ErrorObject} (errorType, errorMessage, stackTrace) rather than raw Throwable, so they
- * survive serialization across checkpoint-and-replay cycles.
+ * <p>Errors are stored as {@link MapError} (plain strings) rather than raw Throwable, so they survive serialization
+ * across checkpoint-and-replay cycles without requiring AWS SDK-specific Jackson modules.
  *
  * @param status the status of this item
  * @param result the result value, or null if failed/not started
  * @param error the error details, or null if succeeded/not started
  * @param <T> the result type
  */
-public record MapResultItem<T>(Status status, T result, ErrorObject error) {
+public record MapResultItem<T>(Status status, T result, MapError error) {
 
     /** Status of an individual map item. */
     public enum Status {
@@ -33,7 +31,7 @@ public record MapResultItem<T>(Status status, T result, ErrorObject error) {
     }
 
     /** Creates a failed result item. */
-    public static <T> MapResultItem<T> failure(ErrorObject error) {
+    public static <T> MapResultItem<T> failure(MapError error) {
         return new MapResultItem<>(Status.FAILED, null, error);
     }
 

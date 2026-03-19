@@ -38,7 +38,6 @@ public class JacksonSerDes implements SerDes {
     public JacksonSerDes() {
         this(new ObjectMapper()
                 .registerModule(new JavaTimeModule())
-                .registerModule(new AwsSdkV2Module())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES));
     }

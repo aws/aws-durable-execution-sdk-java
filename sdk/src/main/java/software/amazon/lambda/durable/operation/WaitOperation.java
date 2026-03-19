@@ -69,6 +69,10 @@ public class WaitOperation extends BaseDurableOperation<Void> {
         if (existing.waitDetails() != null && existing.waitDetails().scheduledEndTimestamp() != null) {
             remainingWaitTime =
                     Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());
+            // If the wait has already elapsed, poll immediately with a minimal positive interval
+            if (remainingWaitTime.isNegative() || remainingWaitTime.isZero()) {
+                remainingWaitTime = Duration.ofMillis(1);
+            }
         }
         logger.debug("Remaining wait time: {} seconds", remainingWaitTime.getSeconds());
         pollForOperationUpdates(remainingWaitTime);

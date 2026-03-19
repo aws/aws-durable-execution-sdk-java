@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.model;
 
 import java.util.Collections;
 import java.util.List;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
 
 /**
  * Result container for map operations.
@@ -13,8 +12,8 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
  * item is represented as a {@link MapResultItem} containing its status, result, and error. Includes the
  * {@link CompletionReason} indicating why the operation completed.
  *
- * <p>Errors are stored as {@link ErrorObject} rather than raw Throwable, so they survive serialization across
- * checkpoint-and-replay cycles.
+ * <p>Errors are stored as {@link MapError} rather than raw Throwable, so they survive serialization across
+ * checkpoint-and-replay cycles without requiring AWS SDK-specific Jackson modules.
  *
  * @param items ordered result items from the map operation
  * @param completionReason why the operation completed
@@ -44,7 +43,7 @@ public record MapResult<T>(List<MapResultItem<T>> items, CompletionReason comple
     }
 
     /** Returns the error at the given index, or null if that item succeeded or was not started. */
-    public ErrorObject getError(int index) {
+    public MapError getError(int index) {
         return items.get(index).error();
     }
 
@@ -73,7 +72,7 @@ public record MapResult<T>(List<MapResultItem<T>> items, CompletionReason comple
     }
 
     /** Returns errors from items that failed. */
-    public List<ErrorObject> failed() {
+    public List<MapError> failed() {
         return items.stream()
                 .filter(item -> item.status() == MapResultItem.Status.FAILED)
                 .map(MapResultItem::error)

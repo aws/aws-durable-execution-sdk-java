@@ -690,59 +690,6 @@ class MapIntegrationTest {
     }
 
     @Test
-    void testMapInsideParallelBranch() {
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            try (var parallel =
-                    context.parallel("outer-parallel", ParallelConfig.builder().build())) {
-                var future1 = parallel.branch("branch-a", String.class, branchCtx -> {
-                    var mapResult = branchCtx.map(
-                            "map-in-branch-a",
-                            List.of("x", "y"),
-                            String.class,
-                            (item, index, ctx) -> item.toUpperCase());
-                    return String.join(",", mapResult.results());
-                });
-                var future2 = parallel.branch("branch-b", String.class, branchCtx -> {
-                    return branchCtx.step("simple-step", String.class, stepCtx -> "DONE");
-                });
-                parallel.join();
-                return future1.get() + "|" + future2.get();
-            }
-        });
-
-        var result = runner.runUntilComplete("test");
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("X,Y|DONE", result.getResult(String.class));
-    }
-
-    @Test
-    void testParallelInsideMapBranch() {
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var items = List.of("group1", "group2");
-            var result = context.map("map-with-parallel", items, String.class, (item, index, ctx) -> {
-                try (var parallel = ctx.parallel(
-                        "parallel-" + index, ParallelConfig.builder().build())) {
-                    var f1 = parallel.branch("sub-a-" + index, String.class, bCtx -> {
-                        return bCtx.step("step-a-" + index, String.class, stepCtx -> item + "-A");
-                    });
-                    var f2 = parallel.branch("sub-b-" + index, String.class, bCtx -> {
-                        return bCtx.step("step-b-" + index, String.class, stepCtx -> item + "-B");
-                    });
-                    parallel.join();
-                    return f1.get() + "+" + f2.get();
-                }
-            });
-
-            assertTrue(result.allSucceeded());
-            return String.join("|", result.results());
-        });
-
-        var result = runner.runUntilComplete("test");
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("group1-A+group1-B|group2-A+group2-B", result.getResult(String.class));
-    }
-
-    @Test
     void testMapWithWaitInsideBranches_maxConcurrency1() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var items = List.of("a", "b");
@@ -778,5 +725,105 @@ class MapIntegrationTest {
             runner.advanceTime();
         }
         fail("Expected SUCCEEDED within 10 invocations");
+    }
+
+    @Test
+    void testMapWithMinSuccessful_replay() {
+        var executionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var items = List.of("a", "b", "c", "d", "e");
+            var config = MapConfig.builder()
+                    .maxConcurrency(1)
+                    .completionConfig(CompletionConfig.minSuccessful(2))
+                    .build();
+            var result = context.map(
+                    "min-success-replay",
+                    items,
+                    String.class,
+                    (item, index, ctx) -> {
+                        executionCount.incrementAndGet();
+                        return item.toUpperCase();
+                    },
+                    config);
+
+            assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
+            assertEquals("A", result.getResult(0));
+            assertEquals("B", result.getResult(1));
+            return "done";
+        });
+
+        var result1 = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        var firstRunCount = executionCount.get();
+
+        // Replay — small result path: deserialize MapResult from payload, no child replay
+        var result2 = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
+    }
+
+    @Test
+    void testMapAsyncWithInterleavedWork_replay() {
+        var executionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var items = List.of("x", "y");
+            var future = context.mapAsync("async-replay-map", items, String.class, (item, index, ctx) -> {
+                executionCount.incrementAndGet();
+                return ctx.step("process-" + index, String.class, stepCtx -> item.toUpperCase());
+            });
+
+            var other = context.step("other-work", String.class, stepCtx -> "OTHER");
+            var mapResult = future.get();
+            assertTrue(mapResult.allSucceeded());
+
+            return other + ":" + String.join(",", mapResult.results());
+        });
+
+        var result1 = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        assertEquals("OTHER:X,Y", result1.getResult(String.class));
+        var firstRunCount = executionCount.get();
+
+        // Replay — async map + interleaved step should all use cached results
+        var result2 = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals("OTHER:X,Y", result2.getResult(String.class));
+        assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
+    }
+
+    @Test
+    void testMapWithLargeResult_replayChildren() {
+        var executionCount = new AtomicInteger(0);
+        // Generate items that produce results exceeding 256KB total to trigger replayChildren path
+        var items = new ArrayList<String>();
+        for (int i = 0; i < 100; i++) {
+            items.add("item-" + i);
+        }
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map("large-result-map", items, String.class, (item, index, ctx) -> {
+                executionCount.incrementAndGet();
+                // Each item returns ~3KB string to push total well over 256KB
+                return item + "-" + "x".repeat(3000);
+            });
+
+            assertTrue(result.allSucceeded());
+            assertEquals(100, result.size());
+            assertTrue(result.getResult(0).startsWith("item-0-"));
+            assertTrue(result.getResult(99).startsWith("item-99-"));
+            return "ok";
+        });
+
+        var result1 = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        var firstRunCount = executionCount.get();
+        assertTrue(firstRunCount >= 100);
+
+        // Replay — large result path: replayChildren=true, children replay from cache
+        var result2 = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
     }
 }

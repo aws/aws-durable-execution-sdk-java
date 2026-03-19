@@ -48,7 +48,6 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     private final Function<DurableContext, T> function;
     private final ExecutorService userExecutor;
     private final ConcurrencyOperation<?> parentOperation;
-    private Runnable onCompleteCallback;
     private boolean replayChildContext;
     private T reconstructedResult;
 
@@ -72,15 +71,6 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         this.function = function;
         this.userExecutor = getContext().getDurableConfig().getExecutorService();
         this.parentOperation = parentOperation;
-    }
-
-    /**
-     * Sets a callback that fires in the finally block of {@code executeChildContext()}, after the branch completes,
-     * fails, or suspends. Used by {@link BaseConcurrentOperation} to track branch completion without relying on
-     * {@code completionFuture} (which doesn't fire on suspension).
-     */
-    public void setOnCompleteCallback(Runnable callback) {
-        this.onCompleteCallback = callback;
     }
 
     /** Starts the operation. */
@@ -155,9 +145,6 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                 } finally {
                     if (parentOperation != null) {
                         parentOperation.onItemComplete(this);
-                    }
-                    if (onCompleteCallback != null) {
-                        onCompleteCallback.run();
                     }
                 }
             }

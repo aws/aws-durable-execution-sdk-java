@@ -26,7 +26,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * Abstract base class for concurrent execution of multiple child context operations.
  *
  * <p>Encapsulates shared concurrency logic: queue-based concurrency control, success/failure counting, and completion
- * checking. Both {@code ParallelOperation} and a future {@code MapOperation} extend this base.
+ * checking. Both {@code ParallelOperation} and {@code MapOperation} extend this base.
  *
  * <p>Key design points:
  *
@@ -55,7 +55,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
     private final List<ChildContextOperation<?>> childOperations = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
-    private ConcurrencyCompletionStatus completionStatus;
+    protected ConcurrencyCompletionStatus completionStatus;
     private OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
 
@@ -150,6 +150,40 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         logger.debug("Item added {}", name);
         executeNextItemIfAllowed();
         return childOp;
+    }
+
+    /**
+     * Creates and enqueues an item without starting execution. Use {@link #startPendingItems()} to begin execution
+     * after all items have been enqueued. This prevents early termination from blocking item creation when all items
+     * are known upfront (e.g., map operations).
+     */
+    protected <R> ChildContextOperation<R> enqueueItem(
+            String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
+        var operationId = this.operationIdGenerator.nextOperationId();
+        var childOp = createItem(operationId, name, function, resultType, serDes, this.rootContext);
+        childOperations.add(childOp);
+        pendingQueue.add(childOp);
+        logger.debug("Item enqueued {}", name);
+        return childOp;
+    }
+
+    /**
+     * Starts executing enqueued items up to maxConcurrency. Called after all items have been enqueued via
+     * {@link #enqueueItem}.
+     */
+    protected void startPendingItems() {
+        // Start as many items as concurrency allows
+        while (true) {
+            synchronized (this) {
+                if (isOperationCompleted()) return;
+                if (maxConcurrency != -1 && runningCount.get() >= maxConcurrency) return;
+                var next = pendingQueue.poll();
+                if (next == null) return;
+                runningCount.incrementAndGet();
+                logger.debug("Executing operation {}", next.getName());
+                next.execute();
+            }
+        }
     }
 
     /**
@@ -248,15 +282,15 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void handleComplete() {
-        if (isOperationCompleted()) {
-            return;
-        }
-        if (completionStatus.isSucceeded()) {
-            handleSuccess();
-        } else {
-            handleFailure(completionStatus);
-        }
         synchronized (completionFuture) {
+            if (isOperationCompleted()) {
+                return;
+            }
+            if (completionStatus.isSucceeded()) {
+                handleSuccess();
+            } else {
+                handleFailure(completionStatus);
+            }
             completionFuture.complete(null);
         }
     }
@@ -293,5 +327,10 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
 
     protected List<ChildContextOperation<?>> getChildOperations() {
         return Collections.unmodifiableList(childOperations);
+    }
+
+    /** Returns true if all items have finished (no pending, no running). Used by subclasses to override canComplete. */
+    protected boolean isAllItemsFinished() {
+        return isJoined.get() && pendingQueue.isEmpty() && runningCount.get() == 0;
     }
 }
