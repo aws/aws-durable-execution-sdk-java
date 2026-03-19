@@ -110,7 +110,11 @@ class IntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(3, result.getSucceededOperations().size());
         assertEquals("Step 1 done", result.getOperation("step1").getStepResult(String.class));
-        assertEquals(OperationType.WAIT, result.getSucceededOperations().get(1).getType());
+        assertEquals(
+                OperationType.WAIT,
+                result.getSucceededOperations()
+                        .get(1)
+                        .getType()); // todo: the result of getSucceededOperations is not ordered
         assertEquals(
                 OperationStatus.SUCCEEDED,
                 result.getSucceededOperations().get(1).getStatus());

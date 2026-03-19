@@ -32,6 +32,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * production of the {@link DurableExecutionOutput} (success, failure, or pending suspension).
  */
 public class DurableExecutor {
+    private static final String ROOT_THREAD_ID = null;
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutor.class);
 
     // Lambda response size limit is 6MB minus small epsilon for envelope

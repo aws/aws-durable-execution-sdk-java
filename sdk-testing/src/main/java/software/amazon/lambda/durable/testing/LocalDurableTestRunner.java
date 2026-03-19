@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.testing;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -308,9 +309,15 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     private DurableExecutionInput createDurableInput(I input) {
+        var executionName = UUID.randomUUID().toString();
+        var invocationId = UUID.randomUUID().toString();
+        var executionArn = String.format(
+                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
+                executionName, invocationId);
         var inputJson = serDes.serialize(input);
         var executionOp = Operation.builder()
-                .id("0")
+                .id(invocationId)
+                .name(executionName)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(
@@ -318,14 +325,13 @@ public class LocalDurableTestRunner<I, O> {
                 .build();
 
         // Load previous operations and include them in InitialExecutionState
-        var existingOps = storage.getExecutionState(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", null)
-                .operations();
+        var existingOps =
+                storage.getExecutionState(executionArn, "test-token", null).operations();
         var allOps = new ArrayList<>(List.of(executionOp));
         allOps.addAll(existingOps);
 
         return new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                executionArn,
                 "test-token",
                 CheckpointUpdatedExecutionState.builder().operations(allOps).build());
     }

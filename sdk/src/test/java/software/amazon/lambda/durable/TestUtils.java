@@ -5,15 +5,12 @@ package software.amazon.lambda.durable;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
 
 public class TestUtils {
 
@@ -70,12 +67,6 @@ public class TestUtils {
     }
 
     public static String hashOperationId(String rawId) {
-        try {
-            var messageDigest = MessageDigest.getInstance("SHA-256");
-            var hash = messageDigest.digest(rawId.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new AssertionError("SHA-256 not available", e);
-        }
+        return OperationIdGenerator.hashOperationId(rawId);
     }
 }

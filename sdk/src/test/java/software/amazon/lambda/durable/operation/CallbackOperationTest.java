@@ -31,10 +31,14 @@ import software.amazon.lambda.durable.serde.SerDes;
 
 class CallbackOperationTest {
 
-    private static final String OPERATION_ID = "1";
+    private static final String OPERATION_ID = TestUtils.hashOperationId("1");
     private static final String OPERATION_NAME = "approval";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
             OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.CALLBACK);
+    private static final String EXECUTION_NAME = "exec-name";
+    private static final String EXECUTION_OP_ID = "123";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
 
     private DurableContextImpl durableContext;
 
@@ -81,7 +85,7 @@ class CallbackOperationTest {
         var client = TestUtils.createMockClient();
         var operations = new ArrayList<Operation>();
         operations.add(Operation.builder()
-                .id("0")
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build());
@@ -89,8 +93,7 @@ class CallbackOperationTest {
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
-                new DurableExecutionInput(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialState),
+                new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
         executionManager.setCurrentThreadContext(new ThreadContext("Root", ThreadType.CONTEXT));
         return executionManager;

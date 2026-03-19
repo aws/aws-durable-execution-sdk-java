@@ -16,10 +16,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -81,11 +79,14 @@ public class ExecutionManager implements AutoCloseable {
         this.executionMode =
                 new AtomicReference<>(operationStorage.size() > 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);
 
-        executionOp = findExecutionOp(input.initialExecutionState());
+        // parse durableExecutionArn and get the last part after / which is the invocation id
+        var durableExecutionArnParts = durableExecutionArn.split("/", -1);
+        var invocationId = durableExecutionArnParts[durableExecutionArnParts.length - 1];
+        executionOp = operationStorage.get(invocationId);
 
         // Validate initial operation is an EXECUTION operation
         if (executionOp == null) {
-            throw new IllegalStateException("First operation must be EXECUTION");
+            throw new IllegalStateException("EXECUTION operation not found");
         }
         logger.debug("DurableExecution.execute() called");
         logger.debug("DurableExecutionArn: {}", durableExecutionArn);
@@ -161,26 +162,6 @@ public class ExecutionManager implements AutoCloseable {
     /** Returns the initial EXECUTION operation from the checkpoint state. */
     public Operation getExecutionOperation() {
         return executionOp;
-    }
-
-    private Operation findExecutionOp(CheckpointUpdatedExecutionState initialExecutionState) {
-        // find execution OP in the input
-        if (initialExecutionState != null
-                && initialExecutionState.operations() != null
-                && !initialExecutionState.operations().isEmpty()) {
-            var op = initialExecutionState.operations().get(0);
-            if (op.type() != OperationType.EXECUTION) {
-                throw new IllegalStateException("First operation must be EXECUTION");
-            }
-            return op;
-        }
-        // find execution OP in the checkpoint result
-        for (Operation op : operationStorage.values()) {
-            if (op.type() == OperationType.EXECUTION) {
-                return op;
-            }
-        }
-        return null;
     }
 
     /**
