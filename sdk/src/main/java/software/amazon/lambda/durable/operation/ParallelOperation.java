@@ -84,6 +84,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
     protected void handleSuccess() {
         if (skipCheckpoint) {
             // Do not send checkpoint during replay
+            markAlreadyCompleted();
             return;
         }
         sendOperationUpdate(OperationUpdate.builder()

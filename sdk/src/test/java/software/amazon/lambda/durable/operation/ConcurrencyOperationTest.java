@@ -259,11 +259,21 @@ class ConcurrencyOperationTest {
         @Override
         protected void handleSuccess() {
             successHandled = true;
+            // Simulate the checkpoint ACK that a real subclass would receive after sendOperationUpdate.
+            // This drives completionFuture to completion so waitForOperationCompletion() unblocks.
+            onCheckpointComplete(Operation.builder()
+                    .id(getOperationId())
+                    .status(OperationStatus.SUCCEEDED)
+                    .build());
         }
 
         @Override
         protected void handleFailure(ConcurrencyCompletionStatus completionStatus) {
             failureHandled = true;
+            onCheckpointComplete(Operation.builder()
+                    .id(getOperationId())
+                    .status(OperationStatus.SUCCEEDED) // always success for parallel
+                    .build());
         }
 
         @Override
