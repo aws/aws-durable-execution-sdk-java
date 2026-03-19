@@ -105,11 +105,7 @@ public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
         var checkpointData = stepDetails != null ? stepDetails.result() : null;
         T currentState; // Get current state
         if (checkpointData != null) {
-            try {
-                currentState = deserializeResult(checkpointData);
-            } catch (Exception e) {
-                currentState = initialState;
-            }
+            currentState = deserializeResult(checkpointData);
         } else {
             currentState = initialState;
         }
