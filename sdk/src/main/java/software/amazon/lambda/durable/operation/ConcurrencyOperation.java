@@ -248,6 +248,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void handleComplete() {
+        // We do not complete the futrure here, the furture is completed via checkpoint
         if (isOperationCompleted()) {
             return;
         }
@@ -255,9 +256,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             handleSuccess();
         } else {
             handleFailure(completionStatus);
-        }
-        synchronized (completionFuture) {
-            completionFuture.complete(null);
         }
     }
 

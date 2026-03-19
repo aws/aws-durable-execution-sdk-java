@@ -10,6 +10,7 @@ import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -69,9 +70,19 @@ class ParallelOperationTest {
         when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
 
-        // Simulate the real backend: when a SUCCEED checkpoint is sent for the parallel op,
-        // make getOperationAndUpdateReplayState return a SUCCEEDED operation so waitForOperationCompletion() can find
-        // it.
+        // Capture registered operations so we can drive onCheckpointComplete callbacks.
+        var registeredOps = new ConcurrentHashMap<String, BaseDurableOperation<?>>();
+        doAnswer(inv -> {
+                    BaseDurableOperation<?> op = inv.getArgument(0);
+                    registeredOps.put(op.getOperationId(), op);
+                    return null;
+                })
+                .when(executionManager)
+                .registerOperation(any());
+
+        // Simulate the real backend for all sendOperationUpdate calls:
+        // - For SUCCEED on the parallel op: update the stub and fire onCheckpointComplete to unblock join().
+        // - For everything else (START, child checkpoints): just return a completed future.
         var succeededParallelOp = Operation.builder()
                 .id(OPERATION_ID)
                 .name("test-parallel")
@@ -79,15 +90,21 @@ class ParallelOperationTest {
                 .subType(OperationSubType.PARALLEL.getValue())
                 .status(OperationStatus.SUCCEEDED)
                 .build();
-        when(executionManager.sendOperationUpdate(argThat(u -> u != null
-                        && u.id() != null
-                        && u.id().equals(OPERATION_ID)
-                        && u.action() == OperationAction.SUCCEED)))
-                .thenAnswer(inv -> {
-                    when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
-                            .thenReturn(succeededParallelOp);
+        doAnswer(inv -> {
+                    var update = (software.amazon.awssdk.services.lambda.model.OperationUpdate) inv.getArgument(0);
+
+                    if (OPERATION_ID.equals(update.id()) && update.action() == OperationAction.SUCCEED) {
+                        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                                .thenReturn(succeededParallelOp);
+                        var op = registeredOps.get(OPERATION_ID);
+                        if (op != null) {
+                            op.onCheckpointComplete(succeededParallelOp);
+                        }
+                    }
                     return CompletableFuture.completedFuture(null);
-                });
+                })
+                .when(executionManager)
+                .sendOperationUpdate(any());
     }
 
     private ParallelOperation<Void> createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount) {
