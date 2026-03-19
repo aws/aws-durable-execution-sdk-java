@@ -9,6 +9,7 @@ COPY sdk ./sdk
 COPY sdk-testing ./sdk-testing
 COPY sdk-integration-tests ./sdk-integration-tests
 COPY examples ./examples
+COPY coverage-report ./coverage-report
 
 # Install Maven
 RUN apk add --no-cache maven

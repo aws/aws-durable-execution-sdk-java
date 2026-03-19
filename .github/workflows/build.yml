@@ -64,15 +64,15 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
         uses: cicirello/jacoco-badge-generator@v2
         with:
-          jacoco-csv-file: sdk/target/site/jacoco/jacoco.csv
-          badges-directory: sdk/target/site/jacoco
+          jacoco-csv-file: coverage-report/target/site/jacoco-aggregate/jacoco.csv
+          badges-directory: coverage-report/target/site/jacoco-aggregate
 
       - name: Publish coverage report to GitHub Pages
         if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: docs
-          folder: sdk/target/site/jacoco
+          folder: coverage-report/target/site/jacoco-aggregate
           target-folder: coverage
 
       - name: Deploy javadoc to Github Pages
