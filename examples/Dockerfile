@@ -11,6 +11,7 @@ COPY sdk ./sdk
 COPY sdk-testing ./sdk-testing
 COPY sdk-integration-tests ./sdk-integration-tests
 COPY examples ./examples
+COPY coverage-report ./coverage-report
 
 # Build and install the SDK modules first
 RUN mvn clean install -DskipTests -pl sdk,sdk-testing -am
