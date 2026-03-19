@@ -3,8 +3,8 @@
 package software.amazon.lambda.durable.retry;
 
 import java.time.Duration;
-import software.amazon.lambda.durable.WaitForConditionResult;
 import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 /**
  * Strategy that computes the delay before the next polling attempt in a {@code waitForCondition} operation.

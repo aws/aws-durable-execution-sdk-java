@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,13 +19,15 @@ import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.WaitForConditionConfig;
-import software.amazon.lambda.durable.WaitForConditionResult;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.WaitForConditionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class WaitForConditionOperationTest {
@@ -275,5 +278,118 @@ class WaitForConditionOperationTest {
         operation.execute();
 
         assertThrows(WaitForConditionException.class, operation::get);
+    }
+
+    // ===== Replay PENDING =====
+
+    @Test
+    void replayPendingPollsAndResumesCheckLoop() throws Exception {
+        var pendingOp = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .subType("WaitForCondition")
+                .status(OperationStatus.PENDING)
+                .stepDetails(StepDetails.builder().attempt(1).result("5").build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(pendingOp);
+
+        var readyOp = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .subType("WaitForCondition")
+                .status(OperationStatus.READY)
+                .stepDetails(StepDetails.builder().attempt(1).result("5").build())
+                .build();
+        when(executionManager.pollForOperationUpdates(OPERATION_ID))
+                .thenReturn(CompletableFuture.completedFuture(readyOp));
+
+        var functionCalled = new AtomicBoolean(false);
+        var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
+        var operation = createOperation(
+                (state, ctx) -> {
+                    functionCalled.set(true);
+                    return WaitForConditionResult.stopPolling(state);
+                },
+                0,
+                config);
+
+        operation.execute();
+
+        Thread.sleep(200);
+        assertTrue(functionCalled.get(), "Check function should be called after PENDING → READY transition");
+    }
+
+    // ===== Replay unexpected status =====
+
+    @Test
+    void replayWithUnexpectedStatusTerminatesExecution() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .id(OPERATION_ID)
+                        .name(OPERATION_NAME)
+                        .type(OperationType.STEP)
+                        .subType("WaitForCondition")
+                        .status(OperationStatus.UNKNOWN_TO_SDK_VERSION)
+                        .build());
+
+        var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+
+        assertThrows(IllegalDurableOperationException.class, operation::execute);
+    }
+
+    // ===== resumeCheckLoop with null checkpoint data =====
+
+    @Test
+    void replayStartedWithNullCheckpointDataUsesInitialState() throws Exception {
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .subType("WaitForCondition")
+                .status(OperationStatus.STARTED)
+                .stepDetails(StepDetails.builder().attempt(0).build()) // no result set
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
+
+        var receivedState = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
+        var operation = createOperation(
+                (state, ctx) -> {
+                    receivedState.set(state);
+                    return WaitForConditionResult.stopPolling(state);
+                },
+                42, // initialState
+                config);
+
+        operation.execute();
+
+        Thread.sleep(200);
+        assertEquals(42, receivedState.get(), "Should use initialState when checkpoint data is null");
+    }
+
+    // ===== resumeCheckLoop checkpoint deserialize exception =====
+
+    @Test
+    void replayStartedWithCorruptCheckpointDataThrowsSerDesException() {
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .subType("WaitForCondition")
+                .status(OperationStatus.STARTED)
+                .stepDetails(StepDetails.builder()
+                        .attempt(1)
+                        .result("not-valid-json!!!")
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
+
+        var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+
+        assertThrows(SerDesException.class, operation::execute);
     }
 }

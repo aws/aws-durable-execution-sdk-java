@@ -32,6 +32,7 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 - `ctx.invoke()` – Invoke another Lambda function and wait for the result
 - `ctx.runInChildContext()` – Run an isolated child context with its own checkpoint log
 - `ctx.map()` – Apply a function to each item in a collection concurrently
+- `ctx.waitForCondition()` – Poll a condition function until it signals done, suspending between polls
 
 ## Quick Start
 
@@ -94,6 +95,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 - [<u>Invoke</u>](docs/core/invoke.md) - Call other durable functions
 - [<u>Child Contexts</u>](docs/core/child-contexts.md) - Organize complex workflows into isolated units
 - [<u>Map</u>](docs/core/map.md) - Apply a function across a collection concurrently
+- [<u>Wait for Condition</u>](docs/core/wait-for-condition.md) - Poll a condition until it's met, with configurable backoff
 
 **Examples**
 

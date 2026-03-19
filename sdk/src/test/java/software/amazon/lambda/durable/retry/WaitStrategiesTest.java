@@ -126,10 +126,10 @@ class WaitStrategiesTest {
                         60, Duration.ofSeconds(5), Duration.ofSeconds(300), 1.5, null));
     }
 
-    // ---- PBT: Exponential backoff calculation with jitter=NONE ----
+    // ---- Exponential backoff calculation with jitter=NONE ----
 
     @RepeatedTest(100)
-    void pbt_exponentialBackoffCalculation_noJitter() {
+    void exponentialBackoffCalculation_noJitter() {
         var random = new Random();
 
         long initialDelaySeconds = 1 + random.nextInt(30);
@@ -157,10 +157,10 @@ class WaitStrategiesTest {
                         initialDelaySeconds, backoffRate, maxDelaySeconds, attempt));
     }
 
-    // ---- PBT: Max attempts enforcement ----
+    // ---- Max attempts enforcement ----
 
     @RepeatedTest(100)
-    void pbt_maxAttemptsEnforcement_throwsWhenExceeded() {
+    void maxAttemptsEnforcement_throwsWhenExceeded() {
         var random = new Random();
 
         int maxAttempts = 1 + random.nextInt(50);
@@ -177,10 +177,10 @@ class WaitStrategiesTest {
         assertTrue(exception.getMessage().contains("maximum attempts"));
     }
 
-    // ---- PBT: Jitter bounds ----
+    // ---- Jitter bounds ----
 
     @RepeatedTest(100)
-    void pbt_jitterBounds_noneProducesExactDelay() {
+    void jitterBounds_noneProducesExactDelay() {
         var random = new Random();
         long delaySeconds = 1 + random.nextInt(300);
 
@@ -192,7 +192,7 @@ class WaitStrategiesTest {
     }
 
     @RepeatedTest(100)
-    void pbt_jitterBounds_fullProducesDelayInRange() {
+    void jitterBounds_fullProducesDelayInRange() {
         var random = new Random();
         long delaySeconds = 2 + random.nextInt(299);
 
@@ -207,7 +207,7 @@ class WaitStrategiesTest {
     }
 
     @RepeatedTest(100)
-    void pbt_jitterBounds_halfProducesDelayInRange() {
+    void jitterBounds_halfProducesDelayInRange() {
         var random = new Random();
         long delaySeconds = 2 + random.nextInt(299);
 

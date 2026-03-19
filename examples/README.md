@@ -90,6 +90,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [WaitAtLeastInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
 | [ManyAsyncStepsExample](src/main/java/com/amazonaws/lambda/durable/examples/ManyAsyncStepsExample.java) | Performance test with 500 concurrent async steps |
 | [SimpleMapExample](src/main/java/com/amazonaws/lambda/durable/examples/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
+| [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
 
 ## Cleanup
 

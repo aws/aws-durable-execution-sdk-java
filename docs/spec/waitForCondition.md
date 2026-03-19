@@ -2,22 +2,19 @@
 
 ## Overview
 
-This design adds a `waitForCondition` operation to the Java Durable Execution SDK. The operation periodically checks a user-supplied condition function, using a configurable wait strategy to determine polling intervals and termination. It follows the same checkpoint-and-replay model as existing operations (`step`, `wait`, `invoke`) and mirrors the JavaScript SDK's `waitForCondition` implementation.
+`waitForCondition` is a durable operation that repeatedly polls a user-supplied check function until it signals done. Between polls, the Lambda suspends without consuming compute. State is checkpointed after each check, so progress survives interruptions. It follows the same checkpoint-and-replay model as existing operations (`step`, `wait`, `invoke`) and mirrors the JavaScript SDK's `waitForCondition` implementation.
 
 ## Architecture
 
 ### How it works
 
-`waitForCondition` is implemented as a specialized step operation that uses the RETRY checkpoint action for polling iterations:
-
-1. User calls `ctx.waitForCondition(name, resultType, checkFunc, config)`
+1. User calls `ctx.waitForCondition(name, resultType, checkFunc, initialState)` (or with optional config)
 2. A `WaitForConditionOperation` is created with a unique operation ID
 3. On first execution:
    - Checkpoint START with subtype `WAIT_FOR_CONDITION`
    - Execute the check function with `initialState` and a `StepContext`
-   - Call the wait strategy with the new state and attempt number
-   - If `stopPolling()`: checkpoint SUCCEED with the final state, return it
-   - If `continuePolling(delay)`: checkpoint RETRY with the state and delay, poll for READY, then loop
+   - If check function returns `WaitForConditionResult.stopPolling(value)`: checkpoint SUCCEED, return value
+   - If check function returns `WaitForConditionResult.continuePolling(value)`: call wait strategy to compute delay, checkpoint RETRY with state and delay, poll for READY, then loop
    - If check function throws: checkpoint FAIL, propagate the error
 4. On replay:
    - SUCCEEDED: return cached result (skip re-execution)
@@ -25,256 +22,207 @@ This design adds a `waitForCondition` operation to the Java Durable Execution SD
    - PENDING: wait for READY transition, then resume polling
    - STARTED/READY: resume execution from current attempt and state
 
-This matches the JS SDK's behavior where each polling iteration is a RETRY on the same STEP operation.
-
-### New Classes
+### File Structure
 
 ```
 sdk/src/main/java/software/amazon/lambda/durable/
-├── WaitForConditionConfig.java       # Config builder (waitStrategy, initialState, serDes)
-├── WaitForConditionWaitStrategy.java  # Functional interface: (T state, int attempt) → WaitForConditionDecision
-├── WaitForConditionDecision.java     # Sealed result: continuePolling(Duration) | stopPolling()
-├── WaitStrategies.java               # Factory with builder for common patterns
+├── WaitForConditionResult.java          # Check function return type (value + isDone)
+├── WaitForConditionConfig.java          # Optional config (wait strategy, custom SerDes)
+├── retry/
+│   ├── WaitForConditionWaitStrategy.java  # Functional interface: (T state, int attempt) → Duration
+│   └── WaitStrategies.java               # Factory methods + Presets.DEFAULT
 ├── operation/
-│   └── WaitForConditionOperation.java  # Operation implementation
-├── model/
-│   └── OperationSubType.java          # Add WAIT_FOR_CONDITION enum value
+│   └── WaitForConditionOperation.java    # Operation implementation
+├── exception/
+│   └── WaitForConditionException.java    # Thrown when max attempts exceeded
+└── model/
+    └── OperationSubType.java             # WAIT_FOR_CONDITION enum value
 ```
 
 ### Class Diagram
 
 ```
-DurableContext
-  ├── waitForCondition(name, Class<T>, checkFunc, config) → T
-  ├── waitForCondition(name, TypeToken<T>, checkFunc, config) → T
-  ├── waitForConditionAsync(name, Class<T>, checkFunc, config) → DurableFuture<T>
-  └── waitForConditionAsync(name, TypeToken<T>, checkFunc, config) → DurableFuture<T>
+DurableContext (interface)
+  ├── waitForCondition(name, Class<T>, checkFunc, initialState) → T
+  ├── waitForCondition(name, Class<T>, checkFunc, initialState, config) → T
+  ├── waitForCondition(name, TypeToken<T>, checkFunc, initialState) → T
+  ├── waitForCondition(name, TypeToken<T>, checkFunc, initialState, config) → T
+  ├── waitForConditionAsync(name, Class<T>, checkFunc, initialState) → DurableFuture<T>
+  ├── waitForConditionAsync(name, Class<T>, checkFunc, initialState, config) → DurableFuture<T>
+  ├── waitForConditionAsync(name, TypeToken<T>, checkFunc, initialState) → DurableFuture<T>
+  └── waitForConditionAsync(name, TypeToken<T>, checkFunc, initialState, config) → DurableFuture<T>
          │
          ▼
 WaitForConditionOperation<T> extends BaseDurableOperation<T>
   ├── start()           → checkpoint START, execute check loop
   ├── replay(existing)  → handle SUCCEEDED/FAILED/PENDING/STARTED/READY
   ├── get()             → block, deserialize result or throw
-  └── executeCheckLoop(currentState, attempt)
+  └── executeCheckLogic(currentState, attempt)
          │
-         ├── calls checkFunc(state, stepContext) → newState
-         ├── calls waitStrategy.evaluate(newState, attempt) → WaitForConditionDecision
-         │     ├── stopPolling()         → checkpoint SUCCEED
-         │     └── continuePolling(delay) → checkpoint RETRY, poll, loop
+         ├── calls checkFunc(state, stepContext) → WaitForConditionResult<T>
+         │     ├── stopPolling(value)      → checkpoint SUCCEED
+         │     └── continuePolling(value)  → call waitStrategy, checkpoint RETRY, poll, loop
          └── on error → checkpoint FAIL
 ```
 
 ## Detailed Design
 
-### WaitForConditionWaitStrategy<T> (Functional Interface)
+### WaitForConditionResult\<T\> (Record)
+
+```java
+public record WaitForConditionResult<T>(T value, boolean isDone) {
+    public static <T> WaitForConditionResult<T> stopPolling(T value);
+    public static <T> WaitForConditionResult<T> continuePolling(T value);
+}
+```
+
+Returned by the check function to signal whether the condition is met:
+- `stopPolling(value)`: condition met, return `value` as the final result
+- `continuePolling(value)`: keep polling, pass `value` to the next check and to the wait strategy
+
+### WaitForConditionWaitStrategy\<T\> (Functional Interface)
 
 ```java
 @FunctionalInterface
 public interface WaitForConditionWaitStrategy<T> {
-    WaitForConditionDecision evaluate(T state, int attempt);
+    Duration evaluate(T state, int attempt);
 }
 ```
 
-- `state`: the current state returned by the check function
-- `attempt`: 0-based attempt number (first check is attempt 0)
-- Returns a `WaitForConditionDecision` indicating whether to continue or stop
+Computes the delay before the next poll. Only called when the check function returns `continuePolling`. Throws `WaitForConditionException` when max attempts exceeded.
 
-### WaitForConditionDecision
+- `state`: the current state from the check function
+- `attempt`: 0-based attempt number
+- Returns: `Duration` delay before next poll
 
-```java
-public sealed interface WaitForConditionDecision {
-    record ContinuePolling(Duration delay) implements WaitForConditionDecision {}
-    record StopPolling() implements WaitForConditionDecision {}
-
-    static WaitForConditionDecision continuePolling(Duration delay) {
-        return new ContinuePolling(delay);
-    }
-
-    static WaitForConditionDecision stopPolling() {
-        return new StopPolling();
-    }
-}
-```
-
-Uses Java sealed interfaces for type safety. The `delay` in `ContinuePolling` must be >= 1 second (enforced at construction).
+Built-in strategies (from `WaitStrategies`) ignore the state parameter and compute delays based solely on the attempt number.
 
 ### WaitStrategies (Factory)
 
 ```java
 public final class WaitStrategies {
-    public static <T> Builder<T> builder(Predicate<T> shouldContinuePolling) { ... }
 
-    public static class Builder<T> {
-        // Defaults match JS SDK
-        private int maxAttempts = 60;
-        private Duration initialDelay = Duration.ofSeconds(5);
-        private Duration maxDelay = Duration.ofSeconds(300);
-        private double backoffRate = 1.5;
-        private JitterStrategy jitter = JitterStrategy.FULL;
-
-        public Builder<T> maxAttempts(int maxAttempts) { ... }
-        public Builder<T> initialDelay(Duration initialDelay) { ... }
-        public Builder<T> maxDelay(Duration maxDelay) { ... }
-        public Builder<T> backoffRate(double backoffRate) { ... }
-        public Builder<T> jitter(JitterStrategy jitter) { ... }
-        public WaitForConditionWaitStrategy<T> build() { ... }
+    public static class Presets {
+        public static final WaitForConditionWaitStrategy<?> DEFAULT = ...;
     }
+
+    public static <T> WaitForConditionWaitStrategy<T> defaultStrategy();
+
+    public static <T> WaitForConditionWaitStrategy<T> exponentialBackoff(
+            int maxAttempts, Duration initialDelay, Duration maxDelay,
+            double backoffRate, JitterStrategy jitter);
+
+    public static <T> WaitForConditionWaitStrategy<T> fixedDelay(
+            int maxAttempts, Duration fixedDelay);
 }
 ```
 
-The built strategy:
-1. Calls `shouldContinuePolling.test(state)` — if false, returns `stopPolling()`
-2. Checks `attempt >= maxAttempts` — if true, throws `WaitForConditionException`
-3. Calculates delay: `min(initialDelay * backoffRate^(attempt-1), maxDelay)`
-4. Applies jitter using the existing `JitterStrategy` enum
-5. Ensures delay >= 1 second, rounds to nearest integer second
-6. Returns `continuePolling(delay)`
+Mirrors `RetryStrategies` with static factory methods and a `Presets` class.
 
-### WaitForConditionConfig<T>
+Default parameters (matching JS SDK): maxAttempts=60, initialDelay=5s, maxDelay=300s, backoffRate=1.5, jitter=FULL.
+
+Delay formula: `max(1, round(jitter(min(initialDelay × backoffRate^attempt, maxDelay))))`
+
+Validation: maxAttempts > 0, initialDelay >= 1s, maxDelay >= 1s, backoffRate >= 1.0, jitter not null.
+
+### WaitForConditionConfig\<T\>
 
 ```java
 public class WaitForConditionConfig<T> {
-    private final WaitForConditionWaitStrategy<T> waitStrategy;
-    private final T initialState;
-    private final SerDes serDes;  // nullable, falls back to DurableConfig default
+    public static <T> Builder<T> builder();
 
-    public static <T> Builder<T> builder(WaitForConditionWaitStrategy<T> waitStrategy, T initialState) { ... }
+    public WaitForConditionWaitStrategy<T> waitStrategy();  // defaults to WaitStrategies.defaultStrategy()
+    public SerDes serDes();                                  // defaults to null (uses handler default)
+    public Builder<T> toBuilder();                           // for internal SerDes injection
 
     public static class Builder<T> {
-        public Builder<T> serDes(SerDes serDes) { ... }
-        public WaitForConditionConfig<T> build() { ... }
+        public Builder<T> waitStrategy(WaitForConditionWaitStrategy<T> waitStrategy);
+        public Builder<T> serDes(SerDes serDes);
+        public WaitForConditionConfig<T> build();
     }
 }
 ```
 
-`waitStrategy` and `initialState` are required constructor parameters on the builder (not optional setters), so they can never be null.
+Holds only optional parameters. Required parameters (`initialState`, `checkFunc`) are direct method arguments on `DurableContext.waitForCondition()`.
 
-### WaitForConditionOperation<T>
+### DurableContext API (8 signatures)
+
+Delegation chain (same pattern as `step()`):
+- All sync methods → corresponding async method → `.get()`
+- All Class-based methods → TypeToken-based via `TypeToken.get(resultType)`
+- All no-config methods → config method with `WaitForConditionConfig.builder().build()`
+- Core method: `waitForConditionAsync(name, TypeToken<T>, checkFunc, initialState, config)`
+
+The core method validates: `name` (via `ParameterValidator`), `typeToken` not null, `checkFunc` not null, `initialState` not null, `config` not null.
+
+### WaitForConditionOperation\<T\>
 
 Extends `BaseDurableOperation<T>`. Key behaviors:
 
 - **start()**: Begins the check loop from `initialState` at attempt 0
-- **replay(existing)**: Handles all operation statuses (SUCCEEDED, FAILED, PENDING, STARTED, READY)
-- **executeCheckLoop(state, attempt)**: Core polling logic
-  - Creates a `StepContext` for the check function
-  - Executes check function in the user executor (same pattern as `StepOperation`)
-  - Serializes/deserializes state through SerDes (round-trip, matching JS SDK)
-  - Calls wait strategy with deserialized state
-  - Checkpoints RETRY with `NextAttemptDelaySeconds` or SUCCEED/FAIL
-- **get()**: Blocks on completion, deserializes result or throws exception
+- **replay(existing)**: Handles all operation statuses
+- **resumeCheckLoop(existing)**: Deserializes checkpointed state (falls back to `initialState` if null, throws `SerDesException` if corrupt)
+- **executeCheckLogic(state, attempt)**: Runs check function on user executor, handles `WaitForConditionResult`, checkpoints accordingly
+- **get()**: Blocks on completion, deserializes result or reconstructs and throws the original exception
 
 All checkpoint updates use `OperationType.STEP` and `OperationSubType.WAIT_FOR_CONDITION`.
 
-### DurableContext API Methods
-
-```java
-// Sync methods (block until condition met)
-public <T> T waitForCondition(String name, Class<T> resultType,
-    Function<StepContext, T> checkFunc, WaitForConditionConfig<T> config)
-
-public <T> T waitForCondition(String name, TypeToken<T> typeToken,
-    Function<StepContext, T> checkFunc, WaitForConditionConfig<T> config)
-
-// Async methods (return DurableFuture immediately)
-public <T> DurableFuture<T> waitForConditionAsync(String name, Class<T> resultType,
-    Function<StepContext, T> checkFunc, WaitForConditionConfig<T> config)
-
-public <T> DurableFuture<T> waitForConditionAsync(String name, TypeToken<T> typeToken,
-    Function<StepContext, T> checkFunc, WaitForConditionConfig<T> config)
-```
-
-The check function signature is `Function<StepContext, T>` rather than `BiFunction<T, StepContext, T>` because the current state is managed internally by the operation. The check function receives the current state via the operation's internal loop — the `StepContext` provides logging and attempt info. Wait, actually looking at the JS SDK more carefully, the check function does receive the current state as a parameter: `(state: T, context) => Promise<T>`. So the Java signature should be `BiFunction<T, StepContext, T>`.
-
-Corrected signature:
-
-```java
-public <T> DurableFuture<T> waitForConditionAsync(String name, TypeToken<T> typeToken,
-    BiFunction<T, StepContext, T> checkFunc, WaitForConditionConfig<T> config)
-```
-
-### OperationSubType Addition
-
-```java
-public enum OperationSubType {
-    RUN_IN_CHILD_CONTEXT("RunInChildContext"),
-    MAP("Map"),
-    PARALLEL("Parallel"),
-    WAIT_FOR_CALLBACK("WaitForCallback"),
-    WAIT_FOR_CONDITION("WaitForCondition");  // NEW
-    ...
-}
-```
-
 ### Error Handling
 
-- **Check function throws**: Checkpoint FAIL with serialized error, wrap in `WaitForConditionException`
-- **Max attempts exceeded**: `WaitStrategies`-built strategy throws `WaitForConditionException("waitForCondition exceeded maximum attempts (N)")`
-- **Custom strategy throws**: Propagated as-is (checkpoint FAIL)
-- **SerDes failure**: Wrapped in `SerDesException` (existing pattern)
+| Scenario | Behavior |
+|----------|----------|
+| Check function throws | Checkpoint FAIL, propagate via `get()` |
+| Strategy throws `WaitForConditionException` | Checkpoint FAIL, propagate via `get()` |
+| Checkpoint data fails to deserialize on replay | Throws `SerDesException` (propagates to handler) |
+| `SuspendExecutionException` during check | Re-thrown (Lambda suspension) |
+| `UnrecoverableDurableExecutionException` during check | Terminates execution |
 
-A new `WaitForConditionException` extends `DurableOperationException` for domain-specific errors.
+## Usage Examples
 
-### Exception Class
+### Minimal (default config)
 
 ```java
-public class WaitForConditionException extends DurableOperationException {
-    public WaitForConditionException(String message) { ... }
-    public WaitForConditionException(Operation operation) { ... }
-}
+var result = ctx.waitForCondition(
+    "wait-for-shipment",
+    String.class,
+    (status, stepCtx) -> {
+        var currentStatus = getOrderStatus(orderId);
+        return "SHIPPED".equals(currentStatus)
+            ? WaitForConditionResult.stopPolling(currentStatus)
+            : WaitForConditionResult.continuePolling(currentStatus);
+    },
+    "PENDING");
 ```
 
-## Testing Strategy
+### Custom strategy
 
-### Unit Tests (sdk/src/test/)
-- `WaitForConditionDecisionTest`: verify `continuePolling`/`stopPolling` factory methods
-- `WaitStrategiesTest`: verify builder defaults, exponential backoff, jitter, max attempts
-- `WaitForConditionConfigTest`: verify builder validation
-- `WaitForConditionOperationTest`: verify start, replay, error handling
+```java
+var config = WaitForConditionConfig.<String>builder()
+    .waitStrategy(WaitStrategies.fixedDelay(10, Duration.ofSeconds(30)))
+    .build();
 
-### Integration Tests (sdk-integration-tests/)
-- `WaitForConditionIntegrationTest`: end-to-end with `LocalDurableTestRunner`, verify replay across invocations
+var result = ctx.waitForCondition(
+    "wait-for-approval",
+    String.class,
+    (status, stepCtx) -> {
+        var current = checkApprovalStatus(requestId);
+        return "APPROVED".equals(current)
+            ? WaitForConditionResult.stopPolling(current)
+            : WaitForConditionResult.continuePolling(current);
+    },
+    "PENDING_REVIEW",
+    config);
+```
 
-### Example Tests (examples/)
-- `WaitForConditionExample`: demonstrates polling with `WaitStrategies` factory
-- `WaitForConditionExampleTest`: verifies example with `LocalDurableTestRunner`
+## Testing
 
-### Testing Framework
-- JUnit 5 for all tests
-- jqwik for property-based tests (already available in the project's test dependencies — if not, we'll use JUnit 5 parameterized tests with random generators)
+### Unit Tests
+- `WaitForConditionOperationTest`: replay (SUCCEEDED, FAILED, STARTED, READY, PENDING, unexpected status), null checkpoint data, corrupt checkpoint data
+- `WaitStrategiesTest`: exponential backoff formula, max delay cap, max attempts enforcement, jitter bounds, validation, factory methods, presets
+- `WaitForConditionConfigTest`: default strategy, custom strategy, SerDes, toBuilder
 
-## Correctness Properties
+### Integration Tests
+- `WaitForConditionIntegrationTest`: basic polling, custom strategy, max attempts exceeded, check function error (with error type verification), replay across invocations, property tests for state/attempt correctness
 
-### Property 1: WaitForConditionWaitStrategy contract — stopPolling terminates
-For any state `s` of type `T` and any attempt number `n >= 1`, if `waitStrategy.evaluate(s, n)` returns `StopPolling`, then `waitForCondition` completes with `s` as the result.
-
-**Validates: Requirements 1.5, 2.1**
-
-### Property 2: WaitStrategies factory — exponential backoff calculation
-For any `initialDelay d`, `backoffRate r >= 1`, `maxDelay m >= d`, and attempt `n >= 1` with jitter=NONE, the delay equals `min(d * r^(n-1), m)` rounded to the nearest integer second, with a minimum of 1 second.
-
-**Validates: Requirements 2.3, 2.4**
-
-### Property 3: WaitStrategies factory — max attempts enforcement
-For any `maxAttempts N >= 1` and any state where `shouldContinuePolling` returns true, calling the strategy with `attempt >= N` must throw `WaitForConditionException`.
-
-**Validates: Requirements 2.5**
-
-### Property 4: WaitForConditionConfig — required fields validation
-Building a `WaitForConditionConfig` without a `waitStrategy` or with a null `initialState` must always throw an exception, regardless of other configuration.
-
-**Validates: Requirements 3.2**
-
-### Property 5: WaitForConditionWaitStrategy receives correct state and attempt
-For any sequence of check function invocations, the wait strategy always receives the state returned by the most recent check function call and the correct 1-based attempt number.
-
-**Validates: Requirements 1.3, 2.1**
-
-### Property 6: Operation name validation
-For any string that violates `ParameterValidator.validateOperationName` rules, calling `waitForCondition` or `waitForConditionAsync` with that name must throw.
-
-**Validates: Requirements 5.4**
-
-### Property 7: Jitter bounds
-For any delay `d` and jitter strategy: NONE produces exactly `d`, FULL produces a value in `[0, d]` (clamped to min 1s), HALF produces a value in `[d/2, d]`.
-
-**Validates: Requirements 2.3**
+### Example
+- `WaitForConditionExample`: simulates polling order shipment status (PENDING → PROCESSING → SHIPPED)

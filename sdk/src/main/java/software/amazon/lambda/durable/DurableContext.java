@@ -9,6 +9,7 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 public interface DurableContext extends BaseContext {
     /**

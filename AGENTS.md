@@ -201,12 +201,13 @@ void testAgainstRealLambda() {
 | Class | Responsibility |
 |-------|----------------|
 | `DurableHandler<I,O>` | Lambda entry point, extend this |
-| `DurableContext` | User API: `step()`, `wait()`, `map()` |
+| `DurableContext` | User API: `step()`, `wait()`, `map()`, `waitForCondition()` |
 | `DurableExecutor` | Orchestrates execution lifecycle |
 | `ExecutionManager` | Thread coordination, state management |
 | `CheckpointBatcher` | Batches checkpoint API calls (750KB limit) |
 | `StepOperation` | Executes steps with retry logic |
 | `WaitOperation` | Handles wait checkpointing |
+| `WaitForConditionOperation` | Polls a condition function with configurable backoff |
 | `MapOperation` | Applies a function across items concurrently via child contexts |
 | `BaseConcurrentOperation` | Shared base for map/parallel: concurrency limiting, completion evaluation |
 

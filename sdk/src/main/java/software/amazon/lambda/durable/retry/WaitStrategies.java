@@ -9,17 +9,10 @@ import software.amazon.lambda.durable.validation.ParameterValidator;
 /**
  * Factory class for creating common {@link WaitForConditionWaitStrategy} implementations.
  *
- * <p>Provides preset strategies for common use cases, as well as factory methods for creating custom strategies with
- * exponential backoff and jitter.
- *
- * <p>Built-in strategies compute delays based solely on the attempt number, ignoring the state parameter. Custom
- * strategies may use the state parameter to vary delays.
+ * <p>This class provides preset wait strategies (for use with waitForCondition) for common use cases, as well as
+ * factory methods for creating custom retry strategies with exponential backoff and jitter.
  */
 public final class WaitStrategies {
-
-    private WaitStrategies() {
-        // Utility class - prevent instantiation
-    }
 
     /** Preset wait strategies for common use cases. */
     public static class Presets {
@@ -34,8 +27,7 @@ public final class WaitStrategies {
     }
 
     /**
-     * Returns the default wait strategy: exponential backoff with 60 max attempts, 5s initial delay, 300s max delay,
-     * 1.5x backoff rate, and FULL jitter.
+     * Returns the default wait strategy.
      *
      * @param <T> the type of state being polled
      * @return the default wait strategy

@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
@@ -129,6 +130,10 @@ class WaitForConditionIntegrationTest {
         var result = runner.runUntilComplete("test");
 
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        var error = result.getError();
+        assertTrue(error.isPresent(), "Error should be present");
+        assertEquals("java.lang.IllegalStateException", error.get().errorType());
+        assertEquals("Check function failed", error.get().errorMessage());
     }
 
     @Test
@@ -172,7 +177,7 @@ class WaitForConditionIntegrationTest {
         assertEquals(firstCheckCount, checkCount.get());
     }
 
-    // ---- PBT — isDone=true completes with that state as result ----
+    // ---- isDone=true completes with that state as result ----
 
     @RepeatedTest(50)
     void propertyStopPollingCompletesWithState() {
@@ -207,7 +212,7 @@ class WaitForConditionIntegrationTest {
         assertEquals(target, result.getResult(Integer.class));
     }
 
-    // ---- PBT — wait strategy receives correct state and attempt ----
+    // ---- wait strategy receives correct state and attempt ----
 
     @RepeatedTest(50)
     void propertyWaitStrategyReceivesCorrectStateAndAttempt() {

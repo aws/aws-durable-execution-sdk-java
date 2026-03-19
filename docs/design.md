@@ -189,15 +189,16 @@ context.step("name", Type.class, supplier,
 │  - User-facing API           │    │  - State (ops, token)           │
 │  - step(), stepAsync(), etc  │    │  - Thread coordination          │
 │  - wait(), waitAsync()       │    │  - Checkpoint batching          │
-│  - Operation ID counter      │    │  - Checkpoint response handling │
-└──────────────────────────────┘    │  - Polling                      │
-            │                       └─────────────────────────────────┘
+│  - waitForCondition()        │    │  - Checkpoint response handling │
+│  - Operation ID counter      │    │  - Polling                      │
+└──────────────────────────────┘    └─────────────────────────────────┘
             │                                       │
             ▼                                       ▼
 ┌──────────────────────────────┐    ┌──────────────────────────────┐
 │  Operations                  │    │  CheckpointBatcher           │
 │  - StepOperation<T>          │    │  - Queues requests           │
 │  - WaitOperation             │    │  - Batches API calls (750KB) │
+│  - WaitForConditionOperation │    │                              │
 │  - execute() / get()         │    │  - Notifies via callback     │
 └──────────────────────────────┘    └──────────────────────────────┘
                                                     │
@@ -233,7 +234,8 @@ software.amazon.lambda.durable
 │   ├── StepOperation<T>         # Step logic
 │   ├── InvokeOperation<T>       # Invoke logic
 │   ├── CallbackOperation<T>     # Callback logic
-│   └── WaitOperation            # Wait logic
+│   ├── WaitOperation            # Wait logic
+│   └── WaitForConditionOperation<T>  # Polling condition logic
 │
 ├── logging/
 │   ├── DurableLogger        # Context-aware logger wrapper (MDC-based)
@@ -243,7 +245,9 @@ software.amazon.lambda.durable
 │   ├── RetryStrategy        # Interface
 │   ├── RetryStrategies      # Presets
 │   ├── RetryDecision        # shouldRetry + delay
-│   └── JitterStrategy       # Jitter options
+│   ├── JitterStrategy       # Jitter options
+│   ├── WaitForConditionWaitStrategy  # Polling delay interface
+│   └── WaitStrategies       # Polling strategy factory + Presets
 │
 ├── client/
 │   ├── DurableExecutionClient        # Interface
@@ -264,6 +268,7 @@ software.amazon.lambda.durable
     ├── NonDeterministicExecutionException
     ├── StepFailedException
     ├── StepInterruptedException
+    ├── WaitForConditionException
     └── SerDesException
 ```
 
@@ -356,6 +361,7 @@ sequenceDiagram
 DurableExecutionException (base)
 ├── StepFailedException          # Step failed after all retries
 ├── StepInterruptedException     # Step interrupted (AT_MOST_ONCE)
+├── WaitForConditionException    # Polling exceeded max attempts
 ├── NonDeterministicExecutionException  # Replay mismatch
 └── SerDesException              # Serialization error
 
@@ -366,6 +372,7 @@ SuspendExecutionException        # Internal: triggers suspension (not user-facin
 |-----------|---------|----------|
 | `StepFailedException` | Step throws after exhausting retries | Catch in handler or let fail |
 | `StepInterruptedException` | AT_MOST_ONCE step interrupted mid-execution | Treat as failure |
+| `WaitForConditionException` | waitForCondition exceeded max polling attempts | Catch in handler or let fail |
 | `NonDeterministicExecutionException` | Replay finds different operation than expected | Bug in handler (non-deterministic code) |
 | `SerDesException` | Jackson fails to serialize/deserialize | Fix data model or custom SerDes |
 
