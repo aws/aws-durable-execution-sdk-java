@@ -163,9 +163,9 @@ public class WaitForConditionOperation&lt;T&gt; extends BaseDurableOperation&lt;
 
                                 // Poll for READY, then continue the loop
 <span class="fc" id="L165">                                pollForOperationUpdates()</span>
-<span class="pc bpc" id="L166" title="1 of 2 branches missed.">                                        .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+<span class="pc bnc" id="L166" title="All 2 branches missed.">                                        .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="nc" id="L167">                                                ? CompletableFuture.completedFuture(op)</span>
-<span class="fc" id="L168">                                                : pollForOperationUpdates())</span>
+<span class="nc" id="L168">                                                : pollForOperationUpdates())</span>
 <span class="pc" id="L169">                                        .thenRun(() -&gt; executeCheckLogic(deserializedValue, attempt + 1));</span>
                             }
 <span class="fc" id="L171">                        } catch (Throwable e) {</span>

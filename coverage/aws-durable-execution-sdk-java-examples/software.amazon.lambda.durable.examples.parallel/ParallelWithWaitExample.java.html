@@ -62,7 +62,9 @@ import software.amazon.lambda.durable.ParallelConfig;
 
 <span class="fc" id="L63">        var deliveries = futures.stream().map(DurableFuture::get).toList();</span>
 <span class="fc" id="L64">        logger.info(&quot;All {} notifications delivered&quot;, deliveries.size());</span>
-<span class="fc" id="L65">        return new Output(deliveries);</span>
+        // Test replay
+<span class="fc" id="L66">        context.wait(&quot;wait for finalization&quot;, Duration.ofSeconds(5));</span>
+<span class="fc" id="L67">        return new Output(deliveries);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
