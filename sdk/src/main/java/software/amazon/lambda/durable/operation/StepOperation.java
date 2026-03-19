@@ -150,17 +150,17 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
 
     private void handleStepFailure(Throwable exception, int attempt) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
-        if (exception instanceof SuspendExecutionException) {
-            ExceptionHelper.sneakyThrow(exception);
+        if (exception instanceof SuspendExecutionException suspendExecutionException) {
+            throw suspendExecutionException;
         }
-        if (exception instanceof UnrecoverableDurableExecutionException) {
+        if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
             // terminate the execution and throw the exception if it's not recoverable
-            terminateExecution((UnrecoverableDurableExecutionException) exception);
+            terminateExecution(unrecoverableDurableExecutionException);
         }
 
         final ErrorObject errorObject;
-        if (exception instanceof DurableOperationException) {
-            errorObject = ((DurableOperationException) exception).getErrorObject();
+        if (exception instanceof DurableOperationException durableOperationException) {
+            errorObject = durableOperationException.getErrorObject();
         } else {
             errorObject = serializeException(exception);
         }

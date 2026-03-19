@@ -36,8 +36,8 @@ public abstract class TypeToken<T> {
      */
     protected TypeToken() {
         Type superClass = getClass().getGenericSuperclass();
-        if (superClass instanceof ParameterizedType) {
-            this.type = ((ParameterizedType) superClass).getActualTypeArguments()[0];
+        if (superClass instanceof ParameterizedType parameterizedType) {
+            this.type = parameterizedType.getActualTypeArguments()[0];
         } else {
             throw new IllegalStateException("TypeToken must be created as an anonymous subclass with a type parameter. "
                     + "Example: new TypeToken<List<String>>() {}");
@@ -74,10 +74,13 @@ public abstract class TypeToken<T> {
 
     @Override
     public boolean equals(Object obj) {
-        if (this == obj) return true;
-        if (!(obj instanceof TypeToken)) return false;
-        TypeToken<?> other = (TypeToken<?>) obj;
-        return type.equals(other.type);
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof TypeToken<?> other) {
+            return type.equals(other.type);
+        }
+        return false;
     }
 
     @Override

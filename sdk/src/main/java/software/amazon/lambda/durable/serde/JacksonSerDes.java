@@ -17,8 +17,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
 /**
  * Jackson-based implementation of {@link SerDes}.
  *
- * <p>This implementation uses Jackson's ObjectMapper for JSON serialization and deserialization, with support for both
- * simple types via {@link Class} and complex generic types via {@link TypeToken}.
+ * <p>This implementation uses Jackson's ObjectMapper for JSON serialization and deserialization.
  *
  * <p>Features:
  *
@@ -67,7 +66,7 @@ public class JacksonSerDes implements SerDes {
         try {
             // Convert TypeToken to Jackson's JavaType using TypeFactory
             // Cache to avoid repeated reflection overhead
-            JavaType javaType = typeCache.computeIfAbsent(typeToken.getType(), type -> typeFactory.constructType(type));
+            JavaType javaType = typeCache.computeIfAbsent(typeToken.getType(), typeFactory::constructType);
             return mapper.readValue(data, javaType);
         } catch (Exception e) {
             throw new SerDesException(

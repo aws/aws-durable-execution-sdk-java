@@ -43,6 +43,7 @@
         <module>sdk-testing</module>
         <module>sdk-integration-tests</module>
         <module>examples</module>
+        <module>coverage-report</module>
     </modules>
 
     <properties>

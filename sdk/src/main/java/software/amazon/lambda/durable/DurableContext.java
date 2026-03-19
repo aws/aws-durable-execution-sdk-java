@@ -42,23 +42,23 @@ public interface DurableContext extends BaseContext {
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
-     * @param typeToken the type token for deserialization of generic types
+     * @param resultType the type token for deserialization of generic types
      * @param func the function to execute, receiving a {@link StepContext}
      * @return the step result
      */
-    <T> T step(String name, TypeToken<T> typeToken, Function<StepContext, T> func);
+    <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func);
 
     /**
      * Executes a durable step using a {@link TypeToken} and configuration, blocking until it completes.
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
-     * @param typeToken the type token for deserialization of generic types
+     * @param resultType the type token for deserialization of generic types
      * @param func the function to execute, receiving a {@link StepContext}
      * @param config the step configuration (retry strategy, semantics, custom SerDes)
      * @return the step result
      */
-    <T> T step(String name, TypeToken<T> typeToken, Function<StepContext, T> func, StepConfig config);
+    <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config);
 
     /**
      * Asynchronously executes a durable step, returning a {@link DurableFuture} that can be composed or blocked on.
@@ -91,11 +91,11 @@ public interface DurableContext extends BaseContext {
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
-     * @param typeToken the type token for deserialization of generic types
+     * @param resultType the type token for deserialization of generic types
      * @param func the function to execute, receiving a {@link StepContext}
      * @return a future representing the step result
      */
-    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Function<StepContext, T> func);
+    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Function<StepContext, T> func);
 
     /**
      * Asynchronously executes a durable step using a {@link TypeToken} and custom configuration.
@@ -104,13 +104,13 @@ public interface DurableContext extends BaseContext {
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
-     * @param typeToken the type token for deserialization of generic types
+     * @param resultType the type token for deserialization of generic types
      * @param func the function to execute, receiving a {@link StepContext}
      * @param config the step configuration (retry strategy, semantics, custom SerDes)
      * @return a future representing the step result
      */
     <T> DurableFuture<T> stepAsync(
-            String name, TypeToken<T> typeToken, Function<StepContext, T> func, StepConfig config);
+            String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config);
 
     @Deprecated
     <T> T step(String name, Class<T> resultType, Supplier<T> func);
@@ -119,10 +119,10 @@ public interface DurableContext extends BaseContext {
     <T> T step(String name, Class<T> resultType, Supplier<T> func, StepConfig config);
 
     @Deprecated
-    <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func);
+    <T> T step(String name, TypeToken<T> resultType, Supplier<T> func);
 
     @Deprecated
-    <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config);
+    <T> T step(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config);
 
     @Deprecated
     <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func);
@@ -131,10 +131,10 @@ public interface DurableContext extends BaseContext {
     <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config);
 
     @Deprecated
-    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func);
+    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func);
 
     @Deprecated
-    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config);
+    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config);
 
     /**
      * Suspends execution for the specified duration without consuming compute resources.
@@ -177,9 +177,10 @@ public interface DurableContext extends BaseContext {
     <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config);
 
     /** Invokes another Lambda function using a {@link TypeToken} for generic result types, blocking until complete. */
-    <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> typeToken);
+    <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType);
 
-    <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config);
+    /** Invokes another Lambda function using a {@link TypeToken} and custom configuration, blocking until complete. */
+    <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config);
 
     /** Invokes another Lambda function using a {@link TypeToken} and custom configuration, blocking until complete. */
     <T, U> DurableFuture<T> invokeAsync(
@@ -201,18 +202,18 @@ public interface DurableContext extends BaseContext {
      * @param name the unique operation name within this context
      * @param functionName the ARN or name of the Lambda function to invoke
      * @param payload the input payload to send to the target function
-     * @param typeToken the type token for deserialization of generic result types
+     * @param resultType the type token for deserialization of generic result types
      * @param config the invoke configuration (custom SerDes for result and payload)
      * @return a future representing the invocation result
      */
     <T, U> DurableFuture<T> invokeAsync(
-            String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config);
+            String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config);
 
     /** Creates a callback with custom configuration. */
     <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config);
 
     /** Creates a callback using a {@link TypeToken} for generic result types. */
-    <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken);
+    <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType);
 
     /** Creates a callback with default configuration. */
     <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType);
@@ -225,11 +226,11 @@ public interface DurableContext extends BaseContext {
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
-     * @param typeToken the type token for deserialization of generic result types
+     * @param resultType the type token for deserialization of generic result types
      * @param config the callback configuration (custom SerDes)
      * @return a future containing the callback ID and eventual result
      */
-    <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken, CallbackConfig config);
+    <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType, CallbackConfig config);
 
     /**
      * Runs a function in a child context, blocking until it completes.
@@ -248,13 +249,13 @@ public interface DurableContext extends BaseContext {
     /**
      * Runs a function in a child context using a {@link TypeToken} for generic result types, blocking until complete.
      */
-    <T> T runInChildContext(String name, TypeToken<T> typeToken, Function<DurableContext, T> func);
+    <T> T runInChildContext(String name, TypeToken<T> resultType, Function<DurableContext, T> func);
 
     /** Asynchronously runs a function in a child context, returning a {@link DurableFuture}. */
     <T> DurableFuture<T> runInChildContextAsync(String name, Class<T> resultType, Function<DurableContext, T> func);
 
     /** Asynchronously runs a function in a child context using a {@link TypeToken} for generic result types. */
-    <T> DurableFuture<T> runInChildContextAsync(String name, TypeToken<T> typeToken, Function<DurableContext, T> func);
+    <T> DurableFuture<T> runInChildContextAsync(String name, TypeToken<T> resultType, Function<DurableContext, T> func);
 
     <I, O> MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function);
 
@@ -301,7 +302,7 @@ public interface DurableContext extends BaseContext {
     <T> T waitForCallback(String name, Class<T> resultType, BiConsumer<String, StepContext> func);
 
     /** Executes a submitter and waits for an external callback using a {@link TypeToken}, blocking until complete. */
-    <T> T waitForCallback(String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func);
+    <T> T waitForCallback(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func);
 
     /** Executes a submitter and waits for an external callback with custom configuration, blocking until complete. */
     <T> T waitForCallback(
@@ -313,7 +314,7 @@ public interface DurableContext extends BaseContext {
     /** Executes a submitter and waits for an external callback using a {@link TypeToken} and custom configuration. */
     <T> T waitForCallback(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiConsumer<String, StepContext> func,
             WaitForCallbackConfig waitForCallbackConfig);
 
@@ -322,7 +323,7 @@ public interface DurableContext extends BaseContext {
 
     /** Asynchronously executes a submitter and waits for an external callback using a {@link TypeToken}. */
     <T> DurableFuture<T> waitForCallbackAsync(
-            String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func);
+            String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func);
 
     /** Asynchronously executes a submitter and waits for an external callback with custom configuration. */
     <T> DurableFuture<T> waitForCallbackAsync(
@@ -341,14 +342,14 @@ public interface DurableContext extends BaseContext {
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
-     * @param typeToken the type token for deserialization of generic result types
+     * @param resultType the type token for deserialization of generic result types
      * @param func the submitter function, receiving the callback ID and a {@link StepContext}
      * @param waitForCallbackConfig the configuration for both the callback and submitter step
      * @return a future representing the callback result
      */
     <T> DurableFuture<T> waitForCallbackAsync(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiConsumer<String, StepContext> func,
             WaitForCallbackConfig waitForCallbackConfig);
 
@@ -379,7 +380,7 @@ public interface DurableContext extends BaseContext {
     /** Polls a condition function until it signals done, using a {@link TypeToken}, blocking until complete. */
     <T> T waitForCondition(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState);
 
@@ -389,7 +390,7 @@ public interface DurableContext extends BaseContext {
      */
     <T> T waitForCondition(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
             WaitForConditionConfig<T> config);
@@ -412,7 +413,7 @@ public interface DurableContext extends BaseContext {
     /** Asynchronously polls a condition function until it signals done, using a {@link TypeToken}. */
     <T> DurableFuture<T> waitForConditionAsync(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState);
 
@@ -425,7 +426,7 @@ public interface DurableContext extends BaseContext {
      *
      * @param <T> the type of state being polled
      * @param name the unique operation name within this context
-     * @param typeToken the type token for deserialization of generic types
+     * @param resultType the type token for deserialization of generic types
      * @param checkFunc the function that evaluates the condition and returns a {@link WaitForConditionResult}
      * @param initialState the initial state passed to the first check invocation
      * @param config the waitForCondition configuration (wait strategy, custom SerDes)
@@ -433,7 +434,7 @@ public interface DurableContext extends BaseContext {
      */
     <T> DurableFuture<T> waitForConditionAsync(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
             WaitForConditionConfig<T> config);

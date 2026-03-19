@@ -23,14 +23,16 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 
 class ReplayValidationTest {
-    public static final String EXECUTION_NAME = "exec-name";
-    public static final String INVOCATION_ID = "invocation-id";
-    public static final String OPERATION_ID1 = TestUtils.hashOperationId("1");
+    private static final String EXECUTION_NAME = "exec-name";
+    private static final String EXECUTION_OP_ID = "invocation-id";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+    private static final String OPERATION_ID1 = TestUtils.hashOperationId("1");
 
     private DurableContext createTestContext(List<Operation> initialOperations) {
         var client = TestUtils.createMockClient();
         var executionOp = Operation.builder()
-                .id(INVOCATION_ID)
+                .id(EXECUTION_OP_ID)
                 .name(EXECUTION_NAME)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
@@ -40,12 +42,11 @@ class ReplayValidationTest {
         var initialExecutionState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
-                new DurableExecutionInput(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test", "test-token", initialExecutionState),
+                new DurableExecutionInput(EXECUTION_ARN, "test-token", initialExecutionState),
                 DurableConfig.builder().withDurableExecutionClient(client).build());
         var context = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
-        executionManager.setCurrentThreadContext(new ThreadContext(INVOCATION_ID + "-execution", ThreadType.CONTEXT));
+        executionManager.setCurrentThreadContext(new ThreadContext(EXECUTION_OP_ID + "-execution", ThreadType.CONTEXT));
 
         return context;
     }

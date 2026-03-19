@@ -13,6 +13,10 @@ import software.amazon.lambda.durable.testing.LocalMemoryExecutionClient;
 
 /** Integration tests that verify checkpoint behavior using LocalMemoryExecutionClient */
 class DurableExecutionCheckpointTest {
+    private static final String EXECUTION_NAME = "test-execution";
+    private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
 
     private DurableConfig configWithMockClient(LocalMemoryExecutionClient client) {
         return DurableConfig.builder().withDurableExecutionClient(client).build();
@@ -22,7 +26,7 @@ class DurableExecutionCheckpointTest {
     void testLargePayloadCheckpointing() {
         var client = new LocalMemoryExecutionClient();
         var executionOp = Operation.builder()
-                .id("0")
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -31,7 +35,7 @@ class DurableExecutionCheckpointTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
@@ -62,7 +66,7 @@ class DurableExecutionCheckpointTest {
     void testSmallPayloadNoExtraCheckpoint() {
         var client = new LocalMemoryExecutionClient();
         var executionOp = Operation.builder()
-                .id("0")
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -71,7 +75,7 @@ class DurableExecutionCheckpointTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))

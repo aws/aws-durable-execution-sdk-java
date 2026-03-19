@@ -24,8 +24,11 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 
 class DurableExecutionTest {
 
-    private static final String OPERATION_ID0 = TestUtils.hashOperationId("0");
+    private static final String EXECUTION_OP_ID = "20dae574-53da-37a1-bfd5-b0e2e6ec715d";
     private static final String OPERATION_ID1 = TestUtils.hashOperationId("1");
+    private static final String EXECUTION_NAME = "exec-name";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
 
     private DurableConfig configWithMockClient() {
         return DurableConfig.builder()
@@ -36,7 +39,7 @@ class DurableExecutionTest {
     @Test
     void testExecuteSuccess() {
         var executionOp = Operation.builder()
-                .id(OPERATION_ID0)
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -45,7 +48,7 @@ class DurableExecutionTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
@@ -66,7 +69,7 @@ class DurableExecutionTest {
     @Test
     void testExecutePending() {
         var executionOp = Operation.builder()
-                .id(OPERATION_ID0)
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -75,7 +78,7 @@ class DurableExecutionTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
@@ -99,7 +102,7 @@ class DurableExecutionTest {
     @Test
     void testExecuteFailure() {
         var executionOp = Operation.builder()
-                .id(OPERATION_ID0)
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -108,7 +111,7 @@ class DurableExecutionTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
@@ -132,7 +135,7 @@ class DurableExecutionTest {
     @Test
     void testExecuteReplay() {
         var executionOp = Operation.builder()
-                .id(OPERATION_ID0)
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -149,7 +152,7 @@ class DurableExecutionTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token2",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp, completedStep))
@@ -169,7 +172,7 @@ class DurableExecutionTest {
     @Test
     void testValidationNoOperations() {
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder().operations(List.of()).build());
 
@@ -178,7 +181,7 @@ class DurableExecutionTest {
                 () -> DurableExecutor.execute(
                         input, null, get(String.class), (userInput, ctx) -> "result", configWithMockClient()));
 
-        assertEquals("First operation must be EXECUTION", exception.getMessage());
+        assertEquals("EXECUTION operation not found", exception.getMessage());
     }
 
     @Test
@@ -191,7 +194,7 @@ class DurableExecutionTest {
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(stepOp))
@@ -202,19 +205,19 @@ class DurableExecutionTest {
                 () -> DurableExecutor.execute(
                         input, null, get(String.class), (userInput, ctx) -> "result", configWithMockClient()));
 
-        assertEquals("First operation must be EXECUTION", exception.getMessage());
+        assertEquals("EXECUTION operation not found", exception.getMessage());
     }
 
     @Test
     void testValidationMissingExecutionDetails() {
         var executionOp = Operation.builder()
-                .id(OPERATION_ID0)
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .build();
 
         var input = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
@@ -238,7 +241,7 @@ class DurableExecutionTest {
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown initially");
 
         var executionOp = Operation.builder()
-                .id(OPERATION_ID0)
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -247,7 +250,7 @@ class DurableExecutionTest {
                 .build();
 
         var input1 = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token1",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
@@ -266,7 +269,7 @@ class DurableExecutionTest {
 
         // Create second input with different execution operation
         var executionOp2 = Operation.builder()
-                .id(OPERATION_ID0)
+                .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .executionDetails(ExecutionDetails.builder()
@@ -275,7 +278,7 @@ class DurableExecutionTest {
                 .build();
 
         var input2 = new DurableExecutionInput(
-                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                EXECUTION_ARN,
                 "token2",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp2))

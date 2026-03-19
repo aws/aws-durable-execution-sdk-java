@@ -3,10 +3,12 @@
 package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,6 +72,18 @@ class ConcurrencyOperationTest {
         when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         // All child operations are NOT in replay
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
+        // Simulate the real backend: the parent concurrency operation is available in storage after completion
+        // so that waitForOperationCompletion() can find it. TestConcurrencyOperation.handleSuccess/Failure are no-ops
+        // (no checkpoint sent), so we stub this unconditionally for OPERATION_ID.
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .id(OPERATION_ID)
+                        .name("test-concurrency")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .build());
+        when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
     }
 
     private TestConcurrencyOperation createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount)
@@ -138,7 +152,7 @@ class ConcurrencyOperationTest {
                 TypeToken.get(String.class),
                 SER_DES);
 
-        runJoin(op);
+        op.exposedJoin();
 
         assertTrue(op.isSuccessHandled());
         assertFalse(op.isFailureHandled());
@@ -171,7 +185,7 @@ class ConcurrencyOperationTest {
                 TypeToken.get(String.class),
                 SER_DES);
 
-        runJoin(op);
+        op.exposedJoin();
 
         assertTrue(op.isSuccessHandled());
         assertEquals(1, op.getSucceededCount());
@@ -189,14 +203,6 @@ class ConcurrencyOperationTest {
         // so the parentContext passed to createItem must be that child context, not durableContext itself
         assertNotSame(durableContext, op.getLastParentContext());
         assertSame(childContext, op.getLastParentContext());
-    }
-
-    // ===== Helpers =====
-
-    private void runJoin(TestConcurrencyOperation op) throws InterruptedException {
-        var t = new Thread(op::exposedJoin);
-        t.start();
-        t.join(2000);
     }
 
     // ===== Test subclass =====
@@ -253,11 +259,21 @@ class ConcurrencyOperationTest {
         @Override
         protected void handleSuccess() {
             successHandled = true;
+            // Simulate the checkpoint ACK that a real subclass would receive after sendOperationUpdate.
+            // This drives completionFuture to completion so waitForOperationCompletion() unblocks.
+            onCheckpointComplete(Operation.builder()
+                    .id(getOperationId())
+                    .status(OperationStatus.SUCCEEDED)
+                    .build());
         }
 
         @Override
         protected void handleFailure(ConcurrencyCompletionStatus completionStatus) {
             failureHandled = true;
+            onCheckpointComplete(Operation.builder()
+                    .id(getOperationId())
+                    .status(OperationStatus.SUCCEEDED) // always success for parallel
+                    .build());
         }
 
         @Override

@@ -50,13 +50,12 @@ import software.amazon.lambda.durable.serde.SerDes;
  * <pre>{@code
  * @Override
  * protected DurableConfig createConfiguration() {
- *     LambdaClient lambdaClient = LambdaClient.builder()
+ *     LambdaClientBuilder lambdaClientBuilder = LambdaClient.builder()
  *         .region(Region.US_WEST_2)
- *         .credentialsProvider(ProfileCredentialsProvider.create("my-profile"))
- *         .build();
+ *         .credentialsProvider(ProfileCredentialsProvider.create("my-profile"));
  *
  *     return DurableConfig.builder()
- *         .withLambdaClient(lambdaClient)
+ *         .withLambdaClientBuilder(lambdaClientBuilder)
  *         .build();
  * }
  * }</pre>

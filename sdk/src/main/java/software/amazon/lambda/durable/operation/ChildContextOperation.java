@@ -194,12 +194,13 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
     private void handleChildContextFailure(Throwable exception) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
-        if (exception instanceof SuspendExecutionException) {
+        if (exception instanceof SuspendExecutionException suspendExecutionException) {
             // Rethrow Error immediately — do not checkpoint
-            ExceptionHelper.sneakyThrow(exception);
+            throw suspendExecutionException;
         }
-        if (exception instanceof UnrecoverableDurableExecutionException) {
-            terminateExecution((UnrecoverableDurableExecutionException) exception);
+        if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
+            // terminate the execution and throw the exception if it's not recoverable
+            terminateExecution(unrecoverableDurableExecutionException);
         }
 
         // Skip checkpointing if parent ConcurrencyOperation has already completed —

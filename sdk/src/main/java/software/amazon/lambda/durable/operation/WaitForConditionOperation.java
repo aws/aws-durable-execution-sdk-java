@@ -105,11 +105,7 @@ public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
         var checkpointData = stepDetails != null ? stepDetails.result() : null;
         T currentState; // Get current state
         if (checkpointData != null) {
-            try {
-                currentState = deserializeResult(checkpointData);
-            } catch (Exception e) {
-                currentState = initialState;
-            }
+            currentState = deserializeResult(checkpointData);
         } else {
             currentState = initialState;
         }
@@ -182,8 +178,8 @@ public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
 
     private void handleCheckFailure(Throwable exception) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
-        if (exception instanceof SuspendExecutionException) {
-            ExceptionHelper.sneakyThrow(exception);
+        if (exception instanceof SuspendExecutionException suspendExecutionException) {
+            throw suspendExecutionException;
         }
         if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {
             terminateExecution(unrecoverable);

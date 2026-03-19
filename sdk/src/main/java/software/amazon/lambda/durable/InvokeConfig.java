@@ -52,6 +52,15 @@ public class InvokeConfig {
             this.tenantId = tenantId;
         }
 
+        /**
+         * Sets the tenant ID for the invoke operation.
+         *
+         * <p>The tenant ID is used to isolate execution state for different tenants. It's required when invoking
+         * multi-tenant functions.
+         *
+         * @param tenantId the tenant ID to use
+         * @return this builder for method chaining
+         */
         public Builder tenantId(String tenantId) {
             this.tenantId = tenantId;
             return this;
