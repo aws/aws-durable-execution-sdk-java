@@ -29,7 +29,9 @@ public class AwsSdkV2Module extends SimpleModule {
      * List of AWS SDK v2 classes that require custom serialization/deserialization. Add new SDK classes here to
      * automatically register serializers and deserializers.
      *
-     * <p>See https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html
+     * <p>See <a
+     * href="https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/migration-serialization-changes.html">serialization
+     * differences</a>
      */
     private static final List<Class<?>> SDK_CLASSES =
             List.of(Operation.class, ErrorObject.class, CheckpointUpdatedExecutionState.class);

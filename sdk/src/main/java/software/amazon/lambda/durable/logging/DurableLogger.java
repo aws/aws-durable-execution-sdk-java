@@ -45,27 +45,25 @@ public class DurableLogger {
         }
 
         if (context instanceof DurableContext) {
-            // context thread - context id
+            // context thread - context id and name
             if (context.getContextId() != null) {
                 MDC.put(MDC_CONTEXT_ID, context.getContextId());
             }
             if (context.getContextName() != null) {
                 MDC.put(MDC_CONTEXT_NAME, context.getContextName());
             }
-        } else {
-            // step context
+        } else if (context instanceof StepContext stepContext) {
+            // In step context, context id is the operation id, context name is the operation name
             var operationId = context.getContextId();
-            // step context - step operation id
             MDC.put(MDC_OPERATION_ID, operationId);
-            // step context - step operation name
             if (context.getContextName() != null) {
                 MDC.put(MDC_OPERATION_NAME, context.getContextName());
             }
-            MDC.put(MDC_ATTEMPT, String.valueOf(((StepContext) context).getAttempt()));
+            MDC.put(MDC_ATTEMPT, String.valueOf(stepContext.getAttempt()));
         }
     }
 
-    /** Clears all MDC entries set by this logger. */
+    /** Clears all MDC entries. User set MDC entries will also be removed as the thread will not be used anymore. */
     public void close() {
         MDC.clear();
     }

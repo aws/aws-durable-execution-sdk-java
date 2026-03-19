@@ -384,4 +384,81 @@ class DurableConfigTest {
 
         assertEquals(Duration.ofSeconds(0), config.getCheckpointDelay());
     }
+
+    // --- validateConfiguration tests ---
+
+    @Test
+    void validateConfiguration_PassesForValidConfig() {
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withSerDes(mockSerDes)
+                .withExecutorService(mockExecutor)
+                .build();
+
+        // Should not throw — all fields are set
+        config.validateConfiguration();
+    }
+
+    @Test
+    void validateConfiguration_ThrowsWhenDurableExecutionClientIsNull() throws Exception {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        setField(config, "durableExecutionClient", null);
+
+        var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
+        assertEquals("DurableExecutionClient configuration failed", ex.getMessage());
+    }
+
+    @Test
+    void validateConfiguration_ThrowsWhenSerDesIsNull() throws Exception {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        setField(config, "serDes", null);
+
+        var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
+        assertEquals("SerDes configuration failed", ex.getMessage());
+    }
+
+    @Test
+    void validateConfiguration_ThrowsWhenExecutorServiceIsNull() throws Exception {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        setField(config, "executorService", null);
+
+        var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
+        assertEquals("ExecutorService configuration failed", ex.getMessage());
+    }
+
+    @Test
+    void validateConfiguration_ChecksClientBeforeSerDes() throws Exception {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        setField(config, "durableExecutionClient", null);
+        setField(config, "serDes", null);
+
+        var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
+        assertEquals("DurableExecutionClient configuration failed", ex.getMessage());
+    }
+
+    @Test
+    void validateConfiguration_ChecksSerDesBeforeExecutorService() throws Exception {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        setField(config, "serDes", null);
+        setField(config, "executorService", null);
+
+        var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
+        assertEquals("SerDes configuration failed", ex.getMessage());
+    }
+
+    private static void setField(Object target, String fieldName, Object value) throws Exception {
+        var field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
 }

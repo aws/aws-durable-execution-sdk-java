@@ -38,6 +38,8 @@ public class DurableExecutor {
     // Lambda response size limit is 6MB minus small epsilon for envelope
     private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
 
+    private DurableExecutor() {}
+
     public static <I, O> DurableExecutionOutput execute(
             DurableExecutionInput input,
             Context lambdaContext,
@@ -115,11 +117,11 @@ public class DurableExecutor {
 
     private static ErrorObject buildErrorObject(Throwable e, SerDes serDes) {
         // exceptions thrown from operations, e.g. Step
-        if (e instanceof DurableOperationException) {
-            return ((DurableOperationException) e).getErrorObject();
+        if (e instanceof DurableOperationException durableOperationException) {
+            return durableOperationException.getErrorObject();
         }
-        if (e instanceof UnrecoverableDurableExecutionException) {
-            return ((UnrecoverableDurableExecutionException) e).getErrorObject();
+        if (e instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
+            return unrecoverableDurableExecutionException.getErrorObject();
         }
         // exceptions thrown from non-operation code
         return ExceptionHelper.buildErrorObject(e, serDes);
@@ -134,6 +136,16 @@ public class DurableExecutor {
         return serDes.deserialize(inputPayload, inputType);
     }
 
+    /**
+     * Wraps a user handler in a RequestHandler that can be used by the Lambda runtime.
+     *
+     * @param inputType the type token for the input
+     * @param handler the handler function
+     * @param config the durable config
+     * @return a request handler that executes the durable function
+     * @param <I> the type of the input
+     * @param <O> the type of the output
+     */
     public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handler, DurableConfig config) {
         return (input, context) -> execute(input, context, inputType, handler, config);

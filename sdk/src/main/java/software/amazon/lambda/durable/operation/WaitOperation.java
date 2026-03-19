@@ -39,8 +39,6 @@ public class WaitOperation extends BaseDurableOperation<Void> {
     /** Starts the operation. */
     @Override
     protected void start() {
-        Duration remainingWaitTime = duration;
-
         // First execution - checkpoint with full duration
         var update = OperationUpdate.builder()
                 .action(OperationAction.START)
@@ -49,28 +47,32 @@ public class WaitOperation extends BaseDurableOperation<Void> {
                         .build());
 
         sendOperationUpdate(update);
-        logger.debug("Remaining wait time: {} seconds", remainingWaitTime.getSeconds());
-        pollForOperationUpdates(remainingWaitTime);
+        pollForWaitExpiration();
     }
 
     /** Replays the operation. */
     @Override
     protected void replay(Operation existing) {
-        Duration remainingWaitTime = duration;
-
         if (existing.status() == OperationStatus.SUCCEEDED) {
             // Wait already completed
             markAlreadyCompleted();
             return;
         }
-        // Replay - calculate remaining time from scheduledEndTimestamp
-        // TODO: if the checkpoint is slow remaining wait time might be off. Track
-        // endTimestamp instead and move calculation in front of polling start.
-        if (existing.waitDetails() != null && existing.waitDetails().scheduledEndTimestamp() != null) {
+
+        pollForWaitExpiration();
+    }
+
+    private void pollForWaitExpiration() {
+        // Always calculate remaining time from scheduledEndTimestamp if scheduledEndTimestamp exists
+        var remainingWaitTime = duration;
+        var existing = getOperation();
+        if (existing != null
+                && existing.waitDetails() != null
+                && existing.waitDetails().scheduledEndTimestamp() != null) {
             remainingWaitTime =
                     Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());
         }
-        logger.debug("Remaining wait time: {} seconds", remainingWaitTime.getSeconds());
+        logger.debug("Remaining wait time: {} ms", remainingWaitTime.toMillis());
         pollForOperationUpdates(remainingWaitTime);
     }
 

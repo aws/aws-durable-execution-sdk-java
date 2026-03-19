@@ -178,8 +178,8 @@ public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
 
     private void handleCheckFailure(Throwable exception) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
-        if (exception instanceof SuspendExecutionException) {
-            ExceptionHelper.sneakyThrow(exception);
+        if (exception instanceof SuspendExecutionException suspendExecutionException) {
+            throw suspendExecutionException;
         }
         if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {
             terminateExecution(unrecoverable);

@@ -87,7 +87,7 @@ public class MyHandler extends DurableHandler<Input, Output> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-            .withLambdaClient(customLambdaClient)
+            .withLambdaClientBuilder(customLambdaClientBuilder)
             .withSerDes(new CustomSerDes())
             .withExecutorService(Executors.newFixedThreadPool(4))
             .build();
@@ -95,12 +95,12 @@ public class MyHandler extends DurableHandler<Input, Output> {
 }
 ```
 
-| Option | Default |
-|--------|---------|
-| `lambdaClient` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/com/amazonaws/lambda/durable/DurableConfig.java)) |
-| `serDes` | `JacksonSerDes` |
-| `executorService` | `Executors.newCachedThreadPool()` (for user-defined operations only) |
-| `loggerConfig` | `LoggerConfig.defaults()` (suppress replay logs) |
+| Option                | Default                                                                                                                                                                   |
+|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lambdaClientBuilder` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/com/amazonaws/lambda/durable/DurableConfig.java)) |
+| `serDes`              | `JacksonSerDes`                                                                                                                                                           |
+| `executorService`     | `Executors.newCachedThreadPool()` (for user-defined operations only)                                                                                                      |
+| `loggerConfig`        | `LoggerConfig.defaults()` (suppress replay logs)                                                                                                                          |
 
 ### Thread Pool Architecture
 
@@ -507,7 +507,7 @@ Implementations:
 - `LambdaDurableFunctionsClient` - Production (wraps AWS SDK)
 - `LocalMemoryExecutionClient` - Testing (in-memory)
 
-For production customization, use `DurableConfig.builder().withLambdaClient(lambdaClient)`.
+For production customization, use `DurableConfig.builder().withLambdaClientBuilder(lambdaClientBuilder)`.
 For testing, use `DurableConfig.builder().withDurableExecutionClient(localMemoryClient)`.
 
 ---
@@ -734,12 +734,12 @@ When a context thread calls `ctx.step(...)`, the following coordination occurs:
 
 ### Sequence: Wait with Suspension
 
-| Seq | Context Thread                                                                                                                 | System Thread          |
-|-----|--------------------------------------------------------------------------------------------------------------------------------|------------------------|
-| 1   | Create `WaitOperation` + `completionFuture`. Call `execute()`. `execute()` calls `start()` → checkpoint WAIT with duration → `pollForOperationUpdates(remainingWaitTime)`.                                                                |  Begin polling backend.                      |
-| 2   | `wait()` calls `get()` → `waitForOperationCompletion()`. Attach `thenRun(re-register)`. Deregister context thread.             | (polling)              |
-| 3   | `activeThreads` is empty → `suspendExecution()` → `executionExceptionFuture.completeExceptionally(SuspendExecutionException)`. | —                      |
-| 4   | `runUntilCompleteOrSuspend` resolves with `SuspendExecutionException` → return `PENDING`.                                      | —                      |
+| Seq | Context Thread                                                                                                                                                             | System Thread          |
+|-----|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------|
+| 1   | Create `WaitOperation` + `completionFuture`. Call `execute()`. `execute()` calls `start()` → checkpoint WAIT with duration → `pollForOperationUpdates(remainingWaitTime)`. | Begin polling backend. |
+| 2   | `wait()` calls `get()` → `waitForOperationCompletion()`. Attach `thenRun(re-register)`. Deregister context thread.                                                         | (polling)              |
+| 3   | `activeThreads` is empty → `suspendExecution()` → `executionExceptionFuture.completeExceptionally(SuspendExecutionException)`.                                             | —                      |
+| 4   | `runUntilCompleteOrSuspend` resolves with `SuspendExecutionException` → return `PENDING`.                                                                                  | —                      |
 
 On re-invocation, the wait replays. If the scheduled end time has passed, `markAlreadyCompleted()` fires and the context thread continues without deregistering.
 
