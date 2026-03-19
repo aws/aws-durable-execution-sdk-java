@@ -244,7 +244,7 @@ class ParallelOperationTest {
 
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
-        verify(executionManager, never())
+        verify(executionManager, times(1))
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
     }
 

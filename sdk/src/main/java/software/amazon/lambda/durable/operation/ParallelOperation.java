@@ -12,6 +12,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ConcurrencyExecutionException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -42,7 +43,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
-    private boolean replaying = false;
+    private boolean skipCheckpoint = false;
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
@@ -81,7 +82,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
     @Override
     protected void handleSuccess() {
-        if (replaying) {
+        if (skipCheckpoint) {
             // Do not send checkpoint during replay
             return;
         }
@@ -107,7 +108,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
     protected void replay(Operation existing) {
         // No-op: child branches handle their own replay via ChildContextOperation.replay().
         // Set replaying=true so handleSuccess() skips re-checkpointing the already-completed parallel context.
-        replaying = true;
+        skipCheckpoint = ExecutionManager.isTerminalStatus(existing.status());
     }
 
     @Override
