@@ -2,35 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
+import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
+import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
  * Configuration for {@code waitForCondition} operations.
  *
- * <p>Bundles the wait strategy, initial state, and optional SerDes for a waitForCondition call. Use
- * {@link #builder(WaitForConditionWaitStrategy, Object)} to create instances.
+ * <p>Holds only optional parameters for a waitForCondition call. Required parameters ({@code initialState},
+ * {@code checkFunc}) are direct method arguments on {@link DurableContext#waitForCondition}. Use {@link #builder()} to
+ * create instances.
  *
  * @param <T> the type of state being polled
  */
 public class WaitForConditionConfig<T> {
     private final WaitForConditionWaitStrategy<T> waitStrategy;
-    private final T initialState;
     private final SerDes serDes;
 
     private WaitForConditionConfig(Builder<T> builder) {
         this.waitStrategy = builder.waitStrategy;
-        this.initialState = builder.initialState;
         this.serDes = builder.serDes;
     }
 
-    /** Returns the wait strategy that controls polling behavior. */
+    /**
+     * Returns the wait strategy that controls polling behavior. If no strategy was explicitly set, returns the default
+     * strategy from {@link WaitStrategies#defaultStrategy()}.
+     */
     public WaitForConditionWaitStrategy<T> waitStrategy() {
-        return waitStrategy;
-    }
-
-    /** Returns the initial state passed to the first check function invocation. */
-    public T initialState() {
-        return initialState;
+        return waitStrategy != null ? waitStrategy : WaitStrategies.defaultStrategy();
     }
 
     /** Returns the custom serializer, or null if not specified (uses default SerDes). */
@@ -39,32 +38,46 @@ public class WaitForConditionConfig<T> {
     }
 
     /**
-     * Creates a new builder with the required wait strategy and initial state.
+     * Returns a new builder initialized with the values from this config. Useful internally for injecting default
+     * SerDes.
      *
-     * @param waitStrategy the strategy controlling polling intervals and termination
-     * @param initialState the initial state for the first check invocation
+     * @return a new builder pre-populated with this config's values
+     */
+    public Builder<T> toBuilder() {
+        var b = new Builder<T>();
+        b.waitStrategy = this.waitStrategy;
+        b.serDes = this.serDes;
+        return b;
+    }
+
+    /**
+     * Creates a new builder for {@code WaitForConditionConfig}. All fields are optional.
+     *
      * @param <T> the type of state being polled
      * @return a new builder instance
-     * @throws IllegalArgumentException if waitStrategy or initialState is null
      */
-    public static <T> Builder<T> builder(WaitForConditionWaitStrategy<T> waitStrategy, T initialState) {
-        if (waitStrategy == null) {
-            throw new IllegalArgumentException("waitStrategy must not be null");
-        }
-        if (initialState == null) {
-            throw new IllegalArgumentException("initialState must not be null");
-        }
-        return new Builder<>(waitStrategy, initialState);
+    public static <T> Builder<T> builder() {
+        return new Builder<>();
     }
 
     public static class Builder<T> {
-        private final WaitForConditionWaitStrategy<T> waitStrategy;
-        private final T initialState;
+        private WaitForConditionWaitStrategy<T> waitStrategy;
         private SerDes serDes;
 
-        private Builder(WaitForConditionWaitStrategy<T> waitStrategy, T initialState) {
+        private Builder() {}
+
+        /**
+         * Sets the wait strategy for the waitForCondition operation.
+         *
+         * <p>If not specified, the default exponential backoff strategy from {@link WaitStrategies#defaultStrategy()}
+         * is used.
+         *
+         * @param waitStrategy the strategy controlling polling intervals and termination
+         * @return this builder for method chaining
+         */
+        public Builder<T> waitStrategy(WaitForConditionWaitStrategy<T> waitStrategy) {
             this.waitStrategy = waitStrategy;
-            this.initialState = initialState;
+            return this;
         }
 
         /**

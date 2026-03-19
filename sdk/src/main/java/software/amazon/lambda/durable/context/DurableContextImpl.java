@@ -28,6 +28,7 @@ import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.WaitForCallbackConfig;
 import software.amazon.lambda.durable.WaitForConditionConfig;
+import software.amazon.lambda.durable.WaitForConditionResult;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -67,7 +68,24 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Context lambdaContext,
             String contextId,
             String contextName) {
-        super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);
+        this(executionManager, durableConfig, lambdaContext, contextId, contextName, true);
+    }
+
+    private DurableContextImpl(
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String contextId,
+            String contextName,
+            boolean setCurrentThreadContext) {
+        super(
+                executionManager,
+                durableConfig,
+                lambdaContext,
+                contextId,
+                contextName,
+                ThreadType.CONTEXT,
+                setCurrentThreadContext);
         operationIdGenerator = new OperationIdGenerator(contextId);
     }
 
@@ -96,6 +114,22 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     public DurableContextImpl createChildContext(String childContextId, String childContextName) {
         return new DurableContextImpl(
                 getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName);
+    }
+
+    /**
+     * Creates a child context without setting the current thread context.
+     *
+     * <p>Use this when the child context is being created on a thread that should not have its thread-local context
+     * overwritten (e.g. when constructing the context ahead of running it on a separate thread).
+     *
+     * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
+     * @param childContextName the name of the child context
+     * @return a new DurableContext for the child context
+     */
+    public DurableContextImpl createChildContextWithoutSettingThreadContext(
+            String childContextId, String childContextName) {
+        return new DurableContextImpl(
+                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName, false);
     }
 
     /**
@@ -643,9 +677,25 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     public <T> T waitForCondition(
             String name,
             Class<T> resultType,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState) {
+        return waitForConditionAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        checkFunc,
+                        initialState,
+                        WaitForConditionConfig.<T>builder().build())
+                .get();
+    }
+
+    @Override
+    public <T> T waitForCondition(
+            String name,
+            Class<T> resultType,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config) {
-        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config)
+        return waitForConditionAsync(name, resultType, checkFunc, initialState, config)
                 .get();
     }
 
@@ -653,38 +703,86 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     public <T> T waitForCondition(
             String name,
             TypeToken<T> typeToken,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState) {
+        return waitForConditionAsync(
+                        name,
+                        typeToken,
+                        checkFunc,
+                        initialState,
+                        WaitForConditionConfig.<T>builder().build())
+                .get();
+    }
+
+    @Override
+    public <T> T waitForCondition(
+            String name,
+            TypeToken<T> typeToken,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config) {
-        return waitForConditionAsync(name, typeToken, checkFunc, config).get();
+        return waitForConditionAsync(name, typeToken, checkFunc, initialState, config)
+                .get();
     }
 
     @Override
     public <T> DurableFuture<T> waitForConditionAsync(
             String name,
             Class<T> resultType,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState) {
+        return waitForConditionAsync(
+                name,
+                TypeToken.get(resultType),
+                checkFunc,
+                initialState,
+                WaitForConditionConfig.<T>builder().build());
+    }
+
+    @Override
+    public <T> DurableFuture<T> waitForConditionAsync(
+            String name,
+            Class<T> resultType,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config) {
-        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config);
+        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, initialState, config);
     }
 
     @Override
     public <T> DurableFuture<T> waitForConditionAsync(
             String name,
             TypeToken<T> typeToken,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState) {
+        return waitForConditionAsync(
+                name,
+                typeToken,
+                checkFunc,
+                initialState,
+                WaitForConditionConfig.<T>builder().build());
+    }
+
+    @Override
+    public <T> DurableFuture<T> waitForConditionAsync(
+            String name,
+            TypeToken<T> typeToken,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        Objects.requireNonNull(checkFunc, "checkFunc cannot be null");
+        Objects.requireNonNull(initialState, "initialState cannot be null");
         ParameterValidator.validateOperationName(name);
 
         if (config.serDes() == null) {
-            config = WaitForConditionConfig.<T>builder(config.waitStrategy(), config.initialState())
-                    .serDes(getDurableConfig().getSerDes())
-                    .build();
+            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
         var operationId = nextOperationId();
 
-        var operation = new WaitForConditionOperation<>(operationId, name, checkFunc, typeToken, config, this);
+        var operation =
+                new WaitForConditionOperation<>(operationId, name, checkFunc, typeToken, initialState, config, this);
 
         operation.execute();
 

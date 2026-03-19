@@ -352,27 +352,89 @@ public interface DurableContext extends BaseContext {
             BiConsumer<String, StepContext> func,
             WaitForCallbackConfig waitForCallbackConfig);
 
+    /**
+     * Polls a condition function until it signals done, blocking until complete.
+     *
+     * @param <T> the type of state being polled
+     * @param name the unique operation name within this context
+     * @param resultType the result class for deserialization
+     * @param checkFunc the function that evaluates the condition and returns a {@link WaitForConditionResult}
+     * @param initialState the initial state passed to the first check invocation
+     * @return the final state value when the condition is met
+     */
     <T> T waitForCondition(
             String name,
             Class<T> resultType,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState);
+
+    /** Polls a condition function until it signals done, using a custom configuration, blocking until complete. */
+    <T> T waitForCondition(
+            String name,
+            Class<T> resultType,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config);
 
+    /** Polls a condition function until it signals done, using a {@link TypeToken}, blocking until complete. */
     <T> T waitForCondition(
             String name,
             TypeToken<T> typeToken,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState);
+
+    /**
+     * Polls a condition function until it signals done, using a {@link TypeToken} and custom configuration, blocking
+     * until complete.
+     */
+    <T> T waitForCondition(
+            String name,
+            TypeToken<T> typeToken,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config);
 
+    /** Asynchronously polls a condition function until it signals done. */
     <T> DurableFuture<T> waitForConditionAsync(
             String name,
             Class<T> resultType,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState);
+
+    /** Asynchronously polls a condition function until it signals done, using custom configuration. */
+    <T> DurableFuture<T> waitForConditionAsync(
+            String name,
+            Class<T> resultType,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config);
 
+    /** Asynchronously polls a condition function until it signals done, using a {@link TypeToken}. */
     <T> DurableFuture<T> waitForConditionAsync(
             String name,
             TypeToken<T> typeToken,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState);
+
+    /**
+     * Asynchronously polls a condition function until it signals done, using a {@link TypeToken} and custom
+     * configuration.
+     *
+     * <p>This is the core waitForConditionAsync implementation. All other waitForCondition/waitForConditionAsync
+     * overloads delegate here.
+     *
+     * @param <T> the type of state being polled
+     * @param name the unique operation name within this context
+     * @param typeToken the type token for deserialization of generic types
+     * @param checkFunc the function that evaluates the condition and returns a {@link WaitForConditionResult}
+     * @param initialState the initial state passed to the first check invocation
+     * @param config the waitForCondition configuration (wait strategy, custom SerDes)
+     * @return a future representing the final state value
+     */
+    <T> DurableFuture<T> waitForConditionAsync(
+            String name,
+            TypeToken<T> typeToken,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            T initialState,
             WaitForConditionConfig<T> config);
 }

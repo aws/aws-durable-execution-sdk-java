@@ -37,6 +37,28 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
             String contextId,
             String contextName,
             ThreadType threadType) {
+        this(executionManager, durableConfig, lambdaContext, contextId, contextName, threadType, true);
+    }
+
+    /**
+     * Creates a new BaseContext instance.
+     *
+     * @param executionManager the execution manager for thread coordination and state management
+     * @param durableConfig the durable execution configuration
+     * @param lambdaContext the AWS Lambda runtime context
+     * @param contextId the context ID, null for root context, set for child contexts
+     * @param contextName the human-readable name for this context
+     * @param threadType the type of thread this context runs on
+     * @param setCurrentThreadContext whether to call setCurrentThreadContext on the execution manager
+     */
+    protected BaseContextImpl(
+            ExecutionManager executionManager,
+            DurableConfig durableConfig,
+            Context lambdaContext,
+            String contextId,
+            String contextName,
+            ThreadType threadType,
+            boolean setCurrentThreadContext) {
         this.executionManager = executionManager;
         this.durableConfig = durableConfig;
         this.lambdaContext = lambdaContext;
@@ -45,8 +67,10 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
         this.isReplaying = executionManager.hasOperationsForContext(contextId);
         this.threadType = threadType;
 
-        // write the thread id and type to thread local
-        executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));
+        if (setCurrentThreadContext) {
+            // write the thread id and type to thread local
+            executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));
+        }
     }
 
     // =============== accessors ================

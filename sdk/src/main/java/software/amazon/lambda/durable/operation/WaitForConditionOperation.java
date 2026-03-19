@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BiFunction;
@@ -14,7 +15,7 @@ import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.WaitForConditionConfig;
-import software.amazon.lambda.durable.WaitForConditionDecision;
+import software.amazon.lambda.durable.WaitForConditionResult;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -35,15 +36,17 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  */
 public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
 
-    private final BiFunction<T, StepContext, T> checkFunc;
+    private final BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc;
     private final WaitForConditionConfig<T> config;
+    private final T initialState;
     private final ExecutorService userExecutor;
 
     public WaitForConditionOperation(
             String operationId,
             String name,
-            BiFunction<T, StepContext, T> checkFunc,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             TypeToken<T> resultTypeToken,
+            T initialState,
             WaitForConditionConfig<T> config,
             DurableContextImpl durableContext) {
         super(
@@ -54,12 +57,13 @@ public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
 
         this.checkFunc = checkFunc;
         this.config = config;
+        this.initialState = initialState;
         this.userExecutor = durableContext.getDurableConfig().getExecutorService();
     }
 
     @Override
     protected void start() {
-        executeCheckLogic(config.initialState(), 0);
+        executeCheckLogic(initialState, 0);
     }
 
     @Override
@@ -104,10 +108,10 @@ public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
             try {
                 currentState = deserializeResult(checkpointData);
             } catch (Exception e) {
-                currentState = config.initialState();
+                currentState = initialState;
             }
         } else {
-            currentState = config.initialState();
+            currentState = initialState;
         }
         executeCheckLogic(currentState, attempt);
     }
@@ -136,48 +140,44 @@ public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
                             }
 
                             // Execute check function in user executor
-                            T newState = checkFunc.apply(currentState, stepContext);
+                            WaitForConditionResult<T> result = checkFunc.apply(currentState, stepContext);
 
-                            // Serialize/deserialize round-trip to ensure state is checkpoint-safe
-                            var serializedState = serializeResult(newState);
-                            T deserializedState = deserializeResult(serializedState);
+                            // Serialize/deserialize round-trip on the value to ensure state is checkpoint-safe
+                            var serializedState = serializeResult(result.value());
+                            T deserializedValue = deserializeResult(serializedState);
 
-                            // Evaluate wait strategy
-                            var decision = config.waitStrategy().evaluate(deserializedState, attempt);
+                            if (result.isDone()) {
+                                // Condition met — checkpoint SUCCEED
+                                var successUpdate = OperationUpdate.builder()
+                                        .action(OperationAction.SUCCEED)
+                                        .payload(serializedState);
+                                sendOperationUpdate(successUpdate);
+                            } else {
+                                // Compute delay from strategy
+                                Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);
 
-                            handleDecision(decision, serializedState, attempt);
+                                // Checkpoint RETRY with delay
+                                var retryUpdate = OperationUpdate.builder()
+                                        .action(OperationAction.RETRY)
+                                        .payload(serializedState)
+                                        .stepOptions(StepOptions.builder()
+                                                .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
+                                                .build());
+                                sendOperationUpdate(retryUpdate);
+
+                                // Poll for READY, then continue the loop
+                                pollForOperationUpdates()
+                                        .thenCompose(op -> op.status() == OperationStatus.READY
+                                                ? CompletableFuture.completedFuture(op)
+                                                : pollForOperationUpdates())
+                                        .thenRun(() -> executeCheckLogic(deserializedValue, attempt + 1));
+                            }
                         } catch (Throwable e) {
                             handleCheckFailure(e);
                         }
                     }
                 },
                 userExecutor);
-    }
-
-    private void handleDecision(WaitForConditionDecision decision, String serializedState, int attempt) {
-        if (!decision.shouldContinue()) {
-            // Condition met — checkpoint SUCCEED
-            var successUpdate =
-                    OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedState);
-            sendOperationUpdate(successUpdate);
-        } else {
-            // Checkpoint RETRY with delay
-            var retryUpdate = OperationUpdate.builder()
-                    .action(OperationAction.RETRY)
-                    .payload(serializedState)
-                    .stepOptions(StepOptions.builder()
-                            .nextAttemptDelaySeconds(
-                                    Math.toIntExact(decision.delay().toSeconds()))
-                            .build());
-            sendOperationUpdate(retryUpdate);
-
-            // Poll for READY, then continue the loop
-            pollForOperationUpdates()
-                    .thenCompose(op -> op.status() == OperationStatus.READY
-                            ? CompletableFuture.completedFuture(op)
-                            : pollForOperationUpdates())
-                    .thenRun(() -> executeCheckLogic(deserializeResult(serializedState), attempt + 1));
-        }
     }
 
     private void handleCheckFailure(Throwable exception) {

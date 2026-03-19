@@ -15,6 +15,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
@@ -29,6 +30,7 @@ class CloudBasedIntegrationTest {
     private static String account;
     private static String region;
     private static String functionNameSuffix;
+    private static LambdaClient lambdaClient;
 
     static boolean isEnabled() {
         var enabled = "true".equals(System.getProperty("test.cloud.enabled"));
@@ -51,11 +53,17 @@ class CloudBasedIntegrationTest {
         functionNameSuffix = System.getProperty("test.function.name.suffix", "");
 
         if (account == null || region == null) {
-            var sts = StsClient.create();
-            if (account == null) account = sts.getCallerIdentity().account();
-            if (region == null)
-                region = sts.serviceClientConfiguration().region().id();
+            try (var sts = StsClient.create()) {
+                if (account == null) account = sts.getCallerIdentity().account();
+                if (region == null)
+                    region = sts.serviceClientConfiguration().region().id();
+            }
         }
+
+        lambdaClient = LambdaClient.builder()
+                .credentialsProvider(DefaultCredentialsProvider.builder().build())
+                .region(Region.of(region))
+                .build();
 
         System.out.println("☁️ Running cloud integration tests against account " + account + " in " + region);
     }
@@ -68,7 +76,7 @@ class CloudBasedIntegrationTest {
     @Test
     void testSimpleStepExample() {
         var runner = CloudDurableTestRunner.create(
-                arn("simple-step-example"), new TypeToken<Map<String, String>>() {}, get(String.class));
+                arn("simple-step-example"), new TypeToken<Map<String, String>>() {}, get(String.class), lambdaClient);
         var result = runner.run(Map.of("message", "test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -82,7 +90,7 @@ class CloudBasedIntegrationTest {
     @Test
     void testNoopExampleWithLargeInput() {
         var runner = CloudDurableTestRunner.create(
-                arn("noop-example"), new TypeToken<Map<String, String>>() {}, get(String.class));
+                arn("noop-example"), new TypeToken<Map<String, String>>() {}, get(String.class), lambdaClient);
         // 6MB large input
         var largeInput = "A".repeat(1024 * 1024 * 6 - 12);
         var result = runner.run(Map.of("name", largeInput));
@@ -94,7 +102,7 @@ class CloudBasedIntegrationTest {
     @Test
     void testSimpleInvokeExample() {
         var runner = CloudDurableTestRunner.create(
-                arn("simple-invoke-example"), new TypeToken<Map<String, String>>() {}, get(String.class));
+                arn("simple-invoke-example"), new TypeToken<Map<String, String>>() {}, get(String.class), lambdaClient);
         var result = runner.run(Map.of("name", functionNameSuffix));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -111,7 +119,7 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testRetryExample() {
-        var runner = CloudDurableTestRunner.create(arn("retry-example"), String.class, String.class);
+        var runner = CloudDurableTestRunner.create(arn("retry-example"), String.class, String.class, lambdaClient);
         var result = runner.run("{}");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -131,7 +139,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testRetryInProcessExample() {
-        var runner = CloudDurableTestRunner.create(arn("retry-in-process-example"), String.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("retry-in-process-example"), String.class, String.class, lambdaClient);
         var result = runner.run("{}");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -153,7 +162,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testWaitExample() {
-        var runner = CloudDurableTestRunner.create(arn("wait-example"), GreetingRequest.class, String.class);
+        var runner =
+                CloudDurableTestRunner.create(arn("wait-example"), GreetingRequest.class, String.class, lambdaClient);
         var result = runner.run(new GreetingRequest("TestUser"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -171,7 +181,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testWaitAtLeastExample() {
-        var runner = CloudDurableTestRunner.create(arn("wait-at-least-example"), GreetingRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("wait-at-least-example"), GreetingRequest.class, String.class, lambdaClient);
         var result = runner.run(new GreetingRequest("TestUser"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -188,7 +199,7 @@ class CloudBasedIntegrationTest {
     @Test
     void testWaitAtLeastInProcessExample() {
         var runner = CloudDurableTestRunner.create(
-                arn("wait-at-least-in-process-example"), GreetingRequest.class, String.class);
+                arn("wait-at-least-in-process-example"), GreetingRequest.class, String.class, lambdaClient);
         var result = runner.run(new GreetingRequest("TestUser"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -205,7 +216,10 @@ class CloudBasedIntegrationTest {
     @Test
     void testGenericTypesExample() {
         var runner = CloudDurableTestRunner.create(
-                arn("generic-types-example"), GenericTypesExample.Input.class, GenericTypesExample.Output.class);
+                arn("generic-types-example"),
+                GenericTypesExample.Input.class,
+                GenericTypesExample.Output.class,
+                lambdaClient);
         var result = runner.run(new GenericTypesExample.Input("user123"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -244,7 +258,8 @@ class CloudBasedIntegrationTest {
         final TypeToken<Map<String, Map<String, List<String>>>> resultType = new TypeToken<>() {};
         final TypeToken<Map<String, String>> inputType = new TypeToken<>() {};
 
-        var runner = CloudDurableTestRunner.create(arn("generic-input-output-example"), inputType, resultType);
+        var runner =
+                CloudDurableTestRunner.create(arn("generic-input-output-example"), inputType, resultType, lambdaClient);
         var result = runner.run(new HashMap<>(Map.of("userId", "user123")));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -266,7 +281,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testCustomConfigExample() {
-        var runner = CloudDurableTestRunner.create(arn("custom-config-example"), String.class, String.class);
+        var runner =
+                CloudDurableTestRunner.create(arn("custom-config-example"), String.class, String.class, lambdaClient);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -295,7 +311,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testErrorHandlingExample() {
-        var runner = CloudDurableTestRunner.create(arn("error-handling-example"), String.class, String.class);
+        var runner =
+                CloudDurableTestRunner.create(arn("error-handling-example"), String.class, String.class, lambdaClient);
         var result = runner.run("test-input");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -310,8 +327,8 @@ class CloudBasedIntegrationTest {
     @Test
     void testCallbackExample() {
         // happy case covering both createCallback (approval) and waitForCallback (preapproval-callback)
-        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
-        var lambda = LambdaClient.create();
+        var runner = CloudDurableTestRunner.create(
+                arn("callback-example"), ApprovalRequest.class, String.class, lambdaClient);
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
@@ -319,7 +336,7 @@ class CloudBasedIntegrationTest {
         // Complete the preapproval callback
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambda.sendDurableExecutionCallbackSuccess(
+        lambdaClient.sendDurableExecutionCallbackSuccess(
                 req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
 
         // Wait for callback to appear
@@ -330,7 +347,7 @@ class CloudBasedIntegrationTest {
         assertNotNull(callbackId);
 
         // Complete the callback using AWS SDK
-        lambda.sendDurableExecutionCallbackSuccess(
+        lambdaClient.sendDurableExecutionCallbackSuccess(
                 req -> req.callbackId(callbackId).result(SdkBytes.fromUtf8String("\"approved\"")));
 
         // Wait for execution to complete
@@ -352,15 +369,15 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testCallbackExampleWithFailure() {
-        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
-        var lambda = LambdaClient.create();
+        var runner = CloudDurableTestRunner.create(
+                arn("callback-example"), ApprovalRequest.class, String.class, lambdaClient);
 
         // Start async execution
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0));
 
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambda.sendDurableExecutionCallbackSuccess(
+        lambdaClient.sendDurableExecutionCallbackSuccess(
                 req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
 
         // Wait for callback to appear
@@ -371,7 +388,7 @@ class CloudBasedIntegrationTest {
         assertNotNull(callbackId);
 
         // Fail the callback using AWS SDK
-        lambda.sendDurableExecutionCallbackFailure(req -> req.callbackId(callbackId)
+        lambdaClient.sendDurableExecutionCallbackFailure(req -> req.callbackId(callbackId)
                 .error(err -> err.errorType("ApprovalRejected").errorMessage("Approval rejected by manager")));
 
         // Wait for execution to complete
@@ -390,15 +407,15 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testCallbackExampleWithTimeout() {
-        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
-        var lambda = LambdaClient.create();
+        var runner = CloudDurableTestRunner.create(
+                arn("callback-example"), ApprovalRequest.class, String.class, lambdaClient);
 
         // Start async execution with 10 second timeout
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0, 10));
 
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambda.sendDurableExecutionCallbackSuccess(
+        lambdaClient.sendDurableExecutionCallbackSuccess(
                 req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
 
         // Wait for callback to appear
@@ -421,15 +438,15 @@ class CloudBasedIntegrationTest {
     @Test
     void testCallbackExampleWithWaitForCallbackFailure() {
         // fail the waitForCallback (preapproval-callback) callback
-        var runner = CloudDurableTestRunner.create(arn("callback-example"), ApprovalRequest.class, String.class);
-        var lambda = LambdaClient.create();
+        var runner = CloudDurableTestRunner.create(
+                arn("callback-example"), ApprovalRequest.class, String.class, lambdaClient);
 
         // Start async execution with 10 second timeout
         var execution = runner.startAsync(new ApprovalRequest("Purchase order", 5000.0, 10));
 
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambda.sendDurableExecutionCallbackFailure(
+        lambdaClient.sendDurableExecutionCallbackFailure(
                 req -> req.callbackId(preapprovalCallbackId).error(err -> err.errorMessage("preapproval denied")));
 
         // Wait for callback to appear
@@ -451,7 +468,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testChildContextExample() {
-        var runner = CloudDurableTestRunner.create(arn("child-context-example"), GreetingRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("child-context-example"), GreetingRequest.class, String.class, lambdaClient);
         var result = runner.run(new GreetingRequest("Alice"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -474,7 +492,8 @@ class CloudBasedIntegrationTest {
             var runner = CloudDurableTestRunner.create(
                     arn("many-async-steps-example"),
                     ManyAsyncStepsExample.Input.class,
-                    ManyAsyncStepsExample.Output.class);
+                    ManyAsyncStepsExample.Output.class,
+                    lambdaClient);
             var result = runner.run(new ManyAsyncStepsExample.Input(2, steps));
 
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -511,7 +530,8 @@ class CloudBasedIntegrationTest {
             var runner = CloudDurableTestRunner.create(
                     arn("many-async-child-context-example"),
                     ManyAsyncChildContextExample.Input.class,
-                    ManyAsyncChildContextExample.Output.class);
+                    ManyAsyncChildContextExample.Output.class,
+                    lambdaClient);
             var result = runner.run(new ManyAsyncChildContextExample.Input(2, steps));
 
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -542,7 +562,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testSimpleMapExample() {
-        var runner = CloudDurableTestRunner.create(arn("simple-map-example"), GreetingRequest.class, String.class);
+        var runner = CloudDurableTestRunner.create(
+                arn("simple-map-example"), GreetingRequest.class, String.class, lambdaClient);
         var result = runner.run(new GreetingRequest("Alice"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());

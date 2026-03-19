@@ -12,11 +12,13 @@ import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.retry.JitterStrategy;
+import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
+import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class WaitForConditionIntegrationTest {
 
-    // ---- 5.1: Basic integration tests ----
+    // ---- Basic integration tests ----
 
     @Test
     void testBasicPollingSucceedsAfterNChecks() {
@@ -24,20 +26,24 @@ class WaitForConditionIntegrationTest {
         var targetCount = 3;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            var strategy = WaitStrategies.<Integer>builder(state -> state < targetCount)
-                    .initialDelay(Duration.ofSeconds(1))
-                    .jitter(JitterStrategy.NONE)
-                    .build();
+            var strategy = WaitStrategies.<Integer>exponentialBackoff(
+                    60, Duration.ofSeconds(1), Duration.ofSeconds(300), 1.5, JitterStrategy.NONE);
 
-            var config = WaitForConditionConfig.<Integer>builder(strategy, 0).build();
+            var config = WaitForConditionConfig.<Integer>builder()
+                    .waitStrategy(strategy)
+                    .build();
 
             return ctx.waitForCondition(
                     "poll-counter",
                     Integer.class,
                     (state, stepCtx) -> {
                         checkCount.incrementAndGet();
-                        return state + 1;
+                        var next = state + 1;
+                        return next >= targetCount
+                                ? WaitForConditionResult.stopPolling(next)
+                                : WaitForConditionResult.continuePolling(next);
                     },
+                    0,
                     config);
         });
 
@@ -51,15 +57,11 @@ class WaitForConditionIntegrationTest {
     @Test
     void testCustomWaitStrategy() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            // Custom strategy: stop when state equals "done", fixed 2s delay
-            WaitForConditionWaitStrategy<String> customStrategy = (state, attempt) -> {
-                if ("done".equals(state)) {
-                    return WaitForConditionDecision.stopPolling();
-                }
-                return WaitForConditionDecision.continuePolling(Duration.ofSeconds(2));
-            };
+            // Custom strategy: fixed 2s delay
+            WaitForConditionWaitStrategy<String> customStrategy = (state, attempt) -> Duration.ofSeconds(2);
 
-            var config = WaitForConditionConfig.<String>builder(customStrategy, "pending")
+            var config = WaitForConditionConfig.<String>builder()
+                    .waitStrategy(customStrategy)
                     .build();
 
             return ctx.waitForCondition(
@@ -67,10 +69,11 @@ class WaitForConditionIntegrationTest {
                     String.class,
                     (state, stepCtx) -> {
                         if ("pending".equals(state)) {
-                            return "processing";
+                            return WaitForConditionResult.continuePolling("processing");
                         }
-                        return "done";
+                        return WaitForConditionResult.stopPolling("done");
                     },
+                    "pending",
                     config);
         });
 
@@ -83,16 +86,19 @@ class WaitForConditionIntegrationTest {
     @Test
     void testMaxAttemptsExceeded() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            var strategy = WaitStrategies.<String>builder(state -> true) // always continue
-                    .maxAttempts(3)
-                    .initialDelay(Duration.ofSeconds(1))
-                    .jitter(JitterStrategy.NONE)
+            var strategy = WaitStrategies.<String>exponentialBackoff(
+                    3, Duration.ofSeconds(1), Duration.ofSeconds(300), 1.5, JitterStrategy.NONE);
+
+            var config = WaitForConditionConfig.<String>builder()
+                    .waitStrategy(strategy)
                     .build();
 
-            var config =
-                    WaitForConditionConfig.<String>builder(strategy, "initial").build();
-
-            return ctx.waitForCondition("max-attempts", String.class, (state, stepCtx) -> state, config);
+            return ctx.waitForCondition(
+                    "max-attempts",
+                    String.class,
+                    (state, stepCtx) -> WaitForConditionResult.continuePolling(state),
+                    "initial",
+                    config);
         });
 
         var result = runner.runUntilComplete("test");
@@ -103,13 +109,12 @@ class WaitForConditionIntegrationTest {
     @Test
     void testCheckFunctionError() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            var strategy = WaitStrategies.<String>builder(state -> true)
-                    .initialDelay(Duration.ofSeconds(1))
-                    .jitter(JitterStrategy.NONE)
-                    .build();
+            var strategy = WaitStrategies.<String>exponentialBackoff(
+                    60, Duration.ofSeconds(1), Duration.ofSeconds(300), 1.5, JitterStrategy.NONE);
 
-            var config =
-                    WaitForConditionConfig.<String>builder(strategy, "initial").build();
+            var config = WaitForConditionConfig.<String>builder()
+                    .waitStrategy(strategy)
+                    .build();
 
             return ctx.waitForCondition(
                     "error-check",
@@ -117,6 +122,7 @@ class WaitForConditionIntegrationTest {
                     (state, stepCtx) -> {
                         throw new IllegalStateException("Check function failed");
                     },
+                    "initial",
                     config);
         });
 
@@ -130,20 +136,24 @@ class WaitForConditionIntegrationTest {
         var checkCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            var strategy = WaitStrategies.<Integer>builder(state -> state < 2)
-                    .initialDelay(Duration.ofSeconds(1))
-                    .jitter(JitterStrategy.NONE)
-                    .build();
+            var strategy = WaitStrategies.<Integer>exponentialBackoff(
+                    60, Duration.ofSeconds(1), Duration.ofSeconds(300), 1.5, JitterStrategy.NONE);
 
-            var config = WaitForConditionConfig.<Integer>builder(strategy, 0).build();
+            var config = WaitForConditionConfig.<Integer>builder()
+                    .waitStrategy(strategy)
+                    .build();
 
             var result = ctx.waitForCondition(
                     "replay-poll",
                     Integer.class,
                     (state, stepCtx) -> {
                         checkCount.incrementAndGet();
-                        return state + 1;
+                        var next = state + 1;
+                        return next >= 2
+                                ? WaitForConditionResult.stopPolling(next)
+                                : WaitForConditionResult.continuePolling(next);
                     },
+                    0,
                     config);
 
             return result.toString();
@@ -162,8 +172,7 @@ class WaitForConditionIntegrationTest {
         assertEquals(firstCheckCount, checkCount.get());
     }
 
-    // ---- 5.2: PBT — stopPolling completes with that state as result ----
-    // **Validates: Requirements 1.5, 2.1**
+    // ---- PBT — isDone=true completes with that state as result ----
 
     @RepeatedTest(50)
     void propertyStopPollingCompletesWithState() {
@@ -172,28 +181,33 @@ class WaitForConditionIntegrationTest {
         var target = random.nextInt(1, 11);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
-            // Strategy: stop when state reaches target
-            WaitForConditionWaitStrategy<Integer> strategy = (state, attempt) -> {
-                if (state >= target) {
-                    return WaitForConditionDecision.stopPolling();
-                }
-                return WaitForConditionDecision.continuePolling(Duration.ofSeconds(1));
-            };
+            var strategy = WaitStrategies.<Integer>fixedDelay(target + 1, Duration.ofSeconds(1));
 
-            var config = WaitForConditionConfig.<Integer>builder(strategy, 0).build();
+            var config = WaitForConditionConfig.<Integer>builder()
+                    .waitStrategy(strategy)
+                    .build();
 
-            return ctx.waitForCondition("stop-polling-prop", Integer.class, (state, stepCtx) -> state + 1, config);
+            return ctx.waitForCondition(
+                    "stop-polling-prop",
+                    Integer.class,
+                    (state, stepCtx) -> {
+                        var next = state + 1;
+                        return next >= target
+                                ? WaitForConditionResult.stopPolling(next)
+                                : WaitForConditionResult.continuePolling(next);
+                    },
+                    0,
+                    config);
         });
 
         var result = runner.runUntilComplete("test");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        // The result should be the state that caused stopPolling — which is target
+        // The result should be the state that caused isDone=true — which is target
         assertEquals(target, result.getResult(Integer.class));
     }
 
-    // ---- 5.3: PBT — wait strategy receives correct state and attempt ----
-    // **Validates: Requirements 1.3, 2.1**
+    // ---- PBT — wait strategy receives correct state and attempt ----
 
     @RepeatedTest(50)
     void propertyWaitStrategyReceivesCorrectStateAndAttempt() {
@@ -207,28 +221,39 @@ class WaitForConditionIntegrationTest {
             WaitForConditionWaitStrategy<Integer> strategy = (state, attempt) -> {
                 observedStates.add(state);
                 observedAttempts.add(attempt);
-                if (attempt + 1 >= totalChecks) {
-                    return WaitForConditionDecision.stopPolling();
-                }
-                return WaitForConditionDecision.continuePolling(Duration.ofSeconds(1));
+                return Duration.ofSeconds(1);
             };
 
-            var config = WaitForConditionConfig.<Integer>builder(strategy, 0).build();
+            var config = WaitForConditionConfig.<Integer>builder()
+                    .waitStrategy(strategy)
+                    .build();
 
-            return ctx.waitForCondition("state-attempt-prop", Integer.class, (state, stepCtx) -> state + 1, config);
+            return ctx.waitForCondition(
+                    "state-attempt-prop",
+                    Integer.class,
+                    (state, stepCtx) -> {
+                        var next = state + 1;
+                        return next >= totalChecks
+                                ? WaitForConditionResult.stopPolling(next)
+                                : WaitForConditionResult.continuePolling(next);
+                    },
+                    0,
+                    config);
         });
 
         var result = runner.runUntilComplete("test");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        // Verify each strategy call received the correct state and attempt
-        assertEquals(totalChecks, observedStates.size());
-        assertEquals(totalChecks, observedAttempts.size());
+        // The strategy is only called when isDone=false, so it's called totalChecks-1 times
+        // (the last check returns isDone=true, so the strategy is not called)
+        var expectedStrategyCalls = totalChecks - 1;
+        assertEquals(expectedStrategyCalls, observedStates.size());
+        assertEquals(expectedStrategyCalls, observedAttempts.size());
 
-        for (int i = 0; i < totalChecks; i++) {
+        for (int i = 0; i < expectedStrategyCalls; i++) {
             // Check function returns state + 1, starting from 0
-            // So after check i, state = i + 1
+            // So after check i, state = i + 1, and strategy receives that value
             assertEquals(i + 1, observedStates.get(i), "State at strategy call " + (i + 1));
             assertEquals(i, observedAttempts.get(i), "Attempt at strategy call " + (i + 1));
         }

@@ -60,6 +60,8 @@ class ParallelOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
+        when(durableContext.createChildContextWithoutSettingThreadContext(anyString(), anyString()))
+                .thenReturn(childContext);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         // Default: no existing operations (fresh execution)
         mockIdGenerator = mock(OperationIdGenerator.class);

@@ -5,98 +5,74 @@ package software.amazon.lambda.durable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
-import java.util.Random;
-import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.retry.JitterStrategy;
+import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
+import software.amazon.lambda.durable.retry.WaitStrategies;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class WaitForConditionConfigTest {
 
-    private static final WaitForConditionWaitStrategy<String> DUMMY_STRATEGY =
-            (state, attempt) -> WaitForConditionDecision.stopPolling();
-
-    // ---- 2.4 Unit tests: builder validation ----
-
     @Test
-    void builder_withValidArgs_buildsConfig() {
-        var config = WaitForConditionConfig.builder(DUMMY_STRATEGY, "initial").build();
+    void builder_withDefaults_buildsConfigWithDefaultStrategy() {
+        var config = WaitForConditionConfig.<String>builder().build();
 
         assertNotNull(config);
-        assertEquals(DUMMY_STRATEGY, config.waitStrategy());
-        assertEquals("initial", config.initialState());
+        assertNotNull(config.waitStrategy());
         assertNull(config.serDes());
     }
 
     @Test
-    void builder_withNullWaitStrategy_throwsIllegalArgumentException() {
-        var exception =
-                assertThrows(IllegalArgumentException.class, () -> WaitForConditionConfig.builder(null, "initial"));
+    void builder_withCustomWaitStrategy_overridesDefault() {
+        WaitForConditionWaitStrategy<String> customStrategy = WaitStrategies.fixedDelay(10, Duration.ofSeconds(2));
+        var config = WaitForConditionConfig.<String>builder()
+                .waitStrategy(customStrategy)
+                .build();
 
-        assertTrue(exception.getMessage().contains("waitStrategy"));
-    }
-
-    @Test
-    void builder_withNullInitialState_throwsIllegalArgumentException() {
-        var exception = assertThrows(
-                IllegalArgumentException.class, () -> WaitForConditionConfig.builder(DUMMY_STRATEGY, null));
-
-        assertTrue(exception.getMessage().contains("initialState"));
-    }
-
-    @Test
-    void builder_withBothNull_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class, () -> WaitForConditionConfig.builder(null, null));
+        assertEquals(customStrategy, config.waitStrategy());
     }
 
     @Test
     void builder_withSerDes_setsSerDes() {
-        var mockSerDes = new software.amazon.lambda.durable.serde.JacksonSerDes();
-        var config = WaitForConditionConfig.builder(DUMMY_STRATEGY, "initial")
-                .serDes(mockSerDes)
-                .build();
+        var mockSerDes = new JacksonSerDes();
+        var config = WaitForConditionConfig.<String>builder().serDes(mockSerDes).build();
 
         assertEquals(mockSerDes, config.serDes());
     }
 
     @Test
     void builder_withNullSerDes_allowsNull() {
-        var config = WaitForConditionConfig.builder(DUMMY_STRATEGY, "initial")
-                .serDes(null)
-                .build();
+        var config = WaitForConditionConfig.<String>builder().serDes(null).build();
 
         assertNull(config.serDes());
     }
 
-    // ---- 2.5 PBT: null waitStrategy or null initialState must always throw ----
-    // **Validates: Requirements 3.2**
+    @Test
+    void builder_defaultStrategy_producesValidDelay() {
+        var config = WaitForConditionConfig.<String>builder().build();
+        var strategy = config.waitStrategy();
 
-    @RepeatedTest(100)
-    void pbt_nullWaitStrategy_alwaysThrows() {
-        var random = new Random();
-        var initialState = "state-" + random.nextInt(10000);
-
-        assertThrows(IllegalArgumentException.class, () -> WaitForConditionConfig.builder(null, initialState));
+        // The default strategy should produce a Duration for attempt 0
+        var delay = strategy.evaluate("any-state", 0);
+        assertNotNull(delay);
     }
 
-    @RepeatedTest(100)
-    void pbt_nullInitialState_alwaysThrows() {
-        var random = new Random();
-        int variant = random.nextInt(3);
-        WaitForConditionWaitStrategy<String> strategy =
-                switch (variant) {
-                    case 0 -> (state, attempt) -> WaitForConditionDecision.stopPolling();
-                    case 1 ->
-                        (state, attempt) ->
-                                WaitForConditionDecision.continuePolling(Duration.ofSeconds(1 + random.nextInt(60)));
-                    default ->
-                        WaitStrategies.<String>builder(s -> true)
-                                .maxAttempts(1 + random.nextInt(100))
-                                .build();
-                };
+    @Test
+    void toBuilder_copiesValues() {
+        WaitForConditionWaitStrategy<String> customStrategy = WaitStrategies.exponentialBackoff(
+                10, Duration.ofSeconds(3), Duration.ofSeconds(60), 2.0, JitterStrategy.NONE);
+        var mockSerDes = new JacksonSerDes();
 
-        assertThrows(IllegalArgumentException.class, () -> WaitForConditionConfig.builder(strategy, null));
+        var original = WaitForConditionConfig.<String>builder()
+                .waitStrategy(customStrategy)
+                .serDes(mockSerDes)
+                .build();
+
+        var copied = original.toBuilder().build();
+
+        assertEquals(customStrategy, copied.waitStrategy());
+        assertEquals(mockSerDes, copied.serDes());
     }
 }
