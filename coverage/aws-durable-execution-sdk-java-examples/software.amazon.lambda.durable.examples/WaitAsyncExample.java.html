@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WaitAsyncExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples</a> &gt; <span class="el_source">WaitAsyncExample.java</span></div><h1>WaitAsyncExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.DurableHandler;
+
+/**
+ * Example demonstrating non-blocking wait with waitAsync().
+ *
+ * &lt;p&gt;This handler starts a wait and a step concurrently, then collects both results. The wait acts as a minimum
+ * duration guarantee — the step runs in parallel, and the handler only proceeds once both the step completes and the
+ * wait elapses.
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;Start a 5-second async wait (non-blocking)
+ *   &lt;li&gt;Start an async step concurrently
+ *   &lt;li&gt;Collect both results — ensures at least 5 seconds have passed
+ * &lt;/ol&gt;
+ */
+<span class="fc" id="L23">public class WaitAsyncExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+<span class="fc" id="L27">        context.getLogger().info(&quot;Starting waitAsync example for {}&quot;, input.getName());</span>
+
+        // Start a non-blocking wait — returns immediately
+<span class="fc" id="L30">        DurableFuture&lt;Void&gt; waitFuture = context.waitAsync(&quot;min-delay&quot;, Duration.ofSeconds(5));</span>
+
+        // Run a step concurrently while the wait timer is ticking
+<span class="fc" id="L33">        DurableFuture&lt;String&gt; stepFuture =</span>
+<span class="fc" id="L34">                context.stepAsync(&quot;process&quot;, String.class, stepCtx -&gt; &quot;Processed: &quot; + input.getName());</span>
+
+        // Block until both complete — guarantees at least 5 seconds elapsed
+<span class="fc" id="L37">        waitFuture.get();</span>
+<span class="fc" id="L38">        var result = stepFuture.get();</span>
+
+<span class="fc" id="L40">        context.getLogger().info(&quot;Both wait and step complete: {}&quot;, result);</span>
+<span class="fc" id="L41">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

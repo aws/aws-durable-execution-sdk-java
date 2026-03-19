@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MapErrorHandlingExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples</a> &gt; <span class="el_source">MapErrorHandlingExample.java</span></div><h1>MapErrorHandlingExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples;
+
+import java.util.List;
+import java.util.stream.Collectors;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.retry.RetryStrategies;
+
+/**
+ * Example demonstrating error handling with the map operation.
+ *
+ * &lt;p&gt;Shows how individual item failures are isolated and captured in the {@code MapResult}, while other items continue
+ * to succeed. Demonstrates inspecting partial results using {@code allSucceeded()}, {@code getError()},
+ * {@code succeeded()}, and {@code failed()}.
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;Map over a list of order IDs concurrently
+ *   &lt;li&gt;Some orders intentionally fail to simulate real-world partial failures
+ *   &lt;li&gt;Inspect the MapResult to handle successes and failures separately
+ * &lt;/ol&gt;
+ */
+<span class="fc" id="L25">public class MapErrorHandlingExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+<span class="fc" id="L29">        var name = input.getName();</span>
+<span class="fc" id="L30">        context.getLogger().info(&quot;Starting map error handling example for {}&quot;, name);</span>
+
+<span class="fc" id="L32">        var orderIds = List.of(&quot;order-1&quot;, &quot;order-INVALID&quot;, &quot;order-3&quot;, &quot;order-ERROR&quot;, &quot;order-5&quot;);</span>
+
+        // Map over orders — some will fail, but others continue processing
+<span class="fc" id="L35">        var result = context.map(&quot;process-orders&quot;, orderIds, String.class, (orderId, index, ctx) -&gt; {</span>
+<span class="fc" id="L36">            return ctx.step(</span>
+                    &quot;process-&quot; + index,
+                    String.class,
+                    stepCtx -&gt; {
+<span class="fc bfc" id="L40" title="All 2 branches covered.">                        if (orderId.contains(&quot;INVALID&quot;)) {</span>
+<span class="fc" id="L41">                            throw new IllegalArgumentException(&quot;Invalid order: &quot; + orderId);</span>
+                        }
+<span class="fc bfc" id="L43" title="All 2 branches covered.">                        if (orderId.contains(&quot;ERROR&quot;)) {</span>
+<span class="fc" id="L44">                            throw new RuntimeException(&quot;Processing error for: &quot; + orderId);</span>
+                        }
+<span class="fc" id="L46">                        return &quot;Processed &quot; + orderId + &quot; for &quot; + name;</span>
+                    },
+<span class="fc" id="L48">                    StepConfig.builder()</span>
+<span class="fc" id="L49">                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)</span>
+<span class="fc" id="L50">                            .build());</span>
+        });
+
+<span class="fc" id="L53">        context.getLogger()</span>
+<span class="fc" id="L54">                .info(</span>
+                        &quot;Map completed: allSucceeded={}, succeeded={}, failed={}&quot;,
+<span class="fc" id="L56">                        result.allSucceeded(),</span>
+<span class="fc" id="L57">                        result.succeeded().size(),</span>
+<span class="fc" id="L58">                        result.failed().size());</span>
+
+        // Build a summary showing successful results and error messages
+<span class="fc" id="L61">        var successSummary = result.succeeded().stream().collect(Collectors.joining(&quot;, &quot;));</span>
+
+<span class="fc" id="L63">        var errorSummary = new StringBuilder();</span>
+<span class="fc bfc" id="L64" title="All 2 branches covered.">        for (int i = 0; i &lt; result.size(); i++) {</span>
+<span class="fc bfc" id="L65" title="All 2 branches covered.">            if (result.getError(i) != null) {</span>
+<span class="fc" id="L66">                errorSummary.append(</span>
+<span class="fc" id="L67">                        String.format(&quot;index %d: %s; &quot;, i, result.getError(i).getMessage()));</span>
+            }
+        }
+
+<span class="fc" id="L71">        return String.format(</span>
+                &quot;succeeded=%d, failed=%d | results=[%s] | errors=[%s]&quot;,
+<span class="fc" id="L73">                result.succeeded().size(),</span>
+<span class="fc" id="L74">                result.failed().size(),</span>
+                successSummary,
+<span class="fc" id="L76">                errorSummary.toString().trim());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

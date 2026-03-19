@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PollingStrategies.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.retry</a> &gt; <span class="el_source">PollingStrategies.java</span></div><h1>PollingStrategies.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.retry;
+
+import java.time.Duration;
+import java.util.Objects;
+
+/** Factory class for creating common polling strategies. */
+<span class="nc" id="L9">public class PollingStrategies {</span>
+
+    /** Preset polling strategies for common use cases. */
+<span class="nc" id="L12">    public static class Presets {</span>
+
+        /**
+         * Default polling strategy: - Base interval: 1 second - Backoff rate: 2x - Jitter: FULL - Max interval 10
+         * second
+         */
+<span class="fc" id="L18">        public static final PollingStrategy DEFAULT =</span>
+<span class="fc" id="L19">                exponentialBackoff(Duration.ofMillis(1000), 2.0, JitterStrategy.FULL, Duration.ofSeconds(10));</span>
+    }
+
+    /**
+     * Creates an exponential backoff polling strategy.
+     *
+     * &lt;p&gt;The delay calculation follows the formula: delay = jitter(baseInterval × backoffRate^attempt)
+     *
+     * @param baseInterval Base delay before first poll
+     * @param backoffRate Multiplier for exponential backoff (must be positive)
+     * @param jitter Jitter strategy to apply to delays
+     * @param maxInterval Maximum delay between polls
+     * @return PollingStrategy implementing exponential backoff with jitter
+     */
+    public static PollingStrategy exponentialBackoff(
+            Duration baseInterval, double backoffRate, JitterStrategy jitter, Duration maxInterval) {
+<span class="fc" id="L35">        Objects.requireNonNull(jitter, &quot;jitter must not be null&quot;);</span>
+<span class="fc" id="L36">        Objects.requireNonNull(baseInterval, &quot;base interval must not be null&quot;);</span>
+<span class="fc" id="L37">        Objects.requireNonNull(maxInterval, &quot;max interval must not be null&quot;);</span>
+<span class="fc bfc" id="L38" title="All 2 branches covered.">        if (backoffRate &lt;= 0) {</span>
+<span class="fc" id="L39">            throw new IllegalArgumentException(&quot;backoffRate must be positive&quot;);</span>
+        }
+
+<span class="fc bfc" id="L42" title="All 4 branches covered.">        if (baseInterval.isNegative() || baseInterval.isZero()) {</span>
+<span class="fc" id="L43">            throw new IllegalArgumentException(&quot;baseInterval must be positive&quot;);</span>
+        }
+
+<span class="fc bfc" id="L46" title="All 4 branches covered.">        if (maxInterval.isNegative() || maxInterval.isZero()) {</span>
+<span class="fc" id="L47">            throw new IllegalArgumentException(&quot;maxInterval must be positive&quot;);</span>
+        }
+
+<span class="fc" id="L50">        return (attempt) -&gt; {</span>
+<span class="fc" id="L51">            double delayMs = baseInterval.toMillis() * Math.pow(backoffRate, attempt);</span>
+<span class="fc" id="L52">            delayMs = Math.min(jitter.apply(delayMs), maxInterval.toMillis());</span>
+<span class="fc" id="L53">            return Duration.ofMillis(Math.round(delayMs));</span>
+        };
+    }
+
+    /**
+     * Creates a fixed-delay polling strategy that uses the same interval for every attempt.
+     *
+     * @param interval Fixed delay between polls
+     * @return PollingStrategy with fixed delay
+     */
+    public static PollingStrategy fixedDelay(Duration interval) {
+<span class="fc" id="L64">        Objects.requireNonNull(interval, &quot;interval must not be null&quot;);</span>
+<span class="fc bfc" id="L65" title="All 4 branches covered.">        if (interval.isNegative() || interval.isZero()) {</span>
+<span class="fc" id="L66">            throw new IllegalArgumentException(&quot;interval must be positive&quot;);</span>
+        }
+<span class="fc" id="L68">        return (attempt) -&gt; interval;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

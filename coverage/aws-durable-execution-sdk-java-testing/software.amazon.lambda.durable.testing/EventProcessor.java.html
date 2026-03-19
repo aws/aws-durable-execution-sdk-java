@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EventProcessor.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-testing</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.testing</a> &gt; <span class="el_source">EventProcessor.java</span></div><h1>EventProcessor.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.testing;
+
+import static software.amazon.awssdk.services.lambda.model.EventType.*;
+
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
+import software.amazon.awssdk.services.lambda.model.*;
+
+/** Generates Event objects from OperationUpdate for local testing. */
+<span class="fc" id="L12">class EventProcessor {</span>
+<span class="fc" id="L13">    private final AtomicInteger eventId = new AtomicInteger(1);</span>
+
+    Event processUpdate(OperationUpdate update, Operation operation) {
+<span class="fc" id="L16">        var builder = Event.builder()</span>
+<span class="fc" id="L17">                .eventId(eventId.getAndIncrement())</span>
+<span class="fc" id="L18">                .eventTimestamp(Instant.now())</span>
+<span class="fc" id="L19">                .id(update.id())</span>
+<span class="fc" id="L20">                .name(update.name());</span>
+
+<span class="pc bpc" id="L22" title="1 of 7 branches missed.">        return switch (update.type()) {</span>
+<span class="fc" id="L23">            case STEP -&gt; buildStepEvent(builder, update, operation);</span>
+<span class="fc" id="L24">            case WAIT -&gt; buildWaitEvent(builder, update, operation);</span>
+<span class="fc" id="L25">            case CHAINED_INVOKE -&gt; buildInvokeEvent(builder, update, operation);</span>
+<span class="fc" id="L26">            case EXECUTION -&gt; buildExecutionEvent(builder, update);</span>
+<span class="fc" id="L27">            case CALLBACK -&gt; buildCallbackEvent(builder, update);</span>
+<span class="fc" id="L28">            case CONTEXT -&gt; buildContextEvent(builder, update);</span>
+<span class="nc" id="L29">            default -&gt; throw new IllegalArgumentException(&quot;Unsupported operation type: &quot; + update.type());</span>
+        };
+    }
+
+    private Event buildStepEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
+<span class="pc bpc" id="L34" title="1 of 5 branches missed.">        return switch (update.action()) {</span>
+            case START -&gt;
+<span class="fc" id="L36">                builder.eventType(STEP_STARTED)</span>
+<span class="fc" id="L37">                        .stepStartedDetails(StepStartedDetails.builder().build())</span>
+<span class="fc" id="L38">                        .build();</span>
+            case SUCCEED -&gt;
+<span class="fc" id="L40">                builder.eventType(STEP_SUCCEEDED)</span>
+<span class="fc" id="L41">                        .stepSucceededDetails(StepSucceededDetails.builder()</span>
+<span class="fc" id="L42">                                .result(EventResult.builder()</span>
+<span class="fc" id="L43">                                        .payload(update.payload())</span>
+<span class="fc" id="L44">                                        .build())</span>
+<span class="fc" id="L45">                                .retryDetails(buildRetryDetails(operation))</span>
+<span class="fc" id="L46">                                .build())</span>
+<span class="fc" id="L47">                        .build();</span>
+            case FAIL -&gt;
+<span class="fc" id="L49">                builder.eventType(STEP_FAILED)</span>
+<span class="fc" id="L50">                        .stepFailedDetails(StepFailedDetails.builder()</span>
+<span class="fc" id="L51">                                .error(EventError.builder()</span>
+<span class="fc" id="L52">                                        .payload(update.error())</span>
+<span class="fc" id="L53">                                        .build())</span>
+<span class="fc" id="L54">                                .retryDetails(buildRetryDetails(operation))</span>
+<span class="fc" id="L55">                                .build())</span>
+<span class="fc" id="L56">                        .build();</span>
+            case RETRY -&gt;
+<span class="fc" id="L58">                builder.eventType(STEP_STARTED)</span>
+<span class="fc" id="L59">                        .stepStartedDetails(StepStartedDetails.builder().build())</span>
+<span class="fc" id="L60">                        .build();</span>
+<span class="nc" id="L61">            default -&gt; throw new IllegalArgumentException(&quot;Unsupported step action: &quot; + update.action());</span>
+        };
+    }
+
+    @SuppressWarnings(&quot;unused&quot;) // operation param kept for API consistency
+    private Event buildWaitEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
+<span class="pc bpc" id="L67" title="2 of 4 branches missed.">        return switch (update.action()) {</span>
+            case START -&gt; {
+                var waitSeconds =
+<span class="pc bpc" id="L70" title="1 of 2 branches missed.">                        update.waitOptions() != null ? update.waitOptions().waitSeconds() : 0;</span>
+<span class="fc" id="L71">                yield builder.eventType(WAIT_STARTED)</span>
+<span class="fc" id="L72">                        .waitStartedDetails(WaitStartedDetails.builder()</span>
+<span class="fc" id="L73">                                .duration(waitSeconds)</span>
+<span class="fc" id="L74">                                .scheduledEndTimestamp(Instant.now().plusSeconds(waitSeconds))</span>
+<span class="fc" id="L75">                                .build())</span>
+<span class="fc" id="L76">                        .build();</span>
+            }
+            case SUCCEED -&gt;
+<span class="fc" id="L79">                builder.eventType(WAIT_SUCCEEDED)</span>
+<span class="fc" id="L80">                        .waitSucceededDetails(WaitSucceededDetails.builder().build())</span>
+<span class="fc" id="L81">                        .build();</span>
+            case CANCEL -&gt;
+<span class="nc" id="L83">                builder.eventType(WAIT_CANCELLED)</span>
+<span class="nc" id="L84">                        .waitCancelledDetails(WaitCancelledDetails.builder().build())</span>
+<span class="nc" id="L85">                        .build();</span>
+<span class="nc" id="L86">            default -&gt; throw new IllegalArgumentException(&quot;Unsupported wait action: &quot; + update.action());</span>
+        };
+    }
+
+    @SuppressWarnings(&quot;unused&quot;) // operation param kept for API consistency
+    private Event buildInvokeEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
+<span class="pc bpc" id="L92" title="1 of 4 branches missed.">        return switch (update.action()) {</span>
+            case START -&gt;
+<span class="fc" id="L94">                builder.eventType(EventType.CHAINED_INVOKE_STARTED)</span>
+<span class="fc" id="L95">                        .chainedInvokeStartedDetails(ChainedInvokeStartedDetails.builder()</span>
+<span class="fc" id="L96">                                .functionName(update.chainedInvokeOptions().functionName())</span>
+<span class="fc" id="L97">                                .input(EventInput.builder()</span>
+<span class="fc" id="L98">                                        .payload(update.payload())</span>
+<span class="fc" id="L99">                                        .build())</span>
+<span class="fc" id="L100">                                .build())</span>
+<span class="fc" id="L101">                        .build();</span>
+            case SUCCEED -&gt;
+<span class="fc" id="L103">                builder.eventType(EventType.CHAINED_INVOKE_SUCCEEDED)</span>
+<span class="fc" id="L104">                        .chainedInvokeSucceededDetails(ChainedInvokeSucceededDetails.builder()</span>
+<span class="fc" id="L105">                                .result(EventResult.builder()</span>
+<span class="fc" id="L106">                                        .payload(</span>
+<span class="fc" id="L107">                                                operation.chainedInvokeDetails().result())</span>
+<span class="fc" id="L108">                                        .build())</span>
+<span class="fc" id="L109">                                .build())</span>
+<span class="fc" id="L110">                        .build();</span>
+            case FAIL -&gt;
+<span class="fc" id="L112">                builder.eventType(EventType.CHAINED_INVOKE_FAILED)</span>
+<span class="fc" id="L113">                        .chainedInvokeFailedDetails(ChainedInvokeFailedDetails.builder()</span>
+<span class="fc" id="L114">                                .error(EventError.builder()</span>
+<span class="fc" id="L115">                                        .payload(</span>
+<span class="fc" id="L116">                                                operation.chainedInvokeDetails().error())</span>
+<span class="fc" id="L117">                                        .build())</span>
+<span class="fc" id="L118">                                .build())</span>
+<span class="fc" id="L119">                        .build();</span>
+
+<span class="nc" id="L121">            default -&gt; throw new IllegalArgumentException(&quot;Unsupported invoke action: &quot; + update.action());</span>
+        };
+    }
+
+    private Event buildExecutionEvent(Event.Builder builder, OperationUpdate update) {
+<span class="pc bpc" id="L126" title="3 of 4 branches missed.">        return switch (update.action()) {</span>
+            case START -&gt;
+<span class="nc" id="L128">                builder.eventType(EXECUTION_STARTED)</span>
+<span class="nc" id="L129">                        .executionStartedDetails(</span>
+<span class="nc" id="L130">                                ExecutionStartedDetails.builder().build())</span>
+<span class="nc" id="L131">                        .build();</span>
+            case SUCCEED -&gt;
+<span class="fc" id="L133">                builder.eventType(EXECUTION_SUCCEEDED)</span>
+<span class="fc" id="L134">                        .executionSucceededDetails(ExecutionSucceededDetails.builder()</span>
+<span class="fc" id="L135">                                .result(EventResult.builder()</span>
+<span class="fc" id="L136">                                        .payload(update.payload())</span>
+<span class="fc" id="L137">                                        .build())</span>
+<span class="fc" id="L138">                                .build())</span>
+<span class="fc" id="L139">                        .build();</span>
+            case FAIL -&gt;
+<span class="nc" id="L141">                builder.eventType(EXECUTION_FAILED)</span>
+<span class="nc" id="L142">                        .executionFailedDetails(ExecutionFailedDetails.builder()</span>
+<span class="nc" id="L143">                                .error(EventError.builder()</span>
+<span class="nc" id="L144">                                        .payload(update.error())</span>
+<span class="nc" id="L145">                                        .build())</span>
+<span class="nc" id="L146">                                .build())</span>
+<span class="nc" id="L147">                        .build();</span>
+<span class="nc" id="L148">            default -&gt; throw new IllegalArgumentException(&quot;Unsupported execution action: &quot; + update.action());</span>
+        };
+    }
+
+    private Event buildCallbackEvent(Event.Builder builder, OperationUpdate update) {
+<span class="pc bpc" id="L153" title="3 of 4 branches missed.">        return switch (update.action()) {</span>
+<span class="fc" id="L154">            case START -&gt; builder.eventType(CALLBACK_STARTED).build();</span>
+<span class="nc" id="L155">            case SUCCEED -&gt; builder.eventType(CALLBACK_SUCCEEDED).build();</span>
+<span class="nc" id="L156">            case FAIL -&gt; builder.eventType(CALLBACK_FAILED).build();</span>
+<span class="nc" id="L157">            default -&gt; throw new IllegalArgumentException(&quot;Unsupported callback action: &quot; + update.action());</span>
+        };
+    }
+
+    private Event buildContextEvent(Event.Builder builder, OperationUpdate update) {
+<span class="pc bpc" id="L162" title="1 of 4 branches missed.">        return switch (update.action()) {</span>
+<span class="fc" id="L163">            case START -&gt; builder.eventType(EventType.CONTEXT_STARTED).build();</span>
+<span class="fc" id="L164">            case SUCCEED -&gt; builder.eventType(EventType.CONTEXT_SUCCEEDED).build();</span>
+<span class="fc" id="L165">            case FAIL -&gt; builder.eventType(EventType.CONTEXT_FAILED).build();</span>
+<span class="nc" id="L166">            default -&gt; throw new IllegalArgumentException(&quot;Unsupported context action: &quot; + update.action());</span>
+        };
+    }
+
+    private RetryDetails buildRetryDetails(Operation operation) {
+<span class="pc bpc" id="L171" title="2 of 4 branches missed.">        if (operation == null || operation.stepDetails() == null) {</span>
+<span class="nc" id="L172">            return RetryDetails.builder().currentAttempt(1).build();</span>
+        }
+<span class="fc" id="L174">        var attempt = operation.stepDetails().attempt();</span>
+<span class="fc" id="L175">        return RetryDetails.builder()</span>
+<span class="fc bfc" id="L176" title="All 2 branches covered.">                .currentAttempt(attempt != null ? attempt : 1)</span>
+<span class="fc" id="L177">                .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

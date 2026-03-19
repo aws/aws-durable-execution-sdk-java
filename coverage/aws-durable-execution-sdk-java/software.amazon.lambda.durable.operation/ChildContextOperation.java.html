@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ChildContextOperation.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.operation</a> &gt; <span class="el_source">ChildContextOperation.java</span></div><h1>ChildContextOperation.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.operation;
+
+import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
+
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.function.Function;
+import software.amazon.awssdk.services.lambda.model.ContextOptions;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackSubmitterException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.exception.ChildContextFailedException;
+import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.StepFailedException;
+import software.amazon.lambda.durable.exception.StepInterruptedException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
+
+/**
+ * Manages the lifecycle of a child execution context.
+ *
+ * &lt;p&gt;A child context runs a user function in a separate thread with its own operation counter and checkpoint log.
+ * Operations within the child context use the child's context ID as their parentId.
+ *
+ * &lt;p&gt;When created as part of a {@link ConcurrencyOperation} (e.g., parallel execution), the child notifies its parent
+ * on completion via {@code onItemComplete()} BEFORE closing its own child context. It also skips checkpointing if the
+ * parent operation has already succeeded.
+ */
+public class ChildContextOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt; {
+
+    private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
+
+    private final Function&lt;DurableContext, T&gt; function;
+    private final ExecutorService userExecutor;
+    private final ConcurrencyOperation&lt;?&gt; parentOperation;
+    private boolean replayChildContext;
+    private T reconstructedResult;
+
+    public ChildContextOperation(
+            OperationIdentifier operationIdentifier,
+            Function&lt;DurableContext, T&gt; function,
+            TypeToken&lt;T&gt; resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext) {
+<span class="fc" id="L60">        this(operationIdentifier, function, resultTypeToken, resultSerDes, durableContext, null);</span>
+<span class="fc" id="L61">    }</span>
+
+    public ChildContextOperation(
+            OperationIdentifier operationIdentifier,
+            Function&lt;DurableContext, T&gt; function,
+            TypeToken&lt;T&gt; resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext,
+            ConcurrencyOperation&lt;?&gt; parentOperation) {
+<span class="fc" id="L70">        super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);</span>
+<span class="fc" id="L71">        this.function = function;</span>
+<span class="fc" id="L72">        this.userExecutor = getContext().getDurableConfig().getExecutorService();</span>
+<span class="fc" id="L73">        this.parentOperation = parentOperation;</span>
+<span class="fc" id="L74">    }</span>
+
+    /** Starts the operation. */
+    @Override
+    protected void start() {
+        // First execution: fire-and-forget START checkpoint, then run
+<span class="fc" id="L80">        sendOperationUpdateAsync(OperationUpdate.builder().action(OperationAction.START));</span>
+<span class="fc" id="L81">        executeChildContext();</span>
+<span class="fc" id="L82">    }</span>
+
+    /** Replays the operation. */
+    @Override
+    protected void replay(Operation existing) {
+<span class="pc bpc" id="L87" title="1 of 4 branches missed.">        switch (existing.status()) {</span>
+            case SUCCEEDED -&gt; {
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">                if (existing.contextDetails() != null</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
+                    // Large result: re-execute child context to reconstruct result
+<span class="fc" id="L92">                    replayChildContext = true;</span>
+<span class="fc" id="L93">                    executeChildContext();</span>
+                } else {
+<span class="fc" id="L95">                    markAlreadyCompleted();</span>
+                }
+<span class="fc" id="L97">            }</span>
+<span class="fc" id="L98">            case FAILED -&gt; markAlreadyCompleted();</span>
+<span class="fc" id="L99">            case STARTED -&gt; executeChildContext();</span>
+            default -&gt;
+<span class="nc" id="L101">                terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L102">                        &quot;Unexpected child context status: &quot; + existing.status());</span>
+        }
+<span class="fc" id="L104">    }</span>
+
+    @Override
+    protected void markAlreadyCompleted() {
+<span class="fc" id="L108">        super.markAlreadyCompleted();</span>
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        if (parentOperation != null) {</span>
+<span class="fc" id="L110">            parentOperation.onItemComplete(this);</span>
+        }
+<span class="fc" id="L112">    }</span>
+
+    private void executeChildContext() {
+        // The operationId is already globally unique (prefixed by parent context path via
+        // DurableContext.nextOperationId), so we use it directly as the contextId.
+        // E.g., first level child context &quot;hash(1)&quot;,
+        //       second level child context &quot;hash(hash(1)-2)&quot;,
+        //       third level child context &quot;hash(hash(hash(1)-2)-1)&quot;.
+<span class="fc" id="L120">        var contextId = getOperationId();</span>
+
+        // Thread registration is intentionally split across two threads:
+        // 1. registerActiveThread on the PARENT thread — ensures the child is tracked before the
+        //    parent can deregister and trigger suspension (race prevention).
+        // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
+        //    the child context know which context they belong to.
+        // registerActiveThread is idempotent (no-op if already registered).
+<span class="fc" id="L128">        registerActiveThread(contextId);</span>
+
+<span class="fc" id="L130">        Runnable userHandler = () -&gt; {</span>
+            // use a try-with-resources to
+            // - add thread id/type to thread local when the step starts
+            // - clear logger properties when the step finishes
+            //
+            // When this child is part of a ConcurrencyOperation (parentOperation != null),
+            // we notify the parent BEFORE closing the child context. This ensures the parent
+            // can trigger the next queued branch while the current child context is still valid.
+<span class="fc" id="L138">            try (var childContext = getContext().createChildContext(contextId, getName())) {</span>
+                try {
+<span class="fc" id="L140">                    T result = function.apply(childContext);</span>
+
+<span class="fc" id="L142">                    handleChildContextSuccess(result);</span>
+<span class="fc" id="L143">                } catch (Throwable e) {</span>
+<span class="fc" id="L144">                    handleChildContextFailure(e);</span>
+                } finally {
+<span class="fc bfc" id="L146" title="All 2 branches covered.">                    if (parentOperation != null) {</span>
+<span class="fc" id="L147">                        parentOperation.onItemComplete(this);</span>
+                    }
+                }
+            }
+<span class="fc" id="L151">        };</span>
+
+        // Execute user provided child context code in user-configured executor
+<span class="fc" id="L154">        CompletableFuture.runAsync(userHandler, userExecutor);</span>
+<span class="fc" id="L155">    }</span>
+
+    private void handleChildContextSuccess(T result) {
+<span class="fc bfc" id="L158" title="All 2 branches covered.">        if (replayChildContext) {</span>
+            // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
+            // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
+<span class="fc" id="L161">            this.reconstructedResult = result;</span>
+<span class="fc" id="L162">            markAlreadyCompleted();</span>
+        } else {
+<span class="fc" id="L164">            checkpointSuccess(result);</span>
+        }
+<span class="fc" id="L166">    }</span>
+
+    private void checkpointSuccess(T result) {
+        // Skip checkpointing if parent ConcurrencyOperation has already completed —
+        // prevents race conditions where a child finishes after the parent has already completed.
+<span class="fc bfc" id="L171" title="All 4 branches covered.">        if (parentOperation != null &amp;&amp; parentOperation.isOperationCompleted()) {</span>
+<span class="fc" id="L172">            this.reconstructedResult = result;</span>
+<span class="fc" id="L173">            markAlreadyCompleted();</span>
+<span class="fc" id="L174">            return;</span>
+        }
+
+<span class="fc" id="L177">        var serialized = serializeResult(result);</span>
+<span class="fc" id="L178">        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);</span>
+
+<span class="fc bfc" id="L180" title="All 2 branches covered.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
+<span class="fc" id="L181">            sendOperationUpdate(</span>
+<span class="fc" id="L182">                    OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));</span>
+        } else {
+            // Large result: checkpoint with empty payload + ReplayChildren flag.
+            // Store the result so get() can return it directly without deserializing the empty payload.
+<span class="fc" id="L186">            this.reconstructedResult = result;</span>
+<span class="fc" id="L187">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L188">                    .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L189">                    .payload(&quot;&quot;)</span>
+<span class="fc" id="L190">                    .contextOptions(</span>
+<span class="fc" id="L191">                            ContextOptions.builder().replayChildren(true).build()));</span>
+        }
+<span class="fc" id="L193">    }</span>
+
+    private void handleChildContextFailure(Throwable exception) {
+<span class="fc" id="L196">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        if (exception instanceof SuspendExecutionException) {</span>
+            // Rethrow Error immediately — do not checkpoint
+<span class="nc" id="L199">            ExceptionHelper.sneakyThrow(exception);</span>
+        }
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">        if (exception instanceof UnrecoverableDurableExecutionException) {</span>
+<span class="nc" id="L202">            terminateExecution((UnrecoverableDurableExecutionException) exception);</span>
+        }
+
+        // Skip checkpointing if parent ConcurrencyOperation has already completed —
+        // prevents race conditions where a child finishes after the parent has already succeeded.
+<span class="fc bfc" id="L207" title="All 4 branches covered.">        if (parentOperation != null &amp;&amp; parentOperation.isOperationCompleted()) {</span>
+<span class="fc" id="L208">            markAlreadyCompleted();</span>
+<span class="fc" id="L209">            return;</span>
+        }
+
+        final ErrorObject errorObject;
+<span class="fc bfc" id="L213" title="All 2 branches covered.">        if (exception instanceof DurableOperationException opEx) {</span>
+<span class="fc" id="L214">            errorObject = opEx.getErrorObject();</span>
+        } else {
+<span class="fc" id="L216">            errorObject = serializeException(exception);</span>
+        }
+
+<span class="fc" id="L219">        sendOperationUpdate(</span>
+<span class="fc" id="L220">                OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));</span>
+<span class="fc" id="L221">    }</span>
+
+    @Override
+    public T get() {
+<span class="fc" id="L225">        var op = waitForOperationCompletion();</span>
+
+<span class="fc bfc" id="L227" title="All 2 branches covered.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="fc bfc" id="L228" title="All 2 branches covered.">            if (reconstructedResult != null) {</span>
+<span class="fc" id="L229">                return reconstructedResult;</span>
+            }
+<span class="fc" id="L231">            var contextDetails = op.contextDetails();</span>
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">            var result = (contextDetails != null) ? contextDetails.result() : null;</span>
+<span class="fc" id="L233">            return deserializeResult(result);</span>
+        } else {
+<span class="fc" id="L235">            var contextDetails = op.contextDetails();</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
+
+            // Attempt to reconstruct and throw the original exception
+<span class="fc" id="L239">            Throwable original = deserializeException(errorObject);</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">            if (original != null) {</span>
+<span class="nc" id="L241">                ExceptionHelper.sneakyThrow(original);</span>
+            }
+
+            // throw a general failed exception if a user exception is not reconstructed
+<span class="pc bpc" id="L245" title="5 of 7 branches missed.">            return switch (getSubType()) {</span>
+<span class="nc" id="L246">                case WAIT_FOR_CALLBACK -&gt; handleWaitForCallbackFailure(op);</span>
+<span class="nc" id="L247">                case MAP -&gt; throw new ChildContextFailedException(op);</span>
+<span class="nc" id="L248">                case MAP_ITERATION -&gt; throw new ChildContextFailedException(op);</span>
+<span class="nc" id="L249">                case PARALLEL -&gt; throw new ChildContextFailedException(op);</span>
+<span class="fc" id="L250">                case PARALLEL_BRANCH -&gt; throw new ChildContextFailedException(op);</span>
+<span class="fc" id="L251">                case RUN_IN_CHILD_CONTEXT -&gt; throw new ChildContextFailedException(op);</span>
+<span class="nc" id="L252">                case WAIT_FOR_CONDITION -&gt; throw new ChildContextFailedException(op);</span>
+            };
+        }
+    }
+
+    private T handleWaitForCallbackFailure(Operation op) {
+<span class="fc" id="L258">        var childrenOps = getChildOperations(op.id());</span>
+<span class="fc" id="L259">        var callbackOp = childrenOps.stream()</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">                .filter(o -&gt; o.type() == OperationType.CALLBACK)</span>
+<span class="fc" id="L261">                .findFirst()</span>
+<span class="fc" id="L262">                .orElse(null);</span>
+<span class="fc" id="L263">        var submitterOp = childrenOps.stream()</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">                .filter(o -&gt; o.type() == OperationType.STEP)</span>
+<span class="fc" id="L265">                .findFirst()</span>
+<span class="fc" id="L266">                .orElse(null);</span>
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">        if (callbackOp != null) {</span>
+            // if callback failed
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">            if (isTerminalStatus(callbackOp.status())) {</span>
+<span class="pc bpc" id="L270" title="1 of 3 branches missed.">                switch (callbackOp.status()) {</span>
+<span class="fc" id="L271">                    case FAILED -&gt; throw new CallbackFailedException(callbackOp);</span>
+<span class="fc" id="L272">                    case TIMED_OUT -&gt; throw new CallbackTimeoutException(callbackOp);</span>
+                }
+            }
+
+            // if submitter failed
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (submitterOp != null</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                    &amp;&amp; isTerminalStatus(submitterOp.status())</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                    &amp;&amp; submitterOp.status() != OperationStatus.SUCCEEDED) {</span>
+<span class="nc" id="L280">                var stepError = submitterOp.stepDetails().error();</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                if (StepInterruptedException.isStepInterruptedException(stepError)) {</span>
+<span class="nc" id="L282">                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));</span>
+                } else {
+<span class="nc" id="L284">                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));</span>
+                }
+            }
+        }
+
+<span class="nc" id="L289">        throw new IllegalStateException(&quot;Unknown waitForCallback status&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

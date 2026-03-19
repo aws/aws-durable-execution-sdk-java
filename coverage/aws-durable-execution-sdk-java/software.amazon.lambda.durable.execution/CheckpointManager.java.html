@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CheckpointManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.execution</a> &gt; <span class="el_source">CheckpointManager.java</span></div><h1>CheckpointManager.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.execution;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.retry.PollingStrategies;
+import software.amazon.lambda.durable.retry.PollingStrategy;
+
+/**
+ * Package-private checkpoint manager for batching and queueing checkpoint API calls.
+ *
+ * &lt;p&gt;Single responsibility: Queue and batch checkpoint requests efficiently. Uses a Consumer to notify when checkpoints
+ * complete, avoiding cyclic dependency.
+ */
+class CheckpointManager {
+    private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
+    private static final int MAX_ITEM_COUNT = 200; // max updates in one batch
+<span class="fc" id="L33">    private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);</span>
+
+    private final Consumer&lt;List&lt;Operation&gt;&gt; callback;
+    private final String durableExecutionArn;
+<span class="fc" id="L37">    private final Map&lt;String, List&lt;CompletableFuture&lt;Operation&gt;&gt;&gt; pollingFutures = new ConcurrentHashMap&lt;&gt;();</span>
+    private final ApiRequestDelayedBatcher&lt;OperationUpdate&gt; checkpointApiRequestDelayedBatcher;
+    private final DurableConfig config;
+    private String checkpointToken;
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+<span class="fc" id="L46">            Consumer&lt;List&lt;Operation&gt;&gt; callback) {</span>
+<span class="fc" id="L47">        this.config = config;</span>
+<span class="fc" id="L48">        this.durableExecutionArn = durableExecutionArn;</span>
+<span class="fc" id="L49">        this.callback = callback;</span>
+<span class="fc" id="L50">        this.checkpointToken = checkpointToken;</span>
+<span class="fc" id="L51">        this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher&lt;&gt;(</span>
+                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
+<span class="fc" id="L53">    }</span>
+
+    /**
+     * Queues a checkpoint request for batched execution
+     *
+     * @return a future that completes when the checkpoint request is executed
+     */
+    CompletableFuture&lt;Void&gt; checkpoint(OperationUpdate update) {
+<span class="fc" id="L61">        logger.debug(&quot;Checkpoint request received: Action {}&quot;, update.action());</span>
+<span class="fc" id="L62">        return checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());</span>
+    }
+
+    /**
+     * Polls for updates of the specified operation with preconfigured intervals
+     *
+     * @return a future that completes when the operation is updated
+     */
+    CompletableFuture&lt;Operation&gt; pollForUpdate(String operationId) {
+<span class="fc" id="L71">        return pollForUpdate(operationId, config.getPollingStrategy());</span>
+    }
+
+    /**
+     * Polls for updates of the specified operation with specified delay
+     *
+     * @return a future that completes when the operation is updated
+     */
+    CompletableFuture&lt;Operation&gt; pollForUpdate(String operationId, Duration delay) {
+<span class="fc" id="L80">        return pollForUpdate(operationId, PollingStrategies.fixedDelay(delay));</span>
+    }
+
+    /**
+     * Polls for updates of the specified operation with specified polling strategy
+     *
+     * @return a future that completes when the operation is updated
+     */
+    CompletableFuture&lt;Operation&gt; pollForUpdate(String operationId, PollingStrategy pollingStrategy) {
+<span class="fc" id="L89">        logger.debug(&quot;Polling request received: operation id {}&quot;, operationId);</span>
+<span class="fc" id="L90">        var future = new CompletableFuture&lt;Operation&gt;();</span>
+<span class="fc" id="L91">        synchronized (pollingFutures) {</span>
+            // register the future in pollingFutures, which will be completed by the polling thread
+<span class="fc" id="L93">            pollingFutures</span>
+<span class="fc" id="L94">                    .computeIfAbsent(operationId, k -&gt; Collections.synchronizedList(new ArrayList&lt;&gt;()))</span>
+<span class="fc" id="L95">                    .add(future);</span>
+<span class="fc" id="L96">        }</span>
+<span class="fc" id="L97">        pollForUpdateInternal(future, 0, Instant.now(), pollingStrategy);</span>
+<span class="fc" id="L98">        return future;</span>
+    }
+
+    /**
+     * Recursively polls for updates of the specified operation with specified polling strategy
+     *
+     * @param future the future to complete
+     * @param attempt the attempt number
+     * @param startTime the start time of the current attempt
+     * @param pollingStrategy the polling strategy
+     * @return a completable future that completes when the polling is done
+     */
+    private CompletableFuture&lt;Void&gt; pollForUpdateInternal(
+            CompletableFuture&lt;Operation&gt; future, int attempt, Instant startTime, PollingStrategy pollingStrategy) {
+
+        // the delay is the polling interval minus the time already elapsed in the current attempt
+<span class="fc" id="L114">        var delay = pollingStrategy.computeDelay(attempt).minus(Duration.between(startTime, Instant.now()));</span>
+<span class="fc" id="L115">        return checkpointApiRequestDelayedBatcher.submit(null, delay).thenCompose(v -&gt; {</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">            if (future.isDone()) {</span>
+<span class="fc" id="L117">                return CompletableFuture.completedFuture(null);</span>
+            }
+<span class="fc" id="L119">            var now = Instant.now();</span>
+<span class="fc bfc" id="L120" title="All 2 branches covered.">            if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) &gt; 0) {</span>
+                // It has exceeded the previous attempt duration, starting a new attempt
+<span class="fc" id="L122">                return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);</span>
+            } else {
+                // continue the previous attempt. The future was completed just because
+                // it was batched with other checkpoint API calls.
+<span class="fc" id="L126">                return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);</span>
+            }
+        });
+    }
+
+    /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
+    void shutdown() {
+        // complete all polling futures with an exception
+        List&lt;List&lt;CompletableFuture&lt;Operation&gt;&gt;&gt; allFutures;
+<span class="fc" id="L135">        synchronized (pollingFutures) {</span>
+<span class="fc" id="L136">            allFutures = new ArrayList&lt;&gt;(pollingFutures.values());</span>
+<span class="fc" id="L137">            pollingFutures.clear();</span>
+<span class="fc" id="L138">        }</span>
+
+<span class="fc bfc" id="L140" title="All 2 branches covered.">        for (var futures : allFutures) {</span>
+<span class="fc" id="L141">            futures.forEach(f -&gt; f.completeExceptionally(new IllegalStateException(&quot;CheckpointManager shutdown&quot;)));</span>
+<span class="fc" id="L142">        }</span>
+
+        // wait for all non-polling checkpoint requests to complete
+<span class="fc" id="L145">        checkpointApiRequestDelayedBatcher.shutdown();</span>
+<span class="fc" id="L146">    }</span>
+
+    /**
+     * Calling GetExecutionState API to get all pages of operations given CheckpointUpdatedExecutionState(operations,
+     * nextMarker)
+     */
+    List&lt;Operation&gt; fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
+<span class="fc" id="L153">        List&lt;Operation&gt; operations = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">        if (checkpointUpdatedExecutionState == null) {</span>
+<span class="fc" id="L155">            return operations;</span>
+        }
+<span class="pc bpc" id="L157" title="1 of 2 branches missed.">        if (checkpointUpdatedExecutionState.operations() != null) {</span>
+<span class="fc" id="L158">            operations.addAll(checkpointUpdatedExecutionState.operations());</span>
+        }
+<span class="fc" id="L160">        var nextMarker = checkpointUpdatedExecutionState.nextMarker();</span>
+<span class="fc bfc" id="L161" title="All 4 branches covered.">        while (nextMarker != null &amp;&amp; !nextMarker.isEmpty()) {</span>
+<span class="fc" id="L162">            var startTime = System.nanoTime();</span>
+<span class="fc" id="L163">            var response = config.getDurableExecutionClient()</span>
+<span class="fc" id="L164">                    .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);</span>
+<span class="fc" id="L165">            logger.debug(</span>
+                    &quot;Durable getExecutionState API called (latency={}ns): {}.&quot;,
+<span class="fc" id="L167">                    System.nanoTime() - startTime,</span>
+                    response);
+<span class="fc" id="L169">            operations.addAll(response.operations());</span>
+<span class="fc" id="L170">            nextMarker = response.nextMarker();</span>
+<span class="fc" id="L171">        }</span>
+<span class="fc" id="L172">        return operations;</span>
+    }
+
+    private void checkpointBatch(List&lt;OperationUpdate&gt; updates) {
+<span class="fc" id="L176">        synchronized (pollingFutures) {</span>
+            // filter the null values from pollers
+<span class="fc" id="L178">            var request = updates.stream().filter(Objects::nonNull).toList();</span>
+
+<span class="fc bfc" id="L180" title="All 4 branches covered.">            if (pollingFutures.isEmpty() &amp;&amp; request.isEmpty()) {</span>
+                // ignore the batch if no pollers and no data to checkpoint
+<span class="fc" id="L182">                return;</span>
+            }
+
+<span class="fc" id="L185">            var startTime = System.nanoTime();</span>
+<span class="fc" id="L186">            logger.debug(&quot;Calling durable checkpoint API with {} updates: {}&quot;, updates.size(), request);</span>
+<span class="fc" id="L187">            var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);</span>
+<span class="fc" id="L188">            logger.debug(&quot;Durable checkpoint API called (latency={}ns): {}.&quot;, System.nanoTime() - startTime, response);</span>
+
+            // Notify callback of completion
+<span class="fc" id="L191">            checkpointToken = response.checkpointToken();</span>
+<span class="fc bfc" id="L192" title="All 2 branches covered.">            if (response.newExecutionState() != null) {</span>
+                // fetch all pages of operations
+<span class="fc" id="L194">                var operations = fetchAllPages(response.newExecutionState());</span>
+
+<span class="fc" id="L196">                var processStartTime = System.nanoTime();</span>
+<span class="fc" id="L197">                int completedFutures = 0;</span>
+<span class="fc" id="L198">                logger.debug(</span>
+<span class="fc" id="L199">                        &quot;Processing {} operations. ({} pending pollers)&quot;, operations.size(), pollingFutures.size());</span>
+                // call the callback
+<span class="fc" id="L201">                callback.accept(operations);</span>
+
+                // complete the registered pollingFutures
+<span class="fc bfc" id="L204" title="All 2 branches covered.">                for (var operation : operations) {</span>
+<span class="fc" id="L205">                    var pollers = pollingFutures.remove(operation.id());</span>
+<span class="fc bfc" id="L206" title="All 2 branches covered.">                    if (pollers != null) {</span>
+<span class="fc" id="L207">                        completedFutures += pollers.size();</span>
+<span class="fc" id="L208">                        pollers.forEach(poller -&gt; poller.complete(operation));</span>
+                    }
+<span class="fc" id="L210">                }</span>
+<span class="fc" id="L211">                logger.debug(</span>
+                        &quot;{} operations processed and {} pollers completed (latency={}ns). &quot;,
+<span class="fc" id="L213">                        operations.size(),</span>
+<span class="fc" id="L214">                        completedFutures,</span>
+<span class="fc" id="L215">                        System.nanoTime() - processStartTime);</span>
+            }
+<span class="fc" id="L217">        }</span>
+<span class="fc" id="L218">    }</span>
+
+    private static int estimateSize(OperationUpdate update) {
+<span class="fc bfc" id="L221" title="All 2 branches covered.">        if (update == null) {</span>
+<span class="fc" id="L222">            return 0;</span>
+        }
+<span class="fc" id="L224">        return update.id().length()</span>
+<span class="fc" id="L225">                + update.type().toString().length()</span>
+<span class="fc" id="L226">                + update.action().toString().length()</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">                + (update.payload() != null ? update.payload().length() : 0)</span>
+                + 100;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

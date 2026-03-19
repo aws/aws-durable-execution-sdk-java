@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RetryInProcessExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples</a> &gt; <span class="el_source">RetryInProcessExample.java</span></div><h1>RetryInProcessExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples;
+
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.retry.JitterStrategy;
+import software.amazon.lambda.durable.retry.RetryStrategies;
+
+/**
+ * Example demonstrating in-process retry behavior with concurrent operations.
+ *
+ * &lt;p&gt;This example shows:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;An async step that fails and retries while other work continues
+ *   &lt;li&gt;A long-running synchronous step that keeps the process busy
+ *   &lt;li&gt;Retry happens in-process without suspension because main thread is active
+ * &lt;/ul&gt;
+ */
+<span class="nc" id="L27">public class RetryInProcessExample extends DurableHandler&lt;Object, String&gt; {</span>
+
+<span class="nc" id="L29">    private static final Logger logger = LoggerFactory.getLogger(RetryInProcessExample.class);</span>
+
+<span class="nc" id="L31">    private final AtomicInteger attemptCount = new AtomicInteger(0);</span>
+
+    @Override
+    public String handleRequest(Object input, DurableContext context) {
+<span class="nc" id="L35">        logger.info(&quot;Starting retry in-process example&quot;);</span>
+
+        // Start async step that will fail and retry
+<span class="nc" id="L38">        DurableFuture&lt;String&gt; asyncStep = context.stepAsync(</span>
+                &quot;flaky-async-operation&quot;,
+                String.class,
+                stepCtx -&gt; {
+<span class="nc" id="L42">                    int attempt = attemptCount.incrementAndGet();</span>
+<span class="nc" id="L43">                    logger.info(</span>
+                            &quot;Async operation attempt #{} in thread: {}&quot;,
+<span class="nc" id="L45">                            attempt,</span>
+<span class="nc" id="L46">                            Thread.currentThread().getName());</span>
+
+                    // Fail first 2 attempts, succeed on 3rd
+<span class="nc bnc" id="L49" title="All 2 branches missed.">                    if (attempt &lt; 3) {</span>
+<span class="nc" id="L50">                        var message = &quot;Async operation failing on attempt &quot; + attempt;</span>
+<span class="nc" id="L51">                        logger.warn(message);</span>
+<span class="nc" id="L52">                        throw new RuntimeException(message);</span>
+                    } else {
+<span class="nc" id="L54">                        var message = &quot;Async operation succeeded on attempt &quot; + attempt;</span>
+<span class="nc" id="L55">                        logger.info(message);</span>
+<span class="nc" id="L56">                        return message;</span>
+                    }
+                },
+<span class="nc" id="L59">                StepConfig.builder()</span>
+<span class="nc" id="L60">                        .retryStrategy(RetryStrategies.exponentialBackoff(</span>
+<span class="nc" id="L61">                                5, Duration.ofSeconds(1), Duration.ofSeconds(10), 2.0, JitterStrategy.NONE))</span>
+<span class="nc" id="L62">                        .build());</span>
+
+        // Long-running synchronous step that keeps process busy
+        // This prevents suspension during async step retries
+<span class="nc" id="L66">        String syncResult = context.step(&quot;long-running-operation&quot;, String.class, stepCtx -&gt; {</span>
+<span class="nc" id="L67">            logger.info(</span>
+                    &quot;Starting long-running operation (10 seconds) in thread: {}&quot;,
+<span class="nc" id="L69">                    Thread.currentThread().getName());</span>
+            try {
+<span class="nc" id="L71">                Thread.sleep(10000); // 10 seconds</span>
+<span class="nc" id="L72">                logger.info(&quot;Long-running operation completed&quot;);</span>
+<span class="nc" id="L73">                return &quot;Long operation completed&quot;;</span>
+<span class="nc" id="L74">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L75">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L76">                throw new RuntimeException(&quot;Long operation interrupted&quot;, e);</span>
+            }
+        });
+
+        // Get async step result (should be ready by now due to retries during sync
+        // step)
+<span class="nc" id="L82">        logger.info(&quot;Getting async step result&quot;);</span>
+<span class="nc" id="L83">        String asyncResult = asyncStep.get();</span>
+
+<span class="nc" id="L85">        logger.info(&quot;Sync result: {}&quot;, syncResult);</span>
+<span class="nc" id="L86">        logger.info(&quot;Async result: {}&quot;, asyncResult);</span>
+
+<span class="nc" id="L88">        return &quot;Retry in-process completed - Sync: &quot; + syncResult + &quot;, Async: &quot; + asyncResult;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

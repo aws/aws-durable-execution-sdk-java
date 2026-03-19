@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BaseConcurrentOperation.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.operation</a> &gt; <span class="el_source">BaseConcurrentOperation.java</span></div><h1>BaseConcurrentOperation.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.operation;
+
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ContextOptions;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.CompletionConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
+import software.amazon.lambda.durable.model.CompletionReason;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.serde.SerDes;
+
+/**
+ * Abstract base class for concurrent operations (map, parallel).
+ *
+ * &lt;p&gt;Provides the shared concurrent execution framework: root child context creation, queue-based concurrency limiting,
+ * success/failure tracking, completion criteria evaluation, and thread registration ordering.
+ *
+ * &lt;p&gt;Subclasses implement {@link #startBranches()} to create branches via {@link #branchInternal} and
+ * {@link #aggregateResults()} to collect branch results into the final result type.
+ *
+ * @param &lt;R&gt; the aggregate result type (e.g., {@code MapResult&lt;O&gt;})
+ */
+public abstract class BaseConcurrentOperation&lt;R&gt; extends BaseDurableOperation&lt;R&gt; {
+
+<span class="fc" id="L46">    private static final Logger logger = LoggerFactory.getLogger(BaseConcurrentOperation.class);</span>
+    private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
+
+<span class="fc" id="L49">    private final List&lt;ChildContextOperation&lt;?&gt;&gt; branches = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L50">    private final Queue&lt;ChildContextOperation&lt;?&gt;&gt; pendingQueue = new ConcurrentLinkedQueue&lt;&gt;();</span>
+<span class="fc" id="L51">    private final Set&lt;ChildContextOperation&lt;?&gt;&gt; startedBranches = ConcurrentHashMap.newKeySet();</span>
+<span class="fc" id="L52">    private final AtomicInteger activeBranches = new AtomicInteger(0);</span>
+<span class="fc" id="L53">    private final AtomicInteger succeeded = new AtomicInteger(0);</span>
+<span class="fc" id="L54">    private final AtomicInteger failed = new AtomicInteger(0);</span>
+    private final Integer maxConcurrency;
+    private final CompletionConfig completionConfig;
+    private final OperationSubType subType;
+    private volatile CompletionReason completionReason;
+<span class="fc" id="L59">    private volatile boolean earlyTermination = false;</span>
+    private DurableContextImpl rootContext;
+    private OperationIdGenerator operationIdGenerator;
+
+    protected BaseConcurrentOperation(
+            String operationId,
+            String name,
+            OperationSubType subType,
+            Integer maxConcurrency,
+            CompletionConfig completionConfig,
+            TypeToken&lt;R&gt; resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext) {
+<span class="fc" id="L72">        super(</span>
+<span class="fc" id="L73">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),</span>
+                resultTypeToken,
+                resultSerDes,
+                durableContext);
+<span class="fc" id="L77">        this.subType = subType;</span>
+<span class="fc" id="L78">        this.maxConcurrency = maxConcurrency;</span>
+<span class="fc" id="L79">        this.completionConfig = completionConfig;</span>
+<span class="fc" id="L80">    }</span>
+
+    // ========== lifecycle ==========
+
+    @Override
+    protected void start() {
+<span class="fc" id="L86">        sendOperationUpdateAsync(</span>
+<span class="fc" id="L87">                OperationUpdate.builder().action(OperationAction.START).subType(subType.getValue()));</span>
+<span class="fc" id="L88">        this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
+<span class="fc" id="L89">        this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
+<span class="fc" id="L90">        startBranches();</span>
+<span class="fc" id="L91">    }</span>
+
+    @Override
+    protected void replay(Operation existing) {
+<span class="pc bpc" id="L95" title="3 of 4 branches missed.">        switch (existing.status()) {</span>
+            case SUCCEEDED -&gt; {
+<span class="pc bpc" id="L97" title="1 of 2 branches missed.">                if (existing.contextDetails() != null</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
+                    // Large result: reconstruct by replaying child contexts
+<span class="nc" id="L100">                    this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
+<span class="nc" id="L101">                    this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
+<span class="nc" id="L102">                    startBranches();</span>
+                } else {
+<span class="fc" id="L104">                    markAlreadyCompleted();</span>
+                }
+<span class="fc" id="L106">            }</span>
+<span class="nc" id="L107">            case FAILED -&gt; markAlreadyCompleted();</span>
+            case STARTED -&gt; {
+                // Interrupted mid-execution: resume from last checkpoint
+<span class="nc" id="L110">                this.rootContext = getContext().createChildContext(getOperationId(), getName());</span>
+<span class="nc" id="L111">                this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
+<span class="nc" id="L112">                startBranches();</span>
+<span class="nc" id="L113">            }</span>
+            default -&gt;
+<span class="nc" id="L115">                terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L116">                        &quot;Unexpected concurrent operation status: &quot; + existing.status());</span>
+        }
+<span class="fc" id="L118">    }</span>
+
+    // ========== abstract methods for subclasses ==========
+
+    protected abstract void startBranches();
+
+    protected abstract R aggregateResults();
+
+    // ========== branch creation ==========
+
+    protected &lt;T&gt; ChildContextOperation&lt;T&gt; branchInternal(
+            String branchName,
+            OperationSubType branchSubType,
+            TypeToken&lt;T&gt; typeToken,
+            SerDes serDes,
+            Function&lt;DurableContext, T&gt; function) {
+<span class="fc" id="L134">        var branchOpId = operationIdGenerator.nextOperationId();</span>
+<span class="fc" id="L135">        var branch = new ChildContextOperation&lt;&gt;(</span>
+<span class="fc" id="L136">                OperationIdentifier.of(branchOpId, branchName, OperationType.CONTEXT, branchSubType),</span>
+                function,
+                typeToken,
+                serDes,
+                rootContext);
+<span class="fc" id="L141">        branches.add(branch);</span>
+
+        // Attach callback BEFORE execution starts (or before future can complete).
+        // The thenRun runs synchronously inside the synchronized(completionFuture) block
+        // when completionFuture.complete(null) is called, so it executes on the checkpoint
+        // processing thread. This callback only does lightweight work: update counters,
+        // evaluate CompletionConfig, dequeue and start next branch.
+<span class="fc" id="L148">        branch.completionFuture.thenRun(() -&gt; {</span>
+<span class="fc" id="L149">            var op = branch.getOperation();</span>
+<span class="pc bpc" id="L150" title="1 of 4 branches missed.">            boolean success = op != null &amp;&amp; op.status() == OperationStatus.SUCCEEDED;</span>
+<span class="fc" id="L151">            onChildContextComplete(branch, success);</span>
+<span class="fc" id="L152">        });</span>
+
+<span class="pc bpc" id="L154" title="1 of 6 branches missed.">        if (!earlyTermination &amp;&amp; (maxConcurrency == null || activeBranches.get() &lt; maxConcurrency)) {</span>
+<span class="fc" id="L155">            activeBranches.incrementAndGet();</span>
+<span class="fc" id="L156">            startedBranches.add(branch);</span>
+<span class="fc" id="L157">            branch.execute();</span>
+        } else {
+<span class="fc" id="L159">            pendingQueue.add(branch);</span>
+        }
+<span class="fc" id="L161">        return branch;</span>
+    }
+
+    // ========== completion callback ==========
+
+    /**
+     * Called on the checkpoint processing thread when a branch's completionFuture completes. Only does lightweight
+     * work: update counters, evaluate CompletionConfig, dequeue and start next branch. Does NOT call
+     * finalizeOperation() or checkpointResult() — those happen in get() on the context thread.
+     */
+    protected void onChildContextComplete(ChildContextOperation&lt;?&gt; branch, boolean success) {
+<span class="fc bfc" id="L172" title="All 2 branches covered.">        if (success) {</span>
+<span class="fc" id="L173">            succeeded.incrementAndGet();</span>
+        } else {
+<span class="fc" id="L175">            failed.incrementAndGet();</span>
+        }
+
+        // Evaluate completion criteria
+<span class="pc bpc" id="L179" title="1 of 4 branches missed.">        if (!earlyTermination &amp;&amp; shouldTerminateEarly()) {</span>
+<span class="fc" id="L180">            earlyTermination = true;</span>
+<span class="fc" id="L181">            completionReason = evaluateCompletionReason();</span>
+<span class="fc" id="L182">            logger.trace(&quot;Early termination triggered for operation {}: reason={}&quot;, getOperationId(), completionReason);</span>
+        }
+
+        // Start next queued branch with correct thread ordering:
+        // register new branch thread BEFORE deregistering completed branch thread
+<span class="fc bfc" id="L187" title="All 2 branches covered.">        if (!earlyTermination) {</span>
+<span class="fc" id="L188">            var next = pendingQueue.poll();</span>
+<span class="fc bfc" id="L189" title="All 2 branches covered.">            if (next != null) {</span>
+                // activeBranches stays the same (one completing, one starting)
+<span class="fc" id="L191">                startedBranches.add(next);</span>
+<span class="fc" id="L192">                next.execute(); // registers new thread internally via ChildContextOperation.start()</span>
+            } else {
+<span class="fc" id="L194">                activeBranches.decrementAndGet();</span>
+            }
+<span class="fc" id="L196">        } else {</span>
+<span class="fc" id="L197">            activeBranches.decrementAndGet();</span>
+        }
+        // completed branch's thread is deregistered by ChildContextOperation's close() in BaseContext
+<span class="fc" id="L200">    }</span>
+
+    // ========== completion evaluation ==========
+
+    private boolean shouldTerminateEarly() {
+        // Check minSuccessful
+<span class="fc bfc" id="L206" title="All 4 branches covered.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded.get() &gt;= completionConfig.minSuccessful()) {</span>
+<span class="fc" id="L207">            return true;</span>
+        }
+
+        // Check toleratedFailureCount
+<span class="fc bfc" id="L211" title="All 2 branches covered.">        if (completionConfig.toleratedFailureCount() != null</span>
+<span class="fc bfc" id="L212" title="All 2 branches covered.">                &amp;&amp; failed.get() &gt; completionConfig.toleratedFailureCount()) {</span>
+<span class="fc" id="L213">            return true;</span>
+        }
+
+        // Check toleratedFailurePercentage
+<span class="fc" id="L217">        int totalCompleted = succeeded.get() + failed.get();</span>
+<span class="pc bpc" id="L218" title="3 of 4 branches missed.">        if (completionConfig.toleratedFailurePercentage() != null</span>
+                &amp;&amp; totalCompleted &gt; 0
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                &amp;&amp; ((double) failed.get() / totalCompleted) &gt; completionConfig.toleratedFailurePercentage()) {</span>
+<span class="nc" id="L221">            return true;</span>
+        }
+
+<span class="fc" id="L224">        return false;</span>
+    }
+
+    protected CompletionReason evaluateCompletionReason() {
+<span class="pc bpc" id="L228" title="1 of 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded.get() &gt;= completionConfig.minSuccessful()) {</span>
+<span class="fc" id="L229">            return CompletionReason.MIN_SUCCESSFUL_REACHED;</span>
+        }
+<span class="fc" id="L231">        return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;</span>
+    }
+
+    private void finalizeOperation() {
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (completionReason == null) {</span>
+<span class="nc" id="L236">            completionReason = CompletionReason.ALL_COMPLETED;</span>
+        }
+
+<span class="nc" id="L239">        R result = aggregateResults();</span>
+<span class="nc" id="L240">        checkpointResult(result);</span>
+<span class="nc" id="L241">    }</span>
+
+    /**
+     * Checkpoints the parent concurrent operation as SUCCEEDED. Uses synchronous {@code sendOperationUpdate} because
+     * this is called from the context thread in {@code get()}, where it is safe to block.
+     *
+     * &lt;p&gt;Small results (&amp;lt;256KB) are checkpointed directly as payload. Large results are checkpointed with
+     * {@code replayChildren=true} and an empty payload, so on replay the result is reconstructed from child contexts.
+     */
+    protected void checkpointResult(R result) {
+<span class="fc" id="L251">        var serialized = serializeResult(result);</span>
+<span class="fc" id="L252">        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);</span>
+
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
+<span class="fc" id="L255">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L256">                    .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L257">                    .subType(subType.getValue())</span>
+<span class="fc" id="L258">                    .payload(serialized));</span>
+        } else {
+            // Large result: checkpoint with empty payload + replayChildren flag
+<span class="nc" id="L261">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="nc" id="L262">                    .action(OperationAction.SUCCEED)</span>
+<span class="nc" id="L263">                    .subType(subType.getValue())</span>
+<span class="nc" id="L264">                    .payload(&quot;&quot;)</span>
+<span class="nc" id="L265">                    .contextOptions(</span>
+<span class="nc" id="L266">                            ContextOptions.builder().replayChildren(true).build()));</span>
+        }
+<span class="fc" id="L268">    }</span>
+
+    // ========== get ==========
+
+    @Override
+    public R get() {
+<span class="nc" id="L274">        var op = waitForOperationCompletion();</span>
+
+<span class="nc bnc" id="L276" title="All 2 branches missed.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (op.contextDetails() != null</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                    &amp;&amp; Boolean.TRUE.equals(op.contextDetails().replayChildren())) {</span>
+                // Large result was reconstructed via replay — aggregate from branches
+<span class="nc" id="L280">                return aggregateResults();</span>
+            }
+<span class="nc" id="L282">            var contextDetails = op.contextDetails();</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            var result = (contextDetails != null) ? contextDetails.result() : null;</span>
+<span class="nc" id="L284">            return deserializeResult(result);</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">        } else if (op.status() == OperationStatus.FAILED) {</span>
+<span class="nc" id="L286">            var contextDetails = op.contextDetails();</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
+<span class="nc" id="L288">            var original = deserializeException(errorObject);</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">            if (original != null) {</span>
+<span class="nc" id="L290">                throw new RuntimeException(original);</span>
+            }
+<span class="nc" id="L292">            throw new RuntimeException(&quot;Concurrent operation failed: &quot; + getOperationId());</span>
+        } else {
+<span class="nc" id="L294">            return terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L295">                    &quot;Unexpected operation status after completion: &quot; + op.status());</span>
+        }
+    }
+
+    // ========== protected accessors for subclasses ==========
+
+    protected List&lt;ChildContextOperation&lt;?&gt;&gt; getBranches() {
+<span class="fc" id="L302">        return Collections.unmodifiableList(branches);</span>
+    }
+
+    protected CompletionReason getCompletionReason() {
+<span class="fc" id="L306">        return completionReason;</span>
+    }
+
+    protected AtomicInteger getSucceeded() {
+<span class="nc" id="L310">        return succeeded;</span>
+    }
+
+    protected AtomicInteger getFailed() {
+<span class="nc" id="L314">        return failed;</span>
+    }
+
+    protected boolean isEarlyTermination() {
+<span class="nc" id="L318">        return earlyTermination;</span>
+    }
+
+    protected DurableContext getRootContext() {
+<span class="nc" id="L322">        return rootContext;</span>
+    }
+
+    /** Returns the pending queue of branches that have not yet been started. */
+    protected Queue&lt;ChildContextOperation&lt;?&gt;&gt; getPendingQueue() {
+<span class="fc" id="L327">        return pendingQueue;</span>
+    }
+
+    /** Returns the set of branches that have been started (had execute() called). */
+    protected Set&lt;ChildContextOperation&lt;?&gt;&gt; getStartedBranches() {
+<span class="nc" id="L332">        return startedBranches;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

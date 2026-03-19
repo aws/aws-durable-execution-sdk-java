@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LocalDurableTestRunner.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-testing</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.testing</a> &gt; <span class="el_source">LocalDurableTestRunner.java</span></div><h1>LocalDurableTestRunner.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.testing;
+
+import com.amazonaws.services.lambda.runtime.Context;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.BiFunction;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableExecutor;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+
+/**
+ * In-memory test runner for durable Lambda functions. Simulates the Lambda re-invocation loop locally without requiring
+ * AWS infrastructure, enabling fast unit and integration tests.
+ *
+ * @param &lt;I&gt; the handler input type
+ * @param &lt;O&gt; the handler output type
+ */
+public class LocalDurableTestRunner&lt;I, O&gt; {
+    private static final int MAX_INVOCATIONS = 100;
+
+    private final TypeToken&lt;I&gt; inputType;
+    private final BiFunction&lt;I, DurableContext, O&gt; handler;
+    private final LocalMemoryExecutionClient storage;
+    private final SerDes serDes;
+    private final DurableConfig customerConfig;
+
+<span class="fc" id="L41">    private LocalDurableTestRunner(TypeToken&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handlerFn) {</span>
+<span class="fc" id="L42">        this.inputType = inputType;</span>
+<span class="fc" id="L43">        this.handler = handlerFn;</span>
+<span class="fc" id="L44">        this.storage = new LocalMemoryExecutionClient();</span>
+<span class="fc" id="L45">        this.serDes = new JacksonSerDes();</span>
+<span class="fc" id="L46">        this.customerConfig = null;</span>
+<span class="fc" id="L47">    }</span>
+
+    private LocalDurableTestRunner(
+<span class="fc" id="L50">            TypeToken&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handlerFn, DurableConfig customerConfig) {</span>
+<span class="fc" id="L51">        this.inputType = inputType;</span>
+<span class="fc" id="L52">        this.handler = handlerFn;</span>
+<span class="fc" id="L53">        this.storage = new LocalMemoryExecutionClient();</span>
+<span class="fc" id="L54">        this.serDes = customerConfig.getSerDes();</span>
+<span class="fc" id="L55">        this.customerConfig = customerConfig;</span>
+<span class="fc" id="L56">    }</span>
+
+    /**
+     * Creates a LocalDurableTestRunner with default configuration. Use this method when your handler uses the default
+     * DurableConfig.
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param &lt;I&gt; Input type
+     * @param &lt;O&gt; Output type
+     * @return LocalDurableTestRunner with default configuration
+     */
+    public static &lt;I, O&gt; LocalDurableTestRunner&lt;I, O&gt; create(
+            Class&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handlerFn) {
+<span class="fc" id="L70">        return new LocalDurableTestRunner&lt;&gt;(TypeToken.get(inputType), handlerFn);</span>
+    }
+
+    /**
+     * Creates a LocalDurableTestRunner with default configuration. Use this method when your handler uses the default
+     * DurableConfig.
+     *
+     * &lt;p&gt;If your handler has custom configuration (custom SerDes, ExecutorService, etc.), use {@link #create(TypeToken,
+     * DurableHandler)} instead to ensure the test runner uses the same configuration as your handler.
+     *
+     * &lt;p&gt;Optionally, you can also use {@link #create(TypeToken, BiFunction, DurableConfig)} to pass in any
+     * DurableConfig directly.
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param &lt;I&gt; Input type
+     * @param &lt;O&gt; Output type
+     * @return LocalDurableTestRunner with default configuration
+     */
+    public static &lt;I, O&gt; LocalDurableTestRunner&lt;I, O&gt; create(
+            TypeToken&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handlerFn) {
+<span class="fc" id="L91">        return new LocalDurableTestRunner&lt;&gt;(inputType, handlerFn);</span>
+    }
+
+    /**
+     * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
+     * SerDes and other configuration, while overriding the DurableExecutionClient with the in-memory implementation.
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param config The DurableConfig to use (DurableExecutionClient will be overridden with in-memory implementation)
+     * @param &lt;I&gt; Input type
+     * @param &lt;O&gt; Output type
+     * @return LocalDurableTestRunner configured with the provided settings
+     */
+    public static &lt;I, O&gt; LocalDurableTestRunner&lt;I, O&gt; create(
+            Class&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handlerFn, DurableConfig config) {
+<span class="fc" id="L107">        return new LocalDurableTestRunner&lt;&gt;(TypeToken.get(inputType), handlerFn, config);</span>
+    }
+    /**
+     * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
+     * SerDes and other configuration, while overriding the DurableExecutionClient with the in-memory implementation.
+     *
+     * &lt;p&gt;Use this method when you need to pass a custom DurableConfig directly, for example when testing with a custom
+     * SerDes without using a DurableHandler.
+     *
+     * &lt;p&gt;Example usage:
+     *
+     * &lt;pre&gt;{@code
+     * // Create a custom DurableConfig with custom SerDes
+     * var config = DurableConfig.builder()
+     *     .withSerDes(new MyCustomSerDes())
+     *     .build();
+     *
+     * // Create test runner with custom configuration
+     * var runner = LocalDurableTestRunner.create(
+     *     String.class,
+     *     (input, context) -&gt; context.step(&quot;process&quot;, String.class, stepCtx -&gt; &quot;result&quot;),
+     *     config
+     * );
+     *
+     * // Run test with custom configuration
+     * var result = runner.run(&quot;test-input&quot;);
+     * assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+     * }&lt;/pre&gt;
+     *
+     * @param inputType The input type class
+     * @param handlerFn The handler function
+     * @param config The DurableConfig to use (DurableExecutionClient will be overridden with in-memory implementation)
+     * @param &lt;I&gt; Input type
+     * @param &lt;O&gt; Output type
+     * @return LocalDurableTestRunner configured with the provided settings
+     */
+    public static &lt;I, O&gt; LocalDurableTestRunner&lt;I, O&gt; create(
+            TypeToken&lt;I&gt; inputType, BiFunction&lt;I, DurableContext, O&gt; handlerFn, DurableConfig config) {
+<span class="nc" id="L145">        return new LocalDurableTestRunner&lt;&gt;(inputType, handlerFn, config);</span>
+    }
+
+    /**
+     * Creates a LocalDurableTestRunner from a DurableHandler instance, automatically extracting the configuration. This
+     * is a convenient method when you have a handler instance and want to test it with the same configuration it uses
+     * in production.
+     *
+     * @param inputType The input type class
+     * @param handler The DurableHandler instance to test
+     * @param &lt;I&gt; Input type
+     * @param &lt;O&gt; Output type
+     * @return LocalDurableTestRunner configured with the handler's settings
+     */
+    public static &lt;I, O&gt; LocalDurableTestRunner&lt;I, O&gt; create(Class&lt;I&gt; inputType, DurableHandler&lt;I, O&gt; handler) {
+<span class="fc" id="L160">        return new LocalDurableTestRunner&lt;&gt;(</span>
+<span class="fc" id="L161">                TypeToken.get(inputType), handler::handleRequest, handler.getConfiguration());</span>
+    }
+
+    /**
+     * Creates a LocalDurableTestRunner from a DurableHandler instance, automatically extracting the configuration. This
+     * is a convenient method when you have a handler instance and want to test it with the same configuration it uses
+     * in production.
+     *
+     * &lt;p&gt;This method automatically:
+     *
+     * &lt;ul&gt;
+     *   &lt;li&gt;Uses the handler's configuration (SerDes, ExecutorService, etc.)
+     *   &lt;li&gt;Overrides the DurableExecutionClient with the in-memory implementation for testing
+     * &lt;/ul&gt;
+     *
+     * &lt;p&gt;Example usage:
+     *
+     * &lt;pre&gt;{@code
+     * // Create handler instance
+     * var handler = new MyCustomHandler();
+     *
+     * // Create test runner from handler (automatically extracts config)
+     * var runner = LocalDurableTestRunner.create(String.class, handler);
+     *
+     * // Run test with the handler's configuration
+     * var result = runner.run(&quot;test-input&quot;);
+     * assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+     * }&lt;/pre&gt;
+     *
+     * @param inputType The input type class
+     * @param handler The DurableHandler instance to test
+     * @param &lt;I&gt; Input type
+     * @param &lt;O&gt; Output type
+     * @return LocalDurableTestRunner configured with the handler's settings
+     */
+    public static &lt;I, O&gt; LocalDurableTestRunner&lt;I, O&gt; create(TypeToken&lt;I&gt; inputType, DurableHandler&lt;I, O&gt; handler) {
+<span class="fc" id="L197">        return new LocalDurableTestRunner&lt;&gt;(inputType, handler::handleRequest, handler.getConfiguration());</span>
+    }
+
+    /** Run a single invocation (may return PENDING if waiting/retrying). */
+    public TestResult&lt;O&gt; run(I input) {
+<span class="fc" id="L202">        var durableInput = createDurableInput(input);</span>
+
+        // Create config that uses customer's configuration but overrides the client with in-memory storage
+        DurableConfig config;
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        if (customerConfig != null) {</span>
+            // Use customer's config but override the client with our in-memory implementation
+<span class="fc" id="L208">            config = DurableConfig.builder()</span>
+<span class="fc" id="L209">                    .withDurableExecutionClient(storage)</span>
+<span class="fc" id="L210">                    .withSerDes(customerConfig.getSerDes())</span>
+<span class="fc" id="L211">                    .withExecutorService(customerConfig.getExecutorService())</span>
+<span class="fc" id="L212">                    .withPollingStrategy(customerConfig.getPollingStrategy())</span>
+<span class="fc" id="L213">                    .withCheckpointDelay(customerConfig.getCheckpointDelay())</span>
+<span class="fc" id="L214">                    .withLoggerConfig(customerConfig.getLoggerConfig())</span>
+<span class="fc" id="L215">                    .build();</span>
+        } else {
+            // Fallback to default config with in-memory client
+<span class="fc" id="L218">            config = DurableConfig.builder().withDurableExecutionClient(storage).build();</span>
+        }
+
+<span class="fc" id="L221">        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, config);</span>
+
+<span class="fc" id="L223">        return storage.toTestResult(output);</span>
+    }
+
+    /**
+     * Run until completion (SUCCEEDED or FAILED) or pending manual intervention, simulating Lambda re-invocations.
+     * Operations that don't require manual intervention (like WAIT in STARTED or STEP in PENDING) will be automatically
+     * advanced.
+     *
+     * @param input The input to process
+     * @return Final test result (SUCCEEDED or FAILED) or PENDING if operations pending manual intervention
+     */
+    public TestResult&lt;O&gt; runUntilComplete(I input) {
+<span class="fc" id="L235">        TestResult&lt;O&gt; result = null;</span>
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">        for (int i = 0; i &lt; MAX_INVOCATIONS; i++) {</span>
+<span class="fc" id="L237">            result = run(input);</span>
+
+<span class="pc bpc" id="L239" title="1 of 4 branches missed.">            if (result.getStatus() != ExecutionStatus.PENDING || !storage.advanceReadyOperations()) {</span>
+                // break the loop if
+                // - Return SUCCEEDED or FAILED - we're done
+                // - Return PENDING and let test manually advance operations if no operations can be auto advanced
+<span class="nc" id="L243">                break;</span>
+            }
+        }
+<span class="fc" id="L246">        return result;</span>
+    }
+
+    /** Resets a named step operation to STARTED status, simulating a checkpoint failure. */
+    public void resetCheckpointToStarted(String stepName) {
+<span class="fc" id="L251">        storage.resetCheckpointToStarted(stepName);</span>
+<span class="fc" id="L252">    }</span>
+
+    /** Removes a named step operation entirely, simulating loss of a fire-and-forget checkpoint. */
+    public void simulateFireAndForgetCheckpointLoss(String stepName) {
+<span class="fc" id="L256">        storage.simulateFireAndForgetCheckpointLoss(stepName);</span>
+<span class="fc" id="L257">    }</span>
+
+    /** Returns the {@link TestOperation} for the given operation name, or null if not found. */
+    public TestOperation getOperation(String name) {
+<span class="fc" id="L261">        var op = storage.getOperationByName(name);</span>
+<span class="pc bpc" id="L262" title="1 of 2 branches missed.">        return op != null ? new TestOperation(op, serDes) : null;</span>
+    }
+
+    /** Get callback ID for a named callback operation. */
+    public String getCallbackId(String operationName) {
+<span class="fc" id="L267">        return storage.getCallbackId(operationName);</span>
+    }
+
+    /** Complete a callback with success result. */
+    public void completeCallback(String callbackId, String result) {
+<span class="fc" id="L272">        storage.completeCallback(callbackId, result);</span>
+<span class="fc" id="L273">    }</span>
+
+    /** Fail a callback with error. */
+    public void failCallback(String callbackId, ErrorObject error) {
+<span class="fc" id="L277">        storage.failCallback(callbackId, error);</span>
+<span class="fc" id="L278">    }</span>
+
+    /** Timeout a callback. */
+    public void timeoutCallback(String callbackId) {
+<span class="fc" id="L282">        storage.timeoutCallback(callbackId);</span>
+<span class="fc" id="L283">    }</span>
+
+    /** Advances all pending operations, simulating time passing for retries and waits. */
+    public void advanceTime() {
+<span class="fc" id="L287">        storage.advanceReadyOperations();</span>
+<span class="fc" id="L288">    }</span>
+
+    /** Completes a chained invoke operation with a successful result. */
+    public void completeChainedInvoke(String name, String result) {
+<span class="fc" id="L292">        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.SUCCEEDED, result, null));</span>
+<span class="fc" id="L293">    }</span>
+
+    /** Marks a chained invoke operation as timed out. */
+    public void timeoutChainedInvoke(String name) {
+<span class="fc" id="L297">        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.TIMED_OUT, null, null));</span>
+<span class="fc" id="L298">    }</span>
+
+    /** Fails a chained invoke operation with the given error. */
+    public void failChainedInvoke(String name, ErrorObject error) {
+<span class="fc" id="L302">        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.FAILED, null, error));</span>
+<span class="fc" id="L303">    }</span>
+
+    /** Stops a chained invoke operation with the given error. */
+    public void stopChainedInvoke(String name, ErrorObject error) {
+<span class="fc" id="L307">        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.STOPPED, null, error));</span>
+<span class="fc" id="L308">    }</span>
+
+    private DurableExecutionInput createDurableInput(I input) {
+<span class="fc" id="L311">        var inputJson = serDes.serialize(input);</span>
+<span class="fc" id="L312">        var executionOp = Operation.builder()</span>
+<span class="fc" id="L313">                .id(&quot;0&quot;)</span>
+<span class="fc" id="L314">                .type(OperationType.EXECUTION)</span>
+<span class="fc" id="L315">                .status(OperationStatus.STARTED)</span>
+<span class="fc" id="L316">                .executionDetails(</span>
+<span class="fc" id="L317">                        ExecutionDetails.builder().inputPayload(inputJson).build())</span>
+<span class="fc" id="L318">                .build();</span>
+
+        // Load previous operations and include them in InitialExecutionState
+<span class="fc" id="L321">        var existingOps = storage.getExecutionState(</span>
+                        &quot;arn:aws:lambda:us-east-1:123456789012:function:test&quot;, &quot;test-token&quot;, null)
+<span class="fc" id="L323">                .operations();</span>
+<span class="fc" id="L324">        var allOps = new ArrayList&lt;&gt;(List.of(executionOp));</span>
+<span class="fc" id="L325">        allOps.addAll(existingOps);</span>
+
+<span class="fc" id="L327">        return new DurableExecutionInput(</span>
+                &quot;arn:aws:lambda:us-east-1:123456789012:function:test&quot;,
+                &quot;test-token&quot;,
+<span class="fc" id="L330">                CheckpointUpdatedExecutionState.builder().operations(allOps).build());</span>
+    }
+
+    private Context mockLambdaContext() {
+<span class="fc" id="L334">        return null; // Minimal - tests don't need real Lambda context</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

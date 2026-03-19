@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TestOperation.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-testing</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.testing</a> &gt; <span class="el_source">TestOperation.java</span></div><h1>TestOperation.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.testing;
+
+import java.util.List;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.awssdk.services.lambda.model.WaitDetails;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.serde.SerDes;
+
+/** Wrapper for AWS SDK Operation providing convenient access methods. */
+public class TestOperation {
+    private final Operation operation;
+    private final List&lt;Event&gt; events;
+    private final SerDes serDes;
+
+    TestOperation(Operation operation, SerDes serDes) {
+<span class="fc" id="L24">        this(operation, List.of(), serDes);</span>
+<span class="fc" id="L25">    }</span>
+
+<span class="fc" id="L27">    TestOperation(Operation operation, List&lt;Event&gt; events, SerDes serDes) {</span>
+<span class="fc" id="L28">        this.operation = operation;</span>
+<span class="fc" id="L29">        this.events = events;</span>
+<span class="fc" id="L30">        this.serDes = serDes;</span>
+<span class="fc" id="L31">    }</span>
+
+    /** Returns the raw history events associated with this operation. */
+    public List&lt;Event&gt; getEvents() {
+<span class="nc" id="L35">        return List.copyOf(events);</span>
+    }
+
+    /** Returns the operation name. */
+    public String getName() {
+<span class="fc" id="L40">        return operation.name();</span>
+    }
+
+    /** Returns the current status of this operation (e.g. STARTED, SUCCEEDED, FAILED). */
+    public OperationStatus getStatus() {
+<span class="fc" id="L45">        return operation.status();</span>
+    }
+
+    /** Returns the operation type (STEP, WAIT, CALLBACK, etc.). */
+    public OperationType getType() {
+<span class="fc" id="L50">        return operation.type();</span>
+    }
+
+    /** Returns the step details, or null if this is not a step operation. */
+    public StepDetails getStepDetails() {
+<span class="fc" id="L55">        return operation.stepDetails();</span>
+    }
+
+    /** Returns the wait details, or null if this is not a wait operation. */
+    public WaitDetails getWaitDetails() {
+<span class="nc" id="L60">        return operation.waitDetails();</span>
+    }
+
+    /** Returns the callback details, or null if this is not a callback operation. */
+    public CallbackDetails getCallbackDetails() {
+<span class="nc" id="L65">        return operation.callbackDetails();</span>
+    }
+
+    /** Deserializes and returns the step result as the given type. */
+    public &lt;T&gt; T getStepResult(Class&lt;T&gt; type) {
+<span class="fc" id="L70">        return getStepResult(TypeToken.get(type));</span>
+    }
+
+    /** Deserializes and returns the step result using a TypeToken for generic types. */
+    public &lt;T&gt; T getStepResult(TypeToken&lt;T&gt; type) {
+<span class="fc" id="L75">        var details = operation.stepDetails();</span>
+<span class="pc bpc" id="L76" title="2 of 4 branches missed.">        if (details == null || details.result() == null) {</span>
+<span class="nc" id="L77">            return null;</span>
+        }
+<span class="fc" id="L79">        return serDes.deserialize(details.result(), type);</span>
+    }
+
+    /** Returns the step error, or null if the step succeeded or this is not a step operation. */
+    public ErrorObject getError() {
+<span class="fc" id="L84">        var details = operation.stepDetails();</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">        return details != null ? details.error() : null;</span>
+    }
+
+    /** Returns the current retry attempt number (0-based), defaulting to 0 if not available. */
+    public int getAttempt() {
+<span class="nc" id="L90">        var details = operation.stepDetails();</span>
+<span class="nc bnc" id="L91" title="All 4 branches missed.">        return details != null &amp;&amp; details.attempt() != null ? details.attempt() : 0;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

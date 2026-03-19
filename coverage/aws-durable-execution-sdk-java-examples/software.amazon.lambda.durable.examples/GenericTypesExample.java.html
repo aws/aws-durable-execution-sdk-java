@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GenericTypesExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples</a> &gt; <span class="el_source">GenericTypesExample.java</span></div><h1>GenericTypesExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.retry.RetryStrategies;
+
+/**
+ * Example demonstrating TypeToken support for complex generic types.
+ *
+ * &lt;p&gt;This example shows how to use TypeToken to work with generic types like {@code List&lt;String&gt;}, {@code Map&lt;String,
+ * Object&gt;}, and nested generics that cannot be represented by simple Class objects.
+ */
+<span class="fc" id="L22">public class GenericTypesExample extends DurableHandler&lt;GenericTypesExample.Input, GenericTypesExample.Output&gt; {</span>
+
+<span class="fc" id="L24">    private static final Logger logger = LoggerFactory.getLogger(GenericTypesExample.class);</span>
+
+    public static class Input {
+        public String userId;
+
+<span class="fc" id="L29">        public Input() {}</span>
+
+<span class="fc" id="L31">        public Input(String userId) {</span>
+<span class="fc" id="L32">            this.userId = userId;</span>
+<span class="fc" id="L33">        }</span>
+    }
+
+    public static class Output {
+        public List&lt;String&gt; items;
+        public Map&lt;String, Integer&gt; counts;
+        public Map&lt;String, List&lt;String&gt;&gt; categories;
+
+<span class="fc" id="L41">        public Output() {}</span>
+
+<span class="fc" id="L43">        public Output(List&lt;String&gt; items, Map&lt;String, Integer&gt; counts, Map&lt;String, List&lt;String&gt;&gt; categories) {</span>
+<span class="fc" id="L44">            this.items = items;</span>
+<span class="fc" id="L45">            this.counts = counts;</span>
+<span class="fc" id="L46">            this.categories = categories;</span>
+<span class="fc" id="L47">        }</span>
+    }
+
+    @Override
+    public Output handleRequest(Input input, DurableContext context) {
+<span class="fc" id="L52">        logger.info(&quot;Starting generic types example for user: {}&quot;, input.userId);</span>
+
+        // Step 1: Fetch a list of items (List&lt;String&gt;)
+<span class="fc" id="L55">        List&lt;String&gt; items = context.step(&quot;fetch-items&quot;, new TypeToken&lt;List&lt;String&gt;&gt;() {}, stepCtx -&gt; {</span>
+<span class="fc" id="L56">            logger.info(&quot;Fetching items for user: {}&quot;, input.userId);</span>
+<span class="fc" id="L57">            return List.of(&quot;item1&quot;, &quot;item2&quot;, &quot;item3&quot;, &quot;item4&quot;);</span>
+        });
+<span class="fc" id="L59">        logger.info(&quot;Fetched {} items&quot;, items.size());</span>
+
+        // Step 2: Count items by category (Map&lt;String, Integer&gt;)
+<span class="fc" id="L62">        Map&lt;String, Integer&gt; counts =</span>
+<span class="fc" id="L63">                context.step(&quot;count-by-category&quot;, new TypeToken&lt;Map&lt;String, Integer&gt;&gt;() {}, stepCtx -&gt; {</span>
+<span class="fc" id="L64">                    logger.info(&quot;Counting items by category&quot;);</span>
+<span class="fc" id="L65">                    var result = new HashMap&lt;String, Integer&gt;();</span>
+<span class="fc" id="L66">                    result.put(&quot;electronics&quot;, 2);</span>
+<span class="fc" id="L67">                    result.put(&quot;books&quot;, 1);</span>
+<span class="fc" id="L68">                    result.put(&quot;clothing&quot;, 1);</span>
+<span class="fc" id="L69">                    return result;</span>
+                });
+<span class="fc" id="L71">        logger.info(&quot;Counted {} categories&quot;, counts.size());</span>
+
+        // Step 3: Fetch nested generic type with retry (Map&lt;String, List&lt;String&gt;&gt;)
+<span class="fc" id="L74">        Map&lt;String, List&lt;String&gt;&gt; categories = context.step(</span>
+                &quot;fetch-categories&quot;,
+<span class="fc" id="L76">                new TypeToken&lt;Map&lt;String, List&lt;String&gt;&gt;&gt;() {},</span>
+                stepCtx -&gt; {
+<span class="fc" id="L78">                    logger.info(&quot;Fetching category details&quot;);</span>
+<span class="fc" id="L79">                    var result = new HashMap&lt;String, List&lt;String&gt;&gt;();</span>
+<span class="fc" id="L80">                    result.put(&quot;electronics&quot;, List.of(&quot;laptop&quot;, &quot;phone&quot;));</span>
+<span class="fc" id="L81">                    result.put(&quot;books&quot;, List.of(&quot;fiction&quot;));</span>
+<span class="fc" id="L82">                    result.put(&quot;clothing&quot;, List.of(&quot;shirt&quot;));</span>
+<span class="fc" id="L83">                    return result;</span>
+                },
+<span class="fc" id="L85">                StepConfig.builder()</span>
+<span class="fc" id="L86">                        .retryStrategy(RetryStrategies.Presets.DEFAULT)</span>
+<span class="fc" id="L87">                        .build());</span>
+<span class="fc" id="L88">        logger.info(&quot;Fetched {} category details&quot;, categories.size());</span>
+
+<span class="fc" id="L90">        logger.info(&quot;Generic types example completed successfully&quot;);</span>
+<span class="fc" id="L91">        return new Output(items, counts, categories);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

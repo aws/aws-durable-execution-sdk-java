@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ParallelWithWaitExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.parallel</a> &gt; <span class="el_source">ParallelWithWaitExample.java</span></div><h1>ParallelWithWaitExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.parallel;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.ParallelConfig;
+
+/**
+ * Example demonstrating parallel branches where some branches include wait operations.
+ *
+ * &lt;p&gt;This models a notification fan-out pattern where different channels have different delivery delays:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Email — sent immediately
+ *   &lt;li&gt;SMS — waits for a rate-limit window before sending
+ *   &lt;li&gt;Push notification — waits for a quiet-hours window before sending
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;All three branches run concurrently. Branches with waits suspend without consuming compute resources and resume
+ * automatically once the wait elapses. The parallel operation completes once all branches finish.
+ */
+<span class="fc" id="L27">public class ParallelWithWaitExample</span>
+        extends DurableHandler&lt;ParallelWithWaitExample.Input, ParallelWithWaitExample.Output&gt; {
+
+<span class="fc" id="L30">    public record Input(String userId, String message) {}</span>
+
+<span class="fc" id="L32">    public record Output(List&lt;String&gt; deliveries) {}</span>
+
+    @Override
+    public Output handleRequest(Input input, DurableContext context) {
+<span class="fc" id="L36">        var logger = context.getLogger();</span>
+<span class="fc" id="L37">        logger.info(&quot;Sending notifications to user {}&quot;, input.userId());</span>
+
+<span class="fc" id="L39">        var config = ParallelConfig.builder().build();</span>
+<span class="fc" id="L40">        var futures = new ArrayList&lt;DurableFuture&lt;String&gt;&gt;(3);</span>
+
+<span class="fc" id="L42">        try (var parallel = context.parallel(&quot;notify&quot;, config)) {</span>
+
+            // Branch 1: email — no wait, deliver immediately
+<span class="fc" id="L45">            futures.add(parallel.branch(&quot;email&quot;, String.class, ctx -&gt; {</span>
+<span class="fc" id="L46">                ctx.wait(&quot;email-rate-limit-delay&quot;, Duration.ofSeconds(10));</span>
+<span class="fc" id="L47">                return ctx.step(&quot;send-email&quot;, String.class, stepCtx -&gt; &quot;email:&quot; + input.message());</span>
+            }));
+
+            // Branch 2: SMS — wait for rate-limit window, then send
+<span class="fc" id="L51">            futures.add(parallel.branch(&quot;sms&quot;, String.class, ctx -&gt; {</span>
+<span class="fc" id="L52">                ctx.wait(&quot;sms-rate-limit-delay&quot;, Duration.ofSeconds(10));</span>
+<span class="fc" id="L53">                return ctx.step(&quot;send-sms&quot;, String.class, stepCtx -&gt; &quot;sms:&quot; + input.message());</span>
+            }));
+
+            // Branch 3: push notification — wait for quiet-hours window, then send
+<span class="fc" id="L57">            futures.add(parallel.branch(&quot;push&quot;, String.class, ctx -&gt; {</span>
+<span class="fc" id="L58">                ctx.wait(&quot;push-quiet-delay&quot;, Duration.ofSeconds(10));</span>
+<span class="fc" id="L59">                return ctx.step(&quot;send-push&quot;, String.class, stepCtx -&gt; &quot;push:&quot; + input.message());</span>
+            }));
+        }
+
+<span class="fc" id="L63">        var deliveries = futures.stream().map(DurableFuture::get).toList();</span>
+<span class="fc" id="L64">        logger.info(&quot;All {} notifications delivered&quot;, deliveries.size());</span>
+<span class="fc" id="L65">        return new Output(deliveries);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

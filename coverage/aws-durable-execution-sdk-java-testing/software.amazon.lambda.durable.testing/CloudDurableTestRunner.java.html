@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CloudDurableTestRunner.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-testing</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.testing</a> &gt; <span class="el_source">CloudDurableTestRunner.java</span></div><h1>CloudDurableTestRunner.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.testing;
+
+import java.time.Duration;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.InvocationType;
+import software.amazon.awssdk.services.lambda.model.InvokeRequest;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+
+/**
+ * Test runner for durable Lambda functions deployed to AWS. Invokes a real Lambda function, polls execution history,
+ * and returns structured test results.
+ *
+ * @param &lt;I&gt; the handler input type
+ * @param &lt;O&gt; the handler output type
+ */
+public class CloudDurableTestRunner&lt;I, O&gt; {
+    private final String functionArn;
+    private final TypeToken&lt;I&gt; inputType;
+    private final TypeToken&lt;O&gt; outputType;
+    private final LambdaClient lambdaClient;
+    private final Duration pollInterval;
+    private final Duration timeout;
+    private final InvocationType invocationType;
+    // Store last execution result for operation inspection
+    private TestResult&lt;O&gt; lastResult;
+
+    private CloudDurableTestRunner(
+            String functionArn,
+            TypeToken&lt;I&gt; inputType,
+            TypeToken&lt;O&gt; outputType,
+            LambdaClient lambdaClient,
+            Duration pollInterval,
+            Duration timeout,
+<span class="fc" id="L39">            InvocationType invocationType) {</span>
+<span class="fc" id="L40">        this.functionArn = functionArn;</span>
+<span class="fc" id="L41">        this.inputType = inputType;</span>
+<span class="fc" id="L42">        this.outputType = outputType;</span>
+<span class="fc" id="L43">        this.lambdaClient = lambdaClient;</span>
+<span class="fc" id="L44">        this.pollInterval = pollInterval;</span>
+<span class="fc" id="L45">        this.timeout = timeout;</span>
+<span class="fc" id="L46">        this.invocationType = invocationType;</span>
+<span class="fc" id="L47">    }</span>
+
+    /** Creates a runner for the given function ARN with Class-based input/output types. */
+    public static &lt;I, O&gt; CloudDurableTestRunner&lt;I, O&gt; create(
+            String functionArn, Class&lt;I&gt; inputType, Class&lt;O&gt; outputType) {
+<span class="nc" id="L52">        return create(functionArn, TypeToken.get(inputType), TypeToken.get(outputType));</span>
+    }
+
+    /** Creates a runner for the given function ARN with TypeToken-based input/output types. */
+    public static &lt;I, O&gt; CloudDurableTestRunner&lt;I, O&gt; create(
+            String functionArn, TypeToken&lt;I&gt; inputType, TypeToken&lt;O&gt; outputType) {
+<span class="nc" id="L58">        return new CloudDurableTestRunner&lt;&gt;(</span>
+                functionArn,
+                inputType,
+                outputType,
+<span class="nc" id="L62">                LambdaClient.builder()</span>
+<span class="nc" id="L63">                        .credentialsProvider(</span>
+<span class="nc" id="L64">                                DefaultCredentialsProvider.builder().build())</span>
+<span class="nc" id="L65">                        .build(),</span>
+<span class="nc" id="L66">                Duration.ofSeconds(2),</span>
+<span class="nc" id="L67">                Duration.ofSeconds(300),</span>
+                InvocationType.REQUEST_RESPONSE);
+    }
+
+    /** Creates a runner with a custom {@link LambdaClient} and Class-based input/output types. */
+    public static &lt;I, O&gt; CloudDurableTestRunner&lt;I, O&gt; create(
+            String functionArn, Class&lt;I&gt; inputType, Class&lt;O&gt; outputType, LambdaClient lambdaClient) {
+<span class="fc" id="L74">        return create(functionArn, TypeToken.get(inputType), TypeToken.get(outputType), lambdaClient);</span>
+    }
+
+    /** Creates a runner with a custom {@link LambdaClient} and TypeToken-based input/output types. */
+    public static &lt;I, O&gt; CloudDurableTestRunner&lt;I, O&gt; create(
+            String functionArn, TypeToken&lt;I&gt; inputType, TypeToken&lt;O&gt; outputType, LambdaClient lambdaClient) {
+<span class="fc" id="L80">        return new CloudDurableTestRunner&lt;&gt;(</span>
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+<span class="fc" id="L85">                Duration.ofSeconds(2),</span>
+<span class="fc" id="L86">                Duration.ofSeconds(300),</span>
+                InvocationType.REQUEST_RESPONSE);
+    }
+
+    /** Returns a new runner with the specified poll interval between history checks. */
+    public CloudDurableTestRunner&lt;I, O&gt; withPollInterval(Duration interval) {
+<span class="fc" id="L92">        return new CloudDurableTestRunner&lt;&gt;(</span>
+                functionArn, inputType, outputType, lambdaClient, interval, timeout, invocationType);
+    }
+
+    /** Returns a new runner with the specified maximum wait time for execution completion. */
+    public CloudDurableTestRunner&lt;I, O&gt; withTimeout(Duration timeout) {
+<span class="nc" id="L98">        return new CloudDurableTestRunner&lt;&gt;(</span>
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType);
+    }
+
+    /** Returns a new runner with the specified Lambda invocation type. */
+    public CloudDurableTestRunner&lt;I, O&gt; withInvocationType(InvocationType type) {
+<span class="fc" id="L104">        return new CloudDurableTestRunner&lt;&gt;(</span>
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type);
+    }
+
+    /** Invokes the Lambda function, polls execution history until completion, and returns the result. */
+    public TestResult&lt;O&gt; run(I input) {
+        try {
+            // Serialize input
+<span class="nc" id="L112">            var serDes = new JacksonSerDes();</span>
+<span class="nc" id="L113">            var inputJson = serDes.serialize(input);</span>
+
+            // Invoke function
+<span class="nc" id="L116">            var invokeRequest = InvokeRequest.builder()</span>
+<span class="nc" id="L117">                    .functionName(functionArn)</span>
+<span class="nc" id="L118">                    .invocationType(invocationType)</span>
+<span class="nc" id="L119">                    .payload(SdkBytes.fromUtf8String(inputJson))</span>
+<span class="nc" id="L120">                    .build();</span>
+
+<span class="nc" id="L122">            var response = lambdaClient.invoke(invokeRequest);</span>
+
+            // Extract execution ARN from response headers
+<span class="nc" id="L125">            var executionArn = response.durableExecutionArn();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            if (executionArn == null) {</span>
+<span class="nc" id="L127">                throw new RuntimeException(&quot;No durable execution ARN returned - function may not be durable&quot;);</span>
+            }
+
+            // Poll history until completion
+<span class="nc" id="L131">            var poller = new HistoryPoller(lambdaClient);</span>
+<span class="nc" id="L132">            var events = poller.pollUntilComplete(executionArn, pollInterval, timeout);</span>
+
+            // Process events into TestResult
+<span class="nc" id="L135">            var processor = new HistoryEventProcessor();</span>
+<span class="nc" id="L136">            var result = processor.processEvents(events, outputType);</span>
+<span class="nc" id="L137">            this.lastResult = result;</span>
+<span class="nc" id="L138">            return result;</span>
+<span class="nc" id="L139">        } catch (Exception e) {</span>
+<span class="nc" id="L140">            throw new RuntimeException(&quot;Function invocation failed&quot;, e);</span>
+        }
+    }
+
+    /**
+     * Start an asynchronous execution and return a handle for incremental polling. Use this for callback-based tests
+     * where you need to interact with the execution while it's running.
+     *
+     * @param input the input to the function
+     * @return execution handle for polling and inspection
+     */
+    public AsyncExecution&lt;O&gt; startAsync(I input) {
+        try {
+            // Serialize input
+<span class="nc" id="L154">            var serDes = new JacksonSerDes();</span>
+<span class="nc" id="L155">            var inputJson = serDes.serialize(input);</span>
+
+            // Invoke function with EVENT type (async)
+<span class="nc" id="L158">            var invokeRequest = InvokeRequest.builder()</span>
+<span class="nc" id="L159">                    .functionName(functionArn)</span>
+<span class="nc" id="L160">                    .invocationType(InvocationType.EVENT)</span>
+<span class="nc" id="L161">                    .payload(SdkBytes.fromUtf8String(inputJson))</span>
+<span class="nc" id="L162">                    .build();</span>
+
+<span class="nc" id="L164">            var response = lambdaClient.invoke(invokeRequest);</span>
+
+            // Extract execution ARN from response
+<span class="nc" id="L167">            var executionArn = response.durableExecutionArn();</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            if (executionArn == null) {</span>
+<span class="nc" id="L169">                throw new RuntimeException(&quot;No durable execution ARN returned - function may not be durable&quot;);</span>
+            }
+
+            // Give the execution a moment to initialize before returning
+            // This prevents immediate polling from failing with &quot;execution does not exist&quot;
+<span class="nc" id="L174">            Thread.sleep(100);</span>
+
+<span class="nc" id="L176">            return new AsyncExecution&lt;&gt;(executionArn, lambdaClient, outputType, pollInterval, timeout);</span>
+<span class="nc" id="L177">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L178">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L179">            throw new RuntimeException(&quot;Interrupted while starting async execution&quot;, e);</span>
+<span class="nc" id="L180">        } catch (Exception e) {</span>
+<span class="nc" id="L181">            throw new RuntimeException(&quot;Function invocation failed&quot;, e);</span>
+        }
+    }
+
+    /** Returns the {@link TestOperation} for the given name from the last execution result. */
+    public TestOperation getOperation(String name) {
+<span class="pc bpc" id="L187" title="1 of 2 branches missed.">        if (lastResult == null) {</span>
+<span class="fc" id="L188">            throw new IllegalStateException(&quot;No execution has been run yet&quot;);</span>
+        }
+<span class="nc" id="L190">        return lastResult.getOperation(name);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

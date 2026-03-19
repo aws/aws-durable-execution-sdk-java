@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CustomPollingExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples</a> &gt; <span class="el_source">CustomPollingExample.java</span></div><h1>CustomPollingExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.InvokeConfig;
+import software.amazon.lambda.durable.retry.JitterStrategy;
+import software.amazon.lambda.durable.retry.PollingStrategies;
+
+/**
+ * Example demonstrating custom polling strategy configuration.
+ *
+ * &lt;p&gt;The polling strategy controls how the SDK polls for async operation results. By default, the SDK uses exponential
+ * backoff (1s base, 2x rate, full jitter). This example shows how to customize the polling behavior.
+ *
+ * &lt;p&gt;This example configures:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Exponential backoff with 500ms base interval
+ *   &lt;li&gt;1.5x backoff rate for gentler growth
+ *   &lt;li&gt;Half jitter to balance between consistency and thundering herd avoidance
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L27">public class CustomPollingExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+
+    @Override
+    protected DurableConfig createConfiguration() {
+<span class="fc" id="L31">        return DurableConfig.builder()</span>
+<span class="fc" id="L32">                .withPollingStrategy(PollingStrategies.exponentialBackoff(</span>
+<span class="fc" id="L33">                        Duration.ofMillis(500), 1.5, JitterStrategy.HALF, Duration.ofSeconds(5)))</span>
+<span class="fc" id="L34">                .build();</span>
+    }
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+<span class="fc" id="L39">        context.getLogger().info(&quot;Starting workflow with input: {}&quot;, input);</span>
+
+        // Step 1: low case the input
+<span class="fc" id="L42">        var lowered = context.stepAsync(&quot;validate&quot;, String.class, () -&gt; {</span>
+            try {
+                // prevent the execution from suspension
+<span class="fc" id="L45">                Thread.sleep(5000);</span>
+<span class="nc" id="L46">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L47">                e.printStackTrace();</span>
+<span class="fc" id="L48">            }</span>
+<span class="fc" id="L49">            return input.getName().toLowerCase();</span>
+        });
+
+        // Step 2: Invoke async
+<span class="fc" id="L53">        var future = context.invokeAsync(</span>
+                &quot;call-greeting&quot;,
+<span class="fc" id="L55">                &quot;simple-step-example&quot; + input.getName() + &quot;:$LATEST&quot;,</span>
+                input,
+                String.class,
+<span class="fc" id="L58">                InvokeConfig.builder().build());</span>
+        // because we are sleeping 5 seconds in the first async step, the function will not be suspened. The invoke
+        // function will have to poll for completion.
+<span class="fc" id="L61">        return future.get() + lowered.get();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

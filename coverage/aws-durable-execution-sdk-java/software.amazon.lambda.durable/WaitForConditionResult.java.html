@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WaitForConditionResult.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">WaitForConditionResult.java</span></div><h1>WaitForConditionResult.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+/**
+ * Result returned by a {@link WaitForConditionWaitStrategy} check function to signal whether the condition is met.
+ *
+ * &lt;p&gt;When {@code isDone} is true, polling stops and {@code value} becomes the final result. When {@code isDone} is
+ * false, polling continues using the delay computed by the wait strategy.
+ *
+ * @param value the current state after evaluation
+ * @param isDone true if the condition is met and polling should stop, false to continue polling
+ * @param &lt;T&gt; the type of the state value
+ */
+<span class="fc" id="L15">public record WaitForConditionResult&lt;T&gt;(T value, boolean isDone) {</span>
+
+    /**
+     * Creates a result indicating the condition is met and polling should stop.
+     *
+     * @param value the final state value
+     * @param &lt;T&gt; the type of the state value
+     * @return a WaitForConditionResult with isDone=true
+     */
+    public static &lt;T&gt; WaitForConditionResult&lt;T&gt; stopPolling(T value) {
+<span class="fc" id="L25">        return new WaitForConditionResult&lt;&gt;(value, true);</span>
+    }
+
+    /**
+     * Creates a result indicating polling should continue with the given state.
+     *
+     * @param value the current state value to pass to the next check
+     * @param &lt;T&gt; the type of the state value
+     * @return a WaitForConditionResult with isDone=false
+     */
+    public static &lt;T&gt; WaitForConditionResult&lt;T&gt; continuePolling(T value) {
+<span class="fc" id="L36">        return new WaitForConditionResult&lt;&gt;(value, false);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

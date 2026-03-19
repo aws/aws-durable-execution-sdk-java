@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WaitForConditionExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples</a> &gt; <span class="el_source">WaitForConditionExample.java</span></div><h1>WaitForConditionExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples;
+
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.WaitForConditionResult;
+
+/**
+ * Example demonstrating the waitForCondition operation.
+ *
+ * &lt;p&gt;Polls a counter until it reaches the length of the input name, then returns the final count. Uses the minimal API
+ * with default configuration — no explicit strategy or config needed.
+ */
+<span class="fc" id="L15">public class WaitForConditionExample extends DurableHandler&lt;GreetingRequest, Integer&gt; {</span>
+
+    @Override
+    public Integer handleRequest(GreetingRequest input, DurableContext context) {
+<span class="fc" id="L19">        var targetCount = input.getName().length();</span>
+
+<span class="fc" id="L21">        return context.waitForCondition(</span>
+                &quot;count-to-name-length&quot;,
+                Integer.class,
+                (state, stepCtx) -&gt; {
+<span class="fc" id="L25">                    var next = state + 1;</span>
+<span class="fc bfc" id="L26" title="All 2 branches covered.">                    return next &gt;= targetCount</span>
+<span class="fc" id="L27">                            ? WaitForConditionResult.stopPolling(next)</span>
+<span class="fc" id="L28">                            : WaitForConditionResult.continuePolling(next);</span>
+                },
+<span class="fc" id="L30">                0);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

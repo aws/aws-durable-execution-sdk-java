@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ApiRequestDelayedBatcher.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.execution</a> &gt; <span class="el_source">ApiRequestDelayedBatcher.java</span></div><h1>ApiRequestDelayedBatcher.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.execution;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+/**
+ * Batches API requests to optimize throughput by grouping individual calls into batch operations. Batches are flushed
+ * when full, when size limits are reached, or after a timeout.
+ *
+ * &lt;p&gt;Uses a dedicated SDK thread pool for internal coordination, keeping checkpoint processing separate from
+ * customer-configured executors used for user-defined operations.
+ *
+ * @see InternalExecutor
+ * @param &lt;T&gt; Request type
+ */
+public class ApiRequestDelayedBatcher&lt;T&gt; {
+<span class="fc" id="L26">    private static final Duration MAX_DELAY = Duration.ofMinutes(60);</span>
+
+    /** Maximum items allowed in a single batch */
+    private final int maxItemCount;
+    /** Maximum bytes allowed in a single batch */
+    private final int maxBatchBytes;
+    /** Calculates byte size of each request */
+    private final Function&lt;T, Integer&gt; calculateItemSize;
+    /** Executes the batch operation */
+    private final Consumer&lt;List&lt;T&gt;&gt; executeBatch;
+
+    /** Accumulated requests to be executed in future */
+    private final List&lt;Item&lt;T&gt;&gt; delayedBatch;
+
+    /** Time when the current batch must be flushed */
+    private long delayedBatchFlushTime;
+
+    /** Timer to auto-flush current batch */
+    private CompletableFuture&lt;Void&gt; delayedBatchFlushTimer;
+
+    /** Requests to be flushed */
+    private final ConcurrentLinkedQueue&lt;Item&lt;T&gt;&gt; flushingQueue;
+
+    /** Future of flushing items in queue */
+    private CompletableFuture&lt;Void&gt; flushingQueueFuture;
+
+<span class="fc" id="L52">    private record Item&lt;T&gt;(T request, CompletableFuture&lt;Void&gt; result) {}</span>
+
+    /**
+     * Creates a new ApiRequestDelayedBatcher with the specified configuration.
+     *
+     * @param maxItemCount Maximum number of items per batch
+     * @param maxBatchBytes Maximum total size in bytes for all items in a batch
+     * @param calculateItemSize Function to calculate the size in bytes of each item
+     * @param executeBatch Function to execute the batch action
+     */
+    public ApiRequestDelayedBatcher(
+            int maxItemCount,
+            int maxBatchBytes,
+            Function&lt;T, Integer&gt; calculateItemSize,
+<span class="fc" id="L66">            Consumer&lt;List&lt;T&gt;&gt; executeBatch) {</span>
+<span class="fc" id="L67">        this.maxItemCount = maxItemCount;</span>
+<span class="fc" id="L68">        this.maxBatchBytes = maxBatchBytes;</span>
+<span class="fc" id="L69">        this.calculateItemSize = calculateItemSize;</span>
+<span class="fc" id="L70">        this.executeBatch = executeBatch;</span>
+
+<span class="fc" id="L72">        this.flushingQueueFuture = CompletableFuture.allOf();</span>
+<span class="fc" id="L73">        this.flushingQueue = new ConcurrentLinkedQueue&lt;&gt;();</span>
+<span class="fc" id="L74">        this.delayedBatch = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L76">        initializeDelayedBatch();</span>
+<span class="fc" id="L77">    }</span>
+
+    /**
+     * Submits request for delayed execution.
+     *
+     * @param request Request to batch
+     * @param flushDelay maximum delay of processing the request
+     * @return Future completed when batch executes
+     */
+    CompletableFuture&lt;Void&gt; submit(T request, Duration flushDelay) {
+<span class="fc" id="L87">        synchronized (delayedBatch) {</span>
+            // add the request to the current batch
+<span class="fc" id="L89">            CompletableFuture&lt;Void&gt; future = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L90">            delayedBatch.add(new Item&lt;&gt;(request, future));</span>
+
+            // The flush time of the current batch is determined by the earliest flush time in the batch.
+<span class="fc" id="L93">            var delayInNano = flushDelay.toNanos();</span>
+<span class="fc" id="L94">            long newFlushTime = System.nanoTime() + delayInNano;</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">            if (newFlushTime &lt; delayedBatchFlushTime) {</span>
+                // Schedule a new timer if the batch needs to be completed earlier than previously scheduled
+<span class="fc" id="L97">                delayedBatchFlushTime = newFlushTime;</span>
+<span class="fc" id="L98">                delayedBatchFlushTimer.completeOnTimeout(null, delayInNano, TimeUnit.NANOSECONDS);</span>
+            }
+
+<span class="fc" id="L101">            return future;</span>
+        }
+    }
+
+    /** Flushes pending batch and waits for completion */
+    void shutdown() {
+<span class="fc" id="L107">        synchronized (delayedBatch) {</span>
+            // cancel the flush timer if it has not been triggered
+<span class="fc" id="L109">            this.delayedBatchFlushTimer.cancel(false);</span>
+            // execute the current batch now
+<span class="fc" id="L111">            flushDelayedBatch();</span>
+<span class="fc" id="L112">        }</span>
+
+        // wait for previous batches to be flushed
+<span class="fc" id="L115">        flushingQueueFuture.join();</span>
+<span class="fc" id="L116">    }</span>
+
+    /** clear the current batch and creates a new batch */
+    private void initializeDelayedBatch() {
+<span class="fc" id="L120">        this.delayedBatch.clear();</span>
+        // MAX_DELAY is longer than a single Lambda invocation
+<span class="fc" id="L122">        this.delayedBatchFlushTime = System.nanoTime() + MAX_DELAY.toNanos();</span>
+
+        // the timer future is created initially without a timeout until an item is added to the batch
+<span class="fc" id="L125">        this.delayedBatchFlushTimer = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L126">        this.delayedBatchFlushTimer.thenRun(() -&gt; {</span>
+<span class="fc" id="L127">            synchronized (delayedBatch) {</span>
+<span class="fc" id="L128">                flushDelayedBatch();</span>
+<span class="fc" id="L129">            }</span>
+<span class="fc" id="L130">        });</span>
+<span class="fc" id="L131">    }</span>
+
+    /** Add the delayed batch to the flushing queue */
+    private void flushDelayedBatch() {
+        // All the items in the delayed batch are flushed altogether, no matter if the scheduled time for the item has
+        // arrived or not
+<span class="fc" id="L137">        flushingQueue.addAll(delayedBatch);</span>
+<span class="fc" id="L138">        initializeDelayedBatch();</span>
+
+<span class="fc bfc" id="L140" title="All 2 branches covered.">        if (flushingQueue.isEmpty()) {</span>
+<span class="fc" id="L141">            return;</span>
+        }
+
+        // Schedule a new flushing future. If the items in this batch have been executed by the previous flushQueue
+        // future,
+        // the new future will just do nothing.
+<span class="fc" id="L147">        flushingQueueFuture = flushingQueueFuture.thenRunAsync(this::flushQueue, InternalExecutor.INSTANCE);</span>
+<span class="fc" id="L148">    }</span>
+    /** Call checkpoint API with items in the flushing queue */
+    private void flushQueue() {
+        // There could be more items to flush because
+        // - remaining items that didn't fit in the previous checkpoint call
+        // - new items being added when processing the previous items
+        // This allows the items being added when making the checkpoint request to be immediately processed
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        while (flushingQueue.peek() != null) {</span>
+<span class="fc" id="L156">            var flushingSize = 0L;</span>
+<span class="fc" id="L157">            var flushingItems = new ArrayList&lt;Item&lt;T&gt;&gt;();</span>
+            while (true) {
+<span class="fc" id="L159">                var item = flushingQueue.peek();</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">                if (item == null) {</span>
+<span class="fc" id="L161">                    break;</span>
+                }
+
+<span class="fc" id="L164">                var itemSizeInByte = calculateItemSize.apply(item.request);</span>
+<span class="fc bfc" id="L165" title="All 2 branches covered.">                var canFit = flushingSize + itemSizeInByte &lt;= maxBatchBytes;</span>
+
+                // Add the item if
+                // - it can fit in one checkpoint call, or
+                // - flushingItems is empty, so that we can try the big item even if it's bigger than the max batch size
+<span class="fc bfc" id="L170" title="All 6 branches covered.">                if (!flushingItems.isEmpty() &amp;&amp; (!canFit || flushingItems.size() &gt;= maxItemCount)) {</span>
+<span class="fc" id="L171">                    break;</span>
+                }
+
+<span class="fc" id="L174">                flushingItems.add(flushingQueue.poll());</span>
+<span class="fc" id="L175">                flushingSize += itemSizeInByte;</span>
+<span class="fc" id="L176">            }</span>
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">            if (!flushingItems.isEmpty()) {</span>
+                try {
+                    // requests might be null for polling requests
+<span class="fc" id="L180">                    var requests = flushingItems.stream()</span>
+<span class="fc" id="L181">                            .map(Item::request)</span>
+<span class="fc" id="L182">                            .filter(Objects::nonNull)</span>
+<span class="fc" id="L183">                            .toList();</span>
+<span class="fc" id="L184">                    executeBatch.accept(requests);</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">                    for (Item&lt;T&gt; item : flushingItems) {</span>
+<span class="fc" id="L186">                        item.result().complete(null);</span>
+<span class="fc" id="L187">                    }</span>
+<span class="fc" id="L188">                } catch (Throwable ex) {</span>
+<span class="fc bfc" id="L189" title="All 2 branches covered.">                    for (Item&lt;T&gt; item : flushingItems) {</span>
+<span class="fc" id="L190">                        item.result().completeExceptionally(ex);</span>
+<span class="fc" id="L191">                    }</span>
+<span class="fc" id="L192">                }</span>
+            }
+<span class="fc" id="L194">        }</span>
+<span class="fc" id="L195">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MapConfigExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples</a> &gt; <span class="el_source">MapConfigExample.java</span></div><h1>MapConfigExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples;
+
+import java.util.List;
+import java.util.stream.Collectors;
+import software.amazon.lambda.durable.CompletionConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.MapConfig;
+
+/**
+ * Example demonstrating MapConfig options: concurrency limiting and completion strategies.
+ *
+ * &lt;p&gt;This handler runs two map operations to showcase different configurations:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;Sequential processing with {@code maxConcurrency(1)} — items run one at a time
+ *   &lt;li&gt;Early termination with {@code minSuccessful(2)} — stops after 2 items succeed
+ * &lt;/ol&gt;
+ */
+<span class="fc" id="L22">public class MapConfigExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+<span class="fc" id="L26">        var name = input.getName();</span>
+<span class="fc" id="L27">        context.getLogger().info(&quot;Starting map config example for {}&quot;, name);</span>
+
+        // Part 1: Sequential execution with maxConcurrency=1
+<span class="fc" id="L30">        var items = List.of(&quot;alpha&quot;, &quot;beta&quot;, &quot;gamma&quot;);</span>
+<span class="fc" id="L31">        var sequentialConfig = MapConfig.builder().maxConcurrency(1).build();</span>
+
+<span class="fc" id="L33">        var sequentialResult = context.map(</span>
+                &quot;sequential-processing&quot;,
+                items,
+                String.class,
+                (item, index, ctx) -&gt; {
+<span class="fc" id="L38">                    return ctx.step(&quot;transform-&quot; + index, String.class, stepCtx -&gt; item.toUpperCase() + &quot;-&quot; + name);</span>
+                },
+                sequentialConfig);
+
+<span class="fc" id="L42">        var sequentialOutput = String.join(&quot;, &quot;, sequentialResult.results());</span>
+<span class="fc" id="L43">        context.getLogger().info(&quot;Sequential result: {}&quot;, sequentialOutput);</span>
+
+        // Part 2: Early termination with minSuccessful(2)
+<span class="fc" id="L46">        var candidates = List.of(&quot;server-1&quot;, &quot;server-2&quot;, &quot;server-3&quot;, &quot;server-4&quot;, &quot;server-5&quot;);</span>
+<span class="fc" id="L47">        var earlyTermConfig = MapConfig.builder()</span>
+<span class="fc" id="L48">                .maxConcurrency(1)</span>
+<span class="fc" id="L49">                .completionConfig(CompletionConfig.minSuccessful(2))</span>
+<span class="fc" id="L50">                .build();</span>
+
+<span class="fc" id="L52">        var earlyTermResult = context.map(</span>
+                &quot;find-healthy-servers&quot;,
+                candidates,
+                String.class,
+                (server, index, ctx) -&gt; {
+<span class="fc" id="L57">                    return ctx.step(&quot;health-check-&quot; + index, String.class, stepCtx -&gt; server + &quot;:healthy&quot;);</span>
+                },
+                earlyTermConfig);
+
+<span class="fc" id="L61">        context.getLogger()</span>
+<span class="fc" id="L62">                .info(</span>
+                        &quot;Early termination: reason={}, succeeded={}&quot;,
+<span class="fc" id="L64">                        earlyTermResult.completionReason(),</span>
+<span class="fc" id="L65">                        earlyTermResult.succeeded().size());</span>
+
+<span class="fc" id="L67">        var healthyServers = earlyTermResult.succeeded().stream().collect(Collectors.joining(&quot;, &quot;));</span>
+
+<span class="fc" id="L69">        return String.format(</span>
+                &quot;sequential=[%s] | earlyTerm=[%s] reason=%s&quot;,
+<span class="fc" id="L71">                sequentialOutput, healthyServers, earlyTermResult.completionReason());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
