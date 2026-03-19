@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +68,26 @@ class ParallelOperationTest {
         mockIdGenerator = mock(OperationIdGenerator.class);
         when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
+
+        // Simulate the real backend: when a SUCCEED checkpoint is sent for the parallel op,
+        // make getOperationAndUpdateReplayState return a SUCCEEDED operation so waitForOperationCompletion() can find
+        // it.
+        var succeededParallelOp = Operation.builder()
+                .id(OPERATION_ID)
+                .name("test-parallel")
+                .type(OperationType.CONTEXT)
+                .subType(OperationSubType.PARALLEL.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .build();
+        when(executionManager.sendOperationUpdate(argThat(u -> u != null
+                        && u.id() != null
+                        && u.id().equals(OPERATION_ID)
+                        && u.action() == OperationAction.SUCCEED)))
+                .thenAnswer(inv -> {
+                    when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                            .thenReturn(succeededParallelOp);
+                    return CompletableFuture.completedFuture(null);
+                });
     }
 
     private ParallelOperation<Void> createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount) {
@@ -153,7 +174,7 @@ class ParallelOperationTest {
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
 
-        runJoin(op);
+        op.get();
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
     }
@@ -179,7 +200,7 @@ class ParallelOperationTest {
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
 
         // Should not throw
-        assertDoesNotThrow(() -> runJoin(op));
+        op.get();
         assertEquals(1, op.getSucceededCount());
     }
 
@@ -240,7 +261,7 @@ class ParallelOperationTest {
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
 
-        runJoin(op);
+        op.get();
 
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
@@ -285,7 +306,7 @@ class ParallelOperationTest {
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
 
-        runJoin(op);
+        op.get();
 
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
@@ -318,22 +339,10 @@ class ParallelOperationTest {
                 TypeToken.get(String.class),
                 SER_DES);
 
-        runJoin(op);
+        op.get();
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
-    }
-
-    // ===== Helpers =====
-
-    private void runJoin(ParallelOperation<?> op) throws InterruptedException {
-        var t = new Thread(op::get);
-        t.start();
-        t.join(2000);
-        if (t.isAlive()) {
-            t.interrupt();
-            fail("join() did not complete within 2 seconds");
-        }
     }
 }
