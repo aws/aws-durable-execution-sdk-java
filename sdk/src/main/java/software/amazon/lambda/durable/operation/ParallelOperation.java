@@ -42,6 +42,8 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
+    private boolean replaying = false;
+
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
@@ -79,6 +81,10 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
     @Override
     protected void handleSuccess() {
+        if (replaying) {
+            // Do not send checkpoint during replay
+            return;
+        }
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.SUCCEED)
                 .subType(getSubType().getValue())
@@ -99,8 +105,9 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
     @Override
     protected void replay(Operation existing) {
-        // Always replay child branches for parallel
-        start();
+        // No-op: child branches handle their own replay via ChildContextOperation.replay().
+        // Set replaying=true so handleSuccess() skips re-checkpointing the already-completed parallel context.
+        replaying = true;
     }
 
     @Override

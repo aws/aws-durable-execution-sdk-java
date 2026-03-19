@@ -199,6 +199,100 @@ class ParallelOperationTest {
         assertNotNull(childOp);
     }
 
+    // ===== Replay =====
+
+    @Test
+    void replay_doesNotSendStartCheckpoint() throws Exception {
+        // Simulate the parallel operation already existing in the service (STARTED status)
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .id(OPERATION_ID)
+                        .name("test-parallel")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL.getValue())
+                        .status(OperationStatus.STARTED)
+                        .build());
+        // Both branches already succeeded
+        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+                .thenReturn(Operation.builder()
+                        .id("child-1")
+                        .name("branch-1")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r1\"").build())
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+                .thenReturn(Operation.builder()
+                        .id("child-2")
+                        .name("branch-2")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r2\"").build())
+                        .build());
+
+        var op = createOperation(-1, -1, 0);
+        setOperationIdGenerator(op, mockIdGenerator);
+        op.execute();
+        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
+        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
+
+        runJoin(op);
+
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+    }
+
+    @Test
+    void replay_doesNotSendSucceedCheckpointWhenParallelAlreadySucceeded() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .id(OPERATION_ID)
+                        .name("test-parallel")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+                .thenReturn(Operation.builder()
+                        .id("child-1")
+                        .name("branch-1")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r1\"").build())
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+                .thenReturn(Operation.builder()
+                        .id("child-2")
+                        .name("branch-2")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r2\"").build())
+                        .build());
+
+        var op = createOperation(-1, -1, 0);
+        setOperationIdGenerator(op, mockIdGenerator);
+        op.execute();
+        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
+        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
+
+        runJoin(op);
+
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+    }
+
     // ===== handleFailure still sends SUCCEED =====
 
     @Test
