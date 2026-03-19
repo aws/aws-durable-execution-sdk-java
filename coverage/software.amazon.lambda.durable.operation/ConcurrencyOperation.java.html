@@ -74,7 +74,7 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
 <span class="fc" id="L74">        this.toleratedFailureCount = toleratedFailureCount;</span>
 <span class="fc" id="L75">        this.failureRateThreshold = failureRateThreshold;</span>
 <span class="fc" id="L76">        this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
-<span class="fc" id="L77">        this.rootContext = durableContext.createChildContext(getOperationId(), getName());</span>
+<span class="fc" id="L77">        this.rootContext = durableContext.createChildContextWithoutSettingThreadContext(getOperationId(), getName());</span>
 <span class="fc" id="L78">    }</span>
 
     protected ConcurrencyOperation(
