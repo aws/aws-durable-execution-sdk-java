@@ -282,7 +282,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void handleComplete() {
-        synchronized (completionFuture) {
+        synchronized (this) {
             if (isOperationCompleted()) {
                 return;
             }
@@ -291,7 +291,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             } else {
                 handleFailure(completionStatus);
             }
-            completionFuture.complete(null);
         }
     }
 
