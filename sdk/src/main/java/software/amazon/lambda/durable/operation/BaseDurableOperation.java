@@ -209,12 +209,8 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             }
         }
 
-        // Block until operation completes or execution suspends.
-        // Using runUntilCompleteOrSuspend races completionFuture against executionExceptionFuture,
-        // so when all active threads suspend (e.g., wait inside map branches), the
-        // SuspendExecutionException propagates and this thread is freed — preventing thread leaks
-        // on shared executor pools across invocations.
-        executionManager.runUntilCompleteOrSuspend(completionFuture).join();
+        // Block until operation completes. No-op if the future is already completed.
+        completionFuture.join();
 
         // Get result based on status
         var op = getOperation();

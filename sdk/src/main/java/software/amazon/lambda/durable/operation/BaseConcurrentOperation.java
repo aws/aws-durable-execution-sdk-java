@@ -26,6 +26,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.CompletionReason;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -289,10 +290,21 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
      * suspended. Does NOT start the next queued branch — suspended branches will resume on re-invocation.
      */
     private void onChildContextSuspended() {
+        boolean allSuspendedOrComplete;
         synchronized (lock) {
             activeBranches--;
             // Don't start next branch — this branch suspended, it will resume on re-invocation.
-            // Don't finalize — suspended branches haven't produced results yet.
+            // Check if all branches are now either completed or suspended with no pending work.
+            allSuspendedOrComplete = activeBranches == 0 && (pendingQueue.isEmpty() || earlyTermination);
+        }
+
+        if (allSuspendedOrComplete) {
+            // All branches have either completed or suspended. Complete the parent's completionFuture
+            // so the parent thread in get() is unblocked. The parent will see the operation is not
+            // SUCCEEDED (it's still STARTED) and propagate the suspension.
+            synchronized (completionFuture) {
+                completionFuture.complete(null);
+            }
         }
     }
 
@@ -370,11 +382,10 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
             }
         }
 
-        // Race completionFuture against executionExceptionFuture.
-        // If branches suspend, executionExceptionFuture completes with SuspendExecutionException,
-        // which propagates up through the handler to DurableExecutor → returns PENDING.
-        // If branches complete, completionFuture completes and we proceed to read the result.
-        executionManager.runUntilCompleteOrSuspend(completionFuture).join();
+        // Block until operation completes or all branches suspend.
+        // When all branches suspend, onChildContextSuspended completes completionFuture directly,
+        // so the parent thread is freed without racing against the global executionExceptionFuture.
+        completionFuture.join();
 
         var op = getOperation();
 
@@ -386,6 +397,10 @@ public abstract class BaseConcurrentOperation<R> extends BaseDurableOperation<R>
             var contextDetails = op.contextDetails();
             var result = (contextDetails != null) ? contextDetails.result() : null;
             return deserializeResult(result);
+        } else if (op.status() == OperationStatus.STARTED) {
+            // All branches suspended (e.g., wait inside map branches) — propagate suspension.
+            // onChildContextSuspended completed completionFuture when activeBranches hit 0.
+            throw new SuspendExecutionException();
         } else {
             return terminateExecutionWithIllegalDurableOperationException(
                     "Unexpected operation status after completion: " + op.status());

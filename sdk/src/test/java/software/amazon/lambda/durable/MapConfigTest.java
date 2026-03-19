@@ -101,4 +101,26 @@ class MapConfigTest {
         assertEquals(10, modified.maxConcurrency());
         assertEquals(4, original.maxConcurrency());
     }
+
+    @Test
+    void builderWithZeroMaxConcurrency_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> MapConfig.builder().maxConcurrency(0).build());
+        assertEquals("maxConcurrency must be at least 1, got: 0", exception.getMessage());
+    }
+
+    @Test
+    void builderWithNegativeMaxConcurrency_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> MapConfig.builder().maxConcurrency(-1).build());
+        assertEquals("maxConcurrency must be at least 1, got: -1", exception.getMessage());
+    }
+
+    @Test
+    void builderWithNullMaxConcurrency_shouldPass() {
+        var config = MapConfig.builder().maxConcurrency(null).build();
+        assertNull(config.maxConcurrency());
+    }
 }

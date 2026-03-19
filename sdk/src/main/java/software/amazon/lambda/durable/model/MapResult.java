@@ -48,9 +48,9 @@ public record MapResult<T>(List<MapResultItem<T>> items, CompletionReason comple
         return items.get(index).error();
     }
 
-    /** Returns true if all items succeeded (no errors). */
+    /** Returns true if all items succeeded (no failures or not-started items). */
     public boolean allSucceeded() {
-        return items.stream().noneMatch(item -> item.error() != null);
+        return items.stream().allMatch(item -> item.status() == MapResultItem.Status.SUCCEEDED);
     }
 
     /** Returns the number of items in this result. */
@@ -64,13 +64,19 @@ public record MapResult<T>(List<MapResultItem<T>> items, CompletionReason comple
                 items.stream().map(MapResultItem::result).toList());
     }
 
-    /** Returns results that succeeded (non-null results). */
+    /** Returns results from items that succeeded (includes null results from successful items). */
     public List<T> succeeded() {
-        return items.stream().map(MapResultItem::result).filter(r -> r != null).toList();
+        return items.stream()
+                .filter(item -> item.status() == MapResultItem.Status.SUCCEEDED)
+                .map(MapResultItem::result)
+                .toList();
     }
 
-    /** Returns errors that occurred (non-null errors). */
+    /** Returns errors from items that failed. */
     public List<ErrorObject> failed() {
-        return items.stream().map(MapResultItem::error).filter(e -> e != null).toList();
+        return items.stream()
+                .filter(item -> item.status() == MapResultItem.Status.FAILED)
+                .map(MapResultItem::error)
+                .toList();
     }
 }

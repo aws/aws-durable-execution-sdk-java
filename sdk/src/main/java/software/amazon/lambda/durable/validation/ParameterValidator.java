@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -118,8 +119,9 @@ public final class ParameterValidator {
     /**
      * Validates that a collection has deterministic iteration order.
      *
-     * <p>Rejects known unordered collection types: {@link HashSet} (and subclasses), and views returned by
-     * {@link HashMap}, {@link IdentityHashMap}, {@link WeakHashMap}, and {@link ConcurrentHashMap}.
+     * <p>Rejects known unordered collection types: {@link HashSet} (but not {@link LinkedHashSet}, which has stable
+     * insertion-order iteration), and views returned by {@link HashMap}, {@link IdentityHashMap}, {@link WeakHashMap},
+     * and {@link ConcurrentHashMap}.
      *
      * @param items the collection to validate
      * @throws IllegalArgumentException if items is null or has non-deterministic iteration order
@@ -127,6 +129,10 @@ public final class ParameterValidator {
     public static void validateOrderedCollection(Collection<?> items) {
         if (items == null) {
             throw new IllegalArgumentException("items cannot be null");
+        }
+        // LinkedHashSet extends HashSet but has stable insertion-order iteration — allow it
+        if (items instanceof LinkedHashSet) {
+            return;
         }
         if (items instanceof HashSet || isUnorderedMapView(items)) {
             throw new IllegalArgumentException("items must have deterministic iteration order");

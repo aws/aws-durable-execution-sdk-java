@@ -71,6 +71,9 @@ public class MapConfig {
         }
 
         public MapConfig build() {
+            if (maxConcurrency != null && maxConcurrency < 1) {
+                throw new IllegalArgumentException("maxConcurrency must be at least 1, got: " + maxConcurrency);
+            }
             return new MapConfig(this);
         }
     }
