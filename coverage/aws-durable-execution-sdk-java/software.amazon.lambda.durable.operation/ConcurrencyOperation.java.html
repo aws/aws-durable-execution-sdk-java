@@ -248,51 +248,49 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
     }
 
     private void handleComplete() {
-<span class="fc bfc" id="L251" title="All 2 branches covered.">        if (isOperationCompleted()) {</span>
-<span class="fc" id="L252">            return;</span>
+        // We do not complete the futrure here, the furture is completed via checkpoint
+<span class="fc bfc" id="L252" title="All 2 branches covered.">        if (isOperationCompleted()) {</span>
+<span class="fc" id="L253">            return;</span>
         }
-<span class="fc bfc" id="L254" title="All 2 branches covered.">        if (completionStatus.isSucceeded()) {</span>
-<span class="fc" id="L255">            handleSuccess();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">        if (completionStatus.isSucceeded()) {</span>
+<span class="fc" id="L256">            handleSuccess();</span>
         } else {
-<span class="fc" id="L257">            handleFailure(completionStatus);</span>
+<span class="fc" id="L258">            handleFailure(completionStatus);</span>
         }
-<span class="fc" id="L259">        synchronized (completionFuture) {</span>
-<span class="fc" id="L260">            completionFuture.complete(null);</span>
-<span class="fc" id="L261">        }</span>
-<span class="fc" id="L262">    }</span>
+<span class="fc" id="L260">    }</span>
 
     /**
      * Blocks the calling thread until the concurrency operation reaches a terminal state. Validates item count, handles
      * zero-branch case, then delegates to {@code waitForOperationCompletion()} from BaseDurableOperation.
      */
     protected void join() {
-<span class="fc" id="L269">        validateItemCount();</span>
-<span class="fc" id="L270">        isJoined.set(true);</span>
-<span class="fc bfc" id="L271" title="All 2 branches covered.">        if (childOperations.isEmpty()) {</span>
-<span class="fc" id="L272">            return;</span>
+<span class="fc" id="L267">        validateItemCount();</span>
+<span class="fc" id="L268">        isJoined.set(true);</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">        if (childOperations.isEmpty()) {</span>
+<span class="fc" id="L270">            return;</span>
         }
 
-<span class="fc bfc" id="L275" title="All 2 branches covered.">        if (canComplete()) {</span>
-<span class="fc" id="L276">            handleComplete();</span>
+<span class="fc bfc" id="L273" title="All 2 branches covered.">        if (canComplete()) {</span>
+<span class="fc" id="L274">            handleComplete();</span>
         }
 
-<span class="fc" id="L279">        waitForOperationCompletion();</span>
-<span class="fc" id="L280">    }</span>
+<span class="fc" id="L277">        waitForOperationCompletion();</span>
+<span class="fc" id="L278">    }</span>
 
     protected int getSucceededCount() {
-<span class="fc" id="L283">        return succeededCount.get();</span>
+<span class="fc" id="L281">        return succeededCount.get();</span>
     }
 
     protected int getFailedCount() {
-<span class="fc" id="L287">        return failedCount.get();</span>
+<span class="fc" id="L285">        return failedCount.get();</span>
     }
 
     protected int getTotalItems() {
-<span class="fc" id="L291">        return childOperations.size();</span>
+<span class="fc" id="L289">        return childOperations.size();</span>
     }
 
     protected List&lt;ChildContextOperation&lt;?&gt;&gt; getChildOperations() {
-<span class="nc" id="L295">        return Collections.unmodifiableList(childOperations);</span>
+<span class="nc" id="L293">        return Collections.unmodifiableList(childOperations);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
