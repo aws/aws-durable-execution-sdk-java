@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.examples;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
@@ -60,5 +61,14 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsExample.
         var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
 
         return new Output(totalSum, executionTimeMs, replayTimeMs);
+    }
+
+    @Override
+    protected DurableConfig createConfiguration() {
+        // Add a small checkpoint delay to help batch the checkpoint requests and reduce the overall latencies
+        // when the function has many concurrent operations
+        return DurableConfig.builder()
+                .withCheckpointDelay(Duration.ofMillis(10))
+                .build();
     }
 }
