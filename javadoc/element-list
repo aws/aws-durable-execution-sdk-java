@@ -12,4 +12,3 @@ software.amazon.lambda.durable.retry
 software.amazon.lambda.durable.serde
 software.amazon.lambda.durable.testing
 software.amazon.lambda.durable.util
-software.amazon.lambda.durable.validation
