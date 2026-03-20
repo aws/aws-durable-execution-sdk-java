@@ -63,6 +63,9 @@ class BaseDurableOperationTest {
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(OPERATION);
+        // Stub runUntilCompleteOrSuspend to pass through the user future — in unit tests there's
+        // no executionExceptionFuture to race against, so just wait on the completionFuture directly.
+        when(executionManager.runUntilCompleteOrSuspend(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     @Test

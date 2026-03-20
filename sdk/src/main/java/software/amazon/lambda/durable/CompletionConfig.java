@@ -36,16 +36,26 @@ public class CompletionConfig {
 
     /** Complete when the specified number of items have succeeded. */
     public static CompletionConfig minSuccessful(int count) {
+        if (count < 1) {
+            throw new IllegalArgumentException("minSuccessful must be at least 1, got: " + count);
+        }
         return new CompletionConfig(count, null, null);
     }
 
     /** Complete when more than the specified number of failures have occurred. */
     public static CompletionConfig toleratedFailureCount(int count) {
+        if (count < 0) {
+            throw new IllegalArgumentException("toleratedFailureCount must be non-negative, got: " + count);
+        }
         return new CompletionConfig(null, count, null);
     }
 
     /** Complete when the failure percentage exceeds the specified threshold (0.0 to 1.0). */
     public static CompletionConfig toleratedFailurePercentage(double percentage) {
+        if (percentage < 0.0 || percentage > 1.0) {
+            throw new IllegalArgumentException(
+                    "toleratedFailurePercentage must be between 0.0 and 1.0, got: " + percentage);
+        }
         return new CompletionConfig(null, null, percentage);
     }
 

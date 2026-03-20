@@ -571,39 +571,21 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
-    void testMapErrorHandlingExample() {
-        var runner = CloudDurableTestRunner.create(
-                arn("map-error-handling-example"), GreetingRequest.class, String.class, lambdaClient);
+    void testComplexMapExample() {
+        var runner = CloudDurableTestRunner.create(arn("complex-map-example"), GreetingRequest.class, String.class);
         var result = runner.run(new GreetingRequest("Alice"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         var output = result.getResult(String.class);
         assertNotNull(output);
 
-        // 3 of 5 orders succeed, 2 fail
-        assertTrue(output.contains("succeeded=3"));
-        assertTrue(output.contains("failed=2"));
-        assertTrue(output.contains("Processed order-1 for Alice"));
-        assertTrue(output.contains("Processed order-3 for Alice"));
-        assertTrue(output.contains("Processed order-5 for Alice"));
-    }
+        // Part 1: Concurrent order processing with step + wait + step
+        assertTrue(output.contains("done:validated:order-1:Alice"));
+        assertTrue(output.contains("done:validated:order-2:Alice"));
+        assertTrue(output.contains("done:validated:order-3:Alice"));
 
-    @Test
-    void testMapConfigExample() {
-        var runner = CloudDurableTestRunner.create(
-                arn("map-config-example"), GreetingRequest.class, String.class, lambdaClient);
-        var result = runner.run(new GreetingRequest("Alice"));
-
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        var output = result.getResult(String.class);
-        assertNotNull(output);
-
-        // Sequential part: all 3 items processed
-        assertTrue(output.contains("ALPHA-Alice"));
-        assertTrue(output.contains("BETA-Alice"));
-        assertTrue(output.contains("GAMMA-Alice"));
-
-        // Early termination part
+        // Part 2: Early termination — find 2 healthy servers then stop
+        assertTrue(output.contains("healthy"));
         assertTrue(output.contains("reason=MIN_SUCCESSFUL_REACHED"));
     }
 }

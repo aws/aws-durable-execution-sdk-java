@@ -9,6 +9,10 @@ import org.junit.jupiter.api.Test;
 
 class MapResultTest {
 
+    private static MapError testError(String message) {
+        return new MapError("java.lang.RuntimeException", message, null);
+    }
+
     @Test
     void empty_returnsZeroSizeResult() {
         var result = MapResult.<String>empty();
@@ -36,7 +40,7 @@ class MapResultTest {
 
     @Test
     void allSucceeded_falseWhenAnyError() {
-        var error = new RuntimeException("fail");
+        var error = testError("fail");
         var result = new MapResult<>(
                 List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error)),
                 CompletionReason.ALL_COMPLETED);
@@ -46,7 +50,7 @@ class MapResultTest {
 
     @Test
     void getResult_returnsNullForFailedItem() {
-        var error = new RuntimeException("fail");
+        var error = testError("fail");
         var result = new MapResult<>(
                 List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error)),
                 CompletionReason.ALL_COMPLETED);
@@ -57,7 +61,7 @@ class MapResultTest {
 
     @Test
     void getError_returnsNullForSucceededItem() {
-        var error = new RuntimeException("fail");
+        var error = testError("fail");
         var result = new MapResult<>(
                 List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error)),
                 CompletionReason.ALL_COMPLETED);
@@ -71,7 +75,7 @@ class MapResultTest {
         var result = new MapResult<>(
                 List.of(
                         MapResultItem.success("a"),
-                        MapResultItem.<String>failure(new RuntimeException()),
+                        MapResultItem.<String>failure(testError("fail")),
                         MapResultItem.success("c")),
                 CompletionReason.ALL_COMPLETED);
 
@@ -80,7 +84,7 @@ class MapResultTest {
 
     @Test
     void failed_filtersNullErrors() {
-        var error = new RuntimeException("fail");
+        var error = testError("fail");
         var result = new MapResult<>(
                 List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error), MapResultItem.success("c")),
                 CompletionReason.ALL_COMPLETED);
@@ -107,7 +111,7 @@ class MapResultTest {
     @Test
     void getItem_returnsMapResultItem() {
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.<String>failure(new RuntimeException("fail"))),
+                List.of(MapResultItem.success("a"), MapResultItem.<String>failure(testError("fail"))),
                 CompletionReason.ALL_COMPLETED);
 
         assertEquals(MapResultItem.Status.SUCCEEDED, result.getItem(0).status());
@@ -120,12 +124,12 @@ class MapResultTest {
     }
 
     @Test
-    void notStartedItems_haveNullStatusResultAndError() {
+    void notStartedItems_haveNotStartedStatusAndNullResultAndError() {
         var result = new MapResult<>(
                 List.of(MapResultItem.success("a"), MapResultItem.<String>notStarted()),
                 CompletionReason.MIN_SUCCESSFUL_REACHED);
 
-        assertNull(result.getItem(1).status());
+        assertEquals(MapResultItem.Status.NOT_STARTED, result.getItem(1).status());
         assertNull(result.getResult(1));
         assertNull(result.getError(1));
     }

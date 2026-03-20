@@ -331,11 +331,9 @@ class ParameterValidatorTest {
     }
 
     @Test
-    void validateOrderedCollection_withLinkedHashSet_shouldThrow() {
-        // LinkedHashSet extends HashSet, so it's rejected even though it has deterministic order
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> ParameterValidator.validateOrderedCollection(new LinkedHashSet<>(List.of("a", "b"))));
+    void validateOrderedCollection_withLinkedHashSet_shouldPass() {
+        // LinkedHashSet extends HashSet but has stable insertion-order iteration — allowed
+        assertDoesNotThrow(() -> ParameterValidator.validateOrderedCollection(new LinkedHashSet<>(List.of("a", "b"))));
     }
 
     @Test

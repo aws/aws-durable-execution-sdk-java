@@ -208,7 +208,7 @@ void testAgainstRealLambda() {
 | `StepOperation` | Executes steps with retry logic |
 | `WaitOperation` | Handles wait checkpointing |
 | `MapOperation` | Applies a function across items concurrently via child contexts |
-| `BaseConcurrentOperation` | Shared base for map/parallel: concurrency limiting, completion evaluation |
+| `ConcurrencyOperation` | Shared base for map/parallel: concurrency limiting, completion evaluation |
 
 ## Common Tasks
 

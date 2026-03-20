@@ -14,7 +14,7 @@ class MapFunctionTest {
     }
 
     @Test
-    void canBeUsedAsLambda() throws Exception {
+    void canBeUsedAsLambda() {
         MapFunction<String, String> fn = (item, index, ctx) -> item.toUpperCase();
 
         var result = fn.apply("hello", 0, null);
@@ -23,21 +23,11 @@ class MapFunctionTest {
     }
 
     @Test
-    void receivesCorrectIndex() throws Exception {
+    void receivesCorrectIndex() {
         MapFunction<String, Integer> fn = (item, index, ctx) -> index;
 
         assertEquals(0, fn.apply("a", 0, null));
         assertEquals(5, fn.apply("b", 5, null));
-    }
-
-    @Test
-    void canThrowCheckedException() {
-        MapFunction<String, String> fn = (item, index, ctx) -> {
-            throw new Exception("checked");
-        };
-
-        var ex = assertThrows(Exception.class, () -> fn.apply("x", 0, null));
-        assertEquals("checked", ex.getMessage());
     }
 
     @Test

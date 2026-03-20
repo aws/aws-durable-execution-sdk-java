@@ -22,7 +22,6 @@ public interface MapFunction<I, O> {
      * @param index the zero-based index of the item in the input collection
      * @param context the durable context for this item's execution
      * @return the result of processing the item
-     * @throws Exception if the function fails
      */
-    O apply(I item, int index, DurableContext context) throws Exception;
+    O apply(I item, int index, DurableContext context);
 }
