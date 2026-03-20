@@ -71,7 +71,10 @@ public class MapConfig {
         }
 
         public MapConfig build() {
-<span class="fc" id="L74">            return new MapConfig(this);</span>
+<span class="fc bfc" id="L74" title="All 4 branches covered.">            if (maxConcurrency != null &amp;&amp; maxConcurrency &lt; 1) {</span>
+<span class="fc" id="L75">                throw new IllegalArgumentException(&quot;maxConcurrency must be at least 1, got: &quot; + maxConcurrency);</span>
+            }
+<span class="fc" id="L77">            return new MapConfig(this);</span>
         }
     }
 }

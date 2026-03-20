@@ -36,32 +36,42 @@ public class CompletionConfig {
 
     /** Complete when the specified number of items have succeeded. */
     public static CompletionConfig minSuccessful(int count) {
-<span class="fc" id="L39">        return new CompletionConfig(count, null, null);</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (count &lt; 1) {</span>
+<span class="fc" id="L40">            throw new IllegalArgumentException(&quot;minSuccessful must be at least 1, got: &quot; + count);</span>
+        }
+<span class="fc" id="L42">        return new CompletionConfig(count, null, null);</span>
     }
 
     /** Complete when more than the specified number of failures have occurred. */
     public static CompletionConfig toleratedFailureCount(int count) {
-<span class="fc" id="L44">        return new CompletionConfig(null, count, null);</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">        if (count &lt; 0) {</span>
+<span class="fc" id="L48">            throw new IllegalArgumentException(&quot;toleratedFailureCount must be non-negative, got: &quot; + count);</span>
+        }
+<span class="fc" id="L50">        return new CompletionConfig(null, count, null);</span>
     }
 
     /** Complete when the failure percentage exceeds the specified threshold (0.0 to 1.0). */
     public static CompletionConfig toleratedFailurePercentage(double percentage) {
-<span class="fc" id="L49">        return new CompletionConfig(null, null, percentage);</span>
+<span class="fc bfc" id="L55" title="All 4 branches covered.">        if (percentage &lt; 0.0 || percentage &gt; 1.0) {</span>
+<span class="fc" id="L56">            throw new IllegalArgumentException(</span>
+                    &quot;toleratedFailurePercentage must be between 0.0 and 1.0, got: &quot; + percentage);
+        }
+<span class="fc" id="L59">        return new CompletionConfig(null, null, percentage);</span>
     }
 
     /** @return minimum number of successful items required, or null if not set */
     public Integer minSuccessful() {
-<span class="fc" id="L54">        return minSuccessful;</span>
+<span class="fc" id="L64">        return minSuccessful;</span>
     }
 
     /** @return maximum number of failures tolerated, or null if unlimited */
     public Integer toleratedFailureCount() {
-<span class="fc" id="L59">        return toleratedFailureCount;</span>
+<span class="fc" id="L69">        return toleratedFailureCount;</span>
     }
 
     /** @return maximum percentage of failures tolerated (0.0 to 1.0), or null if not set */
     public Double toleratedFailurePercentage() {
-<span class="fc" id="L64">        return toleratedFailurePercentage;</span>
+<span class="fc" id="L74">        return toleratedFailurePercentage;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

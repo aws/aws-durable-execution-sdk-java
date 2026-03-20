@@ -26,7 +26,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * Abstract base class for concurrent execution of multiple child context operations.
  *
  * &lt;p&gt;Encapsulates shared concurrency logic: queue-based concurrency control, success/failure counting, and completion
- * checking. Both {@code ParallelOperation} and a future {@code MapOperation} extend this base.
+ * checking. Both {@code ParallelOperation} and {@code MapOperation} extend this base.
  *
  * &lt;p&gt;Key design points:
  *
@@ -55,7 +55,7 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
 <span class="fc" id="L55">    private final Queue&lt;ChildContextOperation&lt;?&gt;&gt; pendingQueue = new ConcurrentLinkedDeque&lt;&gt;();</span>
 <span class="fc" id="L56">    private final List&lt;ChildContextOperation&lt;?&gt;&gt; childOperations = Collections.synchronizedList(new ArrayList&lt;&gt;());</span>
 <span class="fc" id="L57">    private final Set&lt;String&gt; completedOperations = Collections.synchronizedSet(new HashSet&lt;String&gt;());</span>
-    private ConcurrencyCompletionStatus completionStatus;
+    protected ConcurrencyCompletionStatus completionStatus;
     private OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
 
@@ -153,20 +153,54 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
     }
 
     /**
+     * Creates and enqueues an item without starting execution. Use {@link #startPendingItems()} to begin execution
+     * after all items have been enqueued. This prevents early termination from blocking item creation when all items
+     * are known upfront (e.g., map operations).
+     */
+    protected &lt;R&gt; ChildContextOperation&lt;R&gt; enqueueItem(
+            String name, Function&lt;DurableContext, R&gt; function, TypeToken&lt;R&gt; resultType, SerDes serDes) {
+<span class="fc" id="L162">        var operationId = this.operationIdGenerator.nextOperationId();</span>
+<span class="fc" id="L163">        var childOp = createItem(operationId, name, function, resultType, serDes, this.rootContext);</span>
+<span class="fc" id="L164">        childOperations.add(childOp);</span>
+<span class="fc" id="L165">        pendingQueue.add(childOp);</span>
+<span class="fc" id="L166">        logger.debug(&quot;Item enqueued {}&quot;, name);</span>
+<span class="fc" id="L167">        return childOp;</span>
+    }
+
+    /**
+     * Starts executing enqueued items up to maxConcurrency. Called after all items have been enqueued via
+     * {@link #enqueueItem}.
+     */
+    protected void startPendingItems() {
+        // Start as many items as concurrency allows
+        while (true) {
+<span class="fc" id="L177">            synchronized (this) {</span>
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">                if (isOperationCompleted()) return;</span>
+<span class="fc bfc" id="L179" title="All 4 branches covered.">                if (maxConcurrency != -1 &amp;&amp; runningCount.get() &gt;= maxConcurrency) return;</span>
+<span class="fc" id="L180">                var next = pendingQueue.poll();</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">                if (next == null) return;</span>
+<span class="fc" id="L182">                runningCount.incrementAndGet();</span>
+<span class="fc" id="L183">                logger.debug(&quot;Executing operation {}&quot;, next.getName());</span>
+<span class="fc" id="L184">                next.execute();</span>
+<span class="fc" id="L185">            }</span>
+        }
+    }
+
+    /**
      * Starts the next queued item if the running count is below maxConcurrency and the operation hasn't completed yet.
      * Must be called within {@code synchronized (pendingQueue)}.
      */
     private void executeNextItemIfAllowed() {
-<span class="fc" id="L160">        synchronized (this) {</span>
-<span class="pc bpc" id="L161" title="1 of 2 branches missed.">            if (isOperationCompleted()) return;</span>
-<span class="pc bpc" id="L162" title="3 of 4 branches missed.">            if (maxConcurrency != -1 &amp;&amp; runningCount.get() &gt;= maxConcurrency) return;</span>
-<span class="fc" id="L163">            var next = pendingQueue.poll();</span>
-<span class="fc bfc" id="L164" title="All 2 branches covered.">            if (next == null) return;</span>
-<span class="fc" id="L165">            runningCount.incrementAndGet();</span>
-<span class="fc" id="L166">            logger.debug(&quot;Executing operation {}&quot;, next.getName());</span>
-<span class="fc" id="L167">            next.execute();</span>
-<span class="fc" id="L168">        }</span>
-<span class="fc" id="L169">    }</span>
+<span class="fc" id="L194">        synchronized (this) {</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">            if (isOperationCompleted()) return;</span>
+<span class="pc bpc" id="L196" title="1 of 4 branches missed.">            if (maxConcurrency != -1 &amp;&amp; runningCount.get() &gt;= maxConcurrency) return;</span>
+<span class="fc" id="L197">            var next = pendingQueue.poll();</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">            if (next == null) return;</span>
+<span class="fc" id="L199">            runningCount.incrementAndGet();</span>
+<span class="fc" id="L200">            logger.debug(&quot;Executing operation {}&quot;, next.getName());</span>
+<span class="fc" id="L201">            next.execute();</span>
+<span class="fc" id="L202">        }</span>
+<span class="fc" id="L203">    }</span>
 
     /**
      * Called by a ChildContextOperation BEFORE it closes its child context. Updates counters, checks completion
@@ -175,28 +209,28 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
      * @param child the child operation that completed
      */
     public void onItemComplete(ChildContextOperation&lt;?&gt; child) {
-<span class="pc bpc" id="L178" title="1 of 2 branches missed.">        if (completedOperations.contains(child.getOperationId())) {</span>
-<span class="nc" id="L179">            return;</span>
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">        if (completedOperations.contains(child.getOperationId())) {</span>
+<span class="nc" id="L213">            return;</span>
         } else {
-<span class="fc" id="L181">            completedOperations.add(child.getOperationId());</span>
+<span class="fc" id="L215">            completedOperations.add(child.getOperationId());</span>
         }
-<span class="fc" id="L183">        runningCount.decrementAndGet();</span>
-<span class="fc" id="L184">        logger.debug(&quot;OnItemComplete called by {}, Id: {}&quot;, child.getName(), child.getOperationId());</span>
+<span class="fc" id="L217">        runningCount.decrementAndGet();</span>
+<span class="fc" id="L218">        logger.debug(&quot;OnItemComplete called by {}, Id: {}&quot;, child.getName(), child.getOperationId());</span>
         try {
-<span class="fc" id="L186">            child.get();</span>
-<span class="fc" id="L187">            logger.debug(&quot;Result succeeded - {}&quot;, child.getName());</span>
-<span class="fc" id="L188">            succeededCount.incrementAndGet();</span>
-<span class="fc" id="L189">        } catch (Throwable e) {</span>
-<span class="fc" id="L190">            failedCount.incrementAndGet();</span>
-<span class="fc" id="L191">            logger.debug(&quot;Child operation {} failed: {}&quot;, child.getOperationId(), e.getMessage());</span>
-<span class="fc" id="L192">        }</span>
+<span class="fc" id="L220">            child.get();</span>
+<span class="fc" id="L221">            logger.debug(&quot;Result succeeded - {}&quot;, child.getName());</span>
+<span class="fc" id="L222">            succeededCount.incrementAndGet();</span>
+<span class="fc" id="L223">        } catch (Throwable e) {</span>
+<span class="fc" id="L224">            failedCount.incrementAndGet();</span>
+<span class="fc" id="L225">            logger.debug(&quot;Child operation {} failed: {}&quot;, child.getOperationId(), e.getMessage());</span>
+<span class="fc" id="L226">        }</span>
 
-<span class="fc bfc" id="L194" title="All 2 branches covered.">        if (canComplete()) {</span>
-<span class="fc" id="L195">            handleComplete();</span>
+<span class="fc bfc" id="L228" title="All 2 branches covered.">        if (canComplete()) {</span>
+<span class="fc" id="L229">            handleComplete();</span>
         } else {
-<span class="fc" id="L197">            executeNextItemIfAllowed();</span>
+<span class="fc" id="L231">            executeNextItemIfAllowed();</span>
         }
-<span class="fc" id="L199">    }</span>
+<span class="fc" id="L233">    }</span>
 
     // ========== Completion logic ==========
     /**
@@ -206,13 +240,13 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
      * @throws IllegalArgumentException if the item count cannot satisfy the criteria
      */
     protected void validateItemCount() {
-<span class="fc" id="L209">        int totalItems = childOperations.size();</span>
+<span class="fc" id="L243">        int totalItems = childOperations.size();</span>
 
-<span class="pc bpc" id="L211" title="1 of 2 branches missed.">        if (minSuccessful &gt; totalItems - failedCount.get()) {</span>
-<span class="nc" id="L212">            throw new IllegalArgumentException(&quot;minSuccessful (&quot; + minSuccessful</span>
+<span class="pc bpc" id="L245" title="1 of 2 branches missed.">        if (minSuccessful &gt; totalItems - failedCount.get()) {</span>
+<span class="nc" id="L246">            throw new IllegalArgumentException(&quot;minSuccessful (&quot; + minSuccessful</span>
                     + &quot;) exceeds the number of registered items (&quot; + totalItems + &quot;)&quot;);
         }
-<span class="fc" id="L215">    }</span>
+<span class="fc" id="L249">    }</span>
 
     /**
      * Checks whether the concurrency operation can be considered complete.
@@ -220,77 +254,83 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
      * @return true if enough items succeeded, too many failed, or not enough remaining items to reach minSuccessful
      */
     protected boolean canComplete() {
-<span class="fc" id="L223">        int totalItems = childOperations.size();</span>
-<span class="fc" id="L224">        int succeeded = succeededCount.get();</span>
-<span class="fc" id="L225">        int failed = failedCount.get();</span>
+<span class="fc" id="L257">        int totalItems = childOperations.size();</span>
+<span class="fc" id="L258">        int succeeded = succeededCount.get();</span>
+<span class="fc" id="L259">        int failed = failedCount.get();</span>
 
         // If we've met the minimum successful count, we're done
-<span class="pc bpc" id="L228" title="1 of 4 branches missed.">        if (minSuccessful != -1 &amp;&amp; succeeded &gt;= minSuccessful) {</span>
-<span class="fc" id="L229">            completionStatus = ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;</span>
-<span class="fc" id="L230">            return true;</span>
+<span class="pc bpc" id="L262" title="1 of 4 branches missed.">        if (minSuccessful != -1 &amp;&amp; succeeded &gt;= minSuccessful) {</span>
+<span class="fc" id="L263">            completionStatus = ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;</span>
+<span class="fc" id="L264">            return true;</span>
         }
 
         // If we've exceeded the failure tolerance, we're done
-<span class="pc bpc" id="L234" title="3 of 8 branches missed.">        if ((minSuccessful == -1 &amp;&amp; failed &gt; 0)</span>
+<span class="pc bpc" id="L268" title="3 of 8 branches missed.">        if ((minSuccessful == -1 &amp;&amp; failed &gt; 0)</span>
                 || failed &gt; toleratedFailureCount
                 || (double) failed / totalItems &gt; failureRateThreshold) {
-<span class="fc" id="L237">            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
-<span class="fc" id="L238">            return true;</span>
+<span class="fc" id="L271">            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
+<span class="fc" id="L272">            return true;</span>
         }
 
         // This will only happens when minSuccessful == -1 and user calls join()
-<span class="pc bpc" id="L242" title="2 of 8 branches missed.">        if (isJoined.get() &amp;&amp; minSuccessful == -1 &amp;&amp; pendingQueue.isEmpty() &amp;&amp; runningCount.get() == 0) {</span>
-<span class="fc" id="L243">            completionStatus = ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
-<span class="fc" id="L244">            return true;</span>
+<span class="pc bpc" id="L276" title="2 of 8 branches missed.">        if (isJoined.get() &amp;&amp; minSuccessful == -1 &amp;&amp; pendingQueue.isEmpty() &amp;&amp; runningCount.get() == 0) {</span>
+<span class="fc" id="L277">            completionStatus = ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
+<span class="fc" id="L278">            return true;</span>
         }
 
-<span class="fc" id="L247">        return false;</span>
+<span class="fc" id="L281">        return false;</span>
     }
 
     private void handleComplete() {
-        // We do not complete the futrure here, the furture is completed via checkpoint
-<span class="fc bfc" id="L252" title="All 2 branches covered.">        if (isOperationCompleted()) {</span>
-<span class="fc" id="L253">            return;</span>
-        }
-<span class="fc bfc" id="L255" title="All 2 branches covered.">        if (completionStatus.isSucceeded()) {</span>
-<span class="fc" id="L256">            handleSuccess();</span>
-        } else {
-<span class="fc" id="L258">            handleFailure(completionStatus);</span>
-        }
-<span class="fc" id="L260">    }</span>
+<span class="fc" id="L285">        synchronized (this) {</span>
+<span class="fc bfc" id="L286" title="All 2 branches covered.">            if (isOperationCompleted()) {</span>
+<span class="fc" id="L287">                return;</span>
+            }
+<span class="fc bfc" id="L289" title="All 2 branches covered.">            if (completionStatus.isSucceeded()) {</span>
+<span class="fc" id="L290">                handleSuccess();</span>
+            } else {
+<span class="fc" id="L292">                handleFailure(completionStatus);</span>
+            }
+<span class="fc" id="L294">        }</span>
+<span class="fc" id="L295">    }</span>
 
     /**
      * Blocks the calling thread until the concurrency operation reaches a terminal state. Validates item count, handles
      * zero-branch case, then delegates to {@code waitForOperationCompletion()} from BaseDurableOperation.
      */
     protected void join() {
-<span class="fc" id="L267">        validateItemCount();</span>
-<span class="fc" id="L268">        isJoined.set(true);</span>
-<span class="fc bfc" id="L269" title="All 2 branches covered.">        if (childOperations.isEmpty()) {</span>
-<span class="fc" id="L270">            return;</span>
+<span class="fc" id="L302">        validateItemCount();</span>
+<span class="fc" id="L303">        isJoined.set(true);</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">        if (childOperations.isEmpty()) {</span>
+<span class="fc" id="L305">            return;</span>
         }
 
-<span class="fc bfc" id="L273" title="All 2 branches covered.">        if (canComplete()) {</span>
-<span class="fc" id="L274">            handleComplete();</span>
+<span class="fc bfc" id="L308" title="All 2 branches covered.">        if (canComplete()) {</span>
+<span class="fc" id="L309">            handleComplete();</span>
         }
 
-<span class="fc" id="L277">        waitForOperationCompletion();</span>
-<span class="fc" id="L278">    }</span>
+<span class="fc" id="L312">        waitForOperationCompletion();</span>
+<span class="fc" id="L313">    }</span>
 
     protected int getSucceededCount() {
-<span class="fc" id="L281">        return succeededCount.get();</span>
+<span class="fc" id="L316">        return succeededCount.get();</span>
     }
 
     protected int getFailedCount() {
-<span class="fc" id="L285">        return failedCount.get();</span>
+<span class="fc" id="L320">        return failedCount.get();</span>
     }
 
     protected int getTotalItems() {
-<span class="fc" id="L289">        return childOperations.size();</span>
+<span class="fc" id="L324">        return childOperations.size();</span>
     }
 
     protected List&lt;ChildContextOperation&lt;?&gt;&gt; getChildOperations() {
-<span class="nc" id="L293">        return Collections.unmodifiableList(childOperations);</span>
+<span class="fc" id="L328">        return Collections.unmodifiableList(childOperations);</span>
+    }
+
+    /** Returns true if all items have finished (no pending, no running). Used by subclasses to override canComplete. */
+    protected boolean isAllItemsFinished() {
+<span class="fc bfc" id="L333" title="All 6 branches covered.">        return isJoined.get() &amp;&amp; pendingQueue.isEmpty() &amp;&amp; runningCount.get() == 0;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
