@@ -10,7 +10,7 @@ import java.util.List;
  *
  * &lt;p&gt;Holds ordered results from a map operation. Each index corresponds to the input item at the same position. Each
  * item is represented as a {@link MapResultItem} containing its status, result, and error. Includes the
- * {@link CompletionReason} indicating why the operation completed.
+ * {@link ConcurrencyCompletionStatus} indicating why the operation completed.
  *
  * &lt;p&gt;Errors are stored as {@link MapError} rather than raw Throwable, so they survive serialization across
  * checkpoint-and-replay cycles without requiring AWS SDK-specific Jackson modules.
@@ -19,17 +19,17 @@ import java.util.List;
  * @param completionReason why the operation completed
  * @param &lt;T&gt; the result type of each item
  */
-public record MapResult&lt;T&gt;(List&lt;MapResultItem&lt;T&gt;&gt; items, CompletionReason completionReason) {
+public record MapResult&lt;T&gt;(List&lt;MapResultItem&lt;T&gt;&gt; items, ConcurrencyCompletionStatus completionReason) {
 
     /** Compact constructor that applies defensive copy and defaults. */
 <span class="fc" id="L25">    public MapResult {</span>
 <span class="pc bpc" id="L26" title="1 of 2 branches missed.">        items = items != null ? List.copyOf(items) : Collections.emptyList();</span>
-<span class="pc bpc" id="L27" title="1 of 2 branches missed.">        completionReason = completionReason != null ? completionReason : CompletionReason.ALL_COMPLETED;</span>
+<span class="pc bpc" id="L27" title="1 of 2 branches missed.">        completionReason = completionReason != null ? completionReason : ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
 <span class="fc" id="L28">    }</span>
 
     /** Returns an empty MapResult with no items. */
     public static &lt;T&gt; MapResult&lt;T&gt; empty() {
-<span class="fc" id="L32">        return new MapResult&lt;&gt;(Collections.emptyList(), CompletionReason.ALL_COMPLETED);</span>
+<span class="fc" id="L32">        return new MapResult&lt;&gt;(Collections.emptyList(), ConcurrencyCompletionStatus.ALL_COMPLETED);</span>
     }
 
     /** Returns the result item at the given index. */

@@ -175,119 +175,118 @@ public class ChildContextOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt
         }
 
 <span class="fc" id="L177">        var serialized = serializeResult(result);</span>
-<span class="fc" id="L178">        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);</span>
 
-<span class="fc bfc" id="L180" title="All 2 branches covered.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
-<span class="fc" id="L181">            sendOperationUpdate(</span>
-<span class="fc" id="L182">                    OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));</span>
+<span class="fc bfc" id="L179" title="All 4 branches covered.">        if (serialized == null || serialized.getBytes(StandardCharsets.UTF_8).length &lt; LARGE_RESULT_THRESHOLD) {</span>
+<span class="fc" id="L180">            sendOperationUpdate(</span>
+<span class="fc" id="L181">                    OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));</span>
         } else {
             // Large result: checkpoint with empty payload + ReplayChildren flag.
             // Store the result so get() can return it directly without deserializing the empty payload.
-<span class="fc" id="L186">            this.reconstructedResult = result;</span>
-<span class="fc" id="L187">            sendOperationUpdate(OperationUpdate.builder()</span>
-<span class="fc" id="L188">                    .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L189">                    .payload(&quot;&quot;)</span>
-<span class="fc" id="L190">                    .contextOptions(</span>
-<span class="fc" id="L191">                            ContextOptions.builder().replayChildren(true).build()));</span>
+<span class="fc" id="L185">            this.reconstructedResult = result;</span>
+<span class="fc" id="L186">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L187">                    .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L188">                    .payload(&quot;&quot;)</span>
+<span class="fc" id="L189">                    .contextOptions(</span>
+<span class="fc" id="L190">                            ContextOptions.builder().replayChildren(true).build()));</span>
         }
-<span class="fc" id="L193">    }</span>
+<span class="fc" id="L192">    }</span>
 
     private void handleChildContextFailure(Throwable exception) {
-<span class="fc" id="L196">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
-<span class="fc bfc" id="L197" title="All 2 branches covered.">        if (exception instanceof SuspendExecutionException suspendExecutionException) {</span>
+<span class="fc" id="L195">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">        if (exception instanceof SuspendExecutionException suspendExecutionException) {</span>
             // Rethrow Error immediately — do not checkpoint
-<span class="fc" id="L199">            throw suspendExecutionException;</span>
+<span class="fc" id="L198">            throw suspendExecutionException;</span>
         }
-<span class="pc bpc" id="L201" title="1 of 2 branches missed.">        if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {</span>
+<span class="pc bpc" id="L200" title="1 of 2 branches missed.">        if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {</span>
             // terminate the execution and throw the exception if it's not recoverable
-<span class="nc" id="L203">            terminateExecution(unrecoverableDurableExecutionException);</span>
+<span class="nc" id="L202">            terminateExecution(unrecoverableDurableExecutionException);</span>
         }
 
         // Skip checkpointing if parent ConcurrencyOperation has already completed —
         // prevents race conditions where a child finishes after the parent has already succeeded.
-<span class="fc bfc" id="L208" title="All 4 branches covered.">        if (parentOperation != null &amp;&amp; parentOperation.isOperationCompleted()) {</span>
-<span class="fc" id="L209">            markAlreadyCompleted();</span>
-<span class="fc" id="L210">            return;</span>
+<span class="fc bfc" id="L207" title="All 4 branches covered.">        if (parentOperation != null &amp;&amp; parentOperation.isOperationCompleted()) {</span>
+<span class="fc" id="L208">            markAlreadyCompleted();</span>
+<span class="fc" id="L209">            return;</span>
         }
 
         final ErrorObject errorObject;
-<span class="fc bfc" id="L214" title="All 2 branches covered.">        if (exception instanceof DurableOperationException opEx) {</span>
-<span class="fc" id="L215">            errorObject = opEx.getErrorObject();</span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">        if (exception instanceof DurableOperationException opEx) {</span>
+<span class="fc" id="L214">            errorObject = opEx.getErrorObject();</span>
         } else {
-<span class="fc" id="L217">            errorObject = serializeException(exception);</span>
+<span class="fc" id="L216">            errorObject = serializeException(exception);</span>
         }
 
-<span class="fc" id="L220">        sendOperationUpdate(</span>
-<span class="fc" id="L221">                OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));</span>
-<span class="fc" id="L222">    }</span>
+<span class="fc" id="L219">        sendOperationUpdate(</span>
+<span class="fc" id="L220">                OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));</span>
+<span class="fc" id="L221">    }</span>
 
     @Override
     public T get() {
-<span class="fc" id="L226">        var op = waitForOperationCompletion();</span>
+<span class="fc" id="L225">        var op = waitForOperationCompletion();</span>
 
-<span class="fc bfc" id="L228" title="All 2 branches covered.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
-<span class="fc bfc" id="L229" title="All 2 branches covered.">            if (reconstructedResult != null) {</span>
-<span class="fc" id="L230">                return reconstructedResult;</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="fc bfc" id="L228" title="All 2 branches covered.">            if (reconstructedResult != null) {</span>
+<span class="fc" id="L229">                return reconstructedResult;</span>
             }
-<span class="fc" id="L232">            var contextDetails = op.contextDetails();</span>
-<span class="pc bpc" id="L233" title="1 of 2 branches missed.">            var result = (contextDetails != null) ? contextDetails.result() : null;</span>
-<span class="fc" id="L234">            return deserializeResult(result);</span>
+<span class="fc" id="L231">            var contextDetails = op.contextDetails();</span>
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">            var result = (contextDetails != null) ? contextDetails.result() : null;</span>
+<span class="fc" id="L233">            return deserializeResult(result);</span>
         } else {
-<span class="fc" id="L236">            var contextDetails = op.contextDetails();</span>
-<span class="fc bfc" id="L237" title="All 2 branches covered.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
+<span class="fc" id="L235">            var contextDetails = op.contextDetails();</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            var errorObject = (contextDetails != null) ? contextDetails.error() : null;</span>
 
             // Attempt to reconstruct and throw the original exception
-<span class="fc" id="L240">            Throwable original = deserializeException(errorObject);</span>
-<span class="fc bfc" id="L241" title="All 2 branches covered.">            if (original != null) {</span>
-<span class="nc" id="L242">                ExceptionHelper.sneakyThrow(original);</span>
+<span class="fc" id="L239">            Throwable original = deserializeException(errorObject);</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">            if (original != null) {</span>
+<span class="nc" id="L241">                ExceptionHelper.sneakyThrow(original);</span>
             }
 
             // throw a general failed exception if a user exception is not reconstructed
-<span class="pc bpc" id="L246" title="5 of 7 branches missed.">            return switch (getSubType()) {</span>
-<span class="nc" id="L247">                case WAIT_FOR_CALLBACK -&gt; handleWaitForCallbackFailure(op);</span>
-<span class="nc" id="L248">                case MAP -&gt; throw new ChildContextFailedException(op);</span>
-<span class="nc" id="L249">                case MAP_ITERATION -&gt; throw new ChildContextFailedException(op);</span>
-<span class="nc" id="L250">                case PARALLEL -&gt; throw new ChildContextFailedException(op);</span>
-<span class="fc" id="L251">                case PARALLEL_BRANCH -&gt; throw new ChildContextFailedException(op);</span>
-<span class="fc" id="L252">                case RUN_IN_CHILD_CONTEXT -&gt; throw new ChildContextFailedException(op);</span>
-<span class="nc" id="L253">                case WAIT_FOR_CONDITION -&gt; throw new ChildContextFailedException(op);</span>
+<span class="pc bpc" id="L245" title="5 of 7 branches missed.">            return switch (getSubType()) {</span>
+<span class="nc" id="L246">                case WAIT_FOR_CALLBACK -&gt; handleWaitForCallbackFailure(op);</span>
+<span class="nc" id="L247">                case MAP -&gt; throw new ChildContextFailedException(op);</span>
+<span class="nc" id="L248">                case MAP_ITERATION -&gt; throw new ChildContextFailedException(op);</span>
+<span class="nc" id="L249">                case PARALLEL -&gt; throw new ChildContextFailedException(op);</span>
+<span class="fc" id="L250">                case PARALLEL_BRANCH -&gt; throw new ChildContextFailedException(op);</span>
+<span class="fc" id="L251">                case RUN_IN_CHILD_CONTEXT -&gt; throw new ChildContextFailedException(op);</span>
+<span class="nc" id="L252">                case WAIT_FOR_CONDITION -&gt; throw new ChildContextFailedException(op);</span>
             };
         }
     }
 
     private T handleWaitForCallbackFailure(Operation op) {
-<span class="fc" id="L259">        var childrenOps = getChildOperations(op.id());</span>
-<span class="fc" id="L260">        var callbackOp = childrenOps.stream()</span>
-<span class="fc bfc" id="L261" title="All 2 branches covered.">                .filter(o -&gt; o.type() == OperationType.CALLBACK)</span>
-<span class="fc" id="L262">                .findFirst()</span>
-<span class="fc" id="L263">                .orElse(null);</span>
-<span class="fc" id="L264">        var submitterOp = childrenOps.stream()</span>
-<span class="fc bfc" id="L265" title="All 2 branches covered.">                .filter(o -&gt; o.type() == OperationType.STEP)</span>
-<span class="fc" id="L266">                .findFirst()</span>
-<span class="fc" id="L267">                .orElse(null);</span>
-<span class="pc bpc" id="L268" title="1 of 2 branches missed.">        if (callbackOp != null) {</span>
+<span class="fc" id="L258">        var childrenOps = getChildOperations(op.id());</span>
+<span class="fc" id="L259">        var callbackOp = childrenOps.stream()</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">                .filter(o -&gt; o.type() == OperationType.CALLBACK)</span>
+<span class="fc" id="L261">                .findFirst()</span>
+<span class="fc" id="L262">                .orElse(null);</span>
+<span class="fc" id="L263">        var submitterOp = childrenOps.stream()</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">                .filter(o -&gt; o.type() == OperationType.STEP)</span>
+<span class="fc" id="L265">                .findFirst()</span>
+<span class="fc" id="L266">                .orElse(null);</span>
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">        if (callbackOp != null) {</span>
             // if callback failed
-<span class="pc bpc" id="L270" title="1 of 2 branches missed.">            if (isTerminalStatus(callbackOp.status())) {</span>
-<span class="pc bpc" id="L271" title="1 of 3 branches missed.">                switch (callbackOp.status()) {</span>
-<span class="fc" id="L272">                    case FAILED -&gt; throw new CallbackFailedException(callbackOp);</span>
-<span class="fc" id="L273">                    case TIMED_OUT -&gt; throw new CallbackTimeoutException(callbackOp);</span>
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">            if (isTerminalStatus(callbackOp.status())) {</span>
+<span class="pc bpc" id="L270" title="1 of 3 branches missed.">                switch (callbackOp.status()) {</span>
+<span class="fc" id="L271">                    case FAILED -&gt; throw new CallbackFailedException(callbackOp);</span>
+<span class="fc" id="L272">                    case TIMED_OUT -&gt; throw new CallbackTimeoutException(callbackOp);</span>
                 }
             }
 
             // if submitter failed
-<span class="nc bnc" id="L278" title="All 2 branches missed.">            if (submitterOp != null</span>
-<span class="nc bnc" id="L279" title="All 2 branches missed.">                    &amp;&amp; isTerminalStatus(submitterOp.status())</span>
-<span class="nc bnc" id="L280" title="All 2 branches missed.">                    &amp;&amp; submitterOp.status() != OperationStatus.SUCCEEDED) {</span>
-<span class="nc" id="L281">                var stepError = submitterOp.stepDetails().error();</span>
-<span class="nc bnc" id="L282" title="All 2 branches missed.">                if (StepInterruptedException.isStepInterruptedException(stepError)) {</span>
-<span class="nc" id="L283">                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (submitterOp != null</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                    &amp;&amp; isTerminalStatus(submitterOp.status())</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                    &amp;&amp; submitterOp.status() != OperationStatus.SUCCEEDED) {</span>
+<span class="nc" id="L280">                var stepError = submitterOp.stepDetails().error();</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                if (StepInterruptedException.isStepInterruptedException(stepError)) {</span>
+<span class="nc" id="L282">                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));</span>
                 } else {
-<span class="nc" id="L285">                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));</span>
+<span class="nc" id="L284">                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));</span>
                 }
             }
         }
 
-<span class="nc" id="L290">        throw new IllegalStateException(&quot;Unknown waitForCallback status&quot;);</span>
+<span class="nc" id="L289">        throw new IllegalStateException(&quot;Unknown waitForCallback status&quot;);</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

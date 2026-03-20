@@ -17,7 +17,6 @@ import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.model.CompletionReason;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.MapError;
 import software.amazon.lambda.durable.model.MapResult;
@@ -48,6 +47,8 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
     private final SerDes serDes;
     private final CompletionConfig completionConfig;
     private boolean replayFromPayload;
+    private volatile MapResult&lt;O&gt; cachedResult;
+    private ConcurrencyCompletionStatus completionStatus;
 
     public MapOperation(
             OperationIdentifier operationIdentifier,
@@ -56,27 +57,18 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
             TypeToken&lt;O&gt; itemResultType,
             MapConfig config,
             DurableContextImpl durableContext) {
-<span class="fc" id="L59">        super(</span>
+<span class="fc" id="L60">        super(</span>
                 operationIdentifier,
-<span class="fc" id="L61">                new TypeToken&lt;&gt;() {},</span>
-<span class="fc" id="L62">                config.serDes(),</span>
+<span class="fc" id="L62">                new TypeToken&lt;&gt;() {},</span>
+<span class="fc" id="L63">                config.serDes(),</span>
                 durableContext,
-<span class="fc bfc" id="L64" title="All 2 branches covered.">                config.maxConcurrency() != null ? config.maxConcurrency() : -1,</span>
-<span class="fc bfc" id="L65" title="All 2 branches covered.">                config.completionConfig().minSuccessful() != null</span>
-<span class="fc" id="L66">                        ? config.completionConfig().minSuccessful()</span>
-<span class="fc" id="L67">                        : -1,</span>
-<span class="fc bfc" id="L68" title="All 2 branches covered.">                config.completionConfig().toleratedFailureCount() != null</span>
-<span class="fc" id="L69">                        ? config.completionConfig().toleratedFailureCount()</span>
-<span class="fc" id="L70">                        : Integer.MAX_VALUE,</span>
-<span class="fc bfc" id="L71" title="All 2 branches covered.">                config.completionConfig().toleratedFailurePercentage() != null</span>
-<span class="fc" id="L72">                        ? config.completionConfig().toleratedFailurePercentage()</span>
-<span class="fc" id="L73">                        : 100);</span>
-<span class="fc" id="L74">        this.items = List.copyOf(items);</span>
-<span class="fc" id="L75">        this.function = function;</span>
-<span class="fc" id="L76">        this.itemResultType = itemResultType;</span>
-<span class="fc" id="L77">        this.serDes = config.serDes();</span>
-<span class="fc" id="L78">        this.completionConfig = config.completionConfig();</span>
-<span class="fc" id="L79">    }</span>
+<span class="fc bfc" id="L65" title="All 2 branches covered.">                config.maxConcurrency() != null ? config.maxConcurrency() : -1);</span>
+<span class="fc" id="L66">        this.items = List.copyOf(items);</span>
+<span class="fc" id="L67">        this.function = function;</span>
+<span class="fc" id="L68">        this.itemResultType = itemResultType;</span>
+<span class="fc" id="L69">        this.serDes = config.serDes();</span>
+<span class="fc" id="L70">        this.completionConfig = config.completionConfig();</span>
+<span class="fc" id="L71">    }</span>
 
     @Override
     protected &lt;R&gt; ChildContextOperation&lt;R&gt; createItem(
@@ -86,8 +78,8 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
             TypeToken&lt;R&gt; resultType,
             SerDes serDes,
             DurableContextImpl parentContext) {
-<span class="fc" id="L89">        return new ChildContextOperation&lt;&gt;(</span>
-<span class="fc" id="L90">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP_ITERATION),</span>
+<span class="fc" id="L81">        return new ChildContextOperation&lt;&gt;(</span>
+<span class="fc" id="L82">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP_ITERATION),</span>
                 function,
                 resultType,
                 serDes,
@@ -97,67 +89,69 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
 
     @Override
     protected void start() {
-<span class="fc" id="L100">        sendOperationUpdateAsync(OperationUpdate.builder()</span>
-<span class="fc" id="L101">                .action(OperationAction.START)</span>
-<span class="fc" id="L102">                .subType(getSubType().getValue()));</span>
-<span class="fc" id="L103">        addAllItems();</span>
-<span class="fc" id="L104">    }</span>
+<span class="fc" id="L92">        sendOperationUpdateAsync(OperationUpdate.builder()</span>
+<span class="fc" id="L93">                .action(OperationAction.START)</span>
+<span class="fc" id="L94">                .subType(getSubType().getValue()));</span>
+<span class="fc" id="L95">        addAllItems();</span>
+<span class="fc" id="L96">    }</span>
 
     @Override
     protected void replay(Operation existing) {
-<span class="pc bpc" id="L108" title="1 of 3 branches missed.">        switch (existing.status()) {</span>
+<span class="pc bpc" id="L100" title="1 of 3 branches missed.">        switch (existing.status()) {</span>
             case SUCCEEDED -&gt; {
-<span class="pc bpc" id="L110" title="1 of 2 branches missed.">                if (existing.contextDetails() != null</span>
-<span class="fc bfc" id="L111" title="All 2 branches covered.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">                if (existing.contextDetails() != null</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
                     // Large result: re-execute children to reconstruct MapResult
-<span class="fc" id="L113">                    addAllItems();</span>
+<span class="fc" id="L105">                    addAllItems();</span>
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
-<span class="fc" id="L116">                    replayFromPayload = true;</span>
-<span class="fc" id="L117">                    markAlreadyCompleted();</span>
+<span class="fc" id="L108">                    replayFromPayload = true;</span>
+<span class="fc" id="L109">                    markAlreadyCompleted();</span>
                 }
-<span class="fc" id="L119">            }</span>
+<span class="fc" id="L111">            }</span>
             case STARTED -&gt; {
                 // Map was in progress when interrupted — re-create children without sending
                 // another START (the backend rejects duplicate START for existing operations)
-<span class="fc" id="L123">                addAllItems();</span>
-<span class="fc" id="L124">            }</span>
+<span class="fc" id="L115">                addAllItems();</span>
+<span class="fc" id="L116">            }</span>
             default -&gt;
-<span class="nc" id="L126">                terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="nc" id="L127">                        &quot;Unexpected map operation status: &quot; + existing.status());</span>
+<span class="nc" id="L118">                terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L119">                        &quot;Unexpected map operation status: &quot; + existing.status());</span>
         }
-<span class="fc" id="L129">    }</span>
+<span class="fc" id="L121">    }</span>
 
     private void addAllItems() {
         // Enqueue all items first, then start execution. This prevents early termination
         // criteria (e.g., minSuccessful) from completing the operation mid-loop on replay,
         // which would cause subsequent enqueue calls to fail with &quot;completed operation&quot;.
-<span class="fc bfc" id="L135" title="All 2 branches covered.">        for (int i = 0; i &lt; items.size(); i++) {</span>
-<span class="fc" id="L136">            var index = i;</span>
-<span class="fc" id="L137">            var item = items.get(i);</span>
-<span class="fc" id="L138">            enqueueItem(</span>
-<span class="fc" id="L139">                    &quot;map-iteration-&quot; + i, childCtx -&gt; function.apply(item, index, childCtx), itemResultType, serDes);</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        for (int i = 0; i &lt; items.size(); i++) {</span>
+<span class="fc" id="L128">            var index = i;</span>
+<span class="fc" id="L129">            var item = items.get(i);</span>
+<span class="fc" id="L130">            enqueueItem(</span>
+<span class="fc" id="L131">                    &quot;map-iteration-&quot; + i, childCtx -&gt; function.apply(item, index, childCtx), itemResultType, serDes);</span>
         }
-<span class="fc" id="L141">        startPendingItems();</span>
-<span class="fc" id="L142">    }</span>
+<span class="fc" id="L133">        startPendingItems();</span>
+<span class="fc" id="L134">    }</span>
 
     @Override
-    protected void handleSuccess() {
-<span class="fc" id="L146">        checkpointMapResult();</span>
-<span class="fc" id="L147">    }</span>
+    protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+<span class="fc" id="L138">        this.completionStatus = concurrencyCompletionStatus;</span>
+<span class="fc" id="L139">        checkpointMapResult();</span>
+<span class="fc" id="L140">    }</span>
 
     @Override
     protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-<span class="fc" id="L151">        checkpointMapResult();</span>
-<span class="fc" id="L152">    }</span>
+<span class="fc" id="L144">        this.completionStatus = concurrencyCompletionStatus;</span>
+<span class="fc" id="L145">        checkpointMapResult();</span>
+<span class="fc" id="L146">    }</span>
 
     @Override
     protected void validateItemCount() {
-<span class="pc bpc" id="L156" title="1 of 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; completionConfig.minSuccessful() &gt; getTotalItems()) {</span>
-<span class="nc" id="L157">            throw new IllegalArgumentException(&quot;minSuccessful (&quot; + completionConfig.minSuccessful()</span>
-<span class="nc" id="L158">                    + &quot;) exceeds the number of items (&quot; + getTotalItems() + &quot;)&quot;);</span>
+<span class="pc bpc" id="L150" title="1 of 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; completionConfig.minSuccessful() &gt; getTotalItems()) {</span>
+<span class="nc" id="L151">            throw new IllegalArgumentException(&quot;minSuccessful (&quot; + completionConfig.minSuccessful()</span>
+<span class="nc" id="L152">                    + &quot;) exceeds the number of items (&quot; + getTotalItems() + &quot;)&quot;);</span>
         }
-<span class="fc" id="L160">    }</span>
+<span class="fc" id="L154">    }</span>
 
     /**
      * Overrides the default completion logic from {@link ConcurrencyOperation} to support Map's
@@ -165,72 +159,69 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
      * Map's default {@code allCompleted()} allows failures without early termination.
      */
     @Override
-    protected boolean canComplete() {
-<span class="fc" id="L169">        int succeeded = getSucceededCount();</span>
-<span class="fc" id="L170">        int failed = getFailedCount();</span>
-<span class="fc" id="L171">        int totalCompleted = succeeded + failed;</span>
+    protected ConcurrencyCompletionStatus canComplete() {
+<span class="fc" id="L163">        int succeeded = getSucceededCount();</span>
+<span class="fc" id="L164">        int failed = getFailedCount();</span>
+<span class="fc" id="L165">        int totalCompleted = succeeded + failed;</span>
 
         // Check minSuccessful
-<span class="fc bfc" id="L174" title="All 4 branches covered.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded &gt;= completionConfig.minSuccessful()) {</span>
-<span class="fc" id="L175">            completionStatus = ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;</span>
-<span class="fc" id="L176">            return true;</span>
+<span class="fc bfc" id="L168" title="All 4 branches covered.">        if (completionConfig.minSuccessful() != null &amp;&amp; succeeded &gt;= completionConfig.minSuccessful()) {</span>
+<span class="fc" id="L169">            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;</span>
         }
 
         // Check toleratedFailureCount
-<span class="fc bfc" id="L180" title="All 4 branches covered.">        if (completionConfig.toleratedFailureCount() != null &amp;&amp; failed &gt; completionConfig.toleratedFailureCount()) {</span>
-<span class="fc" id="L181">            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
-<span class="fc" id="L182">            return true;</span>
+<span class="fc bfc" id="L173" title="All 4 branches covered.">        if (completionConfig.toleratedFailureCount() != null &amp;&amp; failed &gt; completionConfig.toleratedFailureCount()) {</span>
+<span class="fc" id="L174">            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
         }
 
         // Check toleratedFailurePercentage
-<span class="pc bpc" id="L186" title="1 of 4 branches missed.">        if (completionConfig.toleratedFailurePercentage() != null</span>
+<span class="fc bfc" id="L178" title="All 4 branches covered.">        if (completionConfig.toleratedFailurePercentage() != null</span>
                 &amp;&amp; totalCompleted &gt; 0
-<span class="fc bfc" id="L188" title="All 2 branches covered.">                &amp;&amp; ((double) failed / totalCompleted) &gt; completionConfig.toleratedFailurePercentage()) {</span>
-<span class="fc" id="L189">            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
-<span class="fc" id="L190">            return true;</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">                &amp;&amp; ((double) failed / totalCompleted) &gt; completionConfig.toleratedFailurePercentage()) {</span>
+<span class="fc" id="L181">            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
         }
 
         // All items finished (no pending, no running) — complete with ALL_COMPLETED
-<span class="fc bfc" id="L194" title="All 2 branches covered.">        if (isAllItemsFinished()) {</span>
-<span class="fc" id="L195">            completionStatus = ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
-<span class="fc" id="L196">            return true;</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        if (isAllItemsFinished()) {</span>
+<span class="fc" id="L186">            return ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
         }
 
-<span class="fc" id="L199">        return false;</span>
+<span class="fc" id="L189">        return null;</span>
     }
 
     private void checkpointMapResult() {
-<span class="fc" id="L203">        var result = aggregateResults();</span>
-<span class="fc" id="L204">        var serialized = serializeResult(result);</span>
-<span class="fc" id="L205">        var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);</span>
+<span class="fc" id="L193">        var result = aggregateResults();</span>
+<span class="fc" id="L194">        this.cachedResult = result;</span>
+<span class="fc" id="L195">        var serialized = serializeResult(result);</span>
+<span class="fc" id="L196">        var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);</span>
 
-<span class="fc bfc" id="L207" title="All 2 branches covered.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
-<span class="fc" id="L208">            sendOperationUpdate(OperationUpdate.builder()</span>
-<span class="fc" id="L209">                    .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L210">                    .subType(getSubType().getValue())</span>
-<span class="fc" id="L211">                    .payload(serialized));</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
+<span class="fc" id="L199">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L200">                    .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L201">                    .subType(getSubType().getValue())</span>
+<span class="fc" id="L202">                    .payload(serialized));</span>
         } else {
             // Large result: checkpoint with empty payload + replayChildren flag
-<span class="fc" id="L214">            sendOperationUpdate(OperationUpdate.builder()</span>
-<span class="fc" id="L215">                    .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L216">                    .subType(getSubType().getValue())</span>
-<span class="fc" id="L217">                    .payload(&quot;&quot;)</span>
-<span class="fc" id="L218">                    .contextOptions(</span>
-<span class="fc" id="L219">                            ContextOptions.builder().replayChildren(true).build()));</span>
+<span class="fc" id="L205">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L206">                    .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L207">                    .subType(getSubType().getValue())</span>
+<span class="fc" id="L208">                    .payload(&quot;&quot;)</span>
+<span class="fc" id="L209">                    .contextOptions(</span>
+<span class="fc" id="L210">                            ContextOptions.builder().replayChildren(true).build()));</span>
         }
-<span class="fc" id="L221">    }</span>
+<span class="fc" id="L212">    }</span>
 
     @Override
     public MapResult&lt;O&gt; get() {
-<span class="fc bfc" id="L225" title="All 2 branches covered.">        if (replayFromPayload) {</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">        if (replayFromPayload) {</span>
             // Small result replay: deserialize MapResult directly from checkpoint payload
-<span class="fc" id="L227">            var op = waitForOperationCompletion();</span>
-<span class="pc bpc" id="L228" title="1 of 2 branches missed.">            var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;</span>
-<span class="fc" id="L229">            return deserializeResult(result);</span>
+<span class="fc" id="L218">            var op = waitForOperationCompletion();</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">            var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;</span>
+<span class="fc" id="L220">            return deserializeResult(result);</span>
         }
         // First execution or large result replay: wait for children, then aggregate
-<span class="fc" id="L232">        join();</span>
-<span class="fc" id="L233">        return aggregateResults();</span>
+<span class="fc" id="L223">        join();</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">        return cachedResult != null ? cachedResult : aggregateResults();</span>
     }
 
     /**
@@ -241,50 +232,33 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
      */
     @SuppressWarnings(&quot;unchecked&quot;)
     private MapResult&lt;O&gt; aggregateResults() {
-<span class="fc" id="L244">        var children = getChildOperations();</span>
-<span class="fc" id="L245">        var resultItems = new ArrayList&lt;MapResultItem&lt;O&gt;&gt;(Collections.nCopies(items.size(), null));</span>
+<span class="fc" id="L235">        var children = getChildOperations();</span>
+<span class="fc" id="L236">        var resultItems = new ArrayList&lt;MapResultItem&lt;O&gt;&gt;(Collections.nCopies(items.size(), null));</span>
 
-<span class="fc bfc" id="L247" title="All 2 branches covered.">        for (int i = 0; i &lt; children.size(); i++) {</span>
-<span class="fc" id="L248">            var branch = (ChildContextOperation&lt;O&gt;) children.get(i);</span>
-<span class="fc bfc" id="L249" title="All 2 branches covered.">            if (!branch.isOperationCompleted()) {</span>
-<span class="fc" id="L250">                resultItems.set(i, MapResultItem.notStarted());</span>
-<span class="fc" id="L251">                continue;</span>
+<span class="fc bfc" id="L238" title="All 2 branches covered.">        for (int i = 0; i &lt; children.size(); i++) {</span>
+<span class="fc" id="L239">            var branch = (ChildContextOperation&lt;O&gt;) children.get(i);</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">            if (!branch.isOperationCompleted()) {</span>
+<span class="fc" id="L241">                resultItems.set(i, MapResultItem.notStarted());</span>
+<span class="fc" id="L242">                continue;</span>
             }
             try {
-<span class="fc" id="L254">                resultItems.set(i, MapResultItem.success(branch.get()));</span>
-<span class="fc" id="L255">            } catch (Exception e) {</span>
-<span class="fc" id="L256">                resultItems.set(i, MapResultItem.failure(buildMapError(e)));</span>
-<span class="fc" id="L257">            }</span>
+<span class="fc" id="L245">                resultItems.set(i, MapResultItem.success(branch.get()));</span>
+<span class="fc" id="L246">            } catch (Exception e) {</span>
+<span class="fc" id="L247">                resultItems.set(i, MapResultItem.failure(buildMapError(e)));</span>
+<span class="fc" id="L248">            }</span>
         }
 
         // Fill any remaining null slots (items beyond children size) with notStarted
-<span class="pc bpc" id="L261" title="1 of 2 branches missed.">        for (int i = children.size(); i &lt; items.size(); i++) {</span>
-<span class="nc" id="L262">            resultItems.set(i, MapResultItem.notStarted());</span>
+<span class="pc bpc" id="L252" title="1 of 2 branches missed.">        for (int i = children.size(); i &lt; items.size(); i++) {</span>
+<span class="nc" id="L253">            resultItems.set(i, MapResultItem.notStarted());</span>
         }
 
-<span class="fc" id="L265">        return new MapResult&lt;&gt;(resultItems, toCompletionReason());</span>
-    }
-
-    private CompletionReason toCompletionReason() {
-<span class="pc bpc" id="L269" title="1 of 4 branches missed.">        if (completionConfig.minSuccessful() != null &amp;&amp; getSucceededCount() &gt;= completionConfig.minSuccessful()) {</span>
-<span class="fc" id="L270">            return CompletionReason.MIN_SUCCESSFUL_REACHED;</span>
-        }
-<span class="fc bfc" id="L272" title="All 2 branches covered.">        if (completionConfig.toleratedFailureCount() != null</span>
-<span class="pc bpc" id="L273" title="1 of 2 branches missed.">                &amp;&amp; getFailedCount() &gt; completionConfig.toleratedFailureCount()) {</span>
-<span class="fc" id="L274">            return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;</span>
-        }
-<span class="pc bpc" id="L276" title="1 of 4 branches missed.">        if (completionConfig.toleratedFailurePercentage() != null &amp;&amp; getFailedCount() &gt; 0) {</span>
-<span class="fc" id="L277">            int total = getSucceededCount() + getFailedCount();</span>
-<span class="pc bpc" id="L278" title="2 of 4 branches missed.">            if (total &gt; 0 &amp;&amp; ((double) getFailedCount() / total) &gt; completionConfig.toleratedFailurePercentage()) {</span>
-<span class="fc" id="L279">                return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;</span>
-            }
-        }
-<span class="fc" id="L282">        return CompletionReason.ALL_COMPLETED;</span>
+<span class="fc" id="L256">        return new MapResult&lt;&gt;(resultItems, completionStatus);</span>
     }
 
     private static MapError buildMapError(Exception e) {
-<span class="fc" id="L286">        return new MapError(</span>
-<span class="fc" id="L287">                e.getClass().getName(), e.getMessage(), ExceptionHelper.serializeStackTrace(e.getStackTrace()));</span>
+<span class="fc" id="L260">        return new MapError(</span>
+<span class="fc" id="L261">                e.getClass().getName(), e.getMessage(), ExceptionHelper.serializeStackTrace(e.getStackTrace()));</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

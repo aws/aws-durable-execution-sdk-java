@@ -5,16 +5,15 @@ package software.amazon.lambda.durable.model;
 <span class="fc" id="L5">public enum ConcurrencyCompletionStatus {</span>
 <span class="fc" id="L6">    ALL_COMPLETED,</span>
 <span class="fc" id="L7">    MIN_SUCCESSFUL_REACHED,</span>
-<span class="fc" id="L8">    MIN_SUCCESSFUL_NOT_REACHED,</span>
-<span class="fc" id="L9">    FAILURE_TOLERANCE_EXCEEDED;</span>
+<span class="fc" id="L8">    FAILURE_TOLERANCE_EXCEEDED;</span>
 
     @Override
     public String toString() {
-<span class="nc" id="L13">        return name();</span>
+<span class="fc" id="L12">        return name();</span>
     }
 
     public boolean isSucceeded() {
-<span class="fc bfc" id="L17" title="All 4 branches covered.">        return this == ALL_COMPLETED || this == MIN_SUCCESSFUL_REACHED;</span>
+<span class="fc bfc" id="L16" title="All 4 branches covered.">        return this == ALL_COMPLETED || this == MIN_SUCCESSFUL_REACHED;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
