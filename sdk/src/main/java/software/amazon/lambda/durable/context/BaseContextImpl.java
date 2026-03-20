@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import software.amazon.lambda.durable.BaseContext;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;

@@ -15,6 +15,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.util.ParameterValidator;
 
 class ParameterValidatorTest {
 

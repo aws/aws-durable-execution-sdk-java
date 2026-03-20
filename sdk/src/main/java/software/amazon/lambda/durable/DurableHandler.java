@@ -10,6 +10,7 @@ import java.io.OutputStream;
 import java.lang.reflect.ParameterizedType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.serde.DurableInputOutputSerDes;
 

@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import org.slf4j.LoggerFactory;
-import software.amazon.lambda.durable.BaseContext;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.execution.ExecutionManager;
