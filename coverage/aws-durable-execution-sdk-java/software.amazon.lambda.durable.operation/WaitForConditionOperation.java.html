@@ -15,7 +15,6 @@ import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.WaitForConditionConfig;
-import software.amazon.lambda.durable.WaitForConditionResult;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -23,6 +22,7 @@ import software.amazon.lambda.durable.exception.WaitForConditionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -68,13 +68,13 @@ public class WaitForConditionOperation&lt;T&gt; extends BaseDurableOperation&lt;
 
     @Override
     protected void replay(Operation existing) {
-<span class="pc bpc" id="L71" title="2 of 4 branches missed.">        switch (existing.status()) {</span>
+<span class="fc bfc" id="L71" title="All 4 branches covered.">        switch (existing.status()) {</span>
 <span class="fc" id="L72">            case SUCCEEDED, FAILED -&gt; markAlreadyCompleted(); // Check if already completed / failed</span>
-<span class="nc" id="L73">            case PENDING -&gt; pollReadyAndResumeCheckLoop(existing); // Check if pending retry</span>
+<span class="fc" id="L73">            case PENDING -&gt; pollReadyAndResumeCheckLoop(existing); // Check if pending retry</span>
 <span class="fc" id="L74">            case STARTED, READY -&gt; resumeCheckLoop(existing);</span>
             default -&gt;
-<span class="nc" id="L76">                terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="nc" id="L77">                        &quot;Unexpected waitForCondition status: &quot; + existing.status());</span>
+<span class="pc" id="L76">                terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="fc" id="L77">                        &quot;Unexpected waitForCondition status: &quot; + existing.status());</span>
         }
 <span class="fc" id="L79">    }</span>
 
@@ -104,20 +104,20 @@ public class WaitForConditionOperation&lt;T&gt; extends BaseDurableOperation&lt;
 <span class="pc bpc" id="L104" title="2 of 4 branches missed.">        int attempt = (stepDetails != null &amp;&amp; stepDetails.attempt() != null) ? stepDetails.attempt() : 0;</span>
 <span class="pc bpc" id="L105" title="1 of 2 branches missed.">        var checkpointData = stepDetails != null ? stepDetails.result() : null;</span>
         T currentState; // Get current state
-<span class="pc bpc" id="L107" title="1 of 2 branches missed.">        if (checkpointData != null) {</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (checkpointData != null) {</span>
 <span class="fc" id="L108">            currentState = deserializeResult(checkpointData);</span>
         } else {
-<span class="nc" id="L110">            currentState = initialState;</span>
+<span class="fc" id="L110">            currentState = initialState;</span>
         }
 <span class="fc" id="L112">        executeCheckLogic(currentState, attempt);</span>
 <span class="fc" id="L113">    }</span>
 
     private CompletableFuture&lt;Void&gt; pollReadyAndResumeCheckLoop(Operation existing) {
-<span class="nc" id="L116">        return pollForOperationUpdates()</span>
-<span class="nc bnc" id="L117" title="All 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
-<span class="nc" id="L118">                        ? CompletableFuture.completedFuture(op)</span>
+<span class="fc" id="L116">        return pollForOperationUpdates()</span>
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+<span class="fc" id="L118">                        ? CompletableFuture.completedFuture(op)</span>
 <span class="nc" id="L119">                        : pollForOperationUpdates())</span>
-<span class="nc" id="L120">                .thenRun(() -&gt; resumeCheckLoop(existing));</span>
+<span class="fc" id="L120">                .thenRun(() -&gt; resumeCheckLoop(existing));</span>
     }
 
     private void executeCheckLogic(T currentState, int attempt) {

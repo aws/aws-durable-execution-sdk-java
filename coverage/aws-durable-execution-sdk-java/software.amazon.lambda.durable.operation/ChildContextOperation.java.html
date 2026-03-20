@@ -243,10 +243,10 @@ public class ChildContextOperation&lt;T&gt; extends BaseDurableOperation&lt;T&gt
             }
 
             // throw a general failed exception if a user exception is not reconstructed
-<span class="pc bpc" id="L246" title="5 of 7 branches missed.">            return switch (getSubType()) {</span>
+<span class="pc bpc" id="L246" title="4 of 7 branches missed.">            return switch (getSubType()) {</span>
 <span class="nc" id="L247">                case WAIT_FOR_CALLBACK -&gt; handleWaitForCallbackFailure(op);</span>
 <span class="nc" id="L248">                case MAP -&gt; throw new ChildContextFailedException(op);</span>
-<span class="nc" id="L249">                case MAP_ITERATION -&gt; throw new ChildContextFailedException(op);</span>
+<span class="fc" id="L249">                case MAP_ITERATION -&gt; throw new ChildContextFailedException(op);</span>
 <span class="nc" id="L250">                case PARALLEL -&gt; throw new ChildContextFailedException(op);</span>
 <span class="fc" id="L251">                case PARALLEL_BRANCH -&gt; throw new ChildContextFailedException(op);</span>
 <span class="fc" id="L252">                case RUN_IN_CHILD_CONTEXT -&gt; throw new ChildContextFailedException(op);</span>

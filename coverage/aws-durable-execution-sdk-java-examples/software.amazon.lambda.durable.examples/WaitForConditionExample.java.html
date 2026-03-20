@@ -2,32 +2,39 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.WaitForConditionResult;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 /**
  * Example demonstrating the waitForCondition operation.
  *
- * &lt;p&gt;Polls a counter until it reaches the length of the input name, then returns the final count. Uses the minimal API
- * with default configuration — no explicit strategy or config needed.
+ * &lt;p&gt;This example simulates waiting for an order to ship, by repeatedly calling a check function.
  */
-<span class="fc" id="L15">public class WaitForConditionExample extends DurableHandler&lt;GreetingRequest, Integer&gt; {</span>
+<span class="fc" id="L15">public class WaitForConditionExample extends DurableHandler&lt;String, String&gt; {</span>
+
+<span class="fc" id="L17">    private final AtomicInteger callCount = new AtomicInteger(0);</span>
 
     @Override
-    public Integer handleRequest(GreetingRequest input, DurableContext context) {
-<span class="fc" id="L19">        var targetCount = input.getName().length();</span>
-
-<span class="fc" id="L21">        return context.waitForCondition(</span>
-                &quot;count-to-name-length&quot;,
-                Integer.class,
-                (state, stepCtx) -&gt; {
-<span class="fc" id="L25">                    var next = state + 1;</span>
-<span class="fc bfc" id="L26" title="All 2 branches covered.">                    return next &gt;= targetCount</span>
-<span class="fc" id="L27">                            ? WaitForConditionResult.stopPolling(next)</span>
-<span class="fc" id="L28">                            : WaitForConditionResult.continuePolling(next);</span>
+    public String handleRequest(String input, DurableContext context) {
+        // Poll the shipment status until the order is shipped.
+        // The check function simulates an order shipment status
+        // which transitions from PENDING &gt; PROCESSING &gt; SHIPPED
+<span class="fc" id="L24">        return context.waitForCondition(</span>
+                &quot;wait-for-shipment&quot;,
+                String.class,
+                (status, stepCtx) -&gt; {
+                    // Simulate checking shipment status from an external service
+<span class="fc" id="L29">                    var count = callCount.incrementAndGet();</span>
+<span class="fc bfc" id="L30" title="All 2 branches covered.">                    if (count &gt;= 3) {</span>
+                        // Order has shipped — stop polling
+<span class="fc" id="L32">                        return WaitForConditionResult.stopPolling(input + &quot;: SHIPPED&quot;);</span>
+                    }
+                    // Order still processing — continue polling
+<span class="fc" id="L35">                    return WaitForConditionResult.continuePolling(input + &quot;: PROCESSING&quot;);</span>
                 },
-<span class="fc" id="L30">                0);</span>
+                input + &quot;: PENDING&quot;); // Order pending - initial status
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
