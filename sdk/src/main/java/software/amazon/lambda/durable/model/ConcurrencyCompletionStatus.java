@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.model;
 public enum ConcurrencyCompletionStatus {
     ALL_COMPLETED,
     MIN_SUCCESSFUL_REACHED,
-    MIN_SUCCESSFUL_NOT_REACHED,
     FAILURE_TOLERANCE_EXCEEDED;
 
     @Override

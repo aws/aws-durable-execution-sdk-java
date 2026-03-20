@@ -17,7 +17,6 @@ import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.model.CompletionReason;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.MapError;
 import software.amazon.lambda.durable.model.MapResult;
@@ -48,6 +47,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final SerDes serDes;
     private final CompletionConfig completionConfig;
     private boolean replayFromPayload;
+    private volatile MapResult<O> cachedResult;
+    private ConcurrencyCompletionStatus completionStatus;
 
     public MapOperation(
             OperationIdentifier operationIdentifier,
@@ -61,16 +62,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 new TypeToken<>() {},
                 config.serDes(),
                 durableContext,
-                config.maxConcurrency() != null ? config.maxConcurrency() : -1,
-                config.completionConfig().minSuccessful() != null
-                        ? config.completionConfig().minSuccessful()
-                        : -1,
-                config.completionConfig().toleratedFailureCount() != null
-                        ? config.completionConfig().toleratedFailureCount()
-                        : Integer.MAX_VALUE,
-                config.completionConfig().toleratedFailurePercentage() != null
-                        ? config.completionConfig().toleratedFailurePercentage()
-                        : 100);
+                config.maxConcurrency() != null ? config.maxConcurrency() : -1);
         this.items = List.copyOf(items);
         this.function = function;
         this.itemResultType = itemResultType;
@@ -142,12 +134,14 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     }
 
     @Override
-    protected void handleSuccess() {
+    protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+        this.completionStatus = concurrencyCompletionStatus;
         checkpointMapResult();
     }
 
     @Override
     protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+        this.completionStatus = concurrencyCompletionStatus;
         checkpointMapResult();
     }
 
@@ -165,42 +159,39 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
      * Map's default {@code allCompleted()} allows failures without early termination.
      */
     @Override
-    protected boolean canComplete() {
+    protected ConcurrencyCompletionStatus canComplete() {
         int succeeded = getSucceededCount();
         int failed = getFailedCount();
         int totalCompleted = succeeded + failed;
 
         // Check minSuccessful
         if (completionConfig.minSuccessful() != null && succeeded >= completionConfig.minSuccessful()) {
-            completionStatus = ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-            return true;
+            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
         }
 
         // Check toleratedFailureCount
         if (completionConfig.toleratedFailureCount() != null && failed > completionConfig.toleratedFailureCount()) {
-            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-            return true;
+            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
         }
 
         // Check toleratedFailurePercentage
         if (completionConfig.toleratedFailurePercentage() != null
                 && totalCompleted > 0
                 && ((double) failed / totalCompleted) > completionConfig.toleratedFailurePercentage()) {
-            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-            return true;
+            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
         }
 
         // All items finished (no pending, no running) — complete with ALL_COMPLETED
         if (isAllItemsFinished()) {
-            completionStatus = ConcurrencyCompletionStatus.ALL_COMPLETED;
-            return true;
+            return ConcurrencyCompletionStatus.ALL_COMPLETED;
         }
 
-        return false;
+        return null;
     }
 
     private void checkpointMapResult() {
         var result = aggregateResults();
+        this.cachedResult = result;
         var serialized = serializeResult(result);
         var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
@@ -230,7 +221,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
         // First execution or large result replay: wait for children, then aggregate
         join();
-        return aggregateResults();
+        return cachedResult != null ? cachedResult : aggregateResults();
     }
 
     /**
@@ -262,24 +253,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             resultItems.set(i, MapResultItem.notStarted());
         }
 
-        return new MapResult<>(resultItems, toCompletionReason());
-    }
-
-    private CompletionReason toCompletionReason() {
-        if (completionConfig.minSuccessful() != null && getSucceededCount() >= completionConfig.minSuccessful()) {
-            return CompletionReason.MIN_SUCCESSFUL_REACHED;
-        }
-        if (completionConfig.toleratedFailureCount() != null
-                && getFailedCount() > completionConfig.toleratedFailureCount()) {
-            return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;
-        }
-        if (completionConfig.toleratedFailurePercentage() != null && getFailedCount() > 0) {
-            int total = getSucceededCount() + getFailedCount();
-            if (total > 0 && ((double) getFailedCount() / total) > completionConfig.toleratedFailurePercentage()) {
-                return CompletionReason.FAILURE_TOLERANCE_EXCEEDED;
-            }
-        }
-        return CompletionReason.ALL_COMPLETED;
+        return new MapResult<>(resultItems, completionStatus);
     }
 
     private static MapError buildMapError(Exception e) {

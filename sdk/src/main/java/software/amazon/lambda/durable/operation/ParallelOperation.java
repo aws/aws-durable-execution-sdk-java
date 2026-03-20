@@ -43,6 +43,8 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
+    private final int minSuccessful;
+    private final int toleratedFailureCount;
     private boolean skipCheckpoint = false;
 
     public ParallelOperation(
@@ -53,14 +55,9 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
             int maxConcurrency,
             int minSuccessful,
             int toleratedFailureCount) {
-        super(
-                operationIdentifier,
-                resultTypeToken,
-                resultSerDes,
-                durableContext,
-                maxConcurrency,
-                minSuccessful,
-                toleratedFailureCount);
+        super(operationIdentifier, resultTypeToken, resultSerDes, durableContext, maxConcurrency);
+        this.minSuccessful = minSuccessful;
+        this.toleratedFailureCount = toleratedFailureCount;
     }
 
     @Override
@@ -81,7 +78,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
     }
 
     @Override
-    protected void handleSuccess() {
+    protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         if (skipCheckpoint) {
             // Do not send checkpoint during replay
             markAlreadyCompleted();
@@ -95,7 +92,7 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
     @Override
     protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        handleSuccess();
+        handleSuccess(concurrencyCompletionStatus);
     }
 
     @Override
@@ -116,6 +113,37 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
     public T get() {
         // TODO: implement proper return value handling
         join();
+        return null;
+    }
+
+    @Override
+    protected void validateItemCount() {
+        if (minSuccessful > getTotalItems() - getFailedCount()) {
+            throw new IllegalArgumentException("minSuccessful (" + minSuccessful
+                    + ") exceeds the number of registered items (" + getTotalItems() + ")");
+        }
+    }
+
+    @Override
+    protected ConcurrencyCompletionStatus canComplete() {
+        int succeeded = getSucceededCount();
+        int failed = getFailedCount();
+
+        // If we've met the minimum successful count, we're done
+        if (minSuccessful != -1 && succeeded >= minSuccessful) {
+            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
+        }
+
+        // If we've exceeded the failure tolerance, we're done
+        if ((minSuccessful == -1 && failed > 0) || failed > toleratedFailureCount) {
+            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
+        }
+
+        // All items finished — complete
+        if (isAllItemsFinished()) {
+            return ConcurrencyCompletionStatus.ALL_COMPLETED;
+        }
+
         return null;
     }
 }

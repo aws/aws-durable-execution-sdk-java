@@ -10,7 +10,7 @@ import java.util.List;
  *
  * <p>Holds ordered results from a map operation. Each index corresponds to the input item at the same position. Each
  * item is represented as a {@link MapResultItem} containing its status, result, and error. Includes the
- * {@link CompletionReason} indicating why the operation completed.
+ * {@link ConcurrencyCompletionStatus} indicating why the operation completed.
  *
  * <p>Errors are stored as {@link MapError} rather than raw Throwable, so they survive serialization across
  * checkpoint-and-replay cycles without requiring AWS SDK-specific Jackson modules.
@@ -19,17 +19,17 @@ import java.util.List;
  * @param completionReason why the operation completed
  * @param <T> the result type of each item
  */
-public record MapResult<T>(List<MapResultItem<T>> items, CompletionReason completionReason) {
+public record MapResult<T>(List<MapResultItem<T>> items, ConcurrencyCompletionStatus completionReason) {
 
     /** Compact constructor that applies defensive copy and defaults. */
     public MapResult {
         items = items != null ? List.copyOf(items) : Collections.emptyList();
-        completionReason = completionReason != null ? completionReason : CompletionReason.ALL_COMPLETED;
+        completionReason = completionReason != null ? completionReason : ConcurrencyCompletionStatus.ALL_COMPLETED;
     }
 
     /** Returns an empty MapResult with no items. */
     public static <T> MapResult<T> empty() {
-        return new MapResult<>(Collections.emptyList(), CompletionReason.ALL_COMPLETED);
+        return new MapResult<>(Collections.emptyList(), ConcurrencyCompletionStatus.ALL_COMPLETED);
     }
 
     /** Returns the result item at the given index. */

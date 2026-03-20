@@ -213,6 +213,8 @@ class ConcurrencyOperationTest {
         private boolean failureHandled = false;
         private final AtomicInteger executingCount = new AtomicInteger(0);
         private DurableContextImpl lastParentContext;
+        private final int minSuccessful;
+        private final int toleratedFailureCount;
 
         TestConcurrencyOperation(
                 OperationIdentifier operationIdentifier,
@@ -222,14 +224,9 @@ class ConcurrencyOperationTest {
                 int maxConcurrency,
                 int minSuccessful,
                 int toleratedFailureCount) {
-            super(
-                    operationIdentifier,
-                    resultTypeToken,
-                    resultSerDes,
-                    durableContext,
-                    maxConcurrency,
-                    minSuccessful,
-                    toleratedFailureCount);
+            super(operationIdentifier, resultTypeToken, resultSerDes, durableContext, maxConcurrency);
+            this.minSuccessful = minSuccessful;
+            this.toleratedFailureCount = toleratedFailureCount;
         }
 
         @Override
@@ -257,7 +254,7 @@ class ConcurrencyOperationTest {
         }
 
         @Override
-        protected void handleSuccess() {
+        protected void handleSuccess(ConcurrencyCompletionStatus completionStatus) {
             successHandled = true;
             // Simulate the checkpoint ACK that a real subclass would receive after sendOperationUpdate.
             // This drives completionFuture to completion so waitForOperationCompletion() unblocks.
@@ -281,6 +278,34 @@ class ConcurrencyOperationTest {
 
         @Override
         protected void replay(Operation existing) {}
+
+        @Override
+        protected void validateItemCount() {
+            if (minSuccessful > getTotalItems() - getFailedCount()) {
+                throw new IllegalArgumentException("minSuccessful (" + minSuccessful
+                        + ") exceeds the number of registered items (" + getTotalItems() + ")");
+            }
+        }
+
+        @Override
+        protected ConcurrencyCompletionStatus canComplete() {
+            int succeeded = getSucceededCount();
+            int failed = getFailedCount();
+
+            if (minSuccessful != -1 && succeeded >= minSuccessful) {
+                return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
+            }
+
+            if ((minSuccessful == -1 && failed > 0) || failed > toleratedFailureCount) {
+                return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
+            }
+
+            if (isAllItemsFinished()) {
+                return ConcurrencyCompletionStatus.ALL_COMPLETED;
+            }
+
+            return null;
+        }
 
         @Override
         public Void get() {

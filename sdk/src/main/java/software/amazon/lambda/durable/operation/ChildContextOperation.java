@@ -175,9 +175,8 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         }
 
         var serialized = serializeResult(result);
-        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
 
-        if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
+        if (serialized == null || serialized.getBytes(StandardCharsets.UTF_8).length < LARGE_RESULT_THRESHOLD) {
             sendOperationUpdate(
                     OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));
         } else {

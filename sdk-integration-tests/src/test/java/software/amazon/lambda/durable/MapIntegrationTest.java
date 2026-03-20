@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.model.CompletionReason;
+import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.MapResultItem;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
@@ -81,7 +81,7 @@ class MapIntegrationTest {
             assertNull(result.getError(0));
             assertNull(result.getError(2));
 
-            assertEquals(CompletionReason.ALL_COMPLETED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.completionReason());
 
             return "done";
         });
@@ -252,7 +252,7 @@ class MapIntegrationTest {
                     },
                     config);
 
-            assertEquals(CompletionReason.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
             assertFalse(result.allSucceeded());
             assertEquals(5, result.size());
             assertEquals("OK", result.getResult(0));
@@ -279,7 +279,7 @@ class MapIntegrationTest {
             var result = context.map(
                     "min-successful", items, String.class, (item, index, ctx) -> item.toUpperCase(), config);
 
-            assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionReason());
             assertEquals(5, result.size());
             assertEquals("A", result.getResult(0));
             assertEquals("B", result.getResult(1));
@@ -419,7 +419,7 @@ class MapIntegrationTest {
                     },
                     config);
 
-            assertEquals(CompletionReason.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
             assertFalse(result.allSucceeded());
             return "done";
         });
@@ -442,7 +442,7 @@ class MapIntegrationTest {
                 return item.toUpperCase();
             });
 
-            // Errors survive replay since they are stored as ErrorObject (not raw Throwable)
+            // Errors survive replay since they are stored as MapError (not raw Throwable)
             assertEquals("OK", result.getResult(0));
             assertEquals("OK2", result.getResult(2));
             return "done";
@@ -531,7 +531,7 @@ class MapIntegrationTest {
                     },
                     config);
 
-            assertEquals(CompletionReason.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
             assertEquals("OK1", result.getResult(0));
             assertNotNull(result.getError(1));
             // Items after the failure should be NOT_STARTED
@@ -622,12 +622,49 @@ class MapIntegrationTest {
                     },
                     config);
 
-            assertEquals(CompletionReason.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
             return "done";
         });
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+    }
+
+    @Test
+    void testMapWithToleratedFailurePercentage_replay() {
+        var executionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var items = List.of("ok1", "FAIL1", "ok2", "FAIL2", "ok3", "FAIL3", "ok4");
+            var config = MapConfig.builder()
+                    .completionConfig(CompletionConfig.toleratedFailurePercentage(0.3))
+                    .build();
+            var result = context.map(
+                    "pct-fail-replay",
+                    items,
+                    String.class,
+                    (item, index, ctx) -> {
+                        executionCount.incrementAndGet();
+                        if (item.startsWith("FAIL")) {
+                            throw new RuntimeException("failed: " + item);
+                        }
+                        return item.toUpperCase();
+                    },
+                    config);
+
+            assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
+            return "done";
+        });
+
+        var result1 = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        var firstRunCount = executionCount.get();
+
+        // Replay — with unlimited concurrency, children replay simultaneously.
+        // Verify completionReason is consistent and no re-execution occurs.
+        var result2 = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
     }
 
     @Test
@@ -747,7 +784,7 @@ class MapIntegrationTest {
                     },
                     config);
 
-            assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionReason());
             assertEquals("A", result.getResult(0));
             assertEquals("B", result.getResult(1));
             return "done";
@@ -825,5 +862,64 @@ class MapIntegrationTest {
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
+    }
+
+    @Test
+    void testMapWithNullResults() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var items = List.of("a", "b", "c");
+            var result = context.map("null-map", items, String.class, (item, index, ctx) -> null);
+
+            assertTrue(result.allSucceeded());
+            assertEquals(3, result.size());
+            for (int i = 0; i < result.size(); i++) {
+                assertEquals(MapResultItem.Status.SUCCEEDED, result.getItem(i).status());
+                assertNull(result.getResult(i));
+                assertNull(result.getError(i));
+            }
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+    }
+
+    @Test
+    void testMultipleMapAsyncInParallel() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var numbers = List.of(1, 2, 3);
+            var letters = List.of("a", "b");
+            var words = List.of("hello", "world", "foo", "bar");
+
+            var numbersFuture = context.mapAsync("map-numbers", numbers, String.class, (item, index, ctx) -> {
+                return ctx.step("double-" + index, String.class, stepCtx -> String.valueOf(item * 2));
+            });
+
+            var lettersFuture = context.mapAsync("map-letters", letters, String.class, (item, index, ctx) -> {
+                return ctx.step("upper-" + index, String.class, stepCtx -> item.toUpperCase());
+            });
+
+            var wordsFuture = context.mapAsync("map-words", words, String.class, (item, index, ctx) -> {
+                return ctx.step("reverse-" + index, String.class, stepCtx -> new StringBuilder(item)
+                        .reverse()
+                        .toString());
+            });
+
+            var numbersResult = numbersFuture.get();
+            var lettersResult = lettersFuture.get();
+            var wordsResult = wordsFuture.get();
+
+            assertTrue(numbersResult.allSucceeded());
+            assertTrue(lettersResult.allSucceeded());
+            assertTrue(wordsResult.allSucceeded());
+
+            return String.join(",", numbersResult.results())
+                    + "|" + String.join(",", lettersResult.results())
+                    + "|" + String.join(",", wordsResult.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("2,4,6|A,B|olleh,dlrow,oof,rab", result.getResult(String.class));
     }
 }

@@ -199,8 +199,12 @@ context.step("name", Type.class, supplier,
 │  - StepOperation<T>          │    │  - Queues requests           │
 │  - WaitOperation             │    │  - Batches API calls (750KB) │
 │  - WaitForConditionOperation │    │                              │
-│  - execute() / get()         │    │  - Notifies via callback     │
-└──────────────────────────────┘    └──────────────────────────────┘
+│  - ConcurrencyOperation<T>   │    │  - Notifies via callback     │
+│  - MapOperation<I,O>         │    └──────────────────────────────┘
+│  - ParallelOperation         │
+│  - ChildContextOperation<T>  │
+│  - execute() / get()         │
+└──────────────────────────────┘
                                                     │
                                                     ▼
                                     ┌──────────────────────────────┐
@@ -235,7 +239,11 @@ software.amazon.lambda.durable
 │   ├── InvokeOperation<T>       # Invoke logic
 │   ├── CallbackOperation<T>     # Callback logic
 │   ├── WaitOperation            # Wait logic
-│   └── WaitForConditionOperation<T>  # Polling condition logic
+│   ├── WaitForConditionOperation<T>  # Polling condition logic
+│   ├── ConcurrencyOperation<T>  # Shared base for map/parallel
+│   ├── MapOperation<I,O>        # Map operation logic
+│   ├── ParallelOperation        # Parallel operation logic
+│   └── ChildContextOperation<T> # Per-item child context execution
 │
 ├── logging/
 │   ├── DurableLogger        # Context-aware logger wrapper (MDC-based)

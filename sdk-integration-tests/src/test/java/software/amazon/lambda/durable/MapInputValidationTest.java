@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.HashSet;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.model.CompletionReason;
+import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -54,7 +54,7 @@ class MapInputValidationTest {
 
             assertEquals(0, result.size());
             assertTrue(result.allSucceeded());
-            assertEquals(CompletionReason.ALL_COMPLETED, result.completionReason());
+            assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.completionReason());
 
             return "done";
         });

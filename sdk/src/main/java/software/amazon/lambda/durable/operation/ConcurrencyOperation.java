@@ -33,8 +33,8 @@ import software.amazon.lambda.durable.serde.SerDes;
  * <ul>
  *   <li>Does NOT register its own thread — child context threads handle all suspension
  *   <li>Uses a pending queue + running counter for concurrency control
- *   <li>Completion is determined by {@code minSuccessful}, {@code failureRateThreshold} and
- *       {@code toleratedFailureCount}
+ *   <li>Completion is determined by subclass-specific logic via abstract {@code canComplete()} and
+ *       {@code validateItemCount()}
  *   <li>When a child suspends, the running count is NOT decremented
  * </ul>
  *
@@ -45,9 +45,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private static final Logger logger = LoggerFactory.getLogger(ConcurrencyOperation.class);
 
     private final int maxConcurrency;
-    private final int minSuccessful;
-    private final int toleratedFailureCount;
-    private final double failureRateThreshold;
     private final AtomicInteger succeededCount = new AtomicInteger(0);
     private final AtomicInteger failedCount = new AtomicInteger(0);
     private final AtomicInteger runningCount = new AtomicInteger(0);
@@ -55,7 +52,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
     private final List<ChildContextOperation<?>> childOperations = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
-    protected ConcurrencyCompletionStatus completionStatus;
     private OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
 
@@ -64,36 +60,11 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContextImpl durableContext,
-            int maxConcurrency,
-            int minSuccessful,
-            int toleratedFailureCount,
-            double failureRateThreshold) {
+            int maxConcurrency) {
         super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.maxConcurrency = maxConcurrency;
-        this.minSuccessful = minSuccessful;
-        this.toleratedFailureCount = toleratedFailureCount;
-        this.failureRateThreshold = failureRateThreshold;
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
         this.rootContext = durableContext.createChildContextWithoutSettingThreadContext(getOperationId(), getName());
-    }
-
-    protected ConcurrencyOperation(
-            OperationIdentifier operationIdentifier,
-            TypeToken<T> resultTypeToken,
-            SerDes resultSerDes,
-            DurableContextImpl durableContext,
-            int maxConcurrency,
-            int minSuccessful,
-            int toleratedFailureCount) {
-        this(
-                operationIdentifier,
-                resultTypeToken,
-                resultSerDes,
-                durableContext,
-                maxConcurrency,
-                minSuccessful,
-                toleratedFailureCount,
-                100);
     }
 
     // ========== Template methods for subclasses ==========
@@ -118,11 +89,8 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             SerDes serDes,
             DurableContextImpl parentContext);
 
-    /**
-     * Called when the concurrency operation succeeds (minSuccessful threshold met). Subclasses define checkpointing
-     * behavior.
-     */
-    protected abstract void handleSuccess();
+    /** Called when the concurrency operation succeeds. Subclasses define checkpointing behavior. */
+    protected abstract void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus);
 
     /** Called when the concurrency operation fails. Subclasses define checkpointing and exception behavior. */
     protected abstract void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus);
@@ -209,26 +177,38 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @param child the child operation that completed
      */
     public void onItemComplete(ChildContextOperation<?> child) {
-        if (completedOperations.contains(child.getOperationId())) {
+        if (!completedOperations.add(child.getOperationId())) {
             return;
-        } else {
-            completedOperations.add(child.getOperationId());
         }
-        runningCount.decrementAndGet();
+
+        // Evaluate child result outside the lock — child.get() may block waiting for a checkpoint response.
         logger.debug("OnItemComplete called by {}, Id: {}", child.getName(), child.getOperationId());
+        boolean succeeded;
         try {
             child.get();
             logger.debug("Result succeeded - {}", child.getName());
-            succeededCount.incrementAndGet();
+            succeeded = true;
         } catch (Throwable e) {
-            failedCount.incrementAndGet();
             logger.debug("Child operation {} failed: {}", child.getOperationId(), e.getMessage());
+            succeeded = false;
         }
 
-        if (canComplete()) {
-            handleComplete();
-        } else {
-            executeNextItemIfAllowed();
+        // Counter updates, completion check, and next-item dispatch must be atomic to prevent
+        // the main thread's join() from seeing runningCount==0 with incomplete counters.
+        synchronized (this) {
+            if (succeeded) {
+                succeededCount.incrementAndGet();
+            } else {
+                failedCount.incrementAndGet();
+            }
+            runningCount.decrementAndGet();
+
+            var status = canComplete();
+            if (status != null) {
+                handleComplete(status);
+            } else {
+                executeNextItemIfAllowed();
+            }
         }
     }
 
@@ -239,57 +219,24 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      *
      * @throws IllegalArgumentException if the item count cannot satisfy the criteria
      */
-    protected void validateItemCount() {
-        int totalItems = childOperations.size();
-
-        if (minSuccessful > totalItems - failedCount.get()) {
-            throw new IllegalArgumentException("minSuccessful (" + minSuccessful
-                    + ") exceeds the number of registered items (" + totalItems + ")");
-        }
-    }
+    protected abstract void validateItemCount();
 
     /**
      * Checks whether the concurrency operation can be considered complete.
      *
-     * @return true if enough items succeeded, too many failed, or not enough remaining items to reach minSuccessful
+     * @return the completion status if the operation is complete, or null if it should continue
      */
-    protected boolean canComplete() {
-        int totalItems = childOperations.size();
-        int succeeded = succeededCount.get();
-        int failed = failedCount.get();
+    protected abstract ConcurrencyCompletionStatus canComplete();
 
-        // If we've met the minimum successful count, we're done
-        if (minSuccessful != -1 && succeeded >= minSuccessful) {
-            completionStatus = ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-            return true;
-        }
-
-        // If we've exceeded the failure tolerance, we're done
-        if ((minSuccessful == -1 && failed > 0)
-                || failed > toleratedFailureCount
-                || (double) failed / totalItems > failureRateThreshold) {
-            completionStatus = ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-            return true;
-        }
-
-        // This will only happens when minSuccessful == -1 and user calls join()
-        if (isJoined.get() && minSuccessful == -1 && pendingQueue.isEmpty() && runningCount.get() == 0) {
-            completionStatus = ConcurrencyCompletionStatus.ALL_COMPLETED;
-            return true;
-        }
-
-        return false;
-    }
-
-    private void handleComplete() {
+    private void handleComplete(ConcurrencyCompletionStatus status) {
         synchronized (this) {
             if (isOperationCompleted()) {
                 return;
             }
-            if (completionStatus.isSucceeded()) {
-                handleSuccess();
+            if (status.isSucceeded()) {
+                handleSuccess(status);
             } else {
-                handleFailure(completionStatus);
+                handleFailure(status);
             }
         }
     }
@@ -305,8 +252,11 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             return;
         }
 
-        if (canComplete()) {
-            handleComplete();
+        synchronized (this) {
+            var status = canComplete();
+            if (status != null) {
+                handleComplete(status);
+            }
         }
 
         waitForOperationCompletion();

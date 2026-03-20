@@ -41,14 +41,14 @@ MapResult<OrderResult> result = future.get();
 | Method | Description |
 |--------|-------------|
 | `getResult(i)` | Result at index `i`, or `null` if that item failed |
-| `getError(i)` | `ErrorObject` at index `i`, or `null` if that item succeeded |
+| `getError(i)` | `MapError` at index `i`, or `null` if that item succeeded |
 | `getItem(i)` | The `MapResultItem` at index `i` with status, result, and error |
 | `allSucceeded()` | `true` if every item succeeded |
 | `size()` | Number of items in the result |
 | `items()` | All result items as an unmodifiable list |
 | `results()` | All results as an unmodifiable list (nulls for failed items) |
 | `succeeded()` | Only the non-null (successful) results |
-| `failed()` | Only the non-null `ErrorObject`s |
+| `failed()` | Only the non-null `MapError`s |
 | `completionReason()` | Why the operation completed (`ALL_COMPLETED`, `MIN_SUCCESSFUL_REACHED`, `FAILURE_TOLERANCE_EXCEEDED`) |
 
 ### MapResultItem
@@ -59,7 +59,17 @@ Each `MapResultItem<T>` contains:
 |-------|-------------|
 | `status()` | `SUCCEEDED`, `FAILED`, or `NOT_STARTED` |
 | `result()` | The result value, or `null` if failed/not started |
-| `error()` | The error details as `ErrorObject`, or `null` if succeeded/not started |
+| `error()` | The error details as `MapError`, or `null` if succeeded/not started |
+
+### MapError
+
+Failed items store error details as `MapError`, a serializable record that survives checkpoint-and-replay cycles:
+
+| Field | Description |
+|-------|-------------|
+| `errorType()` | Fully qualified exception class name (e.g., `java.lang.RuntimeException`) |
+| `errorMessage()` | The exception message |
+| `stackTrace()` | Stack trace frames as a list of strings, or `null` |
 
 ### Error Isolation
 
@@ -87,8 +97,10 @@ var config = MapConfig.builder()
     .build();
 
 var result = ctx.map("process-orders", items, OrderResult.class, 
-    (orderId, index, childCtx) -> process(childCtx, orderId), config);
+    (orderId, index, childCtx) -> process(orderId, childCtx), config);
 ```
+
+`MapConfig` also supports a custom `serDes` for serialization via `.serDes(customSerDes)`. By default, the context's serializer is used. `maxConcurrency` must be at least 1 if set.
 
 #### Concurrency Limiting
 
@@ -158,7 +170,7 @@ The function passed to `map()` is a `MapFunction<I, O>`:
 ```java
 @FunctionalInterface
 public interface MapFunction<I, O> {
-    O apply(I item, int index, DurableContext context) throws Exception;
+    O apply(I item, int index, DurableContext context);
 }
 ```
 
