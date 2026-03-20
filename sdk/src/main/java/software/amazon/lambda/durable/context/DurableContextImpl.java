@@ -558,9 +558,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         Objects.requireNonNull(config, "config cannot be null");
         var operationId = nextOperationId();
 
-        var parallelOp = new ParallelOperation<>(
+        var parallelOp = new ParallelOperation(
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL),
-                TypeToken.get(Void.class),
                 getDurableConfig().getSerDes(),
                 this,
                 config.maxConcurrency(),

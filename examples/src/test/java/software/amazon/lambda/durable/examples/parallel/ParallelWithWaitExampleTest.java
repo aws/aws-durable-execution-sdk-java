@@ -29,5 +29,6 @@ class ParallelWithWaitExampleTest {
 
         var output = result.getResult(ParallelWithWaitExample.Output.class);
         assertEquals(List.of("email:world", "sms:world", "push:world"), output.deliveries());
+        assertEquals(3, output.success());
     }
 }

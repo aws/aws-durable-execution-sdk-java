@@ -23,11 +23,8 @@ class ParallelFailureToleranceExampleTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
         var output = result.getResult(ParallelFailureToleranceExample.Output.class);
-        assertEquals(2, output.succeeded().size());
-        assertEquals(1, output.failed().size());
-        assertTrue(output.succeeded().contains("ok:svc-a"));
-        assertTrue(output.succeeded().contains("ok:svc-c"));
-        assertTrue(output.failed().contains("bad-svc-b"));
+        assertEquals(2, output.succeeded());
+        assertEquals(1, output.failed());
     }
 
     @Test
@@ -41,8 +38,7 @@ class ParallelFailureToleranceExampleTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
         var output = result.getResult(ParallelFailureToleranceExample.Output.class);
-        assertEquals(3, output.succeeded().size());
-        assertTrue(output.failed().isEmpty());
+        assertEquals(3, output.succeeded());
     }
 
     @Test
@@ -57,7 +53,7 @@ class ParallelFailureToleranceExampleTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
         var output = result.getResult(ParallelFailureToleranceExample.Output.class);
-        assertEquals(2, output.failed().size());
-        assertEquals(1, output.succeeded().size());
+        assertEquals(2, output.failed());
+        assertEquals(1, output.succeeded());
     }
 }

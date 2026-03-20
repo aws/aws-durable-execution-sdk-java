@@ -8,6 +8,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.ParallelConfig;
+import software.amazon.lambda.durable.model.ParallelResult;
 
 /**
  * Example demonstrating parallel branch execution with the Durable Execution SDK.
@@ -38,8 +39,9 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
         var config = ParallelConfig.builder().build();
 
         var futures = new ArrayList<DurableFuture<String>>(items.size());
+        var parallel = context.parallel("process-items", config);
 
-        try (var parallel = context.parallel("process-items", config)) {
+        try (parallel) {
             for (var item : items) {
                 var future = parallel.branch("process-" + item, String.class, branchCtx -> {
                     branchCtx.getLogger().info("Processing item: {}", item);
@@ -49,7 +51,12 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
             }
         } // join() called here via AutoCloseable
 
-        logger.info("All branches complete, collecting results");
+        ParallelResult parallelResult = parallel.get();
+        logger.info(
+                "Parallel complete: total={}, succeeded={}, failed={}",
+                parallelResult.getTotalBranches(),
+                parallelResult.getSucceededBranches(),
+                parallelResult.getFailedBranches());
 
         var results = futures.stream().map(DurableFuture::get).toList();
 

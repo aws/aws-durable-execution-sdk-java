@@ -245,7 +245,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * Blocks the calling thread until the concurrency operation reaches a terminal state. Validates item count, handles
      * zero-branch case, then delegates to {@code waitForOperationCompletion()} from BaseDurableOperation.
      */
-    protected void join() {
+    public void join() {
         validateItemCount();
         isJoined.set(true);
         if (childOperations.isEmpty()) {
@@ -272,6 +272,10 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
 
     protected int getTotalItems() {
         return childOperations.size();
+    }
+
+    protected ConcurrencyCompletionStatus getCompletionStatus() {
+        return completionStatus;
     }
 
     protected List<ChildContextOperation<?>> getChildOperations() {

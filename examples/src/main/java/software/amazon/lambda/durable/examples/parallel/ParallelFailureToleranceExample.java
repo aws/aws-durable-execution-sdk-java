@@ -9,6 +9,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.ParallelConfig;
 import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
 /**
@@ -26,7 +27,7 @@ public class ParallelFailureToleranceExample
 
     public record Input(List<String> services, int toleratedFailures) {}
 
-    public record Output(List<String> succeeded, List<String> failed) {}
+    public record Output(int succeeded, int failed) {}
 
     @Override
     public Output handleRequest(Input input, DurableContext context) {
@@ -38,8 +39,9 @@ public class ParallelFailureToleranceExample
                 .build();
 
         var futures = new ArrayList<DurableFuture<String>>(input.services().size());
+        var parallel = context.parallel("call-services", config);
 
-        try (var parallel = context.parallel("call-services", config)) {
+        try (parallel) {
             for (var service : input.services()) {
                 var future = parallel.branch("call-" + service, String.class, branchCtx -> {
                     return branchCtx.step(
@@ -59,20 +61,17 @@ public class ParallelFailureToleranceExample
             }
         }
 
-        var succeeded = new ArrayList<String>();
-        var failed = new ArrayList<String>();
+        ParallelResult parallelResult = parallel.get();
+        logger.info(
+                "Parallel complete: succeeded={}, failed={}, status={}",
+                parallelResult.getSucceededBranches(),
+                parallelResult.getFailedBranches(),
+                parallelResult.getCompletionStatus().isSucceeded() ? "succeeded" : "failed");
 
-        for (int i = 0; i < futures.size(); i++) {
-            try {
-                var result = futures.get(i).get();
-                succeeded.add(result);
-            } catch (Exception e) {
-                failed.add(input.services().get(i));
-                logger.info("Branch failed for service {}: {}", input.services().get(i), e.getMessage());
-            }
-        }
+        var succeeded = parallelResult.getSucceededBranches();
+        var failed = parallelResult.getFailedBranches();
 
-        logger.info("Completed: {} succeeded, {} failed", succeeded.size(), failed.size());
+        logger.info("Completed: {} succeeded, {} failed", succeeded, failed);
         return new Output(succeeded, failed);
     }
 }

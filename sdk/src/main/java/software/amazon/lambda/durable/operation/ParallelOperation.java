@@ -11,11 +11,11 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.exception.ConcurrencyExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -25,8 +25,8 @@ import software.amazon.lambda.durable.serde.SerDes;
  *
  * <ul>
  *   <li>Creates branches as {@link ChildContextOperation} with {@link OperationSubType#PARALLEL_BRANCH}
- *   <li>Checkpoints SUCCESS/FAIL on the parallel context when completion criteria are met
- *   <li>Throws {@link ConcurrencyExecutionException} when the operation fails
+ *   <li>Checkpoints SUCCESS on the parallel context when completion criteria are met
+ *   <li>Returns a {@link ParallelResult} summarising branch outcomes
  * </ul>
  *
  * <p>Context hierarchy:
@@ -38,10 +38,8 @@ import software.amazon.lambda.durable.serde.SerDes;
  *         ├── Branch 2 context (ChildContextOperation with PARALLEL_BRANCH)
  *         └── Branch N context (ChildContextOperation with PARALLEL_BRANCH)
  * </pre>
- *
- * @param <T> the result type of this operation (typically Void)
  */
-public class ParallelOperation<T> extends ConcurrencyOperation<T> {
+public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
 
     private final int minSuccessful;
     private final int toleratedFailureCount;
@@ -49,13 +47,12 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
-            TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContextImpl durableContext,
             int maxConcurrency,
             int minSuccessful,
             int toleratedFailureCount) {
-        super(operationIdentifier, resultTypeToken, resultSerDes, durableContext, maxConcurrency);
+        super(operationIdentifier, new TypeToken<ParallelResult>() {}, resultSerDes, durableContext, maxConcurrency);
         this.minSuccessful = minSuccessful;
         this.toleratedFailureCount = toleratedFailureCount;
     }
@@ -110,10 +107,9 @@ public class ParallelOperation<T> extends ConcurrencyOperation<T> {
     }
 
     @Override
-    public T get() {
-        // TODO: implement proper return value handling
+    public ParallelResult get() {
         join();
-        return null;
+        return new ParallelResult(getTotalItems(), getSucceededCount(), getFailedCount(), getCompletionStatus());
     }
 
     @Override

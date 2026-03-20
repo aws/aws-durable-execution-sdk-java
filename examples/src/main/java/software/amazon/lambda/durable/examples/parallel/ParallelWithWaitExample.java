@@ -9,6 +9,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.ParallelConfig;
+import software.amazon.lambda.durable.model.ParallelResult;
 
 /**
  * Example demonstrating parallel branches where some branches include wait operations.
@@ -29,7 +30,7 @@ public class ParallelWithWaitExample
 
     public record Input(String userId, String message) {}
 
-    public record Output(List<String> deliveries) {}
+    public record Output(List<String> deliveries, int success, int faiure) {}
 
     @Override
     public Output handleRequest(Input input, DurableContext context) {
@@ -38,8 +39,9 @@ public class ParallelWithWaitExample
 
         var config = ParallelConfig.builder().build();
         var futures = new ArrayList<DurableFuture<String>>(3);
+        var parallel = context.parallel("notify", config);
 
-        try (var parallel = context.parallel("notify", config)) {
+        try (parallel) {
 
             // Branch 1: email — no wait, deliver immediately
             futures.add(parallel.branch("email", String.class, ctx -> {
@@ -60,10 +62,12 @@ public class ParallelWithWaitExample
             }));
         }
 
+        ParallelResult result = parallel.get();
+
         var deliveries = futures.stream().map(DurableFuture::get).toList();
         logger.info("All {} notifications delivered", deliveries.size());
         // Test replay
         context.wait("wait for finalization", Duration.ofSeconds(5));
-        return new Output(deliveries);
+        return new Output(deliveries, result.getSucceededBranches(), result.getFailedBranches());
     }
 }
