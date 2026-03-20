@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;

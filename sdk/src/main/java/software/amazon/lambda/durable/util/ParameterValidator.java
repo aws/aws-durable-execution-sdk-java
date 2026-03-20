@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.validation;
+package software.amazon.lambda.durable.util;
 
 import java.time.Duration;
 import java.util.Collection;

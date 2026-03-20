@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalMemoryExecutionClient;

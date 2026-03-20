@@ -1,8 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable;
+package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
 public interface BaseContext extends AutoCloseable {
