@@ -4,7 +4,7 @@ package software.amazon.lambda.durable.retry;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.exception.WaitForConditionException;
-import software.amazon.lambda.durable.validation.ParameterValidator;
+import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
  * Factory class for creating common {@link WaitForConditionWaitStrategy} implementations.

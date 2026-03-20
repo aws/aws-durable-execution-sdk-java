@@ -192,7 +192,7 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
      */
     private void executeNextItemIfAllowed() {
 <span class="fc" id="L194">        synchronized (this) {</span>
-<span class="fc bfc" id="L195" title="All 2 branches covered.">            if (isOperationCompleted()) return;</span>
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">            if (isOperationCompleted()) return;</span>
 <span class="pc bpc" id="L196" title="1 of 4 branches missed.">            if (maxConcurrency != -1 &amp;&amp; runningCount.get() &gt;= maxConcurrency) return;</span>
 <span class="fc" id="L197">            var next = pendingQueue.poll();</span>
 <span class="fc bfc" id="L198" title="All 2 branches covered.">            if (next == null) return;</span>
@@ -209,8 +209,8 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends BaseDurableOperation
      * @param child the child operation that completed
      */
     public void onItemComplete(ChildContextOperation&lt;?&gt; child) {
-<span class="fc bfc" id="L212" title="All 2 branches covered.">        if (completedOperations.contains(child.getOperationId())) {</span>
-<span class="fc" id="L213">            return;</span>
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">        if (completedOperations.contains(child.getOperationId())) {</span>
+<span class="nc" id="L213">            return;</span>
         } else {
 <span class="fc" id="L215">            completedOperations.add(child.getOperationId());</span>
         }

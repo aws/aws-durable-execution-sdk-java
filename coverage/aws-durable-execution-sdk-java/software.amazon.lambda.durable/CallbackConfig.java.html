@@ -4,7 +4,7 @@ package software.amazon.lambda.durable;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.validation.ParameterValidator;
+import software.amazon.lambda.durable.util.ParameterValidator;
 
 /** Configuration for callback operations. */
 public class CallbackConfig {

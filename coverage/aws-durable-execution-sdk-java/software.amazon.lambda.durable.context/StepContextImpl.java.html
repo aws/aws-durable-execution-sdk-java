@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import org.slf4j.LoggerFactory;
-import software.amazon.lambda.durable.BaseContext;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -38,36 +37,36 @@ public class StepContextImpl extends BaseContextImpl implements StepContext {
             String stepOperationId,
             String stepOperationName,
             int attempt) {
-<span class="fc" id="L41">        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName, ThreadType.STEP);</span>
-<span class="fc" id="L42">        this.attempt = attempt;</span>
-<span class="fc" id="L43">    }</span>
+<span class="fc" id="L40">        super(executionManager, durableConfig, lambdaContext, stepOperationId, stepOperationName, ThreadType.STEP);</span>
+<span class="fc" id="L41">        this.attempt = attempt;</span>
+<span class="fc" id="L42">    }</span>
 
     /** Returns the current retry attempt number (0-based). */
     @Override
     public int getAttempt() {
-<span class="fc" id="L48">        return attempt;</span>
+<span class="fc" id="L47">        return attempt;</span>
     }
 
     @Override
     public DurableLogger getLogger() {
         // lazy initialize logger
-<span class="pc bpc" id="L54" title="1 of 2 branches missed.">        if (logger == null) {</span>
-<span class="fc" id="L55">            synchronized (this) {</span>
-<span class="pc bpc" id="L56" title="1 of 2 branches missed.">                if (logger == null) {</span>
-<span class="fc" id="L57">                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);</span>
+<span class="pc bpc" id="L53" title="1 of 2 branches missed.">        if (logger == null) {</span>
+<span class="fc" id="L54">            synchronized (this) {</span>
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">                if (logger == null) {</span>
+<span class="fc" id="L56">                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);</span>
                 }
-<span class="fc" id="L59">            }</span>
+<span class="fc" id="L58">            }</span>
         }
-<span class="fc" id="L61">        return logger;</span>
+<span class="fc" id="L60">        return logger;</span>
     }
 
     /** Closes the logger for this context. */
     @Override
     public void close() {
-<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (logger != null) {</span>
-<span class="fc" id="L68">            logger.close();</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (logger != null) {</span>
+<span class="fc" id="L67">            logger.close();</span>
         }
-<span class="fc" id="L70">        super.close();</span>
-<span class="fc" id="L71">    }</span>
+<span class="fc" id="L69">        super.close();</span>
+<span class="fc" id="L70">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

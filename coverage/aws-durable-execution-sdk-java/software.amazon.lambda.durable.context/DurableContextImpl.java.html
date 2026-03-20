@@ -45,7 +45,7 @@ import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitForConditionOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.util.CompletedDurableFuture;
-import software.amazon.lambda.durable.validation.ParameterValidator;
+import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
  * User-facing API for defining durable operations within a workflow.
