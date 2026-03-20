@@ -54,6 +54,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
     private OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
+    private ConcurrencyCompletionStatus completionStatus;
 
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
@@ -203,9 +204,9 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             }
             runningCount.decrementAndGet();
 
-            var status = canComplete();
-            if (status != null) {
-                handleComplete(status);
+            this.completionStatus = canComplete();
+            if (this.completionStatus != null) {
+                handleComplete(this.completionStatus);
             } else {
                 executeNextItemIfAllowed();
             }
@@ -248,14 +249,10 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     public void join() {
         validateItemCount();
         isJoined.set(true);
-        if (childOperations.isEmpty()) {
-            return;
-        }
-
         synchronized (this) {
-            var status = canComplete();
-            if (status != null) {
-                handleComplete(status);
+            this.completionStatus = canComplete();
+            if (this.completionStatus != null) {
+                handleComplete(this.completionStatus);
             }
         }
 

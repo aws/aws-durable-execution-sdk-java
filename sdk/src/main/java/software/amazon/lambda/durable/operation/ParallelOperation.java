@@ -114,7 +114,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
 
     @Override
     protected void validateItemCount() {
-        if (minSuccessful > getTotalItems() - getFailedCount()) {
+        if (minSuccessful > getTotalItems()) {
             throw new IllegalArgumentException("minSuccessful (" + minSuccessful
                     + ") exceeds the number of registered items (" + getTotalItems() + ")");
         }

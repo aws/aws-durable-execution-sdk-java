@@ -25,7 +25,7 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 public class ParallelFailureToleranceExample
         extends DurableHandler<ParallelFailureToleranceExample.Input, ParallelFailureToleranceExample.Output> {
 
-    public record Input(List<String> services, int toleratedFailures) {}
+    public record Input(List<String> services, int toleratedFailures, int minSuccessful) {}
 
     public record Output(int succeeded, int failed) {}
 
@@ -35,6 +35,7 @@ public class ParallelFailureToleranceExample
         logger.info("Starting parallel execution with toleratedFailureCount={}", input.toleratedFailures());
 
         var config = ParallelConfig.builder()
+                .minSuccessful(input.minSuccessful())
                 .toleratedFailureCount(input.toleratedFailures())
                 .build();
 
