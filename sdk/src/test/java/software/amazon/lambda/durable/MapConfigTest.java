@@ -13,7 +13,7 @@ class MapConfigTest {
     void defaultBuilder_hasNullMaxConcurrency() {
         var config = MapConfig.builder().build();
 
-        assertNull(config.maxConcurrency());
+        assertEquals(Integer.MAX_VALUE, config.maxConcurrency());
     }
 
     @Test
@@ -121,6 +121,6 @@ class MapConfigTest {
     @Test
     void builderWithNullMaxConcurrency_shouldPass() {
         var config = MapConfig.builder().maxConcurrency(null).build();
-        assertNull(config.maxConcurrency());
+        assertEquals(Integer.MAX_VALUE, config.maxConcurrency());
     }
 }

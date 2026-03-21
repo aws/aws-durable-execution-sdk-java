@@ -45,6 +45,8 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private static final Logger logger = LoggerFactory.getLogger(ConcurrencyOperation.class);
 
     private final int maxConcurrency;
+    private final Integer minSuccessful;
+    private final Integer toleratedFailureCount;
     private final AtomicInteger succeededCount = new AtomicInteger(0);
     private final AtomicInteger failedCount = new AtomicInteger(0);
     private final AtomicInteger runningCount = new AtomicInteger(0);
@@ -52,7 +54,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
     private final List<ChildContextOperation<?>> childOperations = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
-    private OperationIdGenerator operationIdGenerator;
+    private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
     private ConcurrencyCompletionStatus completionStatus;
 
@@ -61,9 +63,13 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContextImpl durableContext,
-            int maxConcurrency) {
+            int maxConcurrency,
+            Integer minSuccessful,
+            Integer toleratedFailureCount) {
         super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.maxConcurrency = maxConcurrency;
+        this.minSuccessful = minSuccessful;
+        this.toleratedFailureCount = toleratedFailureCount;
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
         this.rootContext = durableContext.createChildContextWithoutSettingThreadContext(getOperationId(), getName());
     }
@@ -92,9 +98,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
 
     /** Called when the concurrency operation succeeds. Subclasses define checkpointing behavior. */
     protected abstract void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus);
-
-    /** Called when the concurrency operation fails. Subclasses define checkpointing and exception behavior. */
-    protected abstract void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus);
 
     // ========== Concurrency control ==========
 
@@ -145,7 +148,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         while (true) {
             synchronized (this) {
                 if (isOperationCompleted()) return;
-                if (maxConcurrency != -1 && runningCount.get() >= maxConcurrency) return;
+                if (runningCount.get() >= maxConcurrency) return;
                 var next = pendingQueue.poll();
                 if (next == null) return;
                 runningCount.incrementAndGet();
@@ -162,7 +165,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private void executeNextItemIfAllowed() {
         synchronized (this) {
             if (isOperationCompleted()) return;
-            if (maxConcurrency != -1 && runningCount.get() >= maxConcurrency) return;
+            if (runningCount.get() >= maxConcurrency) return;
             var next = pendingQueue.poll();
             if (next == null) return;
             runningCount.incrementAndGet();
@@ -220,25 +223,46 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      *
      * @throws IllegalArgumentException if the item count cannot satisfy the criteria
      */
-    protected abstract void validateItemCount();
+    protected void validateItemCount() {
+        if (minSuccessful != null && minSuccessful > getTotalItems()) {
+            throw new IllegalArgumentException("minSuccessful (" + minSuccessful
+                    + ") exceeds the number of registered items (" + getTotalItems() + ")");
+        }
+    }
 
     /**
      * Checks whether the concurrency operation can be considered complete.
      *
      * @return the completion status if the operation is complete, or null if it should continue
      */
-    protected abstract ConcurrencyCompletionStatus canComplete();
+    protected ConcurrencyCompletionStatus canComplete() {
+        int succeeded = getSucceededCount();
+        int failed = getFailedCount();
+
+        // If we've met the minimum successful count, we're done
+        if (minSuccessful != null && succeeded >= minSuccessful) {
+            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
+        }
+
+        // If we've exceeded the failure tolerance, we're done
+        if (toleratedFailureCount != null && failed > toleratedFailureCount) {
+            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
+        }
+
+        // All items finished — complete
+        if (isAllItemsFinished()) {
+            return ConcurrencyCompletionStatus.ALL_COMPLETED;
+        }
+
+        return null;
+    }
 
     private void handleComplete(ConcurrencyCompletionStatus status) {
         synchronized (this) {
             if (isOperationCompleted()) {
                 return;
             }
-            if (status.isSucceeded()) {
-                handleSuccess(status);
-            } else {
-                handleFailure(status);
-            }
+            handleSuccess(status);
         }
     }
 

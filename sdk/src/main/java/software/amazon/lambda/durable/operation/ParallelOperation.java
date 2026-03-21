@@ -9,6 +9,7 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.ParallelConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -41,20 +42,21 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
 
-    private final int minSuccessful;
-    private final int toleratedFailureCount;
     private boolean skipCheckpoint = false;
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
             SerDes resultSerDes,
             DurableContextImpl durableContext,
-            int maxConcurrency,
-            int minSuccessful,
-            int toleratedFailureCount) {
-        super(operationIdentifier, new TypeToken<ParallelResult>() {}, resultSerDes, durableContext, maxConcurrency);
-        this.minSuccessful = minSuccessful;
-        this.toleratedFailureCount = toleratedFailureCount;
+            ParallelConfig config) {
+        super(
+                operationIdentifier,
+                TypeToken.get(ParallelResult.class),
+                resultSerDes,
+                durableContext,
+                config.maxConcurrency(),
+                config.completionConfig().minSuccessful(),
+                config.completionConfig().toleratedFailureCount());
     }
 
     @Override
@@ -88,11 +90,6 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
     }
 
     @Override
-    protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        handleSuccess(concurrencyCompletionStatus);
-    }
-
-    @Override
     protected void start() {
         sendOperationUpdateAsync(OperationUpdate.builder()
                 .action(OperationAction.START)
@@ -110,36 +107,5 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
     public ParallelResult get() {
         join();
         return new ParallelResult(getTotalItems(), getSucceededCount(), getFailedCount(), getCompletionStatus());
-    }
-
-    @Override
-    protected void validateItemCount() {
-        if (minSuccessful > getTotalItems()) {
-            throw new IllegalArgumentException("minSuccessful (" + minSuccessful
-                    + ") exceeds the number of registered items (" + getTotalItems() + ")");
-        }
-    }
-
-    @Override
-    protected ConcurrencyCompletionStatus canComplete() {
-        int succeeded = getSucceededCount();
-        int failed = getFailedCount();
-
-        // If we've met the minimum successful count, we're done
-        if (minSuccessful != -1 && succeeded >= minSuccessful) {
-            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-        }
-
-        // If we've exceeded the failure tolerance, we're done
-        if ((minSuccessful == -1 && failed > 0) || failed > toleratedFailureCount) {
-            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-        }
-
-        // All items finished — complete
-        if (isAllItemsFinished()) {
-            return ConcurrencyCompletionStatus.ALL_COMPLETED;
-        }
-
-        return null;
     }
 }

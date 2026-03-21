@@ -19,6 +19,7 @@ import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
@@ -86,17 +87,15 @@ class ConcurrencyOperationTest {
         when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
     }
 
-    private TestConcurrencyOperation createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount)
-            throws Exception {
+    private TestConcurrencyOperation createOperation(CompletionConfig completionConfig) throws Exception {
         TestConcurrencyOperation testConcurrencyOperation = new TestConcurrencyOperation(
                 OperationIdentifier.of(
                         OPERATION_ID, "test-concurrency", OperationType.CONTEXT, OperationSubType.PARALLEL),
                 RESULT_TYPE,
                 SER_DES,
                 durableContext,
-                maxConcurrency,
-                minSuccessful,
-                toleratedFailureCount);
+                Integer.MAX_VALUE,
+                completionConfig);
         setOperationIdGenerator(testConcurrencyOperation, mockIdGenerator);
         return testConcurrencyOperation;
     }
@@ -134,7 +133,7 @@ class ConcurrencyOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
         op.addItem(
                 "branch-1",
                 ctx -> {
@@ -175,7 +174,7 @@ class ConcurrencyOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var op = createOperation(-1, 1, 0);
+        var op = createOperation(CompletionConfig.minSuccessful(1));
         op.addItem(
                 "only-branch",
                 ctx -> {
@@ -195,7 +194,7 @@ class ConcurrencyOperationTest {
 
     @Test
     void addItem_usesRootChildContextAsParent() throws Exception {
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
 
         op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES);
 
@@ -213,8 +212,6 @@ class ConcurrencyOperationTest {
         private boolean failureHandled = false;
         private final AtomicInteger executingCount = new AtomicInteger(0);
         private DurableContextImpl lastParentContext;
-        private final int minSuccessful;
-        private final int toleratedFailureCount;
 
         TestConcurrencyOperation(
                 OperationIdentifier operationIdentifier,
@@ -222,11 +219,15 @@ class ConcurrencyOperationTest {
                 SerDes resultSerDes,
                 DurableContextImpl durableContext,
                 int maxConcurrency,
-                int minSuccessful,
-                int toleratedFailureCount) {
-            super(operationIdentifier, resultTypeToken, resultSerDes, durableContext, maxConcurrency);
-            this.minSuccessful = minSuccessful;
-            this.toleratedFailureCount = toleratedFailureCount;
+                CompletionConfig completionConfig) {
+            super(
+                    operationIdentifier,
+                    resultTypeToken,
+                    resultSerDes,
+                    durableContext,
+                    maxConcurrency,
+                    completionConfig.minSuccessful(),
+                    completionConfig.toleratedFailureCount());
         }
 
         @Override
@@ -265,47 +266,10 @@ class ConcurrencyOperationTest {
         }
 
         @Override
-        protected void handleFailure(ConcurrencyCompletionStatus completionStatus) {
-            failureHandled = true;
-            onCheckpointComplete(Operation.builder()
-                    .id(getOperationId())
-                    .status(OperationStatus.SUCCEEDED) // always success for parallel
-                    .build());
-        }
-
-        @Override
         protected void start() {}
 
         @Override
         protected void replay(Operation existing) {}
-
-        @Override
-        protected void validateItemCount() {
-            if (minSuccessful > getTotalItems() - getFailedCount()) {
-                throw new IllegalArgumentException("minSuccessful (" + minSuccessful
-                        + ") exceeds the number of registered items (" + getTotalItems() + ")");
-            }
-        }
-
-        @Override
-        protected ConcurrencyCompletionStatus canComplete() {
-            int succeeded = getSucceededCount();
-            int failed = getFailedCount();
-
-            if (minSuccessful != -1 && succeeded >= minSuccessful) {
-                return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-            }
-
-            if ((minSuccessful == -1 && failed > 0) || failed > toleratedFailureCount) {
-                return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-            }
-
-            if (isAllItemsFinished()) {
-                return ConcurrencyCompletionStatus.ALL_COMPLETED;
-            }
-
-            return null;
-        }
 
         @Override
         public Void get() {

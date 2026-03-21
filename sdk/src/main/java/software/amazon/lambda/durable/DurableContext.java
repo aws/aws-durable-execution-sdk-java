@@ -440,4 +440,28 @@ public interface DurableContext extends BaseContext {
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
             WaitForConditionConfig<T> config);
+
+    /**
+     * Function applied to each item in a map operation.
+     *
+     * <p>Each invocation receives its own {@link DurableContext}, allowing the use of durable operations like
+     * {@code step()} and {@code wait()} within the function body. The index parameter indicates the item's position in
+     * the input collection.
+     *
+     * @param <I> the input item type
+     * @param <O> the output result type
+     */
+    @FunctionalInterface
+    interface MapFunction<I, O> {
+
+        /**
+         * Applies this function to the given item.
+         *
+         * @param item the input item to process
+         * @param index the zero-based index of the item in the input collection
+         * @param context the durable context for this item's execution
+         * @return the result of processing the item
+         */
+        O apply(I item, int index, DurableContext context);
+    }
 }

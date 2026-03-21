@@ -20,7 +20,9 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.ParallelConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -107,14 +109,12 @@ class ParallelOperationTest {
                 .sendOperationUpdate(any());
     }
 
-    private ParallelOperation createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount) {
+    private ParallelOperation createOperation(CompletionConfig completionConfig) {
         return new ParallelOperation(
                 OperationIdentifier.of(OPERATION_ID, "test-parallel", OperationType.CONTEXT, OperationSubType.PARALLEL),
                 SER_DES,
                 durableContext,
-                maxConcurrency,
-                minSuccessful,
-                toleratedFailureCount);
+                ParallelConfig.builder().completionConfig(completionConfig).build());
     }
 
     private void setOperationIdGenerator(ConcurrencyOperation<?> op, OperationIdGenerator mockGenerator)
@@ -128,7 +128,7 @@ class ParallelOperationTest {
 
     @Test
     void branchCreation_createsBranchWithParallelBranchSubType() throws Exception {
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
 
         var childOp = op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES);
 
@@ -138,7 +138,7 @@ class ParallelOperationTest {
 
     @Test
     void branchCreation_multipleBranchesAllCreated() throws Exception {
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
 
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
@@ -149,7 +149,7 @@ class ParallelOperationTest {
 
     @Test
     void branchCreation_childOperationHasParentReference() throws Exception {
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
 
         // The child operation should be a ChildContextOperation with this op as parent
         var childOp = op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES);
@@ -184,7 +184,7 @@ class ParallelOperationTest {
                                 ContextDetails.builder().result("\"r2\"").build())
                         .build());
 
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES);
@@ -214,7 +214,7 @@ class ParallelOperationTest {
                                 ContextDetails.builder().result("\"r1\"").build())
                         .build());
 
-        var op = createOperation(-1, 1, 0);
+        var op = createOperation(CompletionConfig.minSuccessful(1));
         setOperationIdGenerator(op, mockIdGenerator);
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
 
@@ -234,7 +234,7 @@ class ParallelOperationTest {
     void contextHierarchy_branchesUseParallelContextAsParent() throws Exception {
         // Verify that branches are created with the parallel operation's context (durableContext)
         // as their parent — not some other context
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
 
         var childOp = op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES);
 
@@ -277,7 +277,7 @@ class ParallelOperationTest {
                                 ContextDetails.builder().result("\"r2\"").build())
                         .build());
 
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
         op.execute();
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
@@ -326,7 +326,7 @@ class ParallelOperationTest {
                                 ContextDetails.builder().result("\"r2\"").build())
                         .build());
 
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
         op.execute();
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
@@ -357,7 +357,7 @@ class ParallelOperationTest {
                         .status(OperationStatus.FAILED)
                         .build());
 
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
         op.addItem(
                 "branch-1",
@@ -400,7 +400,7 @@ class ParallelOperationTest {
                         .build());
 
         // toleratedFailureCount=1 so the operation completes after both branches finish
-        var op = createOperation(-1, -1, 1);
+        var op = createOperation(CompletionConfig.toleratedFailureCount(1));
         setOperationIdGenerator(op, mockIdGenerator);
         op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES);
         op.addItem(
@@ -417,12 +417,12 @@ class ParallelOperationTest {
         assertEquals(2, result.getTotalBranches());
         assertEquals(1, result.getSucceededBranches());
         assertEquals(1, result.getFailedBranches());
-        assertFalse(result.getCompletionStatus().isSucceeded());
+        assertTrue(result.getCompletionStatus().isSucceeded());
     }
 
     @Test
     void get_zeroBranches_returnsAllZerosAndAllCompletedStatus() throws Exception {
-        var op = createOperation(-1, -1, 0);
+        var op = createOperation(CompletionConfig.allSuccessful());
 
         var result = op.get();
 

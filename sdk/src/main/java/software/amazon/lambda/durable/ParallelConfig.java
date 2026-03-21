@@ -10,13 +10,12 @@ package software.amazon.lambda.durable;
  */
 public class ParallelConfig {
     private final int maxConcurrency;
-    private final int minSuccessful;
-    private final int toleratedFailureCount;
+    private final CompletionConfig completionConfig;
 
     private ParallelConfig(Builder builder) {
-        this.maxConcurrency = builder.maxConcurrency;
-        this.minSuccessful = builder.minSuccessful;
-        this.toleratedFailureCount = builder.toleratedFailureCount;
+        this.maxConcurrency = builder.maxConcurrency == null ? Integer.MAX_VALUE : builder.maxConcurrency;
+        this.completionConfig =
+                builder.completionConfig == null ? CompletionConfig.allCompleted() : builder.completionConfig;
     }
 
     /** @return the maximum number of branches running simultaneously, or -1 for unlimited */
@@ -24,14 +23,8 @@ public class ParallelConfig {
         return maxConcurrency;
     }
 
-    /** @return the minimum number of successful branches required, or -1 meaning all must succeed */
-    public int minSuccessful() {
-        return minSuccessful;
-    }
-
-    /** @return the maximum number of branch failures tolerated before stopping */
-    public int toleratedFailureCount() {
-        return toleratedFailureCount;
+    public CompletionConfig completionConfig() {
+        return completionConfig;
     }
 
     /**
@@ -45,42 +38,36 @@ public class ParallelConfig {
 
     /** Builder for creating ParallelConfig instances. */
     public static class Builder {
-        private int maxConcurrency = -1;
-        private int minSuccessful = -1;
-        private int toleratedFailureCount = 0;
+        private Integer maxConcurrency;
+        private CompletionConfig completionConfig;
 
         private Builder() {}
 
         /**
          * Sets the maximum number of branches that can run simultaneously.
          *
-         * @param maxConcurrency the concurrency limit, or -1 for unlimited
+         * @param maxConcurrency the concurrency limit (default: unlimited)
          * @return this builder for method chaining
          */
-        public Builder maxConcurrency(int maxConcurrency) {
+        public Builder maxConcurrency(Integer maxConcurrency) {
+            if (maxConcurrency != null && maxConcurrency < 1) {
+                throw new IllegalArgumentException("maxConcurrency must be at least 1, got: " + maxConcurrency);
+            }
             this.maxConcurrency = maxConcurrency;
             return this;
         }
 
         /**
-         * Sets the minimum number of branches that must succeed for the parallel operation to complete successfully.
+         * Sets the maximum number of branches that can run simultaneously.
          *
-         * @param minSuccessful the minimum successful count, or -1 meaning all branches must succeed
+         * @param completionConfig the completion configuration for the parallel operation
          * @return this builder for method chaining
          */
-        public Builder minSuccessful(int minSuccessful) {
-            this.minSuccessful = minSuccessful;
-            return this;
-        }
-
-        /**
-         * Sets the maximum number of branch failures tolerated before stopping execution.
-         *
-         * @param toleratedFailureCount the maximum tolerated failures
-         * @return this builder for method chaining
-         */
-        public Builder toleratedFailureCount(int toleratedFailureCount) {
-            this.toleratedFailureCount = toleratedFailureCount;
+        public Builder completionConfig(CompletionConfig completionConfig) {
+            if (completionConfig != null && completionConfig.toleratedFailurePercentage() != null) {
+                throw new IllegalArgumentException("ParallelConfig does not support toleratedFailurePercentage");
+            }
+            this.completionConfig = completionConfig;
             return this;
         }
 
@@ -91,16 +78,6 @@ public class ParallelConfig {
          * @throws IllegalArgumentException if any configuration values are invalid
          */
         public ParallelConfig build() {
-            if (maxConcurrency != -1 && maxConcurrency <= 0) {
-                throw new IllegalArgumentException(
-                        "maxConcurrency must be -1 (unlimited) or greater than 0, got: " + maxConcurrency);
-            }
-            if (minSuccessful < -1) {
-                throw new IllegalArgumentException("minSuccessful must be >= -1, got: " + minSuccessful);
-            }
-            if (toleratedFailureCount < 0) {
-                throw new IllegalArgumentException("toleratedFailureCount must be >= 0, got: " + toleratedFailureCount);
-            }
             return new ParallelConfig(this);
         }
     }

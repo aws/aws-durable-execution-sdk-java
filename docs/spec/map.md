@@ -481,7 +481,7 @@ import java.util.List;
 import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.MapConfig;
-import software.amazon.lambda.durable.MapFunction;
+import software.amazon.lambda.durable.DurableContext.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.BatchResult;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -901,7 +901,7 @@ package software.amazon.lambda.durable.operation;
 import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.MapConfig;
-import software.amazon.lambda.durable.MapFunction;
+import software.amazon.lambda.durable.DurableContext.MapFunction;
 import software.amazon.lambda.durable.model.BatchResult;
 import software.amazon.lambda.durable.model.OperationSubType;
 

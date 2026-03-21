@@ -20,7 +20,6 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.MapConfig;
-import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.ParallelConfig;
 import software.amazon.lambda.durable.ParallelContext;
 import software.amazon.lambda.durable.StepConfig;
@@ -562,9 +561,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL),
                 getDurableConfig().getSerDes(),
                 this,
-                config.maxConcurrency(),
-                config.minSuccessful(),
-                config.toleratedFailureCount());
+                config);
 
         parallelOp.execute();
 

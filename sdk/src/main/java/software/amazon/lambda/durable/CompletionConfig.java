@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
+import java.util.Objects;
+
 /**
  * Controls when a concurrent operation (map or parallel) completes.
  *
@@ -13,7 +15,7 @@ public class CompletionConfig {
     private final Integer toleratedFailureCount;
     private final Double toleratedFailurePercentage;
 
-    private CompletionConfig(Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {
+    CompletionConfig(Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {
         this.minSuccessful = minSuccessful;
         this.toleratedFailureCount = toleratedFailureCount;
         this.toleratedFailurePercentage = toleratedFailurePercentage;
@@ -72,5 +74,33 @@ public class CompletionConfig {
     /** @return maximum percentage of failures tolerated (0.0 to 1.0), or null if not set */
     public Double toleratedFailurePercentage() {
         return toleratedFailurePercentage;
+    }
+
+    @Override
+    public String toString() {
+        return "CompletionConfig{" + "minSuccessful="
+                + minSuccessful + ", toleratedFailureCount="
+                + toleratedFailureCount + ", toleratedFailurePercentage="
+                + toleratedFailurePercentage + '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        CompletionConfig that = (CompletionConfig) o;
+
+        return Objects.equals(minSuccessful, that.minSuccessful)
+                && Objects.equals(toleratedFailureCount, that.toleratedFailureCount)
+                && Objects.equals(toleratedFailurePercentage, that.toleratedFailurePercentage);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = minSuccessful != null ? minSuccessful.hashCode() : 0;
+        result = 31 * result + (toleratedFailureCount != null ? toleratedFailureCount.hashCode() : 0);
+        result = 31 * result + (toleratedFailurePercentage != null ? toleratedFailurePercentage.hashCode() : 0);
+        return result;
     }
 }

@@ -14,7 +14,6 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.MapConfig;
-import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -42,10 +41,9 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private final List<I> items;
-    private final MapFunction<I, O> function;
+    private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
-    private final CompletionConfig completionConfig;
     private boolean replayFromPayload;
     private volatile MapResult<O> cachedResult;
     private ConcurrencyCompletionStatus completionStatus;
@@ -53,7 +51,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     public MapOperation(
             OperationIdentifier operationIdentifier,
             List<I> items,
-            MapFunction<I, O> function,
+            DurableContext.MapFunction<I, O> function,
             TypeToken<O> itemResultType,
             MapConfig config,
             DurableContextImpl durableContext) {
@@ -62,12 +60,28 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 new TypeToken<>() {},
                 config.serDes(),
                 durableContext,
-                config.maxConcurrency() != null ? config.maxConcurrency() : -1);
+                config.maxConcurrency() != null ? config.maxConcurrency() : Integer.MAX_VALUE,
+                config.completionConfig().minSuccessful(),
+                getToleratedFailureCount(config.completionConfig(), items.size()));
         this.items = List.copyOf(items);
         this.function = function;
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
-        this.completionConfig = config.completionConfig();
+    }
+
+    private static Integer getToleratedFailureCount(CompletionConfig completionConfig, int totalItems) {
+        if (completionConfig == null
+                || completionConfig.toleratedFailureCount() == null
+                        && completionConfig.toleratedFailurePercentage() == null) {
+            return null;
+        }
+        int toleratedFailureCount = completionConfig.toleratedFailureCount() != null
+                ? completionConfig.toleratedFailureCount()
+                : Integer.MAX_VALUE;
+        int toleratedFailureCountFromPercentage = completionConfig.toleratedFailurePercentage() != null
+                ? (int) Math.ceil(totalItems * completionConfig.toleratedFailurePercentage())
+                : Integer.MAX_VALUE;
+        return Math.min(toleratedFailureCount, toleratedFailureCountFromPercentage);
     }
 
     @Override
@@ -137,56 +151,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         this.completionStatus = concurrencyCompletionStatus;
         checkpointMapResult();
-    }
-
-    @Override
-    protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        this.completionStatus = concurrencyCompletionStatus;
-        checkpointMapResult();
-    }
-
-    @Override
-    protected void validateItemCount() {
-        if (completionConfig.minSuccessful() != null && completionConfig.minSuccessful() > getTotalItems()) {
-            throw new IllegalArgumentException("minSuccessful (" + completionConfig.minSuccessful()
-                    + ") exceeds the number of items (" + getTotalItems() + ")");
-        }
-    }
-
-    /**
-     * Overrides the default completion logic from {@link ConcurrencyOperation} to support Map's
-     * {@link CompletionConfig} semantics. Unlike Parallel (where {@code minSuccessful == -1} means "all must succeed"),
-     * Map's default {@code allCompleted()} allows failures without early termination.
-     */
-    @Override
-    protected ConcurrencyCompletionStatus canComplete() {
-        int succeeded = getSucceededCount();
-        int failed = getFailedCount();
-        int totalCompleted = succeeded + failed;
-
-        // Check minSuccessful
-        if (completionConfig.minSuccessful() != null && succeeded >= completionConfig.minSuccessful()) {
-            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-        }
-
-        // Check toleratedFailureCount
-        if (completionConfig.toleratedFailureCount() != null && failed > completionConfig.toleratedFailureCount()) {
-            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-        }
-
-        // Check toleratedFailurePercentage
-        if (completionConfig.toleratedFailurePercentage() != null
-                && totalCompleted > 0
-                && ((double) failed / totalCompleted) > completionConfig.toleratedFailurePercentage()) {
-            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-        }
-
-        // All items finished (no pending, no running) — complete with ALL_COMPLETED
-        if (isAllItemsFinished()) {
-            return ConcurrencyCompletionStatus.ALL_COMPLETED;
-        }
-
-        return null;
     }
 
     private void checkpointMapResult() {
