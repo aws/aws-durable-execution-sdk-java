@@ -175,7 +175,7 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
         }
 
         // Check toleratedFailurePercentage
-<span class="fc bfc" id="L178" title="All 4 branches covered.">        if (completionConfig.toleratedFailurePercentage() != null</span>
+<span class="pc bpc" id="L178" title="1 of 4 branches missed.">        if (completionConfig.toleratedFailurePercentage() != null</span>
                 &amp;&amp; totalCompleted &gt; 0
 <span class="fc bfc" id="L180" title="All 2 branches covered.">                &amp;&amp; ((double) failed / totalCompleted) &gt; completionConfig.toleratedFailurePercentage()) {</span>
 <span class="fc" id="L181">            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>

@@ -3,15 +3,17 @@
 package software.amazon.lambda.durable;
 
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.operation.ParallelOperation;
 
 /** User-facing context for managing parallel branch execution within a durable function. */
-public class ParallelContext implements AutoCloseable {
+public class ParallelContext implements AutoCloseable, DurableFuture&lt;ParallelResult&gt; {
 
-    private final ParallelOperation&lt;?&gt; parallelOperation;
+    private final ParallelOperation parallelOperation;
     private final DurableContext durableContext;
-    private boolean joined;
+<span class="fc" id="L16">    private final AtomicBoolean joined = new AtomicBoolean(false);</span>
 
     /**
      * Creates a new ParallelContext.
@@ -19,10 +21,10 @@ public class ParallelContext implements AutoCloseable {
      * @param parallelOperation the underlying parallel operation managing concurrency
      * @param durableContext the durable context for creating child operations
      */
-<span class="fc" id="L22">    public ParallelContext(ParallelOperation&lt;?&gt; parallelOperation, DurableContext durableContext) {</span>
-<span class="fc" id="L23">        this.parallelOperation = Objects.requireNonNull(parallelOperation, &quot;parallelOperation cannot be null&quot;);</span>
-<span class="fc" id="L24">        this.durableContext = Objects.requireNonNull(durableContext, &quot;durableContext cannot be null&quot;);</span>
-<span class="fc" id="L25">    }</span>
+<span class="fc" id="L24">    public ParallelContext(ParallelOperation parallelOperation, DurableContext durableContext) {</span>
+<span class="fc" id="L25">        this.parallelOperation = Objects.requireNonNull(parallelOperation, &quot;parallelOperation cannot be null&quot;);</span>
+<span class="fc" id="L26">        this.durableContext = Objects.requireNonNull(durableContext, &quot;durableContext cannot be null&quot;);</span>
+<span class="fc" id="L27">    }</span>
 
     /**
      * Registers and immediately starts a branch (respects maxConcurrency).
@@ -35,7 +37,7 @@ public class ParallelContext implements AutoCloseable {
      * @throws IllegalStateException if called after {@link #join()}
      */
     public &lt;T&gt; DurableFuture&lt;T&gt; branch(String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L38">        return branch(name, TypeToken.get(resultType), func);</span>
+<span class="fc" id="L40">        return branch(name, TypeToken.get(resultType), func);</span>
     }
 
     /**
@@ -49,11 +51,11 @@ public class ParallelContext implements AutoCloseable {
      * @throws IllegalStateException if called after {@link #join()}
      */
     public &lt;T&gt; DurableFuture&lt;T&gt; branch(String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="pc bpc" id="L52" title="1 of 2 branches missed.">        if (joined) {</span>
-<span class="nc" id="L53">            throw new IllegalStateException(&quot;Cannot add branches after join() has been called&quot;);</span>
+<span class="pc bpc" id="L54" title="1 of 2 branches missed.">        if (joined.get()) {</span>
+<span class="nc" id="L55">            throw new IllegalStateException(&quot;Cannot add branches after join() has been called&quot;);</span>
         }
-<span class="fc" id="L55">        return parallelOperation.addItem(</span>
-<span class="fc" id="L56">                name, func, resultType, durableContext.getDurableConfig().getSerDes());</span>
+<span class="fc" id="L57">        return parallelOperation.addItem(</span>
+<span class="fc" id="L58">                name, func, resultType, durableContext.getDurableConfig().getSerDes());</span>
     }
 
     /**
@@ -66,19 +68,31 @@ public class ParallelContext implements AutoCloseable {
      * @throws software.amazon.lambda.durable.exception.ConcurrencyExecutionException if failure threshold exceeded
      */
     public void join() {
-<span class="pc bpc" id="L69" title="1 of 2 branches missed.">        if (joined) {</span>
-<span class="nc" id="L70">            return;</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">        if (!joined.compareAndSet(false, true)) {</span>
+<span class="nc" id="L72">            return;</span>
         }
-<span class="fc" id="L72">        joined = true;</span>
-<span class="fc" id="L73">        parallelOperation.get();</span>
-<span class="fc" id="L74">    }</span>
+<span class="fc" id="L74">        parallelOperation.join();</span>
+<span class="fc" id="L75">    }</span>
+
+    /**
+     * Blocks until the parallel operation completes and returns the {@link ParallelResult}.
+     *
+     * &lt;p&gt;Calling {@code get()} implicitly calls {@code join()} if it has not been called yet.
+     *
+     * @return the {@link ParallelResult} summarising branch outcomes
+     */
+    @Override
+    public ParallelResult get() {
+<span class="fc" id="L86">        joined.set(true);</span>
+<span class="fc" id="L87">        return parallelOperation.get();</span>
+    }
 
     /**
      * Calls {@link #join()} if not already called. Guarantees that all branches complete before the context is closed.
      */
     @Override
     public void close() {
-<span class="fc" id="L81">        join();</span>
-<span class="fc" id="L82">    }</span>
+<span class="fc" id="L95">        join();</span>
+<span class="fc" id="L96">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

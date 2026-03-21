@@ -8,6 +8,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.ParallelConfig;
+import software.amazon.lambda.durable.model.ParallelResult;
 
 /**
  * Example demonstrating parallel branch execution with the Durable Execution SDK.
@@ -23,37 +24,43 @@ import software.amazon.lambda.durable.ParallelConfig;
  * &lt;p&gt;The {@link software.amazon.lambda.durable.ParallelContext} implements {@link AutoCloseable}, so try-with-resources
  * guarantees {@code join()} is called even if an exception occurs.
  */
-<span class="fc" id="L26">public class ParallelExample extends DurableHandler&lt;ParallelExample.Input, ParallelExample.Output&gt; {</span>
+<span class="fc" id="L27">public class ParallelExample extends DurableHandler&lt;ParallelExample.Input, ParallelExample.Output&gt; {</span>
 
-<span class="fc" id="L28">    public record Input(List&lt;String&gt; items) {}</span>
+<span class="fc" id="L29">    public record Input(List&lt;String&gt; items) {}</span>
 
-<span class="fc" id="L30">    public record Output(List&lt;String&gt; results, int totalProcessed) {}</span>
+<span class="fc" id="L31">    public record Output(List&lt;String&gt; results, int totalProcessed) {}</span>
 
     @Override
     public Output handleRequest(Input input, DurableContext context) {
-<span class="fc" id="L34">        var logger = context.getLogger();</span>
-<span class="fc" id="L35">        var items = input.items();</span>
-<span class="fc" id="L36">        logger.info(&quot;Starting parallel processing of {} items&quot;, items.size());</span>
+<span class="fc" id="L35">        var logger = context.getLogger();</span>
+<span class="fc" id="L36">        var items = input.items();</span>
+<span class="fc" id="L37">        logger.info(&quot;Starting parallel processing of {} items&quot;, items.size());</span>
 
-<span class="fc" id="L38">        var config = ParallelConfig.builder().build();</span>
+<span class="fc" id="L39">        var config = ParallelConfig.builder().build();</span>
 
-<span class="fc" id="L40">        var futures = new ArrayList&lt;DurableFuture&lt;String&gt;&gt;(items.size());</span>
+<span class="fc" id="L41">        var futures = new ArrayList&lt;DurableFuture&lt;String&gt;&gt;(items.size());</span>
+<span class="fc" id="L42">        var parallel = context.parallel(&quot;process-items&quot;, config);</span>
 
-<span class="fc" id="L42">        try (var parallel = context.parallel(&quot;process-items&quot;, config)) {</span>
-<span class="fc bfc" id="L43" title="All 2 branches covered.">            for (var item : items) {</span>
-<span class="fc" id="L44">                var future = parallel.branch(&quot;process-&quot; + item, String.class, branchCtx -&gt; {</span>
-<span class="fc" id="L45">                    branchCtx.getLogger().info(&quot;Processing item: {}&quot;, item);</span>
-<span class="fc" id="L46">                    return branchCtx.step(&quot;transform-&quot; + item, String.class, stepCtx -&gt; item.toUpperCase());</span>
+<span class="fc" id="L44">        try (parallel) {</span>
+<span class="fc bfc" id="L45" title="All 2 branches covered.">            for (var item : items) {</span>
+<span class="fc" id="L46">                var future = parallel.branch(&quot;process-&quot; + item, String.class, branchCtx -&gt; {</span>
+<span class="fc" id="L47">                    branchCtx.getLogger().info(&quot;Processing item: {}&quot;, item);</span>
+<span class="fc" id="L48">                    return branchCtx.step(&quot;transform-&quot; + item, String.class, stepCtx -&gt; item.toUpperCase());</span>
                 });
-<span class="fc" id="L48">                futures.add(future);</span>
-<span class="fc" id="L49">            }</span>
+<span class="fc" id="L50">                futures.add(future);</span>
+<span class="fc" id="L51">            }</span>
         } // join() called here via AutoCloseable
 
-<span class="fc" id="L52">        logger.info(&quot;All branches complete, collecting results&quot;);</span>
+<span class="fc" id="L54">        ParallelResult parallelResult = parallel.get();</span>
+<span class="fc" id="L55">        logger.info(</span>
+                &quot;Parallel complete: total={}, succeeded={}, failed={}&quot;,
+<span class="fc" id="L57">                parallelResult.getTotalBranches(),</span>
+<span class="fc" id="L58">                parallelResult.getSucceededBranches(),</span>
+<span class="fc" id="L59">                parallelResult.getFailedBranches());</span>
 
-<span class="fc" id="L54">        var results = futures.stream().map(DurableFuture::get).toList();</span>
+<span class="fc" id="L61">        var results = futures.stream().map(DurableFuture::get).toList();</span>
 
-<span class="fc" id="L56">        return new Output(results, results.size());</span>
+<span class="fc" id="L63">        return new Output(results, results.size());</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
