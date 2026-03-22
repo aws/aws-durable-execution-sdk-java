@@ -9,7 +9,9 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ParallelConfig;
+import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -40,7 +42,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  *         └── Branch N context (ChildContextOperation with PARALLEL_BRANCH)
  * </pre>
  */
-public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
+public class ParallelOperation extends ConcurrencyOperation<ParallelResult> implements ParallelDurableFuture {
 
     private boolean skipCheckpoint = false;
 
@@ -107,5 +109,44 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
     public ParallelResult get() {
         join();
         return new ParallelResult(getTotalItems(), getSucceededCount(), getFailedCount(), getCompletionStatus());
+    }
+
+    /**
+     * Calls {@link #join()} if not already called. Guarantees that all branches complete before the context is closed.
+     */
+    @Override
+    public void close() {
+        join();
+    }
+
+    /**
+     * Registers and immediately starts a branch (respects maxConcurrency).
+     *
+     * @param name the branch name
+     * @param resultType the result type class
+     * @param func the function to execute in the branch's child context
+     * @param <T> the result type
+     * @return a {@link DurableFuture} that will contain the branch result
+     * @throws IllegalStateException if called after {@link #join()}
+     */
+    public <T> DurableFuture<T> branch(String name, Class<T> resultType, Function<DurableContext, T> func) {
+        return branch(name, TypeToken.get(resultType), func);
+    }
+
+    /**
+     * Registers and immediately starts a branch (respects maxConcurrency).
+     *
+     * @param name the branch name
+     * @param resultType the result type token for generic types
+     * @param func the function to execute in the branch's child context
+     * @param <T> the result type
+     * @return a {@link DurableFuture} that will contain the branch result
+     * @throws IllegalStateException if called after {@link #join()}
+     */
+    public <T> DurableFuture<T> branch(String name, TypeToken<T> resultType, Function<DurableContext, T> func) {
+        if (isJoined.get()) {
+            throw new IllegalStateException("Cannot add branches after join() has been called");
+        }
+        return addItem(name, func, resultType, getContext().getDurableConfig().getSerDes());
     }
 }

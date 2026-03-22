@@ -21,7 +21,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.ParallelConfig;
-import software.amazon.lambda.durable.ParallelContext;
+import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.StepConfig;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
@@ -553,7 +553,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     // ========== parallel methods ==========
 
     @Override
-    public ParallelContext parallel(String name, ParallelConfig config) {
+    public ParallelDurableFuture parallel(String name, ParallelConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         var operationId = nextOperationId();
 
@@ -565,7 +565,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         parallelOp.execute();
 
-        return new ParallelContext(parallelOp, this);
+        return parallelOp;
     }
 
     // ========= waitForCallback methods =============

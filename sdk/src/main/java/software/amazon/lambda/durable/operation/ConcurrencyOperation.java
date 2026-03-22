@@ -50,7 +50,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final AtomicInteger succeededCount = new AtomicInteger(0);
     private final AtomicInteger failedCount = new AtomicInteger(0);
     private final AtomicInteger runningCount = new AtomicInteger(0);
-    private final AtomicBoolean isJoined = new AtomicBoolean(false);
+    protected final AtomicBoolean isJoined = new AtomicBoolean(false);
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
     private final List<ChildContextOperation<?>> childOperations = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());

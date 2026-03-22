@@ -282,12 +282,12 @@ public interface DurableContext extends BaseContext {
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config);
 
     /**
-     * Creates a {@link ParallelContext} for executing multiple branches concurrently.
+     * Creates a {@link ParallelDurableFuture} for executing multiple branches concurrently.
      *
      * @param config the parallel execution configuration
-     * @return a new ParallelContext for registering and executing branches
+     * @return a new ParallelDurableFuture for registering and executing branches
      */
-    ParallelContext parallel(String name, ParallelConfig config);
+    ParallelDurableFuture parallel(String name, ParallelConfig config);
 
     /**
      * Executes a submitter function and waits for an external callback, blocking until the callback completes.
