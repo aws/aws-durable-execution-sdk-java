@@ -6,7 +6,6 @@ import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
@@ -14,7 +13,6 @@ import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -65,23 +63,6 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     }
 
     @Override
-    protected <R> ChildContextOperation<R> createItem(
-            String operationId,
-            String name,
-            Function<DurableContext, R> function,
-            TypeToken<R> resultType,
-            SerDes serDes,
-            DurableContextImpl parentContext) {
-        return new ChildContextOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),
-                function,
-                resultType,
-                RunInChildContextConfig.builder().serDes(serDes).build(),
-                parentContext,
-                this);
-    }
-
-    @Override
     protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         if (skipCheckpoint) {
             // Do not send checkpoint during replay
@@ -126,6 +107,6 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
             throw new IllegalStateException("Cannot add branches after join() has been called");
         }
         var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
-        return addItem(name, func, resultType, serDes);
+        return addItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH);
     }
 }

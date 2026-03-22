@@ -5,17 +5,14 @@ package software.amazon.lambda.durable.operation;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.MapResult;
@@ -65,6 +62,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         this.function = function;
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
+
+        addAllItems();
     }
 
     private static Integer getToleratedFailureCount(CompletionConfig completionConfig, int totalItems) {
@@ -87,28 +86,11 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     }
 
     @Override
-    protected <R> ChildContextOperation<R> createItem(
-            String operationId,
-            String name,
-            Function<DurableContext, R> function,
-            TypeToken<R> resultType,
-            SerDes serDes,
-            DurableContextImpl parentContext) {
-        return new ChildContextOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP_ITERATION),
-                function,
-                resultType,
-                RunInChildContextConfig.builder().serDes(serDes).build(),
-                parentContext,
-                this);
-    }
-
-    @Override
     protected void start() {
         sendOperationUpdateAsync(OperationUpdate.builder()
                 .action(OperationAction.START)
                 .subType(getSubType().getValue()));
-        addAllItems();
+        executeNextItemIfAllowed();
     }
 
     @Override
@@ -118,7 +100,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 if (existing.contextDetails() != null
                         && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute children to reconstruct MapResult
-                    addAllItems();
+                    executeNextItemIfAllowed();
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
                     replayFromPayload = true;
@@ -128,7 +110,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             case STARTED -> {
                 // Map was in progress when interrupted — re-create children without sending
                 // another START (the backend rejects duplicate START for existing operations)
-                addAllItems();
+                executeNextItemIfAllowed();
             }
             default ->
                 terminateExecutionWithIllegalDurableOperationException(
@@ -140,13 +122,17 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         // Enqueue all items first, then start execution. This prevents early termination
         // criteria (e.g., minSuccessful) from completing the operation mid-loop on replay,
         // which would cause subsequent enqueue calls to fail with "completed operation".
+        var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
         for (int i = 0; i < items.size(); i++) {
             var index = i;
             var item = items.get(i);
             enqueueItem(
-                    "map-iteration-" + i, childCtx -> function.apply(item, index, childCtx), itemResultType, serDes);
+                    branchPrefix + i,
+                    childCtx -> function.apply(item, index, childCtx),
+                    itemResultType,
+                    serDes,
+                    OperationSubType.MAP_ITERATION);
         }
-        startPendingItems();
     }
 
     @Override

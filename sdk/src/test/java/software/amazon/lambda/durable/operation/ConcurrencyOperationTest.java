@@ -12,7 +12,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -20,10 +19,8 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
@@ -142,7 +139,8 @@ class ConcurrencyOperationTest {
                     return "result-1";
                 },
                 TypeToken.get(String.class),
-                SER_DES);
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
         op.addItem(
                 "branch-2",
                 ctx -> {
@@ -150,7 +148,8 @@ class ConcurrencyOperationTest {
                     return "result-2";
                 },
                 TypeToken.get(String.class),
-                SER_DES);
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
 
         op.exposedJoin();
 
@@ -183,7 +182,8 @@ class ConcurrencyOperationTest {
                     return "done";
                 },
                 TypeToken.get(String.class),
-                SER_DES);
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
 
         op.exposedJoin();
 
@@ -191,18 +191,6 @@ class ConcurrencyOperationTest {
         assertEquals(1, op.getSucceededCount());
         assertEquals(0, op.getFailedCount());
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
-    }
-
-    @Test
-    void addItem_usesRootChildContextAsParent() throws Exception {
-        var op = createOperation(CompletionConfig.allSuccessful());
-
-        op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES);
-
-        // rootContext is created via durableContext.createChildContext(...) in the constructor,
-        // so the parentContext passed to createItem must be that child context, not durableContext itself
-        assertNotSame(durableContext, op.getLastParentContext());
-        assertSame(childContext, op.getLastParentContext());
     }
 
     // ===== Test subclass =====
@@ -229,30 +217,6 @@ class ConcurrencyOperationTest {
                     maxConcurrency,
                     completionConfig.minSuccessful(),
                     completionConfig.toleratedFailureCount());
-        }
-
-        @Override
-        protected <R> ChildContextOperation<R> createItem(
-                String operationId,
-                String name,
-                Function<DurableContext, R> function,
-                TypeToken<R> resultType,
-                SerDes serDes,
-                DurableContextImpl parentContext) {
-            lastParentContext = parentContext;
-            return new ChildContextOperation<R>(
-                    OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),
-                    function,
-                    resultType,
-                    RunInChildContextConfig.builder().serDes(serDes).build(),
-                    parentContext,
-                    this) {
-                @Override
-                public void execute() {
-                    executingCount.incrementAndGet();
-                    super.execute();
-                }
-            };
         }
 
         @Override

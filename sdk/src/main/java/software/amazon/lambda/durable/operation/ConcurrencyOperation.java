@@ -14,12 +14,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -88,13 +91,22 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @param <R> the result type of the child operation
      * @return a new ChildContextOperation
      */
-    protected abstract <R> ChildContextOperation<R> createItem(
+    protected <R> ChildContextOperation<R> createItem(
             String operationId,
             String name,
             Function<DurableContext, R> function,
             TypeToken<R> resultType,
             SerDes serDes,
-            DurableContextImpl parentContext);
+            OperationSubType branchSubType,
+            DurableContextImpl parentContext) {
+        return new ChildContextOperation<>(
+                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, branchSubType),
+                function,
+                resultType,
+                RunInChildContextConfig.builder().serDes(serDes).build(),
+                parentContext,
+                this);
+    }
 
     /** Called when the concurrency operation succeeds. Subclasses define checkpointing behavior. */
     protected abstract void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus);
@@ -113,26 +125,25 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @return the created ChildContextOperation
      */
     public <R> ChildContextOperation<R> addItem(
-            String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
-        if (isOperationCompleted()) throw new IllegalStateException("Cannot add items to a completed operation");
-        var operationId = this.operationIdGenerator.nextOperationId();
-        var childOp = createItem(operationId, name, function, resultType, serDes, this.rootContext);
-        branches.add(childOp);
-        pendingQueue.add(childOp);
-        logger.debug("Item added {}", name);
+            String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes, OperationSubType branchSubType) {
+        var childOp = enqueueItem(name, function, resultType, serDes, branchSubType);
         executeNextItemIfAllowed();
         return childOp;
     }
 
     /**
-     * Creates and enqueues an item without starting execution. Use {@link #startPendingItems()} to begin execution
-     * after all items have been enqueued. This prevents early termination from blocking item creation when all items
-     * are known upfront (e.g., map operations).
+     * Creates and enqueues an item without starting execution. Use {@link #executeNextItemIfAllowed()} to begin
+     * execution after all items have been enqueued. This prevents early termination from blocking item creation when
+     * all items are known upfront (e.g., map operations).
      */
     protected <R> ChildContextOperation<R> enqueueItem(
-            String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
+            String name,
+            Function<DurableContext, R> function,
+            TypeToken<R> resultType,
+            SerDes serDes,
+            OperationSubType branchSubType) {
         var operationId = this.operationIdGenerator.nextOperationId();
-        var childOp = createItem(operationId, name, function, resultType, serDes, this.rootContext);
+        var childOp = createItem(operationId, name, function, resultType, serDes, branchSubType, this.rootContext);
         branches.add(childOp);
         pendingQueue.add(childOp);
         logger.debug("Item enqueued {}", name);
@@ -140,10 +151,10 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     }
 
     /**
-     * Starts executing enqueued items up to maxConcurrency. Called after all items have been enqueued via
-     * {@link #enqueueItem}.
+     * Starts the queued items if the running count is below maxConcurrency and the operation hasn't completed yet. Must
+     * be called within {@code synchronized (pendingQueue)}.
      */
-    protected void startPendingItems() {
+    protected void executeNextItemIfAllowed() {
         // Start as many items as concurrency allows
         while (true) {
             synchronized (this) {
@@ -155,22 +166,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
                 logger.debug("Executing operation {}", next.getName());
                 next.execute();
             }
-        }
-    }
-
-    /**
-     * Starts the next queued item if the running count is below maxConcurrency and the operation hasn't completed yet.
-     * Must be called within {@code synchronized (pendingQueue)}.
-     */
-    private void executeNextItemIfAllowed() {
-        synchronized (this) {
-            if (isOperationCompleted()) return;
-            if (runningCount.get() >= maxConcurrency) return;
-            var next = pendingQueue.poll();
-            if (next == null) return;
-            runningCount.incrementAndGet();
-            logger.debug("Executing operation {}", next.getName());
-            next.execute();
         }
     }
 
