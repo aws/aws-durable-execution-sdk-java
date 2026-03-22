@@ -125,7 +125,11 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @return the created ChildContextOperation
      */
     public <R> ChildContextOperation<R> addItem(
-            String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes, OperationSubType branchSubType) {
+            String name,
+            Function<DurableContext, R> function,
+            TypeToken<R> resultType,
+            SerDes serDes,
+            OperationSubType branchSubType) {
         var childOp = enqueueItem(name, function, resultType, serDes, branchSubType);
         executeNextItemIfAllowed();
         return childOp;

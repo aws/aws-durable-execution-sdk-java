@@ -41,7 +41,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final SerDes serDes;
     private boolean replayFromPayload;
     private volatile MapResult<O> cachedResult;
-    private ConcurrencyCompletionStatus completionStatus;
 
     public MapOperation(
             OperationIdentifier operationIdentifier,
@@ -90,6 +89,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         sendOperationUpdateAsync(OperationUpdate.builder()
                 .action(OperationAction.START)
                 .subType(getSubType().getValue()));
+
         executeNextItemIfAllowed();
     }
 
@@ -135,16 +135,27 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        this.completionStatus = concurrencyCompletionStatus;
-        checkpointMapResult();
-    }
+        var children = getBranches();
+        var resultItems = new ArrayList<MapResult.MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
-    private void checkpointMapResult() {
-        var result = aggregateResults();
-        this.cachedResult = result;
-        var serialized = serializeResult(result);
+        for (int i = 0; i < children.size(); i++) {
+            var branch = (ChildContextOperation<O>) children.get(i);
+            if (!branch.isOperationCompleted()) {
+                resultItems.set(i, MapResult.MapResultItem.skipped());
+            } else {
+                try {
+                    resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));
+                } catch (Exception e) {
+                    resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(e)));
+                }
+            }
+        }
+
+        this.cachedResult = new MapResult<>(resultItems, concurrencyCompletionStatus);
+        var serialized = serializeResult(cachedResult);
         var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
@@ -173,38 +184,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
         // First execution or large result replay: wait for children, then aggregate
         join();
-        return cachedResult != null ? cachedResult : aggregateResults();
-    }
-
-    /**
-     * Aggregates results from completed branches into a {@code MapResult}.
-     *
-     * <p>Called after all branches have completed. At this point every branch's {@code completionFuture} is already
-     * done, so {@code branch.get()} returns immediately without blocking.
-     */
-    @SuppressWarnings("unchecked")
-    private MapResult<O> aggregateResults() {
-        var children = getBranches();
-        var resultItems = new ArrayList<MapResult.MapResultItem<O>>(Collections.nCopies(items.size(), null));
-
-        for (int i = 0; i < children.size(); i++) {
-            var branch = (ChildContextOperation<O>) children.get(i);
-            if (!branch.isOperationCompleted()) {
-                resultItems.set(i, MapResult.MapResultItem.skipped());
-                continue;
-            }
-            try {
-                resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));
-            } catch (Exception e) {
-                resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(e)));
-            }
-        }
-
-        // Fill any remaining null slots (items beyond children size) with skipped
-        for (int i = children.size(); i < items.size(); i++) {
-            resultItems.set(i, MapResult.MapResultItem.skipped());
-        }
-
-        return new MapResult<>(resultItems, completionStatus);
+        return cachedResult;
     }
 }

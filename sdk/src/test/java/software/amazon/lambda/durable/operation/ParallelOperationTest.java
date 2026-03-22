@@ -130,7 +130,8 @@ class ParallelOperationTest {
     void branchCreation_createsBranchWithParallelBranchSubType() {
         var op = createOperation(CompletionConfig.allSuccessful());
 
-        var childOp = op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        var childOp = op.addItem(
+                "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         assertNotNull(childOp);
         assertEquals(OperationSubType.PARALLEL_BRANCH, childOp.getSubType());
@@ -152,7 +153,8 @@ class ParallelOperationTest {
         var op = createOperation(CompletionConfig.allSuccessful());
 
         // The child operation should be a ChildContextOperation with this op as parent
-        var childOp = op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        var childOp = op.addItem(
+                "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         assertNotNull(childOp);
         // Verify it's a ChildContextOperation (the concrete type returned by createItem)
@@ -236,7 +238,8 @@ class ParallelOperationTest {
         // as their parent — not some other context
         var op = createOperation(CompletionConfig.allSuccessful());
 
-        var childOp = op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        var childOp = op.addItem(
+                "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         // The child operation should be registered in the execution manager
         // (BaseDurableOperation constructor calls executionManager.registerOperation)
@@ -365,7 +368,8 @@ class ParallelOperationTest {
                     throw new RuntimeException("branch failed");
                 },
                 TypeToken.get(String.class),
-                SER_DES, OperationSubType.PARALLEL_BRANCH);
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
 
         var result = assertDoesNotThrow(() -> op.get());
 
@@ -409,7 +413,8 @@ class ParallelOperationTest {
                     throw new RuntimeException("branch failed");
                 },
                 TypeToken.get(String.class),
-                SER_DES, OperationSubType.PARALLEL_BRANCH);
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
 
         var result = op.get();
 
