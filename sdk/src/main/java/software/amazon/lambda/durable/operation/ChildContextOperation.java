@@ -243,7 +243,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
 
             // throw a general failed exception if a user exception is not reconstructed
             return switch (getSubType()) {
-                case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure(op);
+                case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure();
                 case MAP -> throw new ChildContextFailedException(op);
                 case MAP_ITERATION -> throw new ChildContextFailedException(op);
                 case PARALLEL -> throw new ChildContextFailedException(op);
@@ -254,8 +254,8 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
         }
     }
 
-    private T handleWaitForCallbackFailure(Operation op) {
-        var childrenOps = getChildOperations(op.id());
+    private T handleWaitForCallbackFailure() {
+        var childrenOps = getChildOperations();
         var callbackOp = childrenOps.stream()
                 .filter(o -> o.type() == OperationType.CALLBACK)
                 .findFirst()

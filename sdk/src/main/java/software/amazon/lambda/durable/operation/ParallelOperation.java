@@ -44,7 +44,8 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class ParallelOperation extends ConcurrencyOperation<ParallelResult> implements ParallelDurableFuture {
 
-    private boolean skipCheckpoint = false;
+    // this field could be written and read in different threads
+    private volatile boolean skipCheckpoint = false;
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,

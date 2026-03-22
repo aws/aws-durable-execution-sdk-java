@@ -52,8 +52,8 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final AtomicInteger runningCount = new AtomicInteger(0);
     protected final AtomicBoolean isJoined = new AtomicBoolean(false);
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
-    private final List<ChildContextOperation<?>> childOperations = Collections.synchronizedList(new ArrayList<>());
-    private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<String>());
+    private final List<ChildContextOperation<?>> branches = Collections.synchronizedList(new ArrayList<>());
+    private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<>());
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
     private ConcurrencyCompletionStatus completionStatus;
@@ -117,7 +117,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         if (isOperationCompleted()) throw new IllegalStateException("Cannot add items to a completed operation");
         var operationId = this.operationIdGenerator.nextOperationId();
         var childOp = createItem(operationId, name, function, resultType, serDes, this.rootContext);
-        childOperations.add(childOp);
+        branches.add(childOp);
         pendingQueue.add(childOp);
         logger.debug("Item added {}", name);
         executeNextItemIfAllowed();
@@ -133,7 +133,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             String name, Function<DurableContext, R> function, TypeToken<R> resultType, SerDes serDes) {
         var operationId = this.operationIdGenerator.nextOperationId();
         var childOp = createItem(operationId, name, function, resultType, serDes, this.rootContext);
-        childOperations.add(childOp);
+        branches.add(childOp);
         pendingQueue.add(childOp);
         logger.debug("Item enqueued {}", name);
         return childOp;
@@ -225,7 +225,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      */
     protected void validateItemCount() {
         if (minSuccessful != null && minSuccessful > getTotalItems()) {
-            throw new IllegalArgumentException("minSuccessful (" + minSuccessful
+            throw new IllegalStateException("minSuccessful (" + minSuccessful
                     + ") exceeds the number of registered items (" + getTotalItems() + ")");
         }
     }
@@ -292,15 +292,15 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     }
 
     protected int getTotalItems() {
-        return childOperations.size();
+        return branches.size();
     }
 
     protected ConcurrencyCompletionStatus getCompletionStatus() {
         return completionStatus;
     }
 
-    protected List<ChildContextOperation<?>> getChildOperations() {
-        return Collections.unmodifiableList(childOperations);
+    protected List<ChildContextOperation<?>> getBranches() {
+        return branches;
     }
 
     /** Returns true if all items have finished (no pending, no running). Used by subclasses to override canComplete. */

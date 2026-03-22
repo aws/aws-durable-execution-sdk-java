@@ -23,7 +23,6 @@ import software.amazon.lambda.durable.model.MapResultItem;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Executes a map operation: applies a function to each item in a collection concurrently, with each item running in its
@@ -200,7 +199,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
      */
     @SuppressWarnings("unchecked")
     private MapResult<O> aggregateResults() {
-        var children = getChildOperations();
+        var children = getBranches();
         var resultItems = new ArrayList<MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
         for (int i = 0; i < children.size(); i++) {
@@ -212,7 +211,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             try {
                 resultItems.set(i, MapResultItem.succeeded(branch.get()));
             } catch (Exception e) {
-                resultItems.set(i, MapResultItem.failed(buildMapError(e)));
+                resultItems.set(i, MapResultItem.failed(MapError.of(e)));
             }
         }
 
@@ -222,10 +221,5 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
 
         return new MapResult<>(resultItems, completionStatus);
-    }
-
-    private static MapError buildMapError(Exception e) {
-        return new MapError(
-                e.getClass().getName(), e.getMessage(), ExceptionHelper.serializeStackTrace(e.getStackTrace()));
     }
 }

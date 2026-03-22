@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.model;
 
 import java.util.List;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Error details for a failed map item.
@@ -14,4 +15,9 @@ import java.util.List;
  * @param errorMessage the error message
  * @param stackTrace the stack trace frames, or null
  */
-public record MapError(String errorType, String errorMessage, List<String> stackTrace) {}
+public record MapError(String errorType, String errorMessage, List<String> stackTrace) {
+    public static MapError of(Throwable e) {
+        return new MapError(
+                e.getClass().getName(), e.getMessage(), ExceptionHelper.serializeStackTrace(e.getStackTrace()));
+    }
+}

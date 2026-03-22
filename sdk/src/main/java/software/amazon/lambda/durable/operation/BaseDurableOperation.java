@@ -144,13 +144,12 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
     }
 
     /**
-     * Gets the direct child Operations of a give context operation.
+     * Gets the direct child Operations of this context operation
      *
-     * @param operationId the operation id of the context
      * @return list of the child Operations
      */
-    protected List<Operation> getChildOperations(String operationId) {
-        return executionManager.getChildOperations(operationId);
+    protected List<Operation> getChildOperations() {
+        return executionManager.getChildOperations(getOperationId());
     }
 
     /**
