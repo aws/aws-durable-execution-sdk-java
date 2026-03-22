@@ -13,20 +13,21 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.InvokeConfig;
-import software.amazon.lambda.durable.MapConfig;
-import software.amazon.lambda.durable.ParallelConfig;
 import software.amazon.lambda.durable.ParallelDurableFuture;
-import software.amazon.lambda.durable.StepConfig;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.WaitForCallbackConfig;
-import software.amazon.lambda.durable.WaitForConditionConfig;
+import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.InvokeConfig;
+import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.WaitForCallbackConfig;
+import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -163,14 +164,14 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     @Override
-    public <T> T step(String name, TypeToken<T> typeToken, Function<StepContext, T> func) {
-        return step(name, typeToken, func, StepConfig.builder().build());
+    public <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func) {
+        return step(name, resultType, func, StepConfig.builder().build());
     }
 
     @Override
-    public <T> T step(String name, TypeToken<T> typeToken, Function<StepContext, T> func, StepConfig config) {
+    public <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config) {
         // Simply delegate to stepAsync and block on the result
-        return stepAsync(name, typeToken, func, config).get();
+        return stepAsync(name, resultType, func, config).get();
     }
 
     @Override
@@ -186,15 +187,15 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     @Override
-    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Function<StepContext, T> func) {
-        return stepAsync(name, typeToken, func, StepConfig.builder().build());
+    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Function<StepContext, T> func) {
+        return stepAsync(name, resultType, func, StepConfig.builder().build());
     }
 
     @Override
     public <T> DurableFuture<T> stepAsync(
-            String name, TypeToken<T> typeToken, Function<StepContext, T> func, StepConfig config) {
+            String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        Objects.requireNonNull(resultType, "resultType cannot be null");
         ParameterValidator.validateOperationName(name);
 
         if (config.serDes() == null) {
@@ -204,7 +205,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.STEP), func, typeToken, config, this);
+                OperationIdentifier.of(operationId, name, OperationType.STEP), func, resultType, config, this);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -234,16 +235,16 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     @Override
-    public <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func) {
-        return stepAsync(name, typeToken, func, StepConfig.builder().build()).get();
+    public <T> T step(String name, TypeToken<T> resultType, Supplier<T> func) {
+        return stepAsync(name, resultType, func, StepConfig.builder().build()).get();
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     @Override
-    public <T> T step(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config) {
+    public <T> T step(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config) {
         // Simply delegate to stepAsync and block on the result
-        return stepAsync(name, typeToken, func, config).get();
+        return stepAsync(name, resultType, func, config).get();
     }
 
     /** @deprecated use the variants accepting StepContext instead */
@@ -264,15 +265,15 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     @Override
-    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func) {
-        return stepAsync(name, typeToken, func, StepConfig.builder().build());
+    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func) {
+        return stepAsync(name, resultType, func, StepConfig.builder().build());
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     @Override
-    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> typeToken, Supplier<T> func, StepConfig config) {
-        return stepAsync(name, typeToken, stepContext -> func.get(), config);
+    public <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config) {
+        return stepAsync(name, resultType, stepContext -> func.get(), config);
     }
 
     // ========== wait methods ==========
@@ -318,19 +319,19 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     @Override
-    public <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> typeToken) {
+    public <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType) {
         return invokeAsync(
                         name,
                         functionName,
                         payload,
-                        typeToken,
+                        resultType,
                         InvokeConfig.builder().build())
                 .get();
     }
 
     @Override
-    public <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config) {
-        return invokeAsync(name, functionName, payload, typeToken, config).get();
+    public <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config) {
+        return invokeAsync(name, functionName, payload, resultType, config).get();
     }
 
     /** Asynchronously invokes another Lambda function with custom configuration. */
@@ -358,9 +359,9 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     public <T, U> DurableFuture<T> invokeAsync(
-            String name, String functionName, U payload, TypeToken<T> typeToken, InvokeConfig config) {
+            String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        Objects.requireNonNull(resultType, "resultType cannot be null");
         ParameterValidator.validateOperationName(name);
 
         if (config.serDes() == null) {
@@ -378,7 +379,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 OperationIdentifier.of(operationId, name, OperationType.CHAINED_INVOKE),
                 functionName,
                 payload,
-                typeToken,
+                resultType,
                 config,
                 this);
 
@@ -394,8 +395,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     @Override
-    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken) {
-        return createCallback(name, typeToken, CallbackConfig.builder().build());
+    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType) {
+        return createCallback(name, resultType, CallbackConfig.builder().build());
     }
 
     @Override
@@ -405,7 +406,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     @Override
-    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> typeToken, CallbackConfig config) {
+    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType, CallbackConfig config) {
         ParameterValidator.validateOperationName(name);
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
@@ -413,7 +414,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var operation = new CallbackOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CALLBACK), typeToken, config, this);
+                OperationIdentifier.of(operationId, name, OperationType.CALLBACK), resultType, config, this);
         operation.execute();
 
         return operation;
@@ -421,39 +422,185 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     // ========== runInChildContext methods ==========
 
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @return the child context result
+     */
     @Override
     public <T> T runInChildContext(String name, Class<T> resultType, Function<DurableContext, T> func) {
-        return runInChildContextAsync(name, TypeToken.get(resultType), func).get();
+        return runInChildContextAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        func,
+                        RunInChildContextConfig.builder().build())
+                .get();
     }
 
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @return the child context result
+     */
     @Override
-    public <T> T runInChildContext(String name, TypeToken<T> typeToken, Function<DurableContext, T> func) {
-        return runInChildContextAsync(name, typeToken, func).get();
+    public <T> T runInChildContext(String name, TypeToken<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(
+                        name,
+                        resultType,
+                        func,
+                        RunInChildContextConfig.builder().build())
+                .get();
     }
 
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @return the DurableFuture of the child context result
+     */
     @Override
     public <T> DurableFuture<T> runInChildContextAsync(
             String name, Class<T> resultType, Function<DurableContext, T> func) {
-        return runInChildContextAsync(name, TypeToken.get(resultType), func);
+        return runInChildContextAsync(
+                name,
+                TypeToken.get(resultType),
+                func,
+                RunInChildContextConfig.builder().build());
     }
 
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @return the DurableFuture of the child context result
+     */
     @Override
     public <T> DurableFuture<T> runInChildContextAsync(
-            String name, TypeToken<T> typeToken, Function<DurableContext, T> func) {
-        return runInChildContextAsync(name, typeToken, func, OperationSubType.RUN_IN_CHILD_CONTEXT);
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(
+                name,
+                resultType,
+                func,
+                RunInChildContextConfig.builder().build(),
+                OperationSubType.RUN_IN_CHILD_CONTEXT);
+    }
+
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the child context result
+     */
+    @Override
+    public <T> T runInChildContext(
+            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return runInChildContextAsync(name, TypeToken.get(resultType), func, config)
+                .get();
+    }
+
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the child context result
+     */
+    @Override
+    public <T> T runInChildContext(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return runInChildContextAsync(name, resultType, func, config).get();
+    }
+
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the DurableFuture wrapping the child context result
+     */
+    @Override
+    public <T> DurableFuture<T> runInChildContextAsync(
+            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return runInChildContextAsync(name, TypeToken.get(resultType), func, config);
+    }
+
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the DurableFuture wrapping the child context result
+     */
+    @Override
+    public <T> DurableFuture<T> runInChildContextAsync(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return runInChildContextAsync(name, resultType, func, config, OperationSubType.RUN_IN_CHILD_CONTEXT);
     }
 
     private <T> DurableFuture<T> runInChildContextAsync(
-            String name, TypeToken<T> typeToken, Function<DurableContext, T> func, OperationSubType subType) {
-        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+            String name,
+            TypeToken<T> resultType,
+            Function<DurableContext, T> func,
+            RunInChildContextConfig config,
+            OperationSubType subType) {
+        Objects.requireNonNull(resultType, "resultType cannot be null");
+        Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
         ParameterValidator.validateOperationName(name);
+
+        if (config.serDes() == null) {
+            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
+        }
+
         var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),
                 func,
-                typeToken,
-                getDurableConfig().getSerDes(),
+                resultType,
+                config,
                 this);
 
         operation.execute();
@@ -581,9 +728,9 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     @Override
-    public <T> T waitForCallback(String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func) {
+    public <T> T waitForCallback(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func) {
         return waitForCallbackAsync(
-                        name, typeToken, func, WaitForCallbackConfig.builder().build())
+                        name, resultType, func, WaitForCallbackConfig.builder().build())
                 .get();
     }
 
@@ -600,10 +747,10 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> T waitForCallback(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiConsumer<String, StepContext> func,
             WaitForCallbackConfig waitForCallbackConfig) {
-        return waitForCallbackAsync(name, typeToken, func, waitForCallbackConfig)
+        return waitForCallbackAsync(name, resultType, func, waitForCallbackConfig)
                 .get();
     }
 
@@ -619,9 +766,9 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     public <T> DurableFuture<T> waitForCallbackAsync(
-            String name, TypeToken<T> typeToken, BiConsumer<String, StepContext> func) {
+            String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func) {
         return waitForCallbackAsync(
-                name, typeToken, func, WaitForCallbackConfig.builder().build());
+                name, resultType, func, WaitForCallbackConfig.builder().build());
     }
 
     @Override
@@ -636,10 +783,10 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> DurableFuture<T> waitForCallbackAsync(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiConsumer<String, StepContext> func,
             WaitForCallbackConfig waitForCallbackConfig) {
-        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(waitForCallbackConfig, "waitForCallbackConfig cannot be null");
         // waitForCallback adds a suffix for the callback operation name and the submitter operation name so
         // the length restriction of waitForCallback name is different from the other operations.
@@ -655,11 +802,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         return runInChildContextAsync(
                 name,
-                typeToken,
+                resultType,
                 childCtx -> {
                     var callback = childCtx.createCallback(
                             name + WAIT_FOR_CALLBACK_CALLBACK_SUFFIX,
-                            typeToken,
+                            resultType,
                             finalWaitForCallbackConfig.callbackConfig());
                     childCtx.step(
                             name + WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX,
@@ -671,6 +818,9 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                             finalWaitForCallbackConfig.stepConfig());
                     return callback.get();
                 },
+                RunInChildContextConfig.builder()
+                        .serDes(finalWaitForCallbackConfig.stepConfig().serDes())
+                        .build(),
                 OperationSubType.WAIT_FOR_CALLBACK);
     }
 
@@ -704,12 +854,12 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> T waitForCondition(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState) {
         return waitForConditionAsync(
                         name,
-                        typeToken,
+                        resultType,
                         checkFunc,
                         initialState,
                         WaitForConditionConfig.<T>builder().build())
@@ -719,11 +869,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> T waitForCondition(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
             WaitForConditionConfig<T> config) {
-        return waitForConditionAsync(name, typeToken, checkFunc, initialState, config)
+        return waitForConditionAsync(name, resultType, checkFunc, initialState, config)
                 .get();
     }
 
@@ -754,12 +904,12 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> DurableFuture<T> waitForConditionAsync(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState) {
         return waitForConditionAsync(
                 name,
-                typeToken,
+                resultType,
                 checkFunc,
                 initialState,
                 WaitForConditionConfig.<T>builder().build());
@@ -768,12 +918,12 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> DurableFuture<T> waitForConditionAsync(
             String name,
-            TypeToken<T> typeToken,
+            TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
             WaitForConditionConfig<T> config) {
         Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(checkFunc, "checkFunc cannot be null");
         Objects.requireNonNull(initialState, "initialState cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -784,7 +934,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var operation =
-                new WaitForConditionOperation<>(operationId, name, checkFunc, typeToken, initialState, config, this);
+                new WaitForConditionOperation<>(operationId, name, checkFunc, resultType, initialState, config, this);
 
         operation.execute();
 

@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.model;
 
 import java.util.Collections;
 import java.util.List;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Result container for map operations.
@@ -76,5 +77,61 @@ public record MapResult<T>(List<MapResultItem<T>> items, ConcurrencyCompletionSt
                 .filter(item -> item.status() == MapResultItem.Status.FAILED)
                 .map(MapResultItem::error)
                 .toList();
+    }
+
+    /**
+     * Represents the outcome of a single item in a map operation.
+     *
+     * <p>Each item either succeeds with a result, fails with an error, or was never started. The status field indicates
+     * which case applies.
+     *
+     * <p>Errors are stored as {@link MapError} (plain strings) rather than raw Throwable, so they survive serialization
+     * across checkpoint-and-replay cycles without requiring AWS SDK-specific Jackson modules.
+     *
+     * @param status the status of this item
+     * @param result the result value, or null if failed/not started
+     * @param error the error details, or null if succeeded/not started
+     * @param <T> the result type
+     */
+    public record MapResultItem<T>(Status status, T result, MapError error) {
+
+        /** Status of an individual map item. */
+        public enum Status {
+            SUCCEEDED,
+            FAILED,
+            SKIPPED
+        }
+
+        /** Creates a successful result item. */
+        public static <T> MapResultItem<T> succeeded(T result) {
+            return new MapResultItem<>(Status.SUCCEEDED, result, null);
+        }
+
+        /** Creates a failed result item. */
+        public static <T> MapResultItem<T> failed(MapError error) {
+            return new MapResultItem<>(Status.FAILED, null, error);
+        }
+
+        /** Creates a skipped result item. */
+        public static <T> MapResultItem<T> skipped() {
+            return new MapResultItem<>(Status.SKIPPED, null, null);
+        }
+    }
+
+    /**
+     * Error details for a failed map item.
+     *
+     * <p>Stores error information as plain strings so that {@link MapResult} can be serialized through the user's
+     * SerDes without requiring AWS SDK-specific Jackson modules.
+     *
+     * @param errorType the fully qualified exception class name
+     * @param errorMessage the error message
+     * @param stackTrace the stack trace frames, or null
+     */
+    public record MapError(String errorType, String errorMessage, List<String> stackTrace) {
+        public static MapError of(Throwable e) {
+            return new MapError(
+                    e.getClass().getName(), e.getMessage(), ExceptionHelper.serializeStackTrace(e.getStackTrace()));
+        }
     }
 }

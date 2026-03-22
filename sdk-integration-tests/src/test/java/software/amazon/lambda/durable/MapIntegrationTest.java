@@ -9,9 +9,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.model.MapResultItem;
+import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class MapIntegrationTest {
@@ -535,8 +537,10 @@ class MapIntegrationTest {
             assertEquals("OK1", result.getResult(0));
             assertNotNull(result.getError(1));
             // Items after the failure should be NOT_STARTED
-            assertEquals(MapResultItem.Status.SKIPPED, result.getItem(2).status());
-            assertEquals(MapResultItem.Status.SKIPPED, result.getItem(3).status());
+            assertEquals(
+                    MapResult.MapResultItem.Status.SKIPPED, result.getItem(2).status());
+            assertEquals(
+                    MapResult.MapResultItem.Status.SKIPPED, result.getItem(3).status());
             return "done";
         });
 
@@ -873,7 +877,9 @@ class MapIntegrationTest {
             assertTrue(result.allSucceeded());
             assertEquals(3, result.size());
             for (int i = 0; i < result.size(); i++) {
-                assertEquals(MapResultItem.Status.SUCCEEDED, result.getItem(i).status());
+                assertEquals(
+                        MapResult.MapResultItem.Status.SUCCEEDED,
+                        result.getItem(i).status());
                 assertNull(result.getResult(i));
                 assertNull(result.getError(i));
             }

@@ -5,10 +5,10 @@ package software.amazon.lambda.durable.examples;
 import java.time.Duration;
 import java.util.List;
 import java.util.stream.Collectors;
-import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.MapConfig;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.MapConfig;
 
 /**
  * Example demonstrating advanced map features: wait operations inside branches, error handling, and early termination.

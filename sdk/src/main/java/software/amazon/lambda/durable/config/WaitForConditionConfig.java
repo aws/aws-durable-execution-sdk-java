@@ -1,7 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable;
+package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.SerDes;

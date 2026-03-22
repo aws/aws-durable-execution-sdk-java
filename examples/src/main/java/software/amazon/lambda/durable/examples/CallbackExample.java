@@ -3,9 +3,9 @@
 package software.amazon.lambda.durable.examples;
 
 import java.time.Duration;
-import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.CallbackConfig;
 
 /**
  * Example demonstrating callback operations for external system integration.

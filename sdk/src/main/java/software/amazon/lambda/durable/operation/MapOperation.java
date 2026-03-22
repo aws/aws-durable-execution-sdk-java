@@ -11,15 +11,14 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.MapConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
-import software.amazon.lambda.durable.model.MapError;
 import software.amazon.lambda.durable.model.MapResult;
-import software.amazon.lambda.durable.model.MapResultItem;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -99,7 +98,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP_ITERATION),
                 function,
                 resultType,
-                serDes,
+                RunInChildContextConfig.builder().serDes(serDes).build(),
                 parentContext,
                 this);
     }
@@ -200,24 +199,24 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     @SuppressWarnings("unchecked")
     private MapResult<O> aggregateResults() {
         var children = getBranches();
-        var resultItems = new ArrayList<MapResultItem<O>>(Collections.nCopies(items.size(), null));
+        var resultItems = new ArrayList<MapResult.MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
         for (int i = 0; i < children.size(); i++) {
             var branch = (ChildContextOperation<O>) children.get(i);
             if (!branch.isOperationCompleted()) {
-                resultItems.set(i, MapResultItem.skipped());
+                resultItems.set(i, MapResult.MapResultItem.skipped());
                 continue;
             }
             try {
-                resultItems.set(i, MapResultItem.succeeded(branch.get()));
+                resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));
             } catch (Exception e) {
-                resultItems.set(i, MapResultItem.failed(MapError.of(e)));
+                resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(e)));
             }
         }
 
         // Fill any remaining null slots (items beyond children size) with skipped
         for (int i = children.size(); i < items.size(); i++) {
-            resultItems.set(i, MapResultItem.skipped());
+            resultItems.set(i, MapResult.MapResultItem.skipped());
         }
 
         return new MapResult<>(resultItems, completionStatus);

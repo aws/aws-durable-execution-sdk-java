@@ -2,74 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-/**
- * Configuration for the {@code waitForCallback} composite operation.
- *
- * <p>Combines a {@link StepConfig} (for the step that produces the callback) and a {@link CallbackConfig} (for the
- * callback wait itself).
- */
+/** @deprecated use {@link software.amazon.lambda.durable.config.WaitForCallbackConfig} instead. */
 public class WaitForCallbackConfig {
-    private final StepConfig stepConfig;
-    private final CallbackConfig callbackConfig;
-
-    private WaitForCallbackConfig(Builder builder) {
-        this.stepConfig = builder.stepConfig == null ? StepConfig.builder().build() : builder.stepConfig;
-        this.callbackConfig =
-                builder.callbackConfig == null ? CallbackConfig.builder().build() : builder.callbackConfig;
-    }
-
-    /** Returns the step configuration for the composite operation. */
-    public StepConfig stepConfig() {
-        return stepConfig;
-    }
-
-    /** Returns the callback configuration for the composite operation. */
-    public CallbackConfig callbackConfig() {
-        return callbackConfig;
-    }
-
-    /** Creates a new builder. */
-    public static Builder builder() {
-        return new Builder();
-    }
-
-    /** Creates a builder pre-populated with this instance's values. */
-    public Builder toBuilder() {
-        return new Builder().stepConfig(this.stepConfig).callbackConfig(this.callbackConfig);
-    }
-
-    /** Builder for {@link WaitForCallbackConfig}. */
-    public static class Builder {
-        private StepConfig stepConfig;
-        private CallbackConfig callbackConfig;
-
-        private Builder() {}
-
-        /**
-         * Sets the step configuration for the composite operation.
-         *
-         * @param stepConfig the step configuration
-         * @return this builder for method chaining
-         */
-        public Builder stepConfig(StepConfig stepConfig) {
-            this.stepConfig = stepConfig;
-            return this;
-        }
-
-        /**
-         * Sets the callback configuration for the composite operation.
-         *
-         * @param callbackConfig the callback configuration
-         * @return this builder for method chaining
-         */
-        public Builder callbackConfig(CallbackConfig callbackConfig) {
-            this.callbackConfig = callbackConfig;
-            return this;
-        }
-
-        /** Builds the WaitForCallbackConfig instance. */
-        public WaitForCallbackConfig build() {
-            return new WaitForCallbackConfig(this);
-        }
+    /** @deprecated use {@link software.amazon.lambda.durable.config.WaitForCallbackConfig#builder()} instead. */
+    public static software.amazon.lambda.durable.config.WaitForCallbackConfig.Builder builder() {
+        return new software.amazon.lambda.durable.config.WaitForCallbackConfig.Builder();
     }
 }

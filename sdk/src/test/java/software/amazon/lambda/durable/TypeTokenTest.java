@@ -17,7 +17,7 @@ class TypeTokenTest {
         var token = new TypeToken<List<String>>() {};
         Type type = token.getType();
 
-        assertTrue(type instanceof ParameterizedType);
+        assertInstanceOf(ParameterizedType.class, type);
         ParameterizedType paramType = (ParameterizedType) type;
         assertEquals(List.class, paramType.getRawType());
         assertEquals(String.class, paramType.getActualTypeArguments()[0]);
@@ -28,13 +28,13 @@ class TypeTokenTest {
         var token = new TypeToken<Map<String, List<Integer>>>() {};
         Type type = token.getType();
 
-        assertTrue(type instanceof ParameterizedType);
+        assertInstanceOf(ParameterizedType.class, type);
         ParameterizedType paramType = (ParameterizedType) type;
         assertEquals(Map.class, paramType.getRawType());
         assertEquals(String.class, paramType.getActualTypeArguments()[0]);
 
         Type valueType = paramType.getActualTypeArguments()[1];
-        assertTrue(valueType instanceof ParameterizedType);
+        assertInstanceOf(ParameterizedType.class, valueType);
         ParameterizedType valueParamType = (ParameterizedType) valueType;
         assertEquals(List.class, valueParamType.getRawType());
         assertEquals(Integer.class, valueParamType.getActualTypeArguments()[0]);

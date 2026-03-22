@@ -19,10 +19,11 @@ import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
@@ -243,7 +244,7 @@ class ConcurrencyOperationTest {
                     OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),
                     function,
                     resultType,
-                    serDes,
+                    RunInChildContextConfig.builder().serDes(serDes).build(),
                     parentContext,
                     this) {
                 @Override

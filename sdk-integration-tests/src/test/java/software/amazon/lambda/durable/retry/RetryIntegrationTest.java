@@ -9,7 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 

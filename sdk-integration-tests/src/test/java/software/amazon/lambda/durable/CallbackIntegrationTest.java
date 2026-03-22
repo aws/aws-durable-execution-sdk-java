@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.model.ExecutionStatus;

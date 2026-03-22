@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
@@ -58,13 +59,22 @@ class ChildContextOperationTest {
 
     private ChildContextOperation<String> createOperation(Function<DurableContext, String> func) {
         return new ChildContextOperation<>(
-                OPERATION_IDENTIFIER, func, TypeToken.get(String.class), SERDES, durableContext);
+                OPERATION_IDENTIFIER,
+                func,
+                TypeToken.get(String.class),
+                RunInChildContextConfig.builder().serDes(SERDES).build(),
+                durableContext);
     }
 
     private ChildContextOperation<String> createOperationWithParent(
             Function<DurableContext, String> func, ConcurrencyOperation<?> parent) {
         return new ChildContextOperation<>(
-                OPERATION_IDENTIFIER, func, TypeToken.get(String.class), SERDES, durableContext, parent);
+                OPERATION_IDENTIFIER,
+                func,
+                TypeToken.get(String.class),
+                RunInChildContextConfig.builder().serDes(SERDES).build(),
+                durableContext,
+                parent);
     }
 
     // ===== SUCCEEDED replay =====

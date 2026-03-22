@@ -8,6 +8,14 @@ import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.InvokeConfig;
+import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.WaitForCallbackConfig;
+import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.context.BaseContext;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -258,6 +266,35 @@ public interface DurableContext extends BaseContext {
 
     /** Asynchronously runs a function in a child context using a {@link TypeToken} for generic result types. */
     <T> DurableFuture<T> runInChildContextAsync(String name, TypeToken<T> resultType, Function<DurableContext, T> func);
+
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param <T> the result type
+     * @param name the unique operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @return the child context result
+     */
+    <T> T runInChildContext(
+            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
+
+    /**
+     * Runs a function in a child context using a {@link TypeToken} for generic result types, blocking until complete.
+     */
+    <T> T runInChildContext(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
+
+    /** Asynchronously runs a function in a child context, returning a {@link DurableFuture}. */
+    <T> DurableFuture<T> runInChildContextAsync(
+            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
+
+    /** Asynchronously runs a function in a child context using a {@link TypeToken} for generic result types. */
+    <T> DurableFuture<T> runInChildContextAsync(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
 
     <I, O> MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function);
 

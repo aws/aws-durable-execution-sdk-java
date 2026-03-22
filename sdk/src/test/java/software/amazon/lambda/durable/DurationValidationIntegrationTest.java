@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.config.CallbackConfig;
 
 class DurationValidationIntegrationTest {
 

@@ -17,6 +17,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackSubmitterException;
@@ -28,7 +29,6 @@ import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -55,19 +55,19 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             OperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
-            SerDes resultSerDes,
+            RunInChildContextConfig config,
             DurableContextImpl durableContext) {
-        this(operationIdentifier, function, resultTypeToken, resultSerDes, durableContext, null);
+        this(operationIdentifier, function, resultTypeToken, config, durableContext, null);
     }
 
     public ChildContextOperation(
             OperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
-            SerDes resultSerDes,
+            RunInChildContextConfig config,
             DurableContextImpl durableContext,
             ConcurrencyOperation<?> parentOperation) {
-        super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
         this.function = function;
         this.userExecutor = getContext().getDurableConfig().getExecutorService();
         this.parentOperation = parentOperation;

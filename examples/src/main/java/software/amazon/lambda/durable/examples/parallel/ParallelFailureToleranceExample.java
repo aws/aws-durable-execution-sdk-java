@@ -4,12 +4,12 @@ package software.amazon.lambda.durable.examples.parallel;
 
 import java.util.ArrayList;
 import java.util.List;
-import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.ParallelConfig;
-import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
+import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 

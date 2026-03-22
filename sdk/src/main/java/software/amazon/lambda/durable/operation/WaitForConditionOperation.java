@@ -14,7 +14,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.WaitForConditionConfig;
+import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
