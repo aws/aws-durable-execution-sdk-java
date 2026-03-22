@@ -20,6 +20,7 @@ import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -73,7 +74,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             case PENDING -> pollReadyAndResumeCheckLoop(existing); // Check if pending retry
             case STARTED, READY -> resumeCheckLoop(existing);
             default ->
-                terminateExecutionWithIllegalDurableOperationException(
+                throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected waitForCondition status: " + existing.status());
         }
     }
@@ -121,59 +122,56 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     }
 
     private void executeCheckLogic(T currentState, int attempt) {
-        // Register thread as active BEFORE executor runs
-        registerActiveThread(getOperationId());
-
-        CompletableFuture.runAsync(
-                () -> {
-                    try (var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {
-                        try {
-                            // Checkpoint START if not already started
-                            var existing = getOperation();
-                            if (existing == null || existing.status() != OperationStatus.STARTED) {
-                                var startUpdate = OperationUpdate.builder().action(OperationAction.START);
-                                sendOperationUpdateAsync(startUpdate);
-                            }
-
-                            // Execute check function in user executor
-                            WaitForConditionResult<T> result = checkFunc.apply(currentState, stepContext);
-
-                            // Serialize/deserialize round-trip on the value to ensure state is checkpoint-safe
-                            var serializedState = serializeResult(result.value());
-                            T deserializedValue = deserializeResult(serializedState);
-
-                            if (result.isDone()) {
-                                // Condition met — checkpoint SUCCEED
-                                var successUpdate = OperationUpdate.builder()
-                                        .action(OperationAction.SUCCEED)
-                                        .payload(serializedState);
-                                sendOperationUpdate(successUpdate);
-                            } else {
-                                // Compute delay from strategy
-                                Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);
-
-                                // Checkpoint RETRY with delay
-                                var retryUpdate = OperationUpdate.builder()
-                                        .action(OperationAction.RETRY)
-                                        .payload(serializedState)
-                                        .stepOptions(StepOptions.builder()
-                                                .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
-                                                .build());
-                                sendOperationUpdate(retryUpdate);
-
-                                // Poll for READY, then continue the loop
-                                pollForOperationUpdates()
-                                        .thenCompose(op -> op.status() == OperationStatus.READY
-                                                ? CompletableFuture.completedFuture(op)
-                                                : pollForOperationUpdates())
-                                        .thenRun(() -> executeCheckLogic(deserializedValue, attempt + 1));
-                            }
-                        } catch (Throwable e) {
-                            handleCheckFailure(e);
-                        }
+        Runnable userHandler = () -> {
+            try (var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {
+                try {
+                    // Checkpoint START if not already started
+                    var existing = getOperation();
+                    if (existing == null || existing.status() != OperationStatus.STARTED) {
+                        var startUpdate = OperationUpdate.builder().action(OperationAction.START);
+                        sendOperationUpdateAsync(startUpdate);
                     }
-                },
-                userExecutor);
+
+                    // Execute check function in user executor
+                    WaitForConditionResult<T> result = checkFunc.apply(currentState, stepContext);
+
+                    // Serialize/deserialize round-trip on the value to ensure state is checkpoint-safe
+                    var serializedState = serializeResult(result.value());
+                    T deserializedValue = deserializeResult(serializedState);
+
+                    if (result.isDone()) {
+                        // Condition met — checkpoint SUCCEED
+                        var successUpdate = OperationUpdate.builder()
+                                .action(OperationAction.SUCCEED)
+                                .payload(serializedState);
+                        sendOperationUpdate(successUpdate);
+                    } else {
+                        // Compute delay from strategy
+                        Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);
+
+                        // Checkpoint RETRY with delay
+                        var retryUpdate = OperationUpdate.builder()
+                                .action(OperationAction.RETRY)
+                                .payload(serializedState)
+                                .stepOptions(StepOptions.builder()
+                                        .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
+                                        .build());
+                        sendOperationUpdate(retryUpdate);
+
+                        // Poll for READY, then continue the loop
+                        pollForOperationUpdates()
+                                .thenCompose(op -> op.status() == OperationStatus.READY
+                                        ? CompletableFuture.completedFuture(op)
+                                        : pollForOperationUpdates())
+                                .thenRun(() -> executeCheckLogic(deserializedValue, attempt + 1));
+                    }
+                } catch (Throwable e) {
+                    handleCheckFailure(e);
+                }
+            }
+        };
+
+        runUserHandler(userHandler, getOperationId(), ThreadType.STEP);
     }
 
     private void handleCheckFailure(Throwable exception) {
@@ -182,7 +180,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             throw suspendExecutionException;
         }
         if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {
-            terminateExecution(unrecoverable);
+            throw terminateExecution(unrecoverable);
         }
 
         final var errorObject = (exception instanceof DurableOperationException durableOpEx)

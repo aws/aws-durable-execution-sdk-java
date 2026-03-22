@@ -65,7 +65,7 @@ public class CallbackOperation<T> extends SerializableDurableOperation<T> implem
                 // Still waiting - continue to polling
             }
             default ->
-                terminateExecutionWithIllegalDurableOperationException(
+                throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected callback status: " + existing.status());
         }
         pollForOperationUpdates();

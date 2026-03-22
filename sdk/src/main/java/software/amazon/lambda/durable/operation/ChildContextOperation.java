@@ -5,8 +5,6 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
 
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -28,6 +26,7 @@ import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -46,7 +45,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private final Function<DurableContext, T> function;
-    private final ExecutorService userExecutor;
     private final ConcurrencyOperation<?> parentOperation;
     private boolean replayChildContext;
     private T reconstructedResult;
@@ -69,7 +67,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             ConcurrencyOperation<?> parentOperation) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
         this.function = function;
-        this.userExecutor = getContext().getDurableConfig().getExecutorService();
         this.parentOperation = parentOperation;
     }
 
@@ -116,14 +113,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         //       third level child context "hash(hash(hash(1)-2)-1)".
         var contextId = getOperationId();
 
-        // Thread registration is intentionally split across two threads:
-        // 1. registerActiveThread on the PARENT thread — ensures the child is tracked before the
-        //    parent can deregister and trigger suspension (race prevention).
-        // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
-        //    the child context know which context they belong to.
-        // registerActiveThread is idempotent (no-op if already registered).
-        registerActiveThread(contextId);
-
         Runnable userHandler = () -> {
             // use a try-with-resources to
             // - add thread id/type to thread local when the step starts
@@ -144,7 +133,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         };
 
         // Execute user provided child context code in user-configured executor
-        CompletableFuture.runAsync(userHandler, userExecutor);
+        runUserHandler(userHandler, contextId, ThreadType.CONTEXT);
     }
 
     private void handleChildContextSuccess(T result) {
@@ -192,7 +181,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         }
         if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
             // terminate the execution and throw the exception if it's not recoverable
-            terminateExecution(unrecoverableDurableExecutionException);
+            throw terminateExecution(unrecoverableDurableExecutionException);
         }
 
         // Skip checkpointing if parent ConcurrencyOperation has already completed —

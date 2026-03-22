@@ -12,7 +12,6 @@ import java.lang.reflect.Field;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -21,6 +20,7 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
@@ -39,17 +39,19 @@ class ParallelOperationTest {
 
     private static final SerDes SER_DES = new JacksonSerDes();
     private static final String OPERATION_ID = "parallel-op-1";
+    private static final String CHILD_OP_1 = TestUtils.hashOperationId(OPERATION_ID + "-1");
+    private static final String CHILD_OP_2 = TestUtils.hashOperationId(OPERATION_ID + "-2");
 
     private DurableContextImpl durableContext;
     private ExecutionManager executionManager;
-    private AtomicInteger operationIdCounter;
-    private OperationIdGenerator mockIdGenerator;
 
     @BeforeEach
     void setUp() {
         durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
-        operationIdCounter = new AtomicInteger(0);
+
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(null, ThreadType.CONTEXT));
+        when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
 
         var childContext = mock(DurableContextImpl.class);
         when(childContext.getExecutionManager()).thenReturn(executionManager);
@@ -64,13 +66,6 @@ class ParallelOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
-        when(durableContext.createChildContextWithoutSettingThreadContext(anyString(), anyString()))
-                .thenReturn(childContext);
-        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
-        // Default: no existing operations (fresh execution)
-        mockIdGenerator = mock(OperationIdGenerator.class);
-        when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
-        when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
 
         // Capture registered operations so we can drive onCheckpointComplete callbacks.
         var registeredOps = new ConcurrentHashMap<String, BaseDurableOperation>();
@@ -110,11 +105,14 @@ class ParallelOperationTest {
     }
 
     private ParallelOperation createOperation(CompletionConfig completionConfig) {
-        return new ParallelOperation(
+        var op = new ParallelOperation(
                 OperationIdentifier.of(OPERATION_ID, "test-parallel", OperationType.CONTEXT, OperationSubType.PARALLEL),
                 SER_DES,
                 durableContext,
                 ParallelConfig.builder().completionConfig(completionConfig).build());
+
+        op.execute();
+        return op;
     }
 
     private void setOperationIdGenerator(ConcurrencyOperation<?> op, OperationIdGenerator mockGenerator)
@@ -167,9 +165,9 @@ class ParallelOperationTest {
 
     @Test
     void allBranchesSucceed_sendsSucceedCheckpointAndReturnsCorrectResult() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -177,9 +175,9 @@ class ParallelOperationTest {
                         .contextDetails(
                                 ContextDetails.builder().result("\"r1\"").build())
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
                 .thenReturn(Operation.builder()
-                        .id("child-2")
+                        .id(CHILD_OP_2)
                         .name("branch-2")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -189,7 +187,6 @@ class ParallelOperationTest {
                         .build());
 
         var op = createOperation(CompletionConfig.allSuccessful());
-        setOperationIdGenerator(op, mockIdGenerator);
         op.enqueueItem(
                 "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
         op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
@@ -208,9 +205,9 @@ class ParallelOperationTest {
 
     @Test
     void minSuccessful_completesWhenThresholdMetAndReturnsResult() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -220,7 +217,6 @@ class ParallelOperationTest {
                         .build());
 
         var op = createOperation(CompletionConfig.minSuccessful(1));
-        setOperationIdGenerator(op, mockIdGenerator);
         op.enqueueItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         var result = op.get();
@@ -262,9 +258,9 @@ class ParallelOperationTest {
                         .subType(OperationSubType.PARALLEL.getValue())
                         .status(OperationStatus.STARTED)
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -272,9 +268,9 @@ class ParallelOperationTest {
                         .contextDetails(
                                 ContextDetails.builder().result("\"r1\"").build())
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
                 .thenReturn(Operation.builder()
-                        .id("child-2")
+                        .id(CHILD_OP_2)
                         .name("branch-2")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -284,8 +280,6 @@ class ParallelOperationTest {
                         .build());
 
         var op = createOperation(CompletionConfig.allSuccessful());
-        setOperationIdGenerator(op, mockIdGenerator);
-        op.execute();
         op.enqueueItem(
                 "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
         op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
@@ -312,9 +306,9 @@ class ParallelOperationTest {
                         .subType(OperationSubType.PARALLEL.getValue())
                         .status(OperationStatus.SUCCEEDED)
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -322,9 +316,9 @@ class ParallelOperationTest {
                         .contextDetails(
                                 ContextDetails.builder().result("\"r1\"").build())
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
                 .thenReturn(Operation.builder()
-                        .id("child-2")
+                        .id(CHILD_OP_2)
                         .name("branch-2")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -334,8 +328,6 @@ class ParallelOperationTest {
                         .build());
 
         var op = createOperation(CompletionConfig.allSuccessful());
-        setOperationIdGenerator(op, mockIdGenerator);
-        op.execute();
         op.enqueueItem(
                 "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
         op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
@@ -355,10 +347,10 @@ class ParallelOperationTest {
     // ===== Branch failure sends SUCCEED checkpoint and returns result =====
 
     @Test
-    void branchFailure_sendsSucceedCheckpointAndReturnsFailureCounts() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+    void branchFailure_sendsSucceedCheckpointAndReturnsFailureCounts() {
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -366,7 +358,6 @@ class ParallelOperationTest {
                         .build());
 
         var op = createOperation(CompletionConfig.allSuccessful());
-        setOperationIdGenerator(op, mockIdGenerator);
         op.enqueueItem(
                 "branch-1",
                 ctx -> {
@@ -376,7 +367,7 @@ class ParallelOperationTest {
                 SER_DES,
                 OperationSubType.PARALLEL_BRANCH);
 
-        var result = assertDoesNotThrow(() -> op.get());
+        var result = assertDoesNotThrow(op::get);
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
         verify(executionManager, never())
@@ -389,9 +380,9 @@ class ParallelOperationTest {
 
     @Test
     void get_someBranchesFail_returnsCorrectCountsAndFailureStatus() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -399,9 +390,9 @@ class ParallelOperationTest {
                         .contextDetails(
                                 ContextDetails.builder().result("\"r1\"").build())
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
                 .thenReturn(Operation.builder()
-                        .id("child-2")
+                        .id(CHILD_OP_2)
                         .name("branch-2")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -410,7 +401,6 @@ class ParallelOperationTest {
 
         // toleratedFailureCount=1 so the operation completes after both branches finish
         var op = createOperation(CompletionConfig.toleratedFailureCount(1));
-        setOperationIdGenerator(op, mockIdGenerator);
         op.enqueueItem(
                 "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
         op.enqueueItem(

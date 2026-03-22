@@ -67,24 +67,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Context lambdaContext,
             String contextId,
             String contextName) {
-        this(executionManager, durableConfig, lambdaContext, contextId, contextName, true);
-    }
-
-    private DurableContextImpl(
-            ExecutionManager executionManager,
-            DurableConfig durableConfig,
-            Context lambdaContext,
-            String contextId,
-            String contextName,
-            boolean setCurrentThreadContext) {
-        super(
-                executionManager,
-                durableConfig,
-                lambdaContext,
-                contextId,
-                contextName,
-                ThreadType.CONTEXT,
-                setCurrentThreadContext);
+        super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);
         operationIdGenerator = new OperationIdGenerator(contextId);
     }
 
@@ -113,22 +96,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     public DurableContextImpl createChildContext(String childContextId, String childContextName) {
         return new DurableContextImpl(
                 getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName);
-    }
-
-    /**
-     * Creates a child context without setting the current thread context.
-     *
-     * <p>Use this when the child context is being created on a thread that should not have its thread-local context
-     * overwritten (e.g. when constructing the context ahead of running it on a separate thread).
-     *
-     * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
-     * @param childContextName the name of the child context
-     * @return a new DurableContext for the child context
-     */
-    public DurableContextImpl createChildContextWithoutSettingThreadContext(
-            String childContextId, String childContextName) {
-        return new DurableContextImpl(
-                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName, false);
     }
 
     /**
@@ -418,7 +385,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (logger != null) {
             logger.close();
         }
-        super.close();
     }
 
     /**

@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -16,6 +17,7 @@ import software.amazon.lambda.durable.exception.IllegalDurableOperationException
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -46,6 +48,7 @@ public abstract class BaseDurableOperation {
     protected final ExecutionManager executionManager;
     protected final CompletableFuture<BaseDurableOperation> completionFuture;
     private final DurableContextImpl durableContext;
+    private final AtomicReference<CompletableFuture<Void>> runningUserHandler = new AtomicReference<>(null);
 
     /**
      * Constructs a new durable operation.
@@ -152,7 +155,7 @@ public abstract class BaseDurableOperation {
                     "Nested %s operation is not supported on %s from within a %s execution.",
                     getType(), getName(), current);
             // terminate execution and throw the exception
-            terminateExecutionWithIllegalDurableOperationException(message);
+            throw terminateExecutionWithIllegalDurableOperationException(message);
         }
     }
 
@@ -206,6 +209,50 @@ public abstract class BaseDurableOperation {
                     String.format("%s operation not found: %s", getType(), getOperationId()));
         }
         return op;
+    }
+
+    protected void runUserHandler(Runnable runnable, String contextId, ThreadType threadType) {
+        Runnable wrapped = () -> {
+            executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));
+            try {
+                runnable.run();
+            } finally {
+                if (contextId != null) {
+                    try {
+                        // if this is a child context or a step context, we need to
+                        // deregister the context's thread from the execution manager
+                        executionManager.deregisterActiveThread(contextId);
+                    } catch (SuspendExecutionException e) {
+                        // Expected when this is the last active thread. Must catch here because:
+                        // 1/ This runs in a worker thread detached from handlerFuture
+                        // 2/ Uncaught exception would prevent stepAsync().get() from resume
+                        // Suspension/Termination is already signaled via
+                        // suspendExecutionFuture/terminateExecutionFuture
+                        // before the throw.
+                    }
+                }
+            }
+        };
+
+        // runUserHandler is used to ensure that only one user handler is running at a time
+        if (runningUserHandler.get() != null) {
+            throw new IllegalStateException("User handler already running");
+        }
+
+        // Thread registration is intentionally split across two threads:
+        // 1. registerActiveThread on the PARENT thread — ensures the child is tracked before the
+        //    parent can deregister and trigger suspension (race prevention).
+        // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
+        //    the child context know which context they belong to.
+        // registerActiveThread is idempotent (no-op if already registered).
+        registerActiveThread(contextId);
+
+        if (!runningUserHandler.compareAndSet(
+                null,
+                CompletableFuture.runAsync(
+                        wrapped, getContext().getDurableConfig().getExecutorService()))) {
+            throw new IllegalStateException("User handler already running");
+        }
     }
 
     /**
@@ -317,13 +364,13 @@ public abstract class BaseDurableOperation {
         }
 
         if (!checkpointed.type().equals(getType())) {
-            terminateExecution(new NonDeterministicExecutionException(String.format(
+            throw terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation type mismatch for \"%s\". Expected %s, got %s",
                     getOperationId(), checkpointed.type(), getType())));
         }
 
         if (!Objects.equals(checkpointed.name(), getName())) {
-            terminateExecution(new NonDeterministicExecutionException(String.format(
+            throw terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     getOperationId(), checkpointed.name(), getName())));
         }
@@ -331,7 +378,7 @@ public abstract class BaseDurableOperation {
         if ((getSubType() == null && checkpointed.subType() != null)
                 || getSubType() != null
                         && !Objects.equals(checkpointed.subType(), getSubType().getValue())) {
-            terminateExecution(new NonDeterministicExecutionException(String.format(
+            throw terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation subType mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     getOperationId(), checkpointed.subType(), getSubType())));
         }

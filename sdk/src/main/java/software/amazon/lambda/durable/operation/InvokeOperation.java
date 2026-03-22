@@ -58,7 +58,7 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
             case STARTED -> pollForOperationUpdates();
             case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
             default ->
-                terminateExecutionWithIllegalDurableOperationException(
+                throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected invoke status: " + existing.statusAsString());
         }
     }

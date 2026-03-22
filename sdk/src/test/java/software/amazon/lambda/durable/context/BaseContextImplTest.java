@@ -15,8 +15,6 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.execution.ThreadContext;
-import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 
 class BaseContextImplTest {
@@ -59,11 +57,6 @@ class BaseContextImplTest {
         // Creating a root context with the default constructor should set the thread context
         DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
-
-        var threadContext = executionManager.getCurrentThreadContext();
-        assertNotNull(threadContext);
-        assertEquals(ThreadType.CONTEXT, threadContext.threadType());
-        assertNull(threadContext.threadId());
     }
 
     @Test
@@ -73,51 +66,8 @@ class BaseContextImplTest {
         // createRootContext sets thread context to root (threadId=null)
         var rootContext = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
-        assertEquals(
-                ThreadType.CONTEXT, executionManager.getCurrentThreadContext().threadType());
-        assertNull(executionManager.getCurrentThreadContext().threadId());
 
         // createChildContext (setCurrentThreadContext=true) should overwrite with child's context
         rootContext.createChildContext("child-id", "child-name");
-
-        var threadContext = executionManager.getCurrentThreadContext();
-        assertNotNull(threadContext);
-        assertEquals(ThreadType.CONTEXT, threadContext.threadType());
-        assertEquals("child-id", threadContext.threadId());
-    }
-
-    @Test
-    void constructorWithSetCurrentThreadContextFalse_doesNotOverwriteThreadContext() {
-        var executionManager = createExecutionManager();
-
-        // Create root context first (it will set thread context to null/root)
-        var rootContext = DurableContextImpl.createRootContext(
-                executionManager, DurableConfig.builder().build(), null);
-
-        // Now set a sentinel — simulating a caller thread that already has context established
-        var sentinel = new ThreadContext("original-context", ThreadType.CONTEXT);
-        executionManager.setCurrentThreadContext(sentinel);
-
-        // createChildContextWithoutSettingThreadContext should NOT overwrite the sentinel
-        rootContext.createChildContextWithoutSettingThreadContext("child-id", "child-name");
-
-        // Thread context should still be the sentinel, not the child's context
-        var threadContext = executionManager.getCurrentThreadContext();
-        assertNotNull(threadContext);
-        assertEquals("original-context", threadContext.threadId());
-    }
-
-    @Test
-    void createChildContextWithoutSettingThreadContext_returnsValidChildContext() {
-        var executionManager = createExecutionManager();
-        executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
-        var rootContext = DurableContextImpl.createRootContext(
-                executionManager, DurableConfig.builder().build(), null);
-
-        var childContext = rootContext.createChildContextWithoutSettingThreadContext("child-id", "child-name");
-
-        assertNotNull(childContext);
-        assertEquals("child-id", childContext.getContextId());
-        assertEquals("child-name", childContext.getContextName());
     }
 }

@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -49,45 +48,5 @@ class DurableContextImplTest {
         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
         rootContext = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
-    }
-
-    @Test
-    void createChildContext_setsThreadContextToChild() {
-        rootContext.createChildContext("child-1", "my-child");
-
-        var threadContext = executionManager.getCurrentThreadContext();
-        assertNotNull(threadContext);
-        assertEquals("child-1", threadContext.threadId());
-        assertEquals(ThreadType.CONTEXT, threadContext.threadType());
-    }
-
-    @Test
-    void createChildContextWithoutSettingThreadContext_preservesCallerThreadContext() {
-        var callerContext = new ThreadContext("caller-thread", ThreadType.CONTEXT);
-        executionManager.setCurrentThreadContext(callerContext);
-
-        rootContext.createChildContextWithoutSettingThreadContext("child-1", "my-child");
-
-        // Thread context must remain unchanged
-        var threadContext = executionManager.getCurrentThreadContext();
-        assertEquals("caller-thread", threadContext.threadId());
-    }
-
-    @Test
-    void createChildContextWithoutSettingThreadContext_returnsCorrectChildMetadata() {
-        var child = rootContext.createChildContextWithoutSettingThreadContext("child-42", "child-name");
-
-        assertEquals("child-42", child.getContextId());
-        assertEquals("child-name", child.getContextName());
-    }
-
-    @Test
-    void createChildContextWithoutSettingThreadContext_whenNoThreadContextSet_leavesItNull() {
-        // Clear any existing thread context
-        executionManager.setCurrentThreadContext(null);
-
-        rootContext.createChildContextWithoutSettingThreadContext("child-1", "my-child");
-
-        assertNull(executionManager.getCurrentThreadContext());
     }
 }

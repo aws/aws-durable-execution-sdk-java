@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
-import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -72,7 +69,7 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
                     "Nested %s operation is not supported on %s from within a %s execution.",
                     getType(), getName(), current);
             // terminate execution and throw the exception
-            terminateExecutionWithIllegalDurableOperationException(message);
+            throw terminateExecutionWithIllegalDurableOperationException(message);
         }
     }
 
@@ -150,33 +147,6 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
             logger.warn("Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
         }
         return original;
-    }
-
-    /** Validates that current operation matches checkpointed operation during replay. */
-    protected void validateReplay(Operation checkpointed) {
-        if (checkpointed == null || checkpointed.type() == null) {
-            return; // First execution, no validation needed
-        }
-
-        if (!checkpointed.type().equals(getType())) {
-            terminateExecution(new NonDeterministicExecutionException(String.format(
-                    "Operation type mismatch for \"%s\". Expected %s, got %s",
-                    getOperationId(), checkpointed.type(), getType())));
-        }
-
-        if (!Objects.equals(checkpointed.name(), getName())) {
-            terminateExecution(new NonDeterministicExecutionException(String.format(
-                    "Operation name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                    getOperationId(), checkpointed.name(), getName())));
-        }
-
-        if ((getSubType() == null && checkpointed.subType() != null)
-                || getSubType() != null
-                        && !Objects.equals(checkpointed.subType(), getSubType().getValue())) {
-            terminateExecution(new NonDeterministicExecutionException(String.format(
-                    "Operation subType mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                    getOperationId(), checkpointed.subType(), getSubType())));
-        }
     }
 
     public abstract T get();

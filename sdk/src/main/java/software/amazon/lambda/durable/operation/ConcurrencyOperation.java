@@ -6,14 +6,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +22,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -53,23 +53,20 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     private final int maxConcurrency;
     private final Integer minSuccessful;
     private final Integer toleratedFailureCount;
-    private final AtomicInteger succeededCount = new AtomicInteger(0);
-    private final AtomicInteger failedCount = new AtomicInteger(0);
-    protected final AtomicBoolean isJoined = new AtomicBoolean(false);
-    private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
-    private final List<ChildContextOperation<?>> branches = Collections.synchronizedList(new ArrayList<>());
-    private final Map<ChildContextOperation<?>, Boolean> runningChildren = new ConcurrentHashMap<>();
-    private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<>());
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
-    private volatile CompletableFuture<BaseDurableOperation> vacancyListener;
 
-    private record NewBranchItem<T>(
-            String name,
-            Function<DurableContext, T> function,
-            TypeToken<T> resultType,
-            SerDes serDes,
-            OperationSubType branchSubType) {}
+    // access by context thread only
+    private final List<ChildContextOperation<?>> branches = Collections.synchronizedList(new ArrayList<>());
+
+    // put only by context thread and consume only by consumer thread
+    private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
+
+    // set by context thread and used by consumer thread
+    protected final AtomicBoolean isJoined = new AtomicBoolean(false);
+
+    // used to wake up consumer thread for either new items or checking completion condition (isJoined changed)
+    private final AtomicReference<CompletableFuture<BaseDurableOperation>> consumerThreadListener;
 
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
@@ -84,7 +81,8 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         this.minSuccessful = minSuccessful;
         this.toleratedFailureCount = toleratedFailureCount;
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
-        this.rootContext = durableContext.createChildContextWithoutSettingThreadContext(getOperationId(), getName());
+        this.rootContext = durableContext.createChildContext(getOperationId(), getName());
+        this.consumerThreadListener = new AtomicReference<>(null);
     }
 
     // ========== Template methods for subclasses ==========
@@ -139,57 +137,84 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         branches.add(childOp);
         pendingQueue.add(childOp);
         logger.debug("Item enqueued {}", name);
-        if (vacancyListener != null) {
-            vacancyListener.complete(null);
-        }
+        // notify the consumer thread a new item is available
+        completeVacancyListenerIfSet();
         return childOp;
     }
 
-    protected void executeItems() {
-        // Start as many items as concurrency allows
-        var contextId = getOperationId();
-        registerActiveThread(contextId);
+    private void completeVacancyListenerIfSet() {
+        synchronized (this) {
+            if (consumerThreadListener.get() != null) {
+                consumerThreadListener.get().complete(null);
+            }
+        }
+    }
 
-        Runnable handler = () -> {
-            try (var context = getContext().createChildContext(contextId, getName())) {
-                while (true) {
-                    if (isOperationCompleted()) {
-                        return;
+    /** Starts execution of all enqueued items. */
+    protected void executeItems() {
+        // variables accessed only by the consumer thread. Put them here to avoid accidentally used by other threads
+        Set<BaseDurableOperation> runningChildren = new HashSet<>();
+        AtomicInteger succeededCount = new AtomicInteger(0);
+        AtomicInteger failedCount = new AtomicInteger(0);
+
+        Runnable consumer = () -> {
+            while (true) {
+                if (isOperationCompleted()) {
+                    return;
+                }
+                var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
+                if (completionStatus != null) {
+                    handleComplete(completionStatus);
+                    return;
+                }
+                while (runningChildren.size() < maxConcurrency && !pendingQueue.isEmpty()) {
+                    var next = pendingQueue.poll();
+                    runningChildren.add(next);
+                    logger.debug("Executing operation {}", next.getName());
+                    next.execute();
+                }
+                var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);
+                if (child != null) {
+                    if (runningChildren.contains(child)) {
+                        runningChildren.remove(child);
+                        onItemComplete(succeededCount, failedCount, (ChildContextOperation<?>) child);
+                    } else {
+                        throw new IllegalStateException("Unexpected completion: " + child);
                     }
-                    while (runningChildren.size() < maxConcurrency) {
-                        if (vacancyListener != null && vacancyListener.isDone()) {
-                            vacancyListener = null;
-                        }
-                        var next = pendingQueue.poll();
-                        if (next == null) {
-                            break;
-                        }
-                        runningChildren.put(next, true);
-                        logger.debug("Executing operation {}", next.getName());
-                        next.execute();
-                    }
-                    var child = waitForChildCompletion();
-                    if (runningChildren.containsKey(child)) {
-                        onItemComplete((ChildContextOperation<?>) child);
+                }
+                synchronized (this) {
+                    if (consumerThreadListener.get() != null
+                            && consumerThreadListener.get().isDone()) {
+                        consumerThreadListener.set(null);
                     }
                 }
             }
         };
-        CompletableFuture.runAsync(handler, getContext().getDurableConfig().getExecutorService());
+        // run consumer in the user thread pool, although it's not a real user thread
+        runUserHandler(consumer, getOperationId(), ThreadType.CONTEXT);
     }
 
-    private BaseDurableOperation waitForChildCompletion() {
+    private BaseDurableOperation waitForChildCompletion(
+            AtomicInteger succeededCount, AtomicInteger failedCount, Set<BaseDurableOperation> runningChildren) {
         var threadContext = getCurrentThreadContext();
         CompletableFuture<Object> future;
 
         synchronized (this) {
+            // check again in synchronized block to prevent race conditions
+            if (isOperationCompleted()) {
+                return null;
+            }
+            var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
+            if (completionStatus != null) {
+                return null;
+            }
             ArrayList<CompletableFuture<BaseDurableOperation>> futures;
-            futures = new ArrayList<>(runningChildren.keySet().stream()
+            futures = new ArrayList<>(runningChildren.stream()
                     .map(BaseDurableOperation::getCompletionFuture)
                     .toList());
             if (futures.size() < maxConcurrency) {
-                vacancyListener = new CompletableFuture<>();
-                futures.add(vacancyListener);
+                consumerThreadListener.compareAndSet(null, new CompletableFuture<>());
+                futures.add(consumerThreadListener.get());
             }
 
             // future will be completed immediately if any future of the list is already completed
@@ -210,63 +235,28 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
      *
      * @param child the child operation that completed
      */
-    public void onItemComplete(ChildContextOperation<?> child) {
-        if (!completedOperations.add(child.getOperationId())) {
-            throw new IllegalStateException("Child operation " + child.getOperationId() + " completed twice");
-        }
-
+    private void onItemComplete(
+            AtomicInteger succeededCount, AtomicInteger failedCount, ChildContextOperation<?> child) {
         // Evaluate child result outside the lock — child.get() may block waiting for a checkpoint response.
         logger.debug("OnItemComplete called by {}, Id: {}", child.getName(), child.getOperationId());
-        boolean succeeded;
         try {
             child.get();
             logger.debug("Result succeeded - {}", child.getName());
-            succeeded = true;
+            succeededCount.incrementAndGet();
         } catch (Throwable e) {
             logger.debug("Child operation {} failed: {}", child.getOperationId(), e.getMessage());
-            succeeded = false;
-        }
-
-        // Counter updates, completion check, and next-item dispatch must be atomic to prevent
-        // the main thread's join() from seeing runningCount==0 with incomplete counters.
-        synchronized (this) {
-            if (succeeded) {
-                succeededCount.incrementAndGet();
-            } else {
-                failedCount.incrementAndGet();
-            }
-            if (!runningChildren.containsKey(child)) {
-                throw new IllegalStateException("Child operation " + child.getOperationId() + " completed twice");
-            }
-            runningChildren.remove(child);
-
-            var completionStatus = canComplete();
-            if (completionStatus != null) {
-                handleComplete(completionStatus);
-            }
+            failedCount.incrementAndGet();
         }
     }
 
     // ========== Completion logic ==========
     /**
-     * Validates that the number of registered items is sufficient to satisfy the completion criteria. Called at join()
-     * time because branches are registered incrementally and the total count is only known once the user calls join().
-     *
-     * @throws IllegalArgumentException if the item count cannot satisfy the criteria
-     */
-    protected void validateItemCount() {
-        if (minSuccessful != null && minSuccessful > branches.size()) {
-            throw new IllegalStateException("minSuccessful (" + minSuccessful
-                    + ") exceeds the number of registered items (" + branches.size() + ")");
-        }
-    }
-
-    /**
      * Checks whether the concurrency operation can be considered complete.
      *
      * @return the completion status if the operation is complete, or null if it should continue
      */
-    protected ConcurrencyCompletionStatus canComplete() {
+    private ConcurrencyCompletionStatus canComplete(
+            AtomicInteger succeededCount, AtomicInteger failedCount, Set<BaseDurableOperation> runningChildren) {
         int succeeded = succeededCount.get();
         int failed = failedCount.get();
 
@@ -281,7 +271,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         }
 
         // All items finished — complete
-        if (isAllItemsFinished()) {
+        if (isJoined.get() && pendingQueue.isEmpty() && runningChildren.isEmpty()) {
             return ConcurrencyCompletionStatus.ALL_COMPLETED;
         }
 
@@ -301,27 +291,18 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
      * Blocks the calling thread until the concurrency operation reaches a terminal state. Validates item count, handles
      * zero-branch case, then delegates to {@code waitForOperationCompletion()} from BaseDurableOperation.
      */
-    public void join() {
-        validateItemCount();
-        isJoined.set(true);
-        synchronized (this) {
-            if (!isOperationCompleted()) {
-                var completionStatus = canComplete();
-                if (completionStatus != null) {
-                    handleComplete(completionStatus);
-                }
-            }
+    protected void join() {
+        if (minSuccessful != null && minSuccessful > branches.size()) {
+            throw new IllegalStateException("minSuccessful (" + minSuccessful
+                    + ") exceeds the number of registered items (" + branches.size() + ")");
         }
-
+        isJoined.set(true);
+        // notify the execution thread this concurrency operation is joined
+        completeVacancyListenerIfSet();
         waitForOperationCompletion();
     }
 
     protected List<ChildContextOperation<?>> getBranches() {
         return branches;
-    }
-
-    /** Returns true if all items have finished (no pending, no running). Used by subclasses to override canComplete. */
-    protected boolean isAllItemsFinished() {
-        return isJoined.get() && pendingQueue.isEmpty() && runningChildren.isEmpty();
     }
 }

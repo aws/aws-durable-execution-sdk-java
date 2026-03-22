@@ -19,6 +19,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -36,19 +37,18 @@ class ConcurrencyOperationTest {
 
     private static final SerDes SER_DES = new JacksonSerDes();
     private static final String OPERATION_ID = "op-1";
+    private static final String CHILD_OP_1 = TestUtils.hashOperationId(OPERATION_ID + "-1");
+    private static final String CHILD_OP_2 = TestUtils.hashOperationId(OPERATION_ID + "-2");
     private static final TypeToken<Void> RESULT_TYPE = TypeToken.get(Void.class);
 
     private DurableContextImpl durableContext;
     private DurableContextImpl childContext;
     private ExecutionManager executionManager;
-    private AtomicInteger operationIdCounter;
-    private OperationIdGenerator mockIdGenerator;
 
     @BeforeEach
     void setUp() {
         durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
-        operationIdCounter = new AtomicInteger(0);
 
         var childContext = mock(DurableContextImpl.class);
         this.childContext = childContext;
@@ -64,11 +64,7 @@ class ConcurrencyOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
-        when(durableContext.createChildContextWithoutSettingThreadContext(anyString(), anyString()))
-                .thenReturn(childContext);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
-        mockIdGenerator = mock(OperationIdGenerator.class);
-        when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         // All child operations are NOT in replay
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
         // Simulate the real backend: the parent concurrency operation is available in storage after completion
@@ -86,7 +82,7 @@ class ConcurrencyOperationTest {
     }
 
     private TestConcurrencyOperation createOperation(CompletionConfig completionConfig) throws Exception {
-        TestConcurrencyOperation testConcurrencyOperation = new TestConcurrencyOperation(
+        return new TestConcurrencyOperation(
                 OperationIdentifier.of(
                         OPERATION_ID, "test-concurrency", OperationType.CONTEXT, OperationSubType.PARALLEL),
                 RESULT_TYPE,
@@ -94,8 +90,6 @@ class ConcurrencyOperationTest {
                 durableContext,
                 Integer.MAX_VALUE,
                 completionConfig);
-        setOperationIdGenerator(testConcurrencyOperation, mockIdGenerator);
-        return testConcurrencyOperation;
     }
 
     private void setOperationIdGenerator(ConcurrencyOperation<?> op, OperationIdGenerator mockGenerator)
@@ -109,9 +103,9 @@ class ConcurrencyOperationTest {
 
     @Test
     void allChildrenAlreadySucceed_callsHandleSuccess() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -119,9 +113,9 @@ class ConcurrencyOperationTest {
                         .contextDetails(
                                 ContextDetails.builder().result("\"result-1\"").build())
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
                 .thenReturn(Operation.builder()
-                        .id("child-2")
+                        .id(CHILD_OP_2)
                         .name("branch-2")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -132,6 +126,7 @@ class ConcurrencyOperationTest {
 
         var functionCalled = new AtomicBoolean(false);
         var op = createOperation(CompletionConfig.allSuccessful());
+        op.execute();
         op.enqueueItem(
                 "branch-1",
                 ctx1 -> {
@@ -163,9 +158,9 @@ class ConcurrencyOperationTest {
 
     @Test
     void singleChildAlreadySucceeds_fullCycle() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("only-branch")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -186,6 +181,7 @@ class ConcurrencyOperationTest {
                 SER_DES,
                 OperationSubType.PARALLEL_BRANCH);
 
+        op.execute();
         op.exposedJoin();
 
         assertTrue(op.isSuccessHandled());
@@ -233,10 +229,14 @@ class ConcurrencyOperationTest {
         }
 
         @Override
-        protected void start() {}
+        protected void start() {
+            executeItems();
+        }
 
         @Override
-        protected void replay(Operation existing) {}
+        protected void replay(Operation existing) {
+            executeItems();
+        }
 
         @Override
         public Void get() {
