@@ -57,6 +57,11 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 config.maxConcurrency(),
                 config.completionConfig().minSuccessful(),
                 getToleratedFailureCount(config.completionConfig(), items.size()));
+        if (config.completionConfig().minSuccessful() != null
+                && config.completionConfig().minSuccessful() > items.size()) {
+            throw new IllegalArgumentException("minSuccessful cannot be greater than total items: "
+                    + config.completionConfig().minSuccessful() + " > " + items.size());
+        }
         this.items = List.copyOf(items);
         this.function = function;
         this.itemResultType = itemResultType;

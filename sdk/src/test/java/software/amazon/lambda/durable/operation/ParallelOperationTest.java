@@ -145,7 +145,7 @@ class ParallelOperationTest {
         op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
         op.addItem("branch-3", ctx -> "r3", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
-        assertEquals(3, op.getTotalItems());
+        assertEquals(3, op.getBranches().size());
     }
 
     @Test

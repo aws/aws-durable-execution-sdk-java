@@ -155,8 +155,9 @@ class ConcurrencyOperationTest {
 
         assertTrue(op.isSuccessHandled());
         assertFalse(op.isFailureHandled());
-        assertEquals(2, op.getSucceededCount());
-        assertEquals(0, op.getFailedCount());
+        var items = op.getBranches();
+        assertEquals(2, items.size());
+        assertTrue(items.stream().allMatch(b -> b.getOperation().status().equals(OperationStatus.SUCCEEDED)));
         assertFalse(functionCalled.get(), "Functions should not be called during SUCCEEDED replay");
     }
 
@@ -188,8 +189,9 @@ class ConcurrencyOperationTest {
         op.exposedJoin();
 
         assertTrue(op.isSuccessHandled());
-        assertEquals(1, op.getSucceededCount());
-        assertEquals(0, op.getFailedCount());
+        var items = op.getBranches();
+        assertEquals(1, items.size());
+        assertEquals(OperationStatus.SUCCEEDED, items.get(0).getOperation().status());
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
     }
 

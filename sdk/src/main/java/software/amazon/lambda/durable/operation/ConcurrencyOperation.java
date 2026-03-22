@@ -59,7 +59,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<>());
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
-    private ConcurrencyCompletionStatus completionStatus;
 
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
@@ -86,7 +85,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @param name the name of this item
      * @param function the user function to execute
      * @param resultType the result type token
-     * @param serDes the serializer/deserializer
+     * @param branchSubType the sub-type of the branch operation
      * @param parentContext the parent durable context
      * @param <R> the result type of the child operation
      * @return a new ChildContextOperation
@@ -206,9 +205,9 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             }
             runningCount.decrementAndGet();
 
-            this.completionStatus = canComplete();
-            if (this.completionStatus != null) {
-                handleComplete(this.completionStatus);
+            var completionStatus = canComplete();
+            if (completionStatus != null) {
+                handleComplete(completionStatus);
             } else {
                 executeNextItemIfAllowed();
             }
@@ -223,9 +222,9 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @throws IllegalArgumentException if the item count cannot satisfy the criteria
      */
     protected void validateItemCount() {
-        if (minSuccessful != null && minSuccessful > getTotalItems()) {
+        if (minSuccessful != null && minSuccessful > branches.size()) {
             throw new IllegalStateException("minSuccessful (" + minSuccessful
-                    + ") exceeds the number of registered items (" + getTotalItems() + ")");
+                    + ") exceeds the number of registered items (" + branches.size() + ")");
         }
     }
 
@@ -235,8 +234,8 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      * @return the completion status if the operation is complete, or null if it should continue
      */
     protected ConcurrencyCompletionStatus canComplete() {
-        int succeeded = getSucceededCount();
-        int failed = getFailedCount();
+        int succeeded = succeededCount.get();
+        int failed = failedCount.get();
 
         // If we've met the minimum successful count, we're done
         if (minSuccessful != null && succeeded >= minSuccessful) {
@@ -273,29 +272,15 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         validateItemCount();
         isJoined.set(true);
         synchronized (this) {
-            this.completionStatus = canComplete();
-            if (this.completionStatus != null) {
-                handleComplete(this.completionStatus);
+            if (!isOperationCompleted()) {
+                var completionStatus = canComplete();
+                if (completionStatus != null) {
+                    handleComplete(completionStatus);
+                }
             }
         }
 
         waitForOperationCompletion();
-    }
-
-    protected int getSucceededCount() {
-        return succeededCount.get();
-    }
-
-    protected int getFailedCount() {
-        return failedCount.get();
-    }
-
-    protected int getTotalItems() {
-        return branches.size();
-    }
-
-    protected ConcurrencyCompletionStatus getCompletionStatus() {
-        return completionStatus;
     }
 
     protected List<ChildContextOperation<?>> getBranches() {

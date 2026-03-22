@@ -6,6 +6,7 @@ import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
@@ -46,6 +47,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
 
     // this field could be written and read in different threads
     private volatile boolean skipCheckpoint = false;
+    private volatile ParallelResult cachedResult;
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
@@ -64,6 +66,14 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
 
     @Override
     protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+        var items = getBranches();
+        int succeededCount = Math.toIntExact(items.stream()
+                .filter(item -> item.getOperation().status() == OperationStatus.SUCCEEDED)
+                .count());
+        int failedCount = Math.toIntExact(items.stream()
+                .filter(item -> item.getOperation().status() != OperationStatus.SUCCEEDED)
+                .count());
+        this.cachedResult = new ParallelResult(items.size(), succeededCount, failedCount, concurrencyCompletionStatus);
         if (skipCheckpoint) {
             // Do not send checkpoint during replay
             markAlreadyCompleted();
@@ -92,7 +102,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     @Override
     public ParallelResult get() {
         join();
-        return new ParallelResult(getTotalItems(), getSucceededCount(), getFailedCount(), getCompletionStatus());
+        return cachedResult;
     }
 
     /** Calls {@link #get()} if not already called. Guarantees that the context is closed. */
