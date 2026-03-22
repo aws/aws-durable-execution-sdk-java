@@ -56,8 +56,7 @@ public class ExecutionManager implements AutoCloseable {
     private final AtomicReference<ExecutionMode> executionMode;
 
     // ===== Thread Coordination =====
-    private final Map<String, BaseDurableOperation<?>> registeredOperations =
-            Collections.synchronizedMap(new HashMap<>());
+    private final Map<String, BaseDurableOperation> registeredOperations = Collections.synchronizedMap(new HashMap<>());
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
@@ -107,7 +106,7 @@ public class ExecutionManager implements AutoCloseable {
     }
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
-    public void registerOperation(BaseDurableOperation<?> operation) {
+    public void registerOperation(BaseDurableOperation operation) {
         registeredOperations.put(operation.getOperationId(), operation);
     }
 

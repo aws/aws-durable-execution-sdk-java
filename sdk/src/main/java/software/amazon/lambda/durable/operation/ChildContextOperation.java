@@ -41,7 +41,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * on completion via {@code onItemComplete()} BEFORE closing its own child context. It also skips checkpointing if the
  * parent operation has already succeeded.
  */
-public class ChildContextOperation<T> extends BaseDurableOperation<T> {
+public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
@@ -98,7 +98,7 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
             case FAILED -> markAlreadyCompleted();
             case STARTED -> executeChildContext();
             default ->
-                terminateExecutionWithIllegalDurableOperationException(
+                throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected child context status: " + existing.status());
         }
     }
@@ -106,9 +106,6 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
     @Override
     protected void markAlreadyCompleted() {
         super.markAlreadyCompleted();
-        if (parentOperation != null) {
-            parentOperation.onItemComplete(this);
-        }
     }
 
     private void executeChildContext() {
@@ -142,10 +139,6 @@ public class ChildContextOperation<T> extends BaseDurableOperation<T> {
                     handleChildContextSuccess(result);
                 } catch (Throwable e) {
                     handleChildContextFailure(e);
-                } finally {
-                    if (parentOperation != null) {
-                        parentOperation.onItemComplete(this);
-                    }
                 }
             }
         };

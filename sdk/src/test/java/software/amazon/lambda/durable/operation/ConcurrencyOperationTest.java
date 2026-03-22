@@ -132,16 +132,16 @@ class ConcurrencyOperationTest {
 
         var functionCalled = new AtomicBoolean(false);
         var op = createOperation(CompletionConfig.allSuccessful());
-        op.addItem(
+        op.enqueueItem(
                 "branch-1",
-                ctx -> {
+                ctx1 -> {
                     functionCalled.set(true);
                     return "result-1";
                 },
                 TypeToken.get(String.class),
                 SER_DES,
                 OperationSubType.PARALLEL_BRANCH);
-        op.addItem(
+        op.enqueueItem(
                 "branch-2",
                 ctx -> {
                     functionCalled.set(true);
@@ -176,7 +176,7 @@ class ConcurrencyOperationTest {
 
         var functionCalled = new AtomicBoolean(false);
         var op = createOperation(CompletionConfig.minSuccessful(1));
-        op.addItem(
+        op.enqueueItem(
                 "only-branch",
                 ctx -> {
                     functionCalled.set(true);

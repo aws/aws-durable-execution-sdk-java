@@ -6,8 +6,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,7 +46,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  *
  * @param <T> the result type of this operation
  */
-public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
+public abstract class ConcurrencyOperation<T> extends SerializableDurableOperation<T> {
 
     private static final Logger logger = LoggerFactory.getLogger(ConcurrencyOperation.class);
 
@@ -52,13 +55,21 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     private final Integer toleratedFailureCount;
     private final AtomicInteger succeededCount = new AtomicInteger(0);
     private final AtomicInteger failedCount = new AtomicInteger(0);
-    private final AtomicInteger runningCount = new AtomicInteger(0);
     protected final AtomicBoolean isJoined = new AtomicBoolean(false);
     private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
     private final List<ChildContextOperation<?>> branches = Collections.synchronizedList(new ArrayList<>());
+    private final Map<ChildContextOperation<?>, Boolean> runningChildren = new ConcurrentHashMap<>();
     private final Set<String> completedOperations = Collections.synchronizedSet(new HashSet<>());
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
+    private volatile CompletableFuture<BaseDurableOperation> vacancyListener;
+
+    private record NewBranchItem<T>(
+            String name,
+            Function<DurableContext, T> function,
+            TypeToken<T> resultType,
+            SerDes serDes,
+            OperationSubType branchSubType) {}
 
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
@@ -113,31 +124,9 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
     // ========== Concurrency control ==========
 
     /**
-     * Adds a new item to this concurrency operation. Creates the child operation and either starts it immediately or
-     * enqueues it if maxConcurrency is reached.
-     *
-     * @param name the name of the item
-     * @param function the user function to execute
-     * @param resultType the result type token
-     * @param serDes the serializer/deserializer
-     * @param <R> the result type of the child operation
-     * @return the created ChildContextOperation
-     */
-    public <R> ChildContextOperation<R> addItem(
-            String name,
-            Function<DurableContext, R> function,
-            TypeToken<R> resultType,
-            SerDes serDes,
-            OperationSubType branchSubType) {
-        var childOp = enqueueItem(name, function, resultType, serDes, branchSubType);
-        executeNextItemIfAllowed();
-        return childOp;
-    }
-
-    /**
-     * Creates and enqueues an item without starting execution. Use {@link #executeNextItemIfAllowed()} to begin
-     * execution after all items have been enqueued. This prevents early termination from blocking item creation when
-     * all items are known upfront (e.g., map operations).
+     * Creates and enqueues an item without starting execution. Use {@link #executeItems()} to begin execution after all
+     * items have been enqueued. This prevents early termination from blocking item creation when all items are known
+     * upfront (e.g., map operations).
      */
     protected <R> ChildContextOperation<R> enqueueItem(
             String name,
@@ -150,26 +139,69 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
         branches.add(childOp);
         pendingQueue.add(childOp);
         logger.debug("Item enqueued {}", name);
+        if (vacancyListener != null) {
+            vacancyListener.complete(null);
+        }
         return childOp;
     }
 
-    /**
-     * Starts the queued items if the running count is below maxConcurrency and the operation hasn't completed yet. Must
-     * be called within {@code synchronized (pendingQueue)}.
-     */
-    protected void executeNextItemIfAllowed() {
+    protected void executeItems() {
         // Start as many items as concurrency allows
-        while (true) {
-            synchronized (this) {
-                if (isOperationCompleted()) return;
-                if (runningCount.get() >= maxConcurrency) return;
-                var next = pendingQueue.poll();
-                if (next == null) return;
-                runningCount.incrementAndGet();
-                logger.debug("Executing operation {}", next.getName());
-                next.execute();
+        var contextId = getOperationId();
+        registerActiveThread(contextId);
+
+        Runnable handler = () -> {
+            try (var context = getContext().createChildContext(contextId, getName())) {
+                while (true) {
+                    if (isOperationCompleted()) {
+                        return;
+                    }
+                    while (runningChildren.size() < maxConcurrency) {
+                        if (vacancyListener != null && vacancyListener.isDone()) {
+                            vacancyListener = null;
+                        }
+                        var next = pendingQueue.poll();
+                        if (next == null) {
+                            break;
+                        }
+                        runningChildren.put(next, true);
+                        logger.debug("Executing operation {}", next.getName());
+                        next.execute();
+                    }
+                    var child = waitForChildCompletion();
+                    if (runningChildren.containsKey(child)) {
+                        onItemComplete((ChildContextOperation<?>) child);
+                    }
+                }
+            }
+        };
+        CompletableFuture.runAsync(handler, getContext().getDurableConfig().getExecutorService());
+    }
+
+    private BaseDurableOperation waitForChildCompletion() {
+        var threadContext = getCurrentThreadContext();
+        CompletableFuture<Object> future;
+
+        synchronized (this) {
+            ArrayList<CompletableFuture<BaseDurableOperation>> futures;
+            futures = new ArrayList<>(runningChildren.keySet().stream()
+                    .map(BaseDurableOperation::getCompletionFuture)
+                    .toList());
+            if (futures.size() < maxConcurrency) {
+                vacancyListener = new CompletableFuture<>();
+                futures.add(vacancyListener);
+            }
+
+            // future will be completed immediately if any future of the list is already completed
+            future = CompletableFuture.anyOf(futures.toArray(CompletableFuture[]::new));
+            // skip deregistering the current thread if there is more completed future to process
+            if (!future.isDone()) {
+                future.thenRun(() -> registerActiveThread(threadContext.threadId()));
+                // Deregister the current thread to allow suspension
+                executionManager.deregisterActiveThread(threadContext.threadId());
             }
         }
+        return future.thenApply(o -> (BaseDurableOperation) o).join();
     }
 
     /**
@@ -180,7 +212,7 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
      */
     public void onItemComplete(ChildContextOperation<?> child) {
         if (!completedOperations.add(child.getOperationId())) {
-            return;
+            throw new IllegalStateException("Child operation " + child.getOperationId() + " completed twice");
         }
 
         // Evaluate child result outside the lock — child.get() may block waiting for a checkpoint response.
@@ -203,13 +235,14 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
             } else {
                 failedCount.incrementAndGet();
             }
-            runningCount.decrementAndGet();
+            if (!runningChildren.containsKey(child)) {
+                throw new IllegalStateException("Child operation " + child.getOperationId() + " completed twice");
+            }
+            runningChildren.remove(child);
 
             var completionStatus = canComplete();
             if (completionStatus != null) {
                 handleComplete(completionStatus);
-            } else {
-                executeNextItemIfAllowed();
             }
         }
     }
@@ -289,6 +322,6 @@ public abstract class ConcurrencyOperation<T> extends BaseDurableOperation<T> {
 
     /** Returns true if all items have finished (no pending, no running). Used by subclasses to override canComplete. */
     protected boolean isAllItemsFinished() {
-        return isJoined.get() && pendingQueue.isEmpty() && runningCount.get() == 0;
+        return isJoined.get() && pendingQueue.isEmpty() && runningChildren.isEmpty();
     }
 }

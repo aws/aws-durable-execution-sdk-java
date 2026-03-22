@@ -90,6 +90,8 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
         sendOperationUpdateAsync(OperationUpdate.builder()
                 .action(OperationAction.START)
                 .subType(getSubType().getValue()));
+
+        executeItems();
     }
 
     @Override
@@ -97,6 +99,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
         // No-op: child branches handle their own replay via ChildContextOperation.replay().
         // Set replaying=true so handleSuccess() skips re-checkpointing the already-completed parallel context.
         skipCheckpoint = ExecutionManager.isTerminalStatus(existing.status());
+        executeItems();
     }
 
     @Override
@@ -117,6 +120,6 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
             throw new IllegalStateException("Cannot add branches after join() has been called");
         }
         var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
-        return addItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH);
+        return enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH);
     }
 }

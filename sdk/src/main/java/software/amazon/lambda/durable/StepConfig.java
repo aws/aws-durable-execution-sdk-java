@@ -10,13 +10,14 @@ package software.amazon.lambda.durable;
  *
  * @deprecated use {@link software.amazon.lambda.durable.config.StepConfig}
  */
+@Deprecated
 public class StepConfig {
     /**
      * Creates a new builder for StepConfig.
      *
-     * @return a new Builder instance
      * @deprecated use {@link software.amazon.lambda.durable.config.StepConfig#builder}
      */
+    @Deprecated
     public static software.amazon.lambda.durable.config.StepConfig.Builder builder() {
         return new software.amazon.lambda.durable.config.StepConfig.Builder(null, null, null);
     }

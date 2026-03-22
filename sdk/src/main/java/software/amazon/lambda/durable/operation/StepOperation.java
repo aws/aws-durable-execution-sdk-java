@@ -34,7 +34,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  *
  * @param <T> the result type of the step function
  */
-public class StepOperation<T> extends BaseDurableOperation<T> {
+public class StepOperation<T> extends SerializableDurableOperation<T> {
     private static final Integer FIRST_ATTEMPT = 0;
 
     private final Function<StepContext, T> function;

@@ -15,7 +15,7 @@ import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 
 /** Durable operation for creating and waiting on external callbacks. */
-public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
+public class CallbackOperation<T> extends SerializableDurableOperation<T> implements DurableCallbackFuture<T> {
 
     private final CallbackConfig config;
 
@@ -80,7 +80,8 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             case FAILED -> throw new CallbackFailedException(op);
             case TIMED_OUT -> throw new CallbackTimeoutException(op);
             default ->
-                terminateExecutionWithIllegalDurableOperationException("Unexpected callback status: " + op.status());
+                throw terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected callback status: " + op.status());
         };
     }
 

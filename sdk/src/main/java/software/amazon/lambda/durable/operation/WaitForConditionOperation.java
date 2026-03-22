@@ -34,7 +34,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  *
  * @param <T> the type of state being polled
  */
-public class WaitForConditionOperation<T> extends BaseDurableOperation<T> {
+public class WaitForConditionOperation<T> extends SerializableDurableOperation<T> {
 
     private final BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc;
     private final WaitForConditionConfig<T> config;

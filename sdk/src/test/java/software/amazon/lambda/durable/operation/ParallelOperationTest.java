@@ -73,9 +73,9 @@ class ParallelOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
 
         // Capture registered operations so we can drive onCheckpointComplete callbacks.
-        var registeredOps = new ConcurrentHashMap<String, BaseDurableOperation<?>>();
+        var registeredOps = new ConcurrentHashMap<String, BaseDurableOperation>();
         doAnswer(inv -> {
-                    BaseDurableOperation<?> op = inv.getArgument(0);
+                    BaseDurableOperation op = inv.getArgument(0);
                     registeredOps.put(op.getOperationId(), op);
                     return null;
                 })
@@ -130,7 +130,7 @@ class ParallelOperationTest {
     void branchCreation_createsBranchWithParallelBranchSubType() {
         var op = createOperation(CompletionConfig.allSuccessful());
 
-        var childOp = op.addItem(
+        var childOp = op.enqueueItem(
                 "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         assertNotNull(childOp);
@@ -141,9 +141,11 @@ class ParallelOperationTest {
     void branchCreation_multipleBranchesAllCreated() {
         var op = createOperation(CompletionConfig.allSuccessful());
 
-        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.addItem("branch-3", ctx -> "r3", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
+                "branch-1", ctx2 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
+                "branch-2", ctx1 -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem("branch-3", ctx -> "r3", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         assertEquals(3, op.getBranches().size());
     }
@@ -153,7 +155,7 @@ class ParallelOperationTest {
         var op = createOperation(CompletionConfig.allSuccessful());
 
         // The child operation should be a ChildContextOperation with this op as parent
-        var childOp = op.addItem(
+        var childOp = op.enqueueItem(
                 "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         assertNotNull(childOp);
@@ -188,8 +190,9 @@ class ParallelOperationTest {
 
         var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
-        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
+                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         var result = op.get();
 
@@ -218,7 +221,7 @@ class ParallelOperationTest {
 
         var op = createOperation(CompletionConfig.minSuccessful(1));
         setOperationIdGenerator(op, mockIdGenerator);
-        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         var result = op.get();
 
@@ -238,7 +241,7 @@ class ParallelOperationTest {
         // as their parent — not some other context
         var op = createOperation(CompletionConfig.allSuccessful());
 
-        var childOp = op.addItem(
+        var childOp = op.enqueueItem(
                 "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         // The child operation should be registered in the execution manager
@@ -283,8 +286,9 @@ class ParallelOperationTest {
         var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
         op.execute();
-        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
+                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         var result = op.get();
 
@@ -332,8 +336,9 @@ class ParallelOperationTest {
         var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
         op.execute();
-        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.addItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
+                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
 
         var result = op.get();
 
@@ -362,7 +367,7 @@ class ParallelOperationTest {
 
         var op = createOperation(CompletionConfig.allSuccessful());
         setOperationIdGenerator(op, mockIdGenerator);
-        op.addItem(
+        op.enqueueItem(
                 "branch-1",
                 ctx -> {
                     throw new RuntimeException("branch failed");
@@ -406,8 +411,9 @@ class ParallelOperationTest {
         // toleratedFailureCount=1 so the operation completes after both branches finish
         var op = createOperation(CompletionConfig.toleratedFailureCount(1));
         setOperationIdGenerator(op, mockIdGenerator);
-        op.addItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.addItem(
+        op.enqueueItem(
+                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
                 "branch-2",
                 ctx -> {
                     throw new RuntimeException("branch failed");

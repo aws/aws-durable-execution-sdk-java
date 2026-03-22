@@ -22,7 +22,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * @param <T> the result type from the invoked function
  * @param <I> the payload type sent to the invoked function
  */
-public class InvokeOperation<T, I> extends BaseDurableOperation<T> {
+public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
     private final String functionName;
     private final I payload;
     private final InvokeConfig invokeConfig;

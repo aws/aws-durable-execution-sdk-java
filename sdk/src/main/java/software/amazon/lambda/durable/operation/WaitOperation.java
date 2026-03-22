@@ -11,11 +11,9 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
-import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.serde.NoopSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
 
 /**
  * Durable operation that suspends execution for a specified duration without consuming compute.
@@ -23,16 +21,15 @@ import software.amazon.lambda.durable.serde.SerDes;
  * <p>The wait is checkpointed and the Lambda is suspended. On re-invocation after the wait period, execution resumes
  * from where it left off.
  */
-public class WaitOperation extends BaseDurableOperation<Void> {
+public class WaitOperation extends BaseDurableOperation implements DurableFuture<Void> {
 
     private static final Logger logger = LoggerFactory.getLogger(WaitOperation.class);
-    private static final SerDes NOOP_SER_DES = new NoopSerDes();
 
     private final Duration duration;
 
     public WaitOperation(
             OperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
-        super(operationIdentifier, TypeToken.get(Void.class), NOOP_SER_DES, durableContext);
+        super(operationIdentifier, durableContext);
         this.duration = duration;
     }
 
@@ -80,7 +77,6 @@ public class WaitOperation extends BaseDurableOperation<Void> {
         pollForOperationUpdates(remainingWaitTime);
     }
 
-    @Override
     public Void get() {
         waitForOperationCompletion();
 

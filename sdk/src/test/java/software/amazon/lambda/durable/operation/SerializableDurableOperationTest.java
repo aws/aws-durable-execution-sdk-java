@@ -39,7 +39,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
-class BaseDurableOperationTest {
+class SerializableDurableOperationTest {
 
     private static final String OPERATION_ID = "1";
     private static final String CONTEXT_ID = "1-step";
@@ -67,8 +67,8 @@ class BaseDurableOperationTest {
 
     @Test
     void getOperation() {
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {}
 
@@ -91,8 +91,8 @@ class BaseDurableOperationTest {
     @Test
     void waitForOperationCompletionThrowsIfOperationMissing() {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {
                         markAlreadyCompleted();
@@ -115,8 +115,8 @@ class BaseDurableOperationTest {
     @Test
     void waitForOperationCompletionWhenRunningAndReadyToComplete()
             throws InterruptedException, ExecutionException, TimeoutException {
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {}
 
@@ -147,8 +147,8 @@ class BaseDurableOperationTest {
 
     @Test
     void waitForOperationCompletionWhenAlreadyCompleted() {
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {
                         markAlreadyCompleted();
@@ -171,8 +171,8 @@ class BaseDurableOperationTest {
 
     @Test
     void markAlreadyCompleted() {
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {
                         markAlreadyCompleted();
@@ -198,8 +198,8 @@ class BaseDurableOperationTest {
                 .thenReturn(
                         Operation.builder().type(OperationType.CHAINED_INVOKE).build());
 
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {
                         validateReplay(getOperation());
@@ -225,8 +225,8 @@ class BaseDurableOperationTest {
                         .type(OPERATION_TYPE)
                         .build());
 
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {
                         validateReplay(getOperation());
@@ -248,8 +248,8 @@ class BaseDurableOperationTest {
     void validateReplayDoesNotThrowWhenNoOperation() {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
 
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {
                         validateReplay(getOperation());
@@ -274,8 +274,8 @@ class BaseDurableOperationTest {
                         .type(OPERATION_TYPE)
                         .build());
 
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {
                         validateReplay(getOperation());
@@ -294,8 +294,8 @@ class BaseDurableOperationTest {
 
     @Test
     void deserializeResult() {
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {}
 
@@ -315,8 +315,8 @@ class BaseDurableOperationTest {
 
     @Test
     void deserializeException() {
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {}
 
@@ -341,8 +341,8 @@ class BaseDurableOperationTest {
 
     @Test
     void polling() {
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {}
 
@@ -365,8 +365,8 @@ class BaseDurableOperationTest {
     void sendOperationUpdate() {
         var update = OperationUpdate.builder();
 
-        BaseDurableOperation<String> op =
-                new BaseDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
                     @Override
                     protected void start() {}
 

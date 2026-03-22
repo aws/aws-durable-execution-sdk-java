@@ -3,8 +3,10 @@
 package software.amazon.lambda.durable;
 
 /** @deprecated use {@link software.amazon.lambda.durable.config.CallbackConfig} instead. */
+@Deprecated
 public class CallbackConfig {
     /** @deprecated use {@link software.amazon.lambda.durable.config.CallbackConfig#builder()} instead. */
+    @Deprecated
     public static software.amazon.lambda.durable.config.CallbackConfig.Builder builder() {
         return new software.amazon.lambda.durable.config.CallbackConfig.Builder(null, null, null);
     }

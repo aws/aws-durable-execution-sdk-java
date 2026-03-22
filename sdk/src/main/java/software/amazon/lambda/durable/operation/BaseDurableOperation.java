@@ -8,24 +8,18 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
-import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
-import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Base class for all durable operations (STEP, WAIT, etc.).
@@ -45,39 +39,33 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  *   <li>Proper thread coordination via future
  * </ul>
  */
-public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
+public abstract class BaseDurableOperation {
     private static final Logger logger = LoggerFactory.getLogger(BaseDurableOperation.class);
 
     private final OperationIdentifier operationIdentifier;
-    private final ExecutionManager executionManager;
-    private final TypeToken<T> resultTypeToken;
-    private final SerDes resultSerDes;
-    protected final CompletableFuture<Void> completionFuture;
+    protected final ExecutionManager executionManager;
+    protected final CompletableFuture<BaseDurableOperation> completionFuture;
     private final DurableContextImpl durableContext;
 
     /**
      * Constructs a new durable operation.
      *
      * @param operationIdentifier the unique identifier for this operation
-     * @param resultTypeToken the type token for deserializing the result
-     * @param resultSerDes the serializer/deserializer for the result
      * @param durableContext the parent context this operation belongs to
      */
-    protected BaseDurableOperation(
-            OperationIdentifier operationIdentifier,
-            TypeToken<T> resultTypeToken,
-            SerDes resultSerDes,
-            DurableContextImpl durableContext) {
+    protected BaseDurableOperation(OperationIdentifier operationIdentifier, DurableContextImpl durableContext) {
         this.operationIdentifier = operationIdentifier;
         this.durableContext = durableContext;
         this.executionManager = durableContext.getExecutionManager();
-        this.resultTypeToken = resultTypeToken;
-        this.resultSerDes = resultSerDes;
 
         this.completionFuture = new CompletableFuture<>();
 
         // register this operation in ExecutionManager so that the operation can receive updates from ExecutionManager
         executionManager.registerOperation(this);
+    }
+
+    protected CompletableFuture<BaseDurableOperation> getCompletionFuture() {
+        return completionFuture;
     }
 
     /** Gets the operation sub-type (e.g. RUN_IN_CHILD_CONTEXT, WAIT_FOR_CALLBACK). */
@@ -214,7 +202,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         // Get result based on status
         var op = getOperation();
         if (op == null) {
-            terminateExecutionWithIllegalDurableOperationException(
+            throw terminateExecutionWithIllegalDurableOperationException(
                     String.format("%s operation not found: %s", getType(), getOperationId()));
         }
         return op;
@@ -238,7 +226,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
                 // to the future. In our case, other contexts may have attached a function to reactivate themselves,
                 // so they will definitely have a chance to reactivate before we finish completing and deactivating
                 // whatever operations were just checkpointed.
-                completionFuture.complete(null);
+                completionFuture.complete(this);
             }
         }
     }
@@ -252,7 +240,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
         // It's important that we synchronize access to the future, otherwise the processing could happen
         // on someone else's thread and cause a race condition.
         synchronized (completionFuture) {
-            completionFuture.complete(null);
+            completionFuture.complete(this);
         }
     }
 
@@ -262,7 +250,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
      * @param exception the unrecoverable exception
      * @return never returns normally; always throws
      */
-    protected T terminateExecution(UnrecoverableDurableExecutionException exception) {
+    protected RuntimeException terminateExecution(UnrecoverableDurableExecutionException exception) {
         executionManager.terminateExecution(exception);
         // Exception is already thrown from above. Keep the throw statement below to make tests happy
         throw exception;
@@ -274,7 +262,7 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
      * @param message the error message
      * @return never returns normally; always throws
      */
-    protected T terminateExecutionWithIllegalDurableOperationException(String message) {
+    protected RuntimeException terminateExecutionWithIllegalDurableOperationException(String message) {
         return terminateExecution(new IllegalDurableOperationException(message));
     }
 
@@ -320,82 +308,6 @@ public abstract class BaseDurableOperation<T> implements DurableFuture<T> {
             updateBuilder.subType(getSubType().getValue());
         }
         return executionManager.sendOperationUpdate(updateBuilder.build());
-    }
-
-    /**
-     * Deserializes a result string into the operation's result type.
-     *
-     * @param result the serialized result string
-     * @return the deserialized result
-     * @throws SerDesException if deserialization fails
-     */
-    protected T deserializeResult(String result) {
-        try {
-            return resultSerDes.deserialize(result, resultTypeToken);
-        } catch (SerDesException e) {
-            logger.warn(
-                    "Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.",
-                    getType(),
-                    getName());
-            throw e;
-        }
-    }
-
-    /**
-     * Serializes the result to a string.
-     *
-     * @param result the result to serialize
-     * @return the serialized string
-     */
-    protected String serializeResult(T result) {
-        return resultSerDes.serialize(result);
-    }
-
-    /**
-     * Serializes a throwable into an {@link ErrorObject} for checkpointing.
-     *
-     * @param throwable the exception to serialize
-     * @return the serialized error object
-     */
-    protected ErrorObject serializeException(Throwable throwable) {
-        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);
-    }
-
-    /**
-     * Deserializes an {@link ErrorObject} back into a throwable, reconstructing the original exception type and stack
-     * trace when possible. Falls back to null if the exception class is not found or deserialization fails.
-     *
-     * @param errorObject the serialized error object
-     * @return the reconstructed throwable, or null if reconstruction is not possible
-     */
-    protected Throwable deserializeException(ErrorObject errorObject) {
-        Throwable original = null;
-        if (errorObject == null) {
-            return original;
-        }
-        var errorType = errorObject.errorType();
-        var errorData = errorObject.errorData();
-
-        if (errorType == null) {
-            return original;
-        }
-        try {
-
-            Class<?> exceptionClass = Class.forName(errorType);
-            if (Throwable.class.isAssignableFrom(exceptionClass)) {
-                original =
-                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
-
-                if (original != null) {
-                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));
-                }
-            }
-        } catch (ClassNotFoundException e) {
-            logger.warn("Cannot re-construct original exception type. Falling back to generic StepFailedException.");
-        } catch (SerDesException e) {
-            logger.warn("Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
-        }
-        return original;
     }
 
     /** Validates that current operation matches checkpointed operation during replay. */
