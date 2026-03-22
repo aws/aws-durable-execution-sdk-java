@@ -33,7 +33,9 @@ public interface DurableContext extends BaseContext {
      * @param func the function to execute, receiving a {@link StepContext}
      * @return the step result
      */
-    <T> T step(String name, Class<T> resultType, Function<StepContext, T> func);
+    default <T> T step(String name, Class<T> resultType, Function<StepContext, T> func) {
+        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());
+    }
 
     /**
      * Executes a durable step with the given name and configuration, blocking until it completes.
@@ -45,7 +47,9 @@ public interface DurableContext extends BaseContext {
      * @param config the step configuration (retry strategy, semantics, custom SerDes)
      * @return the step result
      */
-    <T> T step(String name, Class<T> resultType, Function<StepContext, T> func, StepConfig config);
+    default <T> T step(String name, Class<T> resultType, Function<StepContext, T> func, StepConfig config) {
+        return stepAsync(name, resultType, func, config).get();
+    }
 
     /**
      * Executes a durable step using a {@link TypeToken} for generic result types, blocking until it completes.
@@ -56,7 +60,9 @@ public interface DurableContext extends BaseContext {
      * @param func the function to execute, receiving a {@link StepContext}
      * @return the step result
      */
-    <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func);
+    default <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func) {
+        return step(name, resultType, func, StepConfig.builder().build());
+    }
 
     /**
      * Executes a durable step using a {@link TypeToken} and configuration, blocking until it completes.
@@ -68,7 +74,9 @@ public interface DurableContext extends BaseContext {
      * @param config the step configuration (retry strategy, semantics, custom SerDes)
      * @return the step result
      */
-    <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config);
+    default <T> T step(String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config) {
+        return stepAsync(name, resultType, func, config).get();
+    }
 
     /**
      * Asynchronously executes a durable step, returning a {@link DurableFuture} that can be composed or blocked on.
@@ -79,7 +87,10 @@ public interface DurableContext extends BaseContext {
      * @param func the function to execute, receiving a {@link StepContext}
      * @return a future representing the step result
      */
-    <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Function<StepContext, T> func);
+    default <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Function<StepContext, T> func) {
+        return stepAsync(
+                name, TypeToken.get(resultType), func, StepConfig.builder().build());
+    }
 
     /**
      * Asynchronously executes a durable step using custom configuration.
@@ -92,7 +103,10 @@ public interface DurableContext extends BaseContext {
      * @param config the step configuration (retry strategy, semantics, custom SerDes)
      * @return a future representing the step result
      */
-    <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Function<StepContext, T> func, StepConfig config);
+    default <T> DurableFuture<T> stepAsync(
+            String name, Class<T> resultType, Function<StepContext, T> func, StepConfig config) {
+        return stepAsync(name, TypeToken.get(resultType), func, config);
+    }
 
     /**
      * Asynchronously executes a durable step using a {@link TypeToken} for generic result types.
@@ -105,7 +119,9 @@ public interface DurableContext extends BaseContext {
      * @param func the function to execute, receiving a {@link StepContext}
      * @return a future representing the step result
      */
-    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Function<StepContext, T> func);
+    default <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Function<StepContext, T> func) {
+        return stepAsync(name, resultType, func, StepConfig.builder().build());
+    }
 
     /**
      * Asynchronously executes a durable step using a {@link TypeToken} and custom configuration.
@@ -122,29 +138,60 @@ public interface DurableContext extends BaseContext {
     <T> DurableFuture<T> stepAsync(
             String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config);
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> T step(String name, Class<T> resultType, Supplier<T> func);
+    default <T> T step(String name, Class<T> resultType, Supplier<T> func) {
+        return stepAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        func,
+                        StepConfig.builder().build())
+                .get();
+    }
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> T step(String name, Class<T> resultType, Supplier<T> func, StepConfig config);
+    default <T> T step(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
+        // Simply delegate to stepAsync and block on the result
+        return stepAsync(name, TypeToken.get(resultType), func, config).get();
+    }
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> T step(String name, TypeToken<T> resultType, Supplier<T> func);
+    default <T> T step(String name, TypeToken<T> resultType, Supplier<T> func) {
+        return stepAsync(name, resultType, func, StepConfig.builder().build()).get();
+    }
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> T step(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config);
+    default <T> T step(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config) {
+        return stepAsync(name, resultType, func, config).get();
+    }
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func);
+    default <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func) {
+        return stepAsync(
+                name, TypeToken.get(resultType), func, StepConfig.builder().build());
+    }
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config);
+    default <T> DurableFuture<T> stepAsync(String name, Class<T> resultType, Supplier<T> func, StepConfig config) {
+        return stepAsync(name, TypeToken.get(resultType), func, config);
+    }
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func);
+    default <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func) {
+        return stepAsync(name, resultType, func, StepConfig.builder().build());
+    }
 
+    /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
-    <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config);
+    default <T> DurableFuture<T> stepAsync(String name, TypeToken<T> resultType, Supplier<T> func, StepConfig config) {
+        return stepAsync(name, resultType, stepContext -> func.get(), config);
+    }
 
     /**
      * Suspends execution for the specified duration without consuming compute resources.
@@ -156,7 +203,9 @@ public interface DurableContext extends BaseContext {
      * @param duration the duration to wait
      * @return always {@code null}
      */
-    Void wait(String name, Duration duration);
+    default Void wait(String name, Duration duration) {
+        return waitAsync(name, duration).get();
+    }
 
     /**
      * Asynchronously suspends execution for the specified duration.
@@ -181,26 +230,59 @@ public interface DurableContext extends BaseContext {
      * @param resultType the result class for deserialization
      * @return the invocation result
      */
-    <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType);
+    default <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType) {
+        return invokeAsync(
+                        name,
+                        functionName,
+                        payload,
+                        TypeToken.get(resultType),
+                        InvokeConfig.builder().build())
+                .get();
+    }
 
     /** Invokes another Lambda function with custom configuration, blocking until the result is available. */
-    <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config);
+    default <T, U> T invoke(String name, String functionName, U payload, Class<T> resultType, InvokeConfig config) {
+        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config)
+                .get();
+    }
 
     /** Invokes another Lambda function using a {@link TypeToken} for generic result types, blocking until complete. */
-    <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType);
+    default <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType) {
+        return invokeAsync(
+                        name,
+                        functionName,
+                        payload,
+                        resultType,
+                        InvokeConfig.builder().build())
+                .get();
+    }
 
     /** Invokes another Lambda function using a {@link TypeToken} and custom configuration, blocking until complete. */
-    <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config);
+    default <T, U> T invoke(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config) {
+        return invokeAsync(name, functionName, payload, resultType, config).get();
+    }
 
     /** Invokes another Lambda function using a {@link TypeToken} and custom configuration, blocking until complete. */
-    <T, U> DurableFuture<T> invokeAsync(
-            String name, String functionName, U payload, Class<T> resultType, InvokeConfig config);
+    default <T, U> DurableFuture<T> invokeAsync(
+            String name, String functionName, U payload, Class<T> resultType, InvokeConfig config) {
+        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config);
+    }
 
     /** Asynchronously invokes another Lambda function, returning a {@link DurableFuture}. */
-    <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, Class<T> resultType);
+    default <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, Class<T> resultType) {
+        return invokeAsync(
+                name,
+                functionName,
+                payload,
+                TypeToken.get(resultType),
+                InvokeConfig.builder().build());
+    }
 
     /** Asynchronously invokes another Lambda function using a {@link TypeToken} for generic result types. */
-    <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType);
+    default <T, U> DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType) {
+        return invokeAsync(
+                name, functionName, payload, resultType, InvokeConfig.builder().build());
+    }
 
     /**
      * Asynchronously invokes another Lambda function using a {@link TypeToken} and custom configuration.
@@ -220,13 +302,20 @@ public interface DurableContext extends BaseContext {
             String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config);
 
     /** Creates a callback with custom configuration. */
-    <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config);
+    default <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config) {
+        return createCallback(name, TypeToken.get(resultType), config);
+    }
 
     /** Creates a callback using a {@link TypeToken} for generic result types. */
-    <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType);
+    default <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType) {
+        return createCallback(name, resultType, CallbackConfig.builder().build());
+    }
 
     /** Creates a callback with default configuration. */
-    <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType);
+    default <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType) {
+        return createCallback(
+                name, TypeToken.get(resultType), CallbackConfig.builder().build());
+    }
 
     /**
      * Creates a callback operation that suspends execution until an external system completes it.
@@ -254,18 +343,63 @@ public interface DurableContext extends BaseContext {
      * @param func the function to execute, receiving a child {@link DurableContext}
      * @return the child context result
      */
-    <T> T runInChildContext(String name, Class<T> resultType, Function<DurableContext, T> func);
+    default <T> T runInChildContext(String name, Class<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        func,
+                        RunInChildContextConfig.builder().build())
+                .get();
+    }
 
     /**
      * Runs a function in a child context using a {@link TypeToken} for generic result types, blocking until complete.
      */
-    <T> T runInChildContext(String name, TypeToken<T> resultType, Function<DurableContext, T> func);
+    default <T> T runInChildContext(String name, TypeToken<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(
+                        name,
+                        resultType,
+                        func,
+                        RunInChildContextConfig.builder().build())
+                .get();
+    }
 
-    /** Asynchronously runs a function in a child context, returning a {@link DurableFuture}. */
-    <T> DurableFuture<T> runInChildContextAsync(String name, Class<T> resultType, Function<DurableContext, T> func);
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @return the DurableFuture of the child context result
+     */
+    default <T> DurableFuture<T> runInChildContextAsync(
+            String name, Class<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(
+                name,
+                TypeToken.get(resultType),
+                func,
+                RunInChildContextConfig.builder().build());
+    }
 
-    /** Asynchronously runs a function in a child context using a {@link TypeToken} for generic result types. */
-    <T> DurableFuture<T> runInChildContextAsync(String name, TypeToken<T> resultType, Function<DurableContext, T> func);
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @return the DurableFuture of the child context result
+     */
+    default <T> DurableFuture<T> runInChildContextAsync(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func) {
+        return runInChildContextAsync(
+                name, resultType, func, RunInChildContextConfig.builder().build());
+    }
 
     /**
      * Runs a function in a child context, blocking until it completes.
@@ -279,41 +413,107 @@ public interface DurableContext extends BaseContext {
      * @param func the function to execute, receiving a child {@link DurableContext}
      * @return the child context result
      */
-    <T> T runInChildContext(
-            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
+    default <T> T runInChildContext(
+            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return runInChildContextAsync(name, TypeToken.get(resultType), func, config)
+                .get();
+    }
 
     /**
-     * Runs a function in a child context using a {@link TypeToken} for generic result types, blocking until complete.
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the child context result
      */
-    <T> T runInChildContext(
+    default <T> T runInChildContext(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return runInChildContextAsync(name, resultType, func, config).get();
+    }
+
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the DurableFuture wrapping the child context result
+     */
+    default <T> DurableFuture<T> runInChildContextAsync(
+            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return runInChildContextAsync(name, TypeToken.get(resultType), func, config);
+    }
+
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the DurableFuture wrapping the child context result
+     */
+    <T> DurableFuture<T> runInChildContextAsync(
             String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
 
-    /** Asynchronously runs a function in a child context, returning a {@link DurableFuture}. */
-    <T> DurableFuture<T> runInChildContextAsync(
-            String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
+    default <I, O> MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(
+                        name,
+                        items,
+                        TypeToken.get(resultType),
+                        function,
+                        MapConfig.builder().build())
+                .get();
+    }
 
-    /** Asynchronously runs a function in a child context using a {@link TypeToken} for generic result types. */
-    <T> DurableFuture<T> runInChildContextAsync(
-            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
+    default <I, O> MapResult<O> map(
+            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
+        return mapAsync(name, items, TypeToken.get(resultType), function, config)
+                .get();
+    }
 
-    <I, O> MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function);
+    default <I, O> MapResult<O> map(
+            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(name, items, resultType, function, MapConfig.builder().build())
+                .get();
+    }
 
-    <I, O> MapResult<O> map(
-            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config);
+    default <I, O> MapResult<O> map(
+            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
+        return mapAsync(name, items, resultType, function, config).get();
+    }
 
-    <I, O> MapResult<O> map(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function);
+    default <I, O> DurableFuture<MapResult<O>> mapAsync(
+            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(
+                name,
+                items,
+                TypeToken.get(resultType),
+                function,
+                MapConfig.builder().build());
+    }
 
-    <I, O> MapResult<O> map(
-            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config);
+    default <I, O> DurableFuture<MapResult<O>> mapAsync(
+            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
+        return mapAsync(name, items, TypeToken.get(resultType), function, config);
+    }
 
-    <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function);
-
-    <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config);
-
-    <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function);
+    default <I, O> DurableFuture<MapResult<O>> mapAsync(
+            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
+        return mapAsync(name, items, resultType, function, MapConfig.builder().build());
+    }
 
     <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config);
@@ -338,38 +538,67 @@ public interface DurableContext extends BaseContext {
      * @param func the submitter function, receiving the callback ID and a {@link StepContext}
      * @return the callback result
      */
-    <T> T waitForCallback(String name, Class<T> resultType, BiConsumer<String, StepContext> func);
+    default <T> T waitForCallback(String name, Class<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        func,
+                        WaitForCallbackConfig.builder().build())
+                .get();
+    }
 
     /** Executes a submitter and waits for an external callback using a {@link TypeToken}, blocking until complete. */
-    <T> T waitForCallback(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func);
+    default <T> T waitForCallback(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                        name, resultType, func, WaitForCallbackConfig.builder().build())
+                .get();
+    }
 
     /** Executes a submitter and waits for an external callback with custom configuration, blocking until complete. */
-    <T> T waitForCallback(
+    default <T> T waitForCallback(
             String name,
             Class<T> resultType,
             BiConsumer<String, StepContext> func,
-            WaitForCallbackConfig waitForCallbackConfig);
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)
+                .get();
+    }
 
     /** Executes a submitter and waits for an external callback using a {@link TypeToken} and custom configuration. */
-    <T> T waitForCallback(
+    default <T> T waitForCallback(
             String name,
             TypeToken<T> resultType,
             BiConsumer<String, StepContext> func,
-            WaitForCallbackConfig waitForCallbackConfig);
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, resultType, func, waitForCallbackConfig)
+                .get();
+    }
 
     /** Asynchronously executes a submitter and waits for an external callback. */
-    <T> DurableFuture<T> waitForCallbackAsync(String name, Class<T> resultType, BiConsumer<String, StepContext> func);
+    default <T> DurableFuture<T> waitForCallbackAsync(
+            String name, Class<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                name,
+                TypeToken.get(resultType),
+                func,
+                WaitForCallbackConfig.builder().build());
+    }
 
     /** Asynchronously executes a submitter and waits for an external callback using a {@link TypeToken}. */
-    <T> DurableFuture<T> waitForCallbackAsync(
-            String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func);
+    default <T> DurableFuture<T> waitForCallbackAsync(
+            String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func) {
+        return waitForCallbackAsync(
+                name, resultType, func, WaitForCallbackConfig.builder().build());
+    }
 
     /** Asynchronously executes a submitter and waits for an external callback with custom configuration. */
-    <T> DurableFuture<T> waitForCallbackAsync(
+    default <T> DurableFuture<T> waitForCallbackAsync(
             String name,
             Class<T> resultType,
             BiConsumer<String, StepContext> func,
-            WaitForCallbackConfig waitForCallbackConfig);
+            WaitForCallbackConfig waitForCallbackConfig) {
+        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);
+    }
 
     /**
      * Asynchronously executes a submitter and waits for an external callback using a {@link TypeToken} and custom
@@ -402,59 +631,97 @@ public interface DurableContext extends BaseContext {
      * @param initialState the initial state passed to the first check invocation
      * @return the final state value when the condition is met
      */
-    <T> T waitForCondition(
+    default <T> T waitForCondition(
             String name,
             Class<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
-            T initialState);
+            T initialState) {
+        return waitForConditionAsync(
+                        name,
+                        TypeToken.get(resultType),
+                        checkFunc,
+                        initialState,
+                        WaitForConditionConfig.<T>builder().build())
+                .get();
+    }
 
     /** Polls a condition function until it signals done, using a custom configuration, blocking until complete. */
-    <T> T waitForCondition(
+    default <T> T waitForCondition(
             String name,
             Class<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
-            WaitForConditionConfig<T> config);
+            WaitForConditionConfig<T> config) {
+        return waitForConditionAsync(name, resultType, checkFunc, initialState, config)
+                .get();
+    }
 
     /** Polls a condition function until it signals done, using a {@link TypeToken}, blocking until complete. */
-    <T> T waitForCondition(
+    default <T> T waitForCondition(
             String name,
             TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
-            T initialState);
+            T initialState) {
+        return waitForConditionAsync(
+                        name,
+                        resultType,
+                        checkFunc,
+                        initialState,
+                        WaitForConditionConfig.<T>builder().build())
+                .get();
+    }
 
     /**
      * Polls a condition function until it signals done, using a {@link TypeToken} and custom configuration, blocking
      * until complete.
      */
-    <T> T waitForCondition(
+    default <T> T waitForCondition(
             String name,
             TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
-            WaitForConditionConfig<T> config);
+            WaitForConditionConfig<T> config) {
+        return waitForConditionAsync(name, resultType, checkFunc, initialState, config)
+                .get();
+    }
 
     /** Asynchronously polls a condition function until it signals done. */
-    <T> DurableFuture<T> waitForConditionAsync(
+    default <T> DurableFuture<T> waitForConditionAsync(
             String name,
             Class<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
-            T initialState);
+            T initialState) {
+        return waitForConditionAsync(
+                name,
+                TypeToken.get(resultType),
+                checkFunc,
+                initialState,
+                WaitForConditionConfig.<T>builder().build());
+    }
 
     /** Asynchronously polls a condition function until it signals done, using custom configuration. */
-    <T> DurableFuture<T> waitForConditionAsync(
+    default <T> DurableFuture<T> waitForConditionAsync(
             String name,
             Class<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             T initialState,
-            WaitForConditionConfig<T> config);
+            WaitForConditionConfig<T> config) {
+        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, initialState, config);
+    }
 
     /** Asynchronously polls a condition function until it signals done, using a {@link TypeToken}. */
-    <T> DurableFuture<T> waitForConditionAsync(
+    default <T> DurableFuture<T> waitForConditionAsync(
             String name,
             TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
-            T initialState);
+            T initialState) {
+        return waitForConditionAsync(
+                name,
+                resultType,
+                checkFunc,
+                initialState,
+                WaitForConditionConfig.<T>builder().build());
+    }
 
     /**
      * Asynchronously polls a condition function until it signals done, using a {@link TypeToken} and custom
