@@ -2,24 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import java.util.Objects;
-
 /**
  * Controls when a concurrent operation (map or parallel) completes.
  *
  * <p>Provides factory methods for common completion strategies and fine-grained control via {@code minSuccessful},
  * {@code toleratedFailureCount}, and {@code toleratedFailurePercentage}.
  */
-public class CompletionConfig {
-    private final Integer minSuccessful;
-    private final Integer toleratedFailureCount;
-    private final Double toleratedFailurePercentage;
-
-    CompletionConfig(Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {
-        this.minSuccessful = minSuccessful;
-        this.toleratedFailureCount = toleratedFailureCount;
-        this.toleratedFailurePercentage = toleratedFailurePercentage;
-    }
+public record CompletionConfig(
+        Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {
 
     /** All items must succeed. Zero failures tolerated. */
     public static CompletionConfig allSuccessful() {
@@ -59,48 +49,5 @@ public class CompletionConfig {
                     "toleratedFailurePercentage must be between 0.0 and 1.0, got: " + percentage);
         }
         return new CompletionConfig(null, null, percentage);
-    }
-
-    /** @return minimum number of successful items required, or null if not set */
-    public Integer minSuccessful() {
-        return minSuccessful;
-    }
-
-    /** @return maximum number of failures tolerated, or null if unlimited */
-    public Integer toleratedFailureCount() {
-        return toleratedFailureCount;
-    }
-
-    /** @return maximum percentage of failures tolerated (0.0 to 1.0), or null if not set */
-    public Double toleratedFailurePercentage() {
-        return toleratedFailurePercentage;
-    }
-
-    @Override
-    public String toString() {
-        return "CompletionConfig{" + "minSuccessful="
-                + minSuccessful + ", toleratedFailureCount="
-                + toleratedFailureCount + ", toleratedFailurePercentage="
-                + toleratedFailurePercentage + '}';
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-
-        CompletionConfig that = (CompletionConfig) o;
-
-        return Objects.equals(minSuccessful, that.minSuccessful)
-                && Objects.equals(toleratedFailureCount, that.toleratedFailureCount)
-                && Objects.equals(toleratedFailurePercentage, that.toleratedFailurePercentage);
-    }
-
-    @Override
-    public int hashCode() {
-        int result = minSuccessful != null ? minSuccessful.hashCode() : 0;
-        result = 31 * result + (toleratedFailureCount != null ? toleratedFailureCount.hashCode() : 0);
-        result = 31 * result + (toleratedFailurePercentage != null ? toleratedFailurePercentage.hashCode() : 0);
-        return result;
     }
 }

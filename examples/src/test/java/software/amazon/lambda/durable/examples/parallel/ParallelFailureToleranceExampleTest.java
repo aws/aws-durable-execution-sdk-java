@@ -17,7 +17,7 @@ class ParallelFailureToleranceExampleTest {
         var runner = LocalDurableTestRunner.create(ParallelFailureToleranceExample.Input.class, handler);
 
         // 2 good services, 1 bad — toleratedFailureCount=1 so the parallel op still succeeds
-        var input = new ParallelFailureToleranceExample.Input(List.of("svc-a", "bad-svc-b", "svc-c"), 1, -1);
+        var input = new ParallelFailureToleranceExample.Input(List.of("svc-a", "bad-svc-b", "svc-c"), 1, null);
         var result = runner.runUntilComplete(input);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
@@ -32,7 +32,7 @@ class ParallelFailureToleranceExampleTest {
         var handler = new ParallelFailureToleranceExample();
         var runner = LocalDurableTestRunner.create(ParallelFailureToleranceExample.Input.class, handler);
 
-        var input = new ParallelFailureToleranceExample.Input(List.of("svc-a", "svc-b", "svc-c"), 2, -1);
+        var input = new ParallelFailureToleranceExample.Input(List.of("svc-a", "svc-b", "svc-c"), 2, null);
         var result = runner.runUntilComplete(input);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());

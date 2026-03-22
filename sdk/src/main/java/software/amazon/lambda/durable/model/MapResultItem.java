@@ -22,21 +22,21 @@ public record MapResultItem<T>(Status status, T result, MapError error) {
     public enum Status {
         SUCCEEDED,
         FAILED,
-        NOT_STARTED
+        SKIPPED
     }
 
     /** Creates a successful result item. */
-    public static <T> MapResultItem<T> success(T result) {
+    public static <T> MapResultItem<T> succeeded(T result) {
         return new MapResultItem<>(Status.SUCCEEDED, result, null);
     }
 
     /** Creates a failed result item. */
-    public static <T> MapResultItem<T> failure(MapError error) {
+    public static <T> MapResultItem<T> failed(MapError error) {
         return new MapResultItem<>(Status.FAILED, null, error);
     }
 
-    /** Creates a not-started result item. */
-    public static <T> MapResultItem<T> notStarted() {
-        return new MapResultItem<>(Status.NOT_STARTED, null, null);
+    /** Creates a skipped result item. */
+    public static <T> MapResultItem<T> skipped() {
+        return new MapResultItem<>(Status.SKIPPED, null, null);
     }
 }

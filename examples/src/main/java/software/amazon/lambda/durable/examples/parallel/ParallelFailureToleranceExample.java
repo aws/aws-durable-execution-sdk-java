@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.examples.parallel;
 
 import java.util.ArrayList;
 import java.util.List;
+import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
@@ -25,7 +26,7 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 public class ParallelFailureToleranceExample
         extends DurableHandler<ParallelFailureToleranceExample.Input, ParallelFailureToleranceExample.Output> {
 
-    public record Input(List<String> services, int toleratedFailures, int minSuccessful) {}
+    public record Input(List<String> services, Integer toleratedFailures, Integer minSuccessful) {}
 
     public record Output(int succeeded, int failed) {}
 
@@ -35,8 +36,7 @@ public class ParallelFailureToleranceExample
         logger.info("Starting parallel execution with toleratedFailureCount={}", input.toleratedFailures());
 
         var config = ParallelConfig.builder()
-                .minSuccessful(input.minSuccessful())
-                .toleratedFailureCount(input.toleratedFailures())
+                .completionConfig(new CompletionConfig(input.minSuccessful, input.toleratedFailures, null))
                 .build();
 
         var futures = new ArrayList<DurableFuture<String>>(input.services().size());
@@ -65,12 +65,12 @@ public class ParallelFailureToleranceExample
         ParallelResult parallelResult = parallel.get();
         logger.info(
                 "Parallel complete: succeeded={}, failed={}, status={}",
-                parallelResult.getSucceededBranches(),
-                parallelResult.getFailedBranches(),
-                parallelResult.getCompletionStatus().isSucceeded() ? "succeeded" : "failed");
+                parallelResult.succeeded(),
+                parallelResult.failed(),
+                parallelResult.completionStatus().isSucceeded() ? "succeeded" : "failed");
 
-        var succeeded = parallelResult.getSucceededBranches();
-        var failed = parallelResult.getFailedBranches();
+        var succeeded = parallelResult.succeeded();
+        var failed = parallelResult.failed();
 
         logger.info("Completed: {} succeeded, {} failed", succeeded, failed);
         return new Output(succeeded, failed);

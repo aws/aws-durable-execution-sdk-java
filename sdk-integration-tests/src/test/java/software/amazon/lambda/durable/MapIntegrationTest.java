@@ -535,8 +535,8 @@ class MapIntegrationTest {
             assertEquals("OK1", result.getResult(0));
             assertNotNull(result.getError(1));
             // Items after the failure should be NOT_STARTED
-            assertEquals(MapResultItem.Status.NOT_STARTED, result.getItem(2).status());
-            assertEquals(MapResultItem.Status.NOT_STARTED, result.getItem(3).status());
+            assertEquals(MapResultItem.Status.SKIPPED, result.getItem(2).status());
+            assertEquals(MapResultItem.Status.SKIPPED, result.getItem(3).status());
             return "done";
         });
 

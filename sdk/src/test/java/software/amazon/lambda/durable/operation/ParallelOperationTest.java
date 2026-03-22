@@ -192,11 +192,11 @@ class ParallelOperationTest {
         var result = op.get();
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
-        assertEquals(2, result.getTotalBranches());
-        assertEquals(2, result.getSucceededBranches());
-        assertEquals(0, result.getFailedBranches());
-        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.getCompletionStatus());
-        assertTrue(result.getCompletionStatus().isSucceeded());
+        assertEquals(2, result.size());
+        assertEquals(2, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.completionStatus());
+        assertTrue(result.completionStatus().isSucceeded());
     }
 
     // ===== MinSuccessful satisfaction =====
@@ -221,11 +221,11 @@ class ParallelOperationTest {
         var result = op.get();
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
-        assertEquals(1, result.getTotalBranches());
-        assertEquals(1, result.getSucceededBranches());
-        assertEquals(0, result.getFailedBranches());
-        assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.getCompletionStatus());
-        assertTrue(result.getCompletionStatus().isSucceeded());
+        assertEquals(1, result.size());
+        assertEquals(1, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
+        assertTrue(result.completionStatus().isSucceeded());
     }
 
     // ===== Context hierarchy =====
@@ -289,10 +289,10 @@ class ParallelOperationTest {
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
         verify(executionManager, times(1))
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
-        assertEquals(2, result.getTotalBranches());
-        assertEquals(2, result.getSucceededBranches());
-        assertEquals(0, result.getFailedBranches());
-        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.getCompletionStatus());
+        assertEquals(2, result.size());
+        assertEquals(2, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.completionStatus());
     }
 
     @Test
@@ -338,10 +338,10 @@ class ParallelOperationTest {
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.START));
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
-        assertEquals(2, result.getTotalBranches());
-        assertEquals(2, result.getSucceededBranches());
-        assertEquals(0, result.getFailedBranches());
-        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.getCompletionStatus());
+        assertEquals(2, result.size());
+        assertEquals(2, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.completionStatus());
     }
 
     // ===== Branch failure sends SUCCEED checkpoint and returns result =====
@@ -372,10 +372,10 @@ class ParallelOperationTest {
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
-        assertEquals(1, result.getTotalBranches());
-        assertEquals(0, result.getSucceededBranches());
-        assertEquals(1, result.getFailedBranches());
-        assertFalse(result.getCompletionStatus().isSucceeded());
+        assertEquals(1, result.size());
+        assertEquals(0, result.succeeded());
+        assertEquals(1, result.failed());
+        assertFalse(result.completionStatus().isSucceeded());
     }
 
     @Test
@@ -414,10 +414,10 @@ class ParallelOperationTest {
         var result = op.get();
 
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
-        assertEquals(2, result.getTotalBranches());
-        assertEquals(1, result.getSucceededBranches());
-        assertEquals(1, result.getFailedBranches());
-        assertTrue(result.getCompletionStatus().isSucceeded());
+        assertEquals(2, result.size());
+        assertEquals(1, result.succeeded());
+        assertEquals(1, result.failed());
+        assertTrue(result.completionStatus().isSucceeded());
     }
 
     @Test
@@ -426,10 +426,10 @@ class ParallelOperationTest {
 
         var result = op.get();
 
-        assertEquals(0, result.getTotalBranches());
-        assertEquals(0, result.getSucceededBranches());
-        assertEquals(0, result.getFailedBranches());
-        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.getCompletionStatus());
+        assertEquals(0, result.size());
+        assertEquals(0, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.completionStatus());
         verify(executionManager).sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
     }
 }

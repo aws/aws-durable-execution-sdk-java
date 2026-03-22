@@ -60,7 +60,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 new TypeToken<>() {},
                 config.serDes(),
                 durableContext,
-                config.maxConcurrency() != null ? config.maxConcurrency() : Integer.MAX_VALUE,
+                config.maxConcurrency(),
                 config.completionConfig().minSuccessful(),
                 getToleratedFailureCount(config.completionConfig(), items.size()));
         this.items = List.copyOf(items);
@@ -71,16 +71,20 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     private static Integer getToleratedFailureCount(CompletionConfig completionConfig, int totalItems) {
         if (completionConfig == null
-                || completionConfig.toleratedFailureCount() == null
-                        && completionConfig.toleratedFailurePercentage() == null) {
+                || (completionConfig.toleratedFailureCount() == null
+                        && completionConfig.toleratedFailurePercentage() == null)) {
+            // neither toleratedFailureCount nor toleratedFailurePercentage is specified.
             return null;
         }
         int toleratedFailureCount = completionConfig.toleratedFailureCount() != null
                 ? completionConfig.toleratedFailureCount()
                 : Integer.MAX_VALUE;
+
+        // convert percentage to count
         int toleratedFailureCountFromPercentage = completionConfig.toleratedFailurePercentage() != null
-                ? (int) Math.ceil(totalItems * completionConfig.toleratedFailurePercentage())
+                ? (int) Math.floor(totalItems * completionConfig.toleratedFailurePercentage())
                 : Integer.MAX_VALUE;
+        // minimum of two if both count and percentage is specified
         return Math.min(toleratedFailureCount, toleratedFailureCountFromPercentage);
     }
 
@@ -202,19 +206,19 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         for (int i = 0; i < children.size(); i++) {
             var branch = (ChildContextOperation<O>) children.get(i);
             if (!branch.isOperationCompleted()) {
-                resultItems.set(i, MapResultItem.notStarted());
+                resultItems.set(i, MapResultItem.skipped());
                 continue;
             }
             try {
-                resultItems.set(i, MapResultItem.success(branch.get()));
+                resultItems.set(i, MapResultItem.succeeded(branch.get()));
             } catch (Exception e) {
-                resultItems.set(i, MapResultItem.failure(buildMapError(e)));
+                resultItems.set(i, MapResultItem.failed(buildMapError(e)));
             }
         }
 
-        // Fill any remaining null slots (items beyond children size) with notStarted
+        // Fill any remaining null slots (items beyond children size) with skipped
         for (int i = children.size(); i < items.size(); i++) {
-            resultItems.set(i, MapResultItem.notStarted());
+            resultItems.set(i, MapResultItem.skipped());
         }
 
         return new MapResult<>(resultItems, completionStatus);

@@ -54,9 +54,9 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
         ParallelResult parallelResult = parallel.get();
         logger.info(
                 "Parallel complete: total={}, succeeded={}, failed={}",
-                parallelResult.getTotalBranches(),
-                parallelResult.getSucceededBranches(),
-                parallelResult.getFailedBranches());
+                parallelResult.size(),
+                parallelResult.succeeded(),
+                parallelResult.failed());
 
         var results = futures.stream().map(DurableFuture::get).toList();
 

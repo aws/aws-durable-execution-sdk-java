@@ -59,8 +59,7 @@ public record MapResult<T>(List<MapResultItem<T>> items, ConcurrencyCompletionSt
 
     /** Returns all results as an unmodifiable list (nulls for failed/not-started items). */
     public List<T> results() {
-        return Collections.unmodifiableList(
-                items.stream().map(MapResultItem::result).toList());
+        return items.stream().map(MapResultItem::result).toList();
     }
 
     /** Returns results from items that succeeded (includes null results from successful items). */

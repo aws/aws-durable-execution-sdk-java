@@ -12,9 +12,9 @@ class ParallelResultTest {
     void allBranchesSucceed_countsAreCorrect() {
         var result = new ParallelResult(3, 3, 0, ConcurrencyCompletionStatus.ALL_COMPLETED);
 
-        assertEquals(3, result.getTotalBranches());
-        assertEquals(3, result.getSucceededBranches());
-        assertEquals(0, result.getFailedBranches());
-        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.getCompletionStatus());
+        assertEquals(3, result.size());
+        assertEquals(3, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(ConcurrencyCompletionStatus.ALL_COMPLETED, result.completionStatus());
     }
 }

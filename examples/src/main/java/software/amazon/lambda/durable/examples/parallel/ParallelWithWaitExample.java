@@ -68,6 +68,6 @@ public class ParallelWithWaitExample
         logger.info("All {} notifications delivered", deliveries.size());
         // Test replay
         context.wait("wait for finalization", Duration.ofSeconds(5));
-        return new Output(deliveries, result.getSucceededBranches(), result.getFailedBranches());
+        return new Output(deliveries, result.succeeded(), result.failed());
     }
 }
