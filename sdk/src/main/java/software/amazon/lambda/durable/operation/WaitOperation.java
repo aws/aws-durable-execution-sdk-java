@@ -77,6 +77,7 @@ public class WaitOperation extends BaseDurableOperation implements DurableFuture
         pollForOperationUpdates(remainingWaitTime);
     }
 
+    @Override
     public Void get() {
         waitForOperationCompletion();
 
