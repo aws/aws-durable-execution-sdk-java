@@ -42,13 +42,16 @@ public class WaitExample extends DurableHandler<GreetingRequest, String> {
         });
 
         // Wait at most seconds
-        var wait5seconds = context.waitAsync(null, Duration.ofSeconds(5));
+        var wait5seconds = context.runInChildContextAsync("wait-5-seconds", String.class, ctx -> {
+            ctx.wait("wait-5-seconds", Duration.ofSeconds(5));
 
-        DurableFuture.anyOf(continued, wait5seconds);
+            return started + " - waited 5 seconds";
+        });
+
+        var step2 = DurableFuture.anyOf(continued, wait5seconds);
 
         // Step 3: Complete
-        var result =
-                context.step("complete-processing", String.class, stepCtx -> continued + " - completed after 5s more");
+        var result = context.step("complete-processing", String.class, stepCtx -> step2 + " - completed after 5s more");
 
         return result;
     }

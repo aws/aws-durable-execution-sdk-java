@@ -171,7 +171,8 @@ class CloudBasedIntegrationTest {
         var finalResult = result.getResult(String.class);
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("Started processing for TestUser"));
-        assertTrue(finalResult.contains("continued after 10s"));
+        assertFalse(finalResult.contains("continued after 10s"));
+        assertTrue(finalResult.contains("waited 5 seconds"));
         assertTrue(finalResult.contains("completed after 5s more"));
 
         assertNotNull(runner.getOperation("start-processing"));

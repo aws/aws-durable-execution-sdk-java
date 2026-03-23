@@ -65,6 +65,8 @@ public interface DurableFuture<T> {
         return CompletableFuture.anyOf(Arrays.stream(futures)
                         .map(f -> ((BaseDurableOperation) f).getCompletionFuture())
                         .toArray(CompletableFuture[]::new))
-                .join();
+                .thenApply(o -> (DurableFuture) o)
+                .join()
+                .get();
     }
 }
