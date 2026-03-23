@@ -6,8 +6,8 @@ import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
@@ -22,7 +22,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * @param &lt;T&gt; the result type from the invoked function
  * @param &lt;I&gt; the payload type sent to the invoked function
  */
-public class InvokeOperation&lt;T, I&gt; extends BaseDurableOperation&lt;T&gt; {
+public class InvokeOperation&lt;T, I&gt; extends SerializableDurableOperation&lt;T&gt; {
     private final String functionName;
     private final I payload;
     private final InvokeConfig invokeConfig;
@@ -58,7 +58,7 @@ public class InvokeOperation&lt;T, I&gt; extends BaseDurableOperation&lt;T&gt; {
 <span class="fc" id="L58">            case STARTED -&gt; pollForOperationUpdates();</span>
 <span class="fc" id="L59">            case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -&gt; markAlreadyCompleted();</span>
             default -&gt;
-<span class="nc" id="L61">                terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L61">                throw terminateExecutionWithIllegalDurableOperationException(</span>
 <span class="nc" id="L62">                        &quot;Unexpected invoke status: &quot; + existing.statusAsString());</span>
         }
 <span class="fc" id="L64">    }</span>

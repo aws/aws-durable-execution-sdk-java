@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ParallelDurableFuture.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable</a> &gt; <span class="el_source">ParallelDurableFuture.java</span></div><h1>ParallelDurableFuture.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable;
+
+import java.util.function.Function;
+import software.amazon.lambda.durable.config.ParallelBranchConfig;
+import software.amazon.lambda.durable.model.ParallelResult;
+
+/** User-facing context for managing parallel branch execution within a durable function. */
+public interface ParallelDurableFuture extends AutoCloseable, DurableFuture&lt;ParallelResult&gt; {
+
+    /**
+     * Registers and immediately starts a branch (respects maxConcurrency).
+     *
+     * @param name the branch name
+     * @param resultType the result type token for generic types
+     * @param func the function to execute in the branch's child context
+     * @param &lt;T&gt; the result type
+     * @return a {@link DurableFuture} that will contain the branch result
+     * @throws IllegalStateException if called after {@link #close()}
+     */
+    default &lt;T&gt; DurableFuture&lt;T&gt; branch(String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
+<span class="fc" id="L23">        return branch(</span>
+                name,
+<span class="fc" id="L25">                TypeToken.get(resultType),</span>
+                func,
+<span class="fc" id="L27">                ParallelBranchConfig.builder().build());</span>
+    }
+
+    /**
+     * Registers and immediately starts a branch (respects maxConcurrency).
+     *
+     * @param name the branch name
+     * @param resultType the result type token for generic types
+     * @param func the function to execute in the branch's child context
+     * @param &lt;T&gt; the result type
+     * @return a {@link DurableFuture} that will contain the branch result
+     * @throws IllegalStateException if called after {@link #close()}
+     */
+    default &lt;T&gt; DurableFuture&lt;T&gt; branch(String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
+<span class="nc" id="L41">        return branch(name, resultType, func, ParallelBranchConfig.builder().build());</span>
+    }
+
+    /**
+     * Registers and immediately starts a branch (respects maxConcurrency).
+     *
+     * @param name the branch name
+     * @param resultType the result type token for generic types
+     * @param func the function to execute in the branch's child context
+     * @param &lt;T&gt; the result type
+     * @return a {@link DurableFuture} that will contain the branch result
+     * @throws IllegalStateException if called after {@link #close()}
+     */
+    default &lt;T&gt; DurableFuture&lt;T&gt; branch(
+            String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, ParallelBranchConfig config) {
+<span class="nc" id="L56">        return branch(name, TypeToken.get(resultType), func, config);</span>
+    }
+
+    /**
+     * Registers and immediately starts a branch (respects maxConcurrency).
+     *
+     * @param name the branch name
+     * @param resultType the result type token for generic types
+     * @param func the function to execute in the branch's child context
+     * @param &lt;T&gt; the result type
+     * @return a {@link DurableFuture} that will contain the branch result
+     * @throws IllegalStateException if called after {@link #close()}
+     */
+    &lt;T&gt; DurableFuture&lt;T&gt; branch(
+            String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, ParallelBranchConfig config);
+
+    /** Calls {@link #get()} if not already called. Guarantees that the context is closed. */
+    void close();
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -5,8 +5,6 @@ package software.amazon.lambda.durable.context;
 import com.amazonaws.services.lambda.runtime.Context;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 
 public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
@@ -35,42 +33,15 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
             Context lambdaContext,
             String contextId,
             String contextName,
-            ThreadType threadType) {
-<span class="fc" id="L39">        this(executionManager, durableConfig, lambdaContext, contextId, contextName, threadType, true);</span>
-<span class="fc" id="L40">    }</span>
-
-    /**
-     * Creates a new BaseContext instance.
-     *
-     * @param executionManager the execution manager for thread coordination and state management
-     * @param durableConfig the durable execution configuration
-     * @param lambdaContext the AWS Lambda runtime context
-     * @param contextId the context ID, null for root context, set for child contexts
-     * @param contextName the human-readable name for this context
-     * @param threadType the type of thread this context runs on
-     * @param setCurrentThreadContext whether to call setCurrentThreadContext on the execution manager
-     */
-    protected BaseContextImpl(
-            ExecutionManager executionManager,
-            DurableConfig durableConfig,
-            Context lambdaContext,
-            String contextId,
-            String contextName,
-            ThreadType threadType,
-<span class="fc" id="L60">            boolean setCurrentThreadContext) {</span>
-<span class="fc" id="L61">        this.executionManager = executionManager;</span>
-<span class="fc" id="L62">        this.durableConfig = durableConfig;</span>
-<span class="fc" id="L63">        this.lambdaContext = lambdaContext;</span>
-<span class="fc" id="L64">        this.contextId = contextId;</span>
-<span class="fc" id="L65">        this.contextName = contextName;</span>
-<span class="fc" id="L66">        this.isReplaying = executionManager.hasOperationsForContext(contextId);</span>
-<span class="fc" id="L67">        this.threadType = threadType;</span>
-
-<span class="fc bfc" id="L69" title="All 2 branches covered.">        if (setCurrentThreadContext) {</span>
-            // write the thread id and type to thread local
-<span class="fc" id="L71">            executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));</span>
-        }
-<span class="fc" id="L73">    }</span>
+<span class="fc" id="L36">            ThreadType threadType) {</span>
+<span class="fc" id="L37">        this.executionManager = executionManager;</span>
+<span class="fc" id="L38">        this.durableConfig = durableConfig;</span>
+<span class="fc" id="L39">        this.lambdaContext = lambdaContext;</span>
+<span class="fc" id="L40">        this.contextId = contextId;</span>
+<span class="fc" id="L41">        this.contextName = contextName;</span>
+<span class="fc" id="L42">        this.isReplaying = executionManager.hasOperationsForContext(contextId);</span>
+<span class="fc" id="L43">        this.threadType = threadType;</span>
+<span class="fc" id="L44">    }</span>
 
     // =============== accessors ================
 
@@ -81,7 +52,7 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
      */
     @Override
     public Context getLambdaContext() {
-<span class="fc" id="L84">        return lambdaContext;</span>
+<span class="fc" id="L55">        return lambdaContext;</span>
     }
 
     /**
@@ -95,7 +66,7 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
      */
     @Override
     public String getExecutionArn() {
-<span class="fc" id="L98">        return executionManager.getDurableExecutionArn();</span>
+<span class="fc" id="L69">        return executionManager.getDurableExecutionArn();</span>
     }
 
     /**
@@ -105,7 +76,7 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
      */
     @Override
     public DurableConfig getDurableConfig() {
-<span class="fc" id="L108">        return durableConfig;</span>
+<span class="fc" id="L79">        return durableConfig;</span>
     }
 
     // ============= internal utilities ===============
@@ -113,49 +84,30 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
     /** Gets the context ID for this context. Null for root context, set for child contexts. */
     @Override
     public String getContextId() {
-<span class="fc" id="L116">        return contextId;</span>
+<span class="fc" id="L87">        return contextId;</span>
     }
 
     /** Gets the context name for this context. Null for root context. */
     @Override
     public String getContextName() {
-<span class="fc" id="L122">        return contextName;</span>
+<span class="fc" id="L93">        return contextName;</span>
     }
 
     public ExecutionManager getExecutionManager() {
-<span class="fc" id="L126">        return executionManager;</span>
+<span class="fc" id="L97">        return executionManager;</span>
     }
 
     /** Returns whether this context is currently in replay mode. */
     @Override
     public boolean isReplaying() {
-<span class="fc" id="L132">        return isReplaying;</span>
+<span class="fc" id="L103">        return isReplaying;</span>
     }
 
     /**
      * Transitions this context from replay to execution mode. Called when the first un-cached operation is encountered.
      */
     public void setExecutionMode() {
-<span class="fc" id="L139">        this.isReplaying = false;</span>
-<span class="fc" id="L140">    }</span>
-
-    @Override
-    public void close() {
-        // this is called in the user thread, after the context's user code has completed
-<span class="fc bfc" id="L145" title="All 2 branches covered.">        if (getContextId() != null) {</span>
-            // if this is a child context or a step context, we need to
-            // deregister the context's thread from the execution manager
-            try {
-<span class="fc" id="L149">                executionManager.deregisterActiveThread(getContextId());</span>
-<span class="fc" id="L150">            } catch (SuspendExecutionException e) {</span>
-                // Expected when this is the last active thread. Must catch here because:
-                // 1/ This runs in a worker thread detached from handlerFuture
-                // 2/ Uncaught exception would prevent stepAsync().get() from resume
-                // Suspension/Termination is already signaled via
-                // suspendExecutionFuture/terminateExecutionFuture
-                // before the throw.
-<span class="fc" id="L157">            }</span>
-        }
-<span class="fc" id="L159">    }</span>
+<span class="fc" id="L110">        this.isReplaying = false;</span>
+<span class="fc" id="L111">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

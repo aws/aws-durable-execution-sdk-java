@@ -11,11 +11,9 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
-import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.serde.NoopSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
 
 /**
  * Durable operation that suspends execution for a specified duration without consuming compute.
@@ -23,68 +21,67 @@ import software.amazon.lambda.durable.serde.SerDes;
  * &lt;p&gt;The wait is checkpointed and the Lambda is suspended. On re-invocation after the wait period, execution resumes
  * from where it left off.
  */
-public class WaitOperation extends BaseDurableOperation&lt;Void&gt; {
+public class WaitOperation extends BaseDurableOperation implements DurableFuture&lt;Void&gt; {
 
-<span class="fc" id="L28">    private static final Logger logger = LoggerFactory.getLogger(WaitOperation.class);</span>
-<span class="fc" id="L29">    private static final SerDes NOOP_SER_DES = new NoopSerDes();</span>
+<span class="fc" id="L26">    private static final Logger logger = LoggerFactory.getLogger(WaitOperation.class);</span>
 
     private final Duration duration;
 
     public WaitOperation(
             OperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
-<span class="fc" id="L35">        super(operationIdentifier, TypeToken.get(Void.class), NOOP_SER_DES, durableContext);</span>
-<span class="fc" id="L36">        this.duration = duration;</span>
-<span class="fc" id="L37">    }</span>
+<span class="fc" id="L32">        super(operationIdentifier, durableContext);</span>
+<span class="fc" id="L33">        this.duration = duration;</span>
+<span class="fc" id="L34">    }</span>
 
     /** Starts the operation. */
     @Override
     protected void start() {
         // First execution - checkpoint with full duration
-<span class="fc" id="L43">        var update = OperationUpdate.builder()</span>
-<span class="fc" id="L44">                .action(OperationAction.START)</span>
-<span class="fc" id="L45">                .waitOptions(WaitOptions.builder()</span>
-<span class="fc" id="L46">                        .waitSeconds((int) duration.toSeconds())</span>
-<span class="fc" id="L47">                        .build());</span>
+<span class="fc" id="L40">        var update = OperationUpdate.builder()</span>
+<span class="fc" id="L41">                .action(OperationAction.START)</span>
+<span class="fc" id="L42">                .waitOptions(WaitOptions.builder()</span>
+<span class="fc" id="L43">                        .waitSeconds((int) duration.toSeconds())</span>
+<span class="fc" id="L44">                        .build());</span>
 
-<span class="fc" id="L49">        sendOperationUpdate(update);</span>
-<span class="fc" id="L50">        pollForWaitExpiration();</span>
-<span class="fc" id="L51">    }</span>
+<span class="fc" id="L46">        sendOperationUpdate(update);</span>
+<span class="fc" id="L47">        pollForWaitExpiration();</span>
+<span class="fc" id="L48">    }</span>
 
     /** Replays the operation. */
     @Override
     protected void replay(Operation existing) {
-<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (existing.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        if (existing.status() == OperationStatus.SUCCEEDED) {</span>
             // Wait already completed
-<span class="fc" id="L58">            markAlreadyCompleted();</span>
-<span class="fc" id="L59">            return;</span>
+<span class="fc" id="L55">            markAlreadyCompleted();</span>
+<span class="fc" id="L56">            return;</span>
         }
 
-<span class="fc" id="L62">        pollForWaitExpiration();</span>
-<span class="fc" id="L63">    }</span>
+<span class="fc" id="L59">        pollForWaitExpiration();</span>
+<span class="fc" id="L60">    }</span>
 
     private void pollForWaitExpiration() {
         // Always calculate remaining time from scheduledEndTimestamp if scheduledEndTimestamp exists
-<span class="fc" id="L67">        var remainingWaitTime = duration;</span>
-<span class="fc" id="L68">        var existing = getOperation();</span>
-<span class="pc bpc" id="L69" title="1 of 2 branches missed.">        if (existing != null</span>
-<span class="fc bfc" id="L70" title="All 2 branches covered.">                &amp;&amp; existing.waitDetails() != null</span>
-<span class="pc bpc" id="L71" title="1 of 2 branches missed.">                &amp;&amp; existing.waitDetails().scheduledEndTimestamp() != null) {</span>
+<span class="fc" id="L64">        var remainingWaitTime = duration;</span>
+<span class="fc" id="L65">        var existing = getOperation();</span>
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        if (existing != null</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">                &amp;&amp; existing.waitDetails() != null</span>
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">                &amp;&amp; existing.waitDetails().scheduledEndTimestamp() != null) {</span>
             remainingWaitTime =
-<span class="fc" id="L73">                    Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());</span>
+<span class="fc" id="L70">                    Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());</span>
             // If the wait has already elapsed, poll immediately with a minimal positive interval
-<span class="pc bpc" id="L75" title="2 of 4 branches missed.">            if (remainingWaitTime.isNegative() || remainingWaitTime.isZero()) {</span>
-<span class="nc" id="L76">                remainingWaitTime = Duration.ofMillis(1);</span>
+<span class="pc bpc" id="L72" title="2 of 4 branches missed.">            if (remainingWaitTime.isNegative() || remainingWaitTime.isZero()) {</span>
+<span class="nc" id="L73">                remainingWaitTime = Duration.ofMillis(1);</span>
             }
         }
-<span class="fc" id="L79">        logger.debug(&quot;Remaining wait time: {} ms&quot;, remainingWaitTime.toMillis());</span>
-<span class="fc" id="L80">        pollForOperationUpdates(remainingWaitTime);</span>
-<span class="fc" id="L81">    }</span>
+<span class="fc" id="L76">        logger.debug(&quot;Remaining wait time: {} ms&quot;, remainingWaitTime.toMillis());</span>
+<span class="fc" id="L77">        pollForOperationUpdates(remainingWaitTime);</span>
+<span class="fc" id="L78">    }</span>
 
     @Override
     public Void get() {
-<span class="fc" id="L85">        waitForOperationCompletion();</span>
+<span class="fc" id="L82">        waitForOperationCompletion();</span>
 
-<span class="fc" id="L87">        return null;</span>
+<span class="fc" id="L84">        return null;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

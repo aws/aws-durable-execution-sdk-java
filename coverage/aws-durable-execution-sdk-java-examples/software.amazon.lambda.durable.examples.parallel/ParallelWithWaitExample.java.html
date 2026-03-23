@@ -8,7 +8,7 @@ import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.ParallelConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.model.ParallelResult;
 
 /**
@@ -68,7 +68,7 @@ import software.amazon.lambda.durable.model.ParallelResult;
 <span class="fc" id="L68">        logger.info(&quot;All {} notifications delivered&quot;, deliveries.size());</span>
         // Test replay
 <span class="fc" id="L70">        context.wait(&quot;wait for finalization&quot;, Duration.ofSeconds(5));</span>
-<span class="fc" id="L71">        return new Output(deliveries, result.getSucceededBranches(), result.getFailedBranches());</span>
+<span class="fc" id="L71">        return new Output(deliveries, result.succeeded(), result.failed());</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

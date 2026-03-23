@@ -10,24 +10,23 @@ import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.InvokeConfig;
-import software.amazon.lambda.durable.MapConfig;
-import software.amazon.lambda.durable.MapFunction;
-import software.amazon.lambda.durable.ParallelConfig;
-import software.amazon.lambda.durable.ParallelContext;
-import software.amazon.lambda.durable.StepConfig;
+import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.WaitForCallbackConfig;
-import software.amazon.lambda.durable.WaitForConditionConfig;
+import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.InvokeConfig;
+import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.WaitForCallbackConfig;
+import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -56,8 +55,8 @@ import software.amazon.lambda.durable.util.ParameterValidator;
 public class DurableContextImpl extends BaseContextImpl implements DurableContext {
     private static final String WAIT_FOR_CALLBACK_CALLBACK_SUFFIX = &quot;-callback&quot;;
     private static final String WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX = &quot;-submitter&quot;;
-<span class="fc" id="L59">    private static final int MAX_WAIT_FOR_CALLBACK_NAME_LENGTH = ParameterValidator.MAX_OPERATION_NAME_LENGTH</span>
-<span class="fc" id="L60">            - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());</span>
+<span class="fc" id="L58">    private static final int MAX_WAIT_FOR_CALLBACK_NAME_LENGTH = ParameterValidator.MAX_OPERATION_NAME_LENGTH</span>
+<span class="fc" id="L59">            - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());</span>
     private final OperationIdGenerator operationIdGenerator;
     private volatile DurableLogger logger;
 
@@ -68,26 +67,9 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Context lambdaContext,
             String contextId,
             String contextName) {
-<span class="fc" id="L71">        this(executionManager, durableConfig, lambdaContext, contextId, contextName, true);</span>
+<span class="fc" id="L70">        super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);</span>
+<span class="fc" id="L71">        operationIdGenerator = new OperationIdGenerator(contextId);</span>
 <span class="fc" id="L72">    }</span>
-
-    private DurableContextImpl(
-            ExecutionManager executionManager,
-            DurableConfig durableConfig,
-            Context lambdaContext,
-            String contextId,
-            String contextName,
-            boolean setCurrentThreadContext) {
-<span class="fc" id="L81">        super(</span>
-                executionManager,
-                durableConfig,
-                lambdaContext,
-                contextId,
-                contextName,
-                ThreadType.CONTEXT,
-                setCurrentThreadContext);
-<span class="fc" id="L89">        operationIdGenerator = new OperationIdGenerator(contextId);</span>
-<span class="fc" id="L90">    }</span>
 
     /**
      * Creates a root context (contextId = null)
@@ -101,7 +83,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      */
     public static DurableContextImpl createRootContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
-<span class="fc" id="L104">        return new DurableContextImpl(executionManager, durableConfig, lambdaContext, null, null);</span>
+<span class="fc" id="L86">        return new DurableContextImpl(executionManager, durableConfig, lambdaContext, null, null);</span>
     }
 
     /**
@@ -112,24 +94,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * @return a new DurableContext for the child context
      */
     public DurableContextImpl createChildContext(String childContextId, String childContextName) {
-<span class="fc" id="L115">        return new DurableContextImpl(</span>
-<span class="fc" id="L116">                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName);</span>
-    }
-
-    /**
-     * Creates a child context without setting the current thread context.
-     *
-     * &lt;p&gt;Use this when the child context is being created on a thread that should not have its thread-local context
-     * overwritten (e.g. when constructing the context ahead of running it on a separate thread).
-     *
-     * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
-     * @param childContextName the name of the child context
-     * @return a new DurableContext for the child context
-     */
-    public DurableContextImpl createChildContextWithoutSettingThreadContext(
-            String childContextId, String childContextName) {
-<span class="fc" id="L131">        return new DurableContextImpl(</span>
-<span class="fc" id="L132">                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName, false);</span>
+<span class="fc" id="L97">        return new DurableContextImpl(</span>
+<span class="fc" id="L98">                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName);</span>
     }
 
     /**
@@ -141,671 +107,273 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * @return a new StepContext instance
      */
     public StepContextImpl createStepContext(String stepOperationId, String stepOperationName, int attempt) {
-<span class="fc" id="L144">        return new StepContextImpl(</span>
-<span class="fc" id="L145">                getExecutionManager(),</span>
-<span class="fc" id="L146">                getDurableConfig(),</span>
-<span class="fc" id="L147">                getLambdaContext(),</span>
+<span class="fc" id="L110">        return new StepContextImpl(</span>
+<span class="fc" id="L111">                getExecutionManager(),</span>
+<span class="fc" id="L112">                getDurableConfig(),</span>
+<span class="fc" id="L113">                getLambdaContext(),</span>
                 stepOperationId,
                 stepOperationName,
                 attempt);
     }
 
-    // ========== step methods ==========
-
-    @Override
-    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L157">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
-        // Simply delegate to stepAsync and block on the result
-<span class="fc" id="L163">        return stepAsync(name, resultType, func, config).get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L168">        return step(name, typeToken, func, StepConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func, StepConfig config) {
-        // Simply delegate to stepAsync and block on the result
-<span class="fc" id="L174">        return stepAsync(name, typeToken, func, config).get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L179">        return stepAsync(</span>
-<span class="fc" id="L180">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
-    }
-
     @Override
     public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(
-            String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
-<span class="fc" id="L186">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
-    }
+            String name, TypeToken&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
+<span class="fc" id="L122">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="fc" id="L123">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
+<span class="fc" id="L124">        ParameterValidator.validateOperationName(name);</span>
 
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L191">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(
-            String name, TypeToken&lt;T&gt; typeToken, Function&lt;StepContext, T&gt; func, StepConfig config) {
-<span class="fc" id="L197">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
-<span class="fc" id="L198">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
-<span class="fc" id="L199">        ParameterValidator.validateOperationName(name);</span>
-
-<span class="fc bfc" id="L201" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
-<span class="fc" id="L202">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L127">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
         }
-<span class="fc" id="L204">        var operationId = nextOperationId();</span>
+<span class="fc" id="L129">        var operationId = nextOperationId();</span>
 
         // Create and start step operation with TypeToken
-<span class="fc" id="L207">        var operation = new StepOperation&lt;&gt;(</span>
-<span class="fc" id="L208">                OperationIdentifier.of(operationId, name, OperationType.STEP), func, typeToken, config, this);</span>
+<span class="fc" id="L132">        var operation = new StepOperation&lt;&gt;(</span>
+<span class="fc" id="L133">                OperationIdentifier.of(operationId, name, OperationType.STEP), func, resultType, config, this);</span>
 
-<span class="fc" id="L210">        operation.execute(); // Start the step (returns immediately)</span>
+<span class="fc" id="L135">        operation.execute(); // Start the step (returns immediately)</span>
 
-<span class="fc" id="L212">        return operation;</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="nc" id="L219">        return stepAsync(</span>
-                        name,
-<span class="nc" id="L221">                        TypeToken.get(resultType),</span>
-                        func,
-<span class="nc" id="L223">                        StepConfig.builder().build())</span>
-<span class="nc" id="L224">                .get();</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
-        // Simply delegate to stepAsync and block on the result
-<span class="nc" id="L232">        return stepAsync(name, TypeToken.get(resultType), func, config).get();</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func) {
-<span class="nc" id="L239">        return stepAsync(name, typeToken, func, StepConfig.builder().build()).get();</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; T step(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func, StepConfig config) {
-        // Simply delegate to stepAsync and block on the result
-<span class="nc" id="L247">        return stepAsync(name, typeToken, func, config).get();</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="fc" id="L254">        return stepAsync(</span>
-<span class="fc" id="L255">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
-<span class="nc" id="L262">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func) {
-<span class="nc" id="L269">        return stepAsync(name, typeToken, func, StepConfig.builder().build());</span>
-    }
-
-    /** @deprecated use the variants accepting StepContext instead */
-    @Deprecated
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; typeToken, Supplier&lt;T&gt; func, StepConfig config) {
-<span class="fc" id="L276">        return stepAsync(name, typeToken, stepContext -&gt; func.get(), config);</span>
-    }
-
-    // ========== wait methods ==========
-
-    @Override
-    public Void wait(String name, Duration duration) {
-        // Block (will throw SuspendExecutionException if there is no active thread)
-<span class="fc" id="L284">        return waitAsync(name, duration).get();</span>
+<span class="fc" id="L137">        return operation;</span>
     }
 
     @Override
     public DurableFuture&lt;Void&gt; waitAsync(String name, Duration duration) {
-<span class="fc" id="L289">        ParameterValidator.validateDuration(duration, &quot;Wait duration&quot;);</span>
-<span class="fc" id="L290">        ParameterValidator.validateOperationName(name);</span>
+<span class="fc" id="L142">        ParameterValidator.validateDuration(duration, &quot;Wait duration&quot;);</span>
+<span class="fc" id="L143">        ParameterValidator.validateOperationName(name);</span>
 
-<span class="fc" id="L292">        var operationId = nextOperationId();</span>
+<span class="fc" id="L145">        var operationId = nextOperationId();</span>
 
         // Create and start wait operation
-<span class="fc" id="L295">        var operation =</span>
-<span class="fc" id="L296">                new WaitOperation(OperationIdentifier.of(operationId, name, OperationType.WAIT), duration, this);</span>
+<span class="fc" id="L148">        var operation =</span>
+<span class="fc" id="L149">                new WaitOperation(OperationIdentifier.of(operationId, name, OperationType.WAIT), duration, this);</span>
 
-<span class="fc" id="L298">        operation.execute(); // Checkpoint the wait</span>
-<span class="fc" id="L299">        return operation;</span>
-    }
-
-    // ========== chained invoke methods ==========
-
-    @Override
-    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, Class&lt;T&gt; resultType) {
-<span class="fc" id="L306">        return invokeAsync(</span>
-                        name,
-                        functionName,
-                        payload,
-<span class="fc" id="L310">                        TypeToken.get(resultType),</span>
-<span class="fc" id="L311">                        InvokeConfig.builder().build())</span>
-<span class="fc" id="L312">                .get();</span>
-    }
-
-    @Override
-    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, Class&lt;T&gt; resultType, InvokeConfig config) {
-<span class="fc" id="L317">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config)</span>
-<span class="fc" id="L318">                .get();</span>
-    }
-
-    @Override
-    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, TypeToken&lt;T&gt; typeToken) {
-<span class="nc" id="L323">        return invokeAsync(</span>
-                        name,
-                        functionName,
-                        payload,
-                        typeToken,
-<span class="nc" id="L328">                        InvokeConfig.builder().build())</span>
-<span class="nc" id="L329">                .get();</span>
-    }
-
-    @Override
-    public &lt;T, U&gt; T invoke(String name, String functionName, U payload, TypeToken&lt;T&gt; typeToken, InvokeConfig config) {
-<span class="nc" id="L334">        return invokeAsync(name, functionName, payload, typeToken, config).get();</span>
-    }
-
-    /** Asynchronously invokes another Lambda function with custom configuration. */
-    @Override
-    public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(
-            String name, String functionName, U payload, Class&lt;T&gt; resultType, InvokeConfig config) {
-<span class="fc" id="L341">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config);</span>
-    }
-
-    @Override
-    public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(String name, String functionName, U payload, Class&lt;T&gt; resultType) {
-<span class="fc" id="L346">        return invokeAsync(</span>
-                name,
-                functionName,
-                payload,
-<span class="fc" id="L350">                TypeToken.get(resultType),</span>
-<span class="fc" id="L351">                InvokeConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(String name, String functionName, U payload, TypeToken&lt;T&gt; resultType) {
-<span class="nc" id="L356">        return invokeAsync(</span>
-<span class="nc" id="L357">                name, functionName, payload, resultType, InvokeConfig.builder().build());</span>
+<span class="fc" id="L151">        operation.execute(); // Checkpoint the wait</span>
+<span class="fc" id="L152">        return operation;</span>
     }
 
     @Override
     public &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(
-            String name, String functionName, U payload, TypeToken&lt;T&gt; typeToken, InvokeConfig config) {
-<span class="fc" id="L363">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
-<span class="fc" id="L364">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
-<span class="fc" id="L365">        ParameterValidator.validateOperationName(name);</span>
+            String name, String functionName, U payload, TypeToken&lt;T&gt; resultType, InvokeConfig config) {
+<span class="fc" id="L158">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="fc" id="L159">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
+<span class="fc" id="L160">        ParameterValidator.validateOperationName(name);</span>
 
-<span class="pc bpc" id="L367" title="1 of 2 branches missed.">        if (config.serDes() == null) {</span>
-<span class="fc" id="L368">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L163">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
         }
-<span class="pc bpc" id="L370" title="1 of 2 branches missed.">        if (config.payloadSerDes() == null) {</span>
-<span class="fc" id="L371">            config = config.toBuilder()</span>
-<span class="fc" id="L372">                    .payloadSerDes(getDurableConfig().getSerDes())</span>
-<span class="fc" id="L373">                    .build();</span>
+<span class="pc bpc" id="L165" title="1 of 2 branches missed.">        if (config.payloadSerDes() == null) {</span>
+<span class="fc" id="L166">            config = config.toBuilder()</span>
+<span class="fc" id="L167">                    .payloadSerDes(getDurableConfig().getSerDes())</span>
+<span class="fc" id="L168">                    .build();</span>
         }
-<span class="fc" id="L375">        var operationId = nextOperationId();</span>
+<span class="fc" id="L170">        var operationId = nextOperationId();</span>
 
         // Create and start invoke operation
-<span class="fc" id="L378">        var operation = new InvokeOperation&lt;&gt;(</span>
-<span class="fc" id="L379">                OperationIdentifier.of(operationId, name, OperationType.CHAINED_INVOKE),</span>
+<span class="fc" id="L173">        var operation = new InvokeOperation&lt;&gt;(</span>
+<span class="fc" id="L174">                OperationIdentifier.of(operationId, name, OperationType.CHAINED_INVOKE),</span>
                 functionName,
                 payload,
-                typeToken,
+                resultType,
                 config,
                 this);
 
-<span class="fc" id="L386">        operation.execute(); // checkpoint the invoke operation</span>
-<span class="fc" id="L387">        return operation; // Block (will throw SuspendExecutionException if needed)</span>
-    }
-
-    // ========== createCallback methods ==========
-
-    @Override
-    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, Class&lt;T&gt; resultType, CallbackConfig config) {
-<span class="fc" id="L394">        return createCallback(name, TypeToken.get(resultType), config);</span>
+<span class="fc" id="L181">        operation.execute(); // checkpoint the invoke operation</span>
+<span class="fc" id="L182">        return operation; // Block (will throw SuspendExecutionException if needed)</span>
     }
 
     @Override
-    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, TypeToken&lt;T&gt; typeToken) {
-<span class="nc" id="L399">        return createCallback(name, typeToken, CallbackConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, Class&lt;T&gt; resultType) {
-<span class="fc" id="L404">        return createCallback(</span>
-<span class="fc" id="L405">                name, TypeToken.get(resultType), CallbackConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, TypeToken&lt;T&gt; typeToken, CallbackConfig config) {
-<span class="fc" id="L410">        ParameterValidator.validateOperationName(name);</span>
-<span class="fc bfc" id="L411" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
-<span class="fc" id="L412">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+    public &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, TypeToken&lt;T&gt; resultType, CallbackConfig config) {
+<span class="fc" id="L187">        ParameterValidator.validateOperationName(name);</span>
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L189">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
         }
-<span class="fc" id="L414">        var operationId = nextOperationId();</span>
+<span class="fc" id="L191">        var operationId = nextOperationId();</span>
 
-<span class="fc" id="L416">        var operation = new CallbackOperation&lt;&gt;(</span>
-<span class="fc" id="L417">                OperationIdentifier.of(operationId, name, OperationType.CALLBACK), typeToken, config, this);</span>
-<span class="fc" id="L418">        operation.execute();</span>
+<span class="fc" id="L193">        var operation = new CallbackOperation&lt;&gt;(</span>
+<span class="fc" id="L194">                OperationIdentifier.of(operationId, name, OperationType.CALLBACK), resultType, config, this);</span>
+<span class="fc" id="L195">        operation.execute();</span>
 
-<span class="fc" id="L420">        return operation;</span>
+<span class="fc" id="L197">        return operation;</span>
     }
 
-    // ========== runInChildContext methods ==========
-
-    @Override
-    public &lt;T&gt; T runInChildContext(String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L427">        return runInChildContextAsync(name, TypeToken.get(resultType), func).get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T runInChildContext(String name, TypeToken&lt;T&gt; typeToken, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L432">        return runInChildContextAsync(name, typeToken, func).get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
-            String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L438">        return runInChildContextAsync(name, TypeToken.get(resultType), func);</span>
-    }
-
+    /**
+     * Runs a function in a child context, blocking until it completes.
+     *
+     * &lt;p&gt;Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
+     * collisions. On replay, the child context's operations are replayed independently.
+     *
+     * @param name the operation name within this context
+     * @param resultType the result class for deserialization
+     * @param func the function to execute, receiving a child {@link DurableContext}
+     * @param config the configuration for the child context
+     * @return the DurableFuture wrapping the child context result
+     */
     @Override
     public &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
-            String name, TypeToken&lt;T&gt; typeToken, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L444">        return runInChildContextAsync(name, typeToken, func, OperationSubType.RUN_IN_CHILD_CONTEXT);</span>
+            String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config) {
+<span class="fc" id="L215">        return runInChildContextAsync(name, resultType, func, config, OperationSubType.RUN_IN_CHILD_CONTEXT);</span>
     }
 
     private &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
-            String name, TypeToken&lt;T&gt; typeToken, Function&lt;DurableContext, T&gt; func, OperationSubType subType) {
-<span class="fc" id="L449">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
-<span class="fc" id="L450">        ParameterValidator.validateOperationName(name);</span>
-<span class="fc" id="L451">        var operationId = nextOperationId();</span>
+            String name,
+            TypeToken&lt;T&gt; resultType,
+            Function&lt;DurableContext, T&gt; func,
+            RunInChildContextConfig config,
+            OperationSubType subType) {
+<span class="fc" id="L224">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
+<span class="fc" id="L225">        Objects.requireNonNull(config, &quot;RunInChildContextConfig cannot be null&quot;);</span>
+<span class="fc" id="L226">        ParameterValidator.validateOperationName(name);</span>
 
-<span class="fc" id="L453">        var operation = new ChildContextOperation&lt;&gt;(</span>
-<span class="fc" id="L454">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),</span>
+<span class="fc bfc" id="L228" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L229">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+        }
+
+<span class="fc" id="L232">        var operationId = nextOperationId();</span>
+
+<span class="fc" id="L234">        var operation = new ChildContextOperation&lt;&gt;(</span>
+<span class="fc" id="L235">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),</span>
                 func,
-                typeToken,
-<span class="fc" id="L457">                getDurableConfig().getSerDes(),</span>
+                resultType,
+                config,
                 this);
 
-<span class="fc" id="L460">        operation.execute();</span>
-<span class="fc" id="L461">        return operation;</span>
-    }
-
-    // ========== map methods ==========
-
-    @Override
-    public &lt;I, O&gt; MapResult&lt;O&gt; map(String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="fc" id="L468">        return mapAsync(</span>
-                        name,
-                        items,
-<span class="fc" id="L471">                        TypeToken.get(resultType),</span>
-                        function,
-<span class="fc" id="L473">                        MapConfig.builder().build())</span>
-<span class="fc" id="L474">                .get();</span>
-    }
-
-    @Override
-    public &lt;I, O&gt; MapResult&lt;O&gt; map(
-            String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="fc" id="L480">        return mapAsync(name, items, TypeToken.get(resultType), function, config)</span>
-<span class="fc" id="L481">                .get();</span>
-    }
-
-    @Override
-    public &lt;I, O&gt; MapResult&lt;O&gt; map(
-            String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="fc" id="L487">        return mapAsync(name, items, resultType, function, MapConfig.builder().build())</span>
-<span class="fc" id="L488">                .get();</span>
-    }
-
-    @Override
-    public &lt;I, O&gt; MapResult&lt;O&gt; map(
-            String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="nc" id="L494">        return mapAsync(name, items, resultType, function, config).get();</span>
-    }
-
-    @Override
-    public &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
-            String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="fc" id="L500">        return mapAsync(</span>
-                name,
-                items,
-<span class="fc" id="L503">                TypeToken.get(resultType),</span>
-                function,
-<span class="fc" id="L505">                MapConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
-            String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="nc" id="L511">        return mapAsync(name, items, TypeToken.get(resultType), function, config);</span>
-    }
-
-    @Override
-    public &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
-            String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="nc" id="L517">        return mapAsync(name, items, resultType, function, MapConfig.builder().build());</span>
+<span class="fc" id="L241">        operation.execute();</span>
+<span class="fc" id="L242">        return operation;</span>
     }
 
     @Override
     public &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
             String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="fc" id="L523">        Objects.requireNonNull(items, &quot;items cannot be null&quot;);</span>
-<span class="fc" id="L524">        Objects.requireNonNull(function, &quot;function cannot be null&quot;);</span>
-<span class="fc" id="L525">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
-<span class="fc" id="L526">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
-<span class="fc" id="L527">        ParameterValidator.validateOperationName(name);</span>
-<span class="fc" id="L528">        ParameterValidator.validateOrderedCollection(items);</span>
+<span class="fc" id="L248">        Objects.requireNonNull(items, &quot;items cannot be null&quot;);</span>
+<span class="fc" id="L249">        Objects.requireNonNull(function, &quot;function cannot be null&quot;);</span>
+<span class="fc" id="L250">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
+<span class="fc" id="L251">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="fc" id="L252">        ParameterValidator.validateOperationName(name);</span>
+<span class="fc" id="L253">        ParameterValidator.validateOrderedCollection(items);</span>
 
-<span class="fc bfc" id="L530" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
-<span class="fc" id="L531">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L256">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
         }
 
         // Short-circuit for empty collections — no checkpoint overhead
-<span class="fc bfc" id="L535" title="All 2 branches covered.">        if (items.isEmpty()) {</span>
-<span class="fc" id="L536">            return new CompletedDurableFuture&lt;&gt;(MapResult.empty());</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (items.isEmpty()) {</span>
+<span class="fc" id="L261">            return new CompletedDurableFuture&lt;&gt;(MapResult.empty());</span>
         }
 
         // Convert to List for deterministic index-based access
-<span class="fc" id="L540">        var itemList = List.copyOf(items);</span>
-<span class="fc" id="L541">        var operationId = nextOperationId();</span>
+<span class="fc" id="L265">        var itemList = List.copyOf(items);</span>
+<span class="fc" id="L266">        var operationId = nextOperationId();</span>
 
-<span class="fc" id="L543">        var operation = new MapOperation&lt;&gt;(</span>
-<span class="fc" id="L544">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP),</span>
+<span class="fc" id="L268">        var operation = new MapOperation&lt;&gt;(</span>
+<span class="fc" id="L269">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP),</span>
                 itemList,
                 function,
                 resultType,
                 config,
                 this);
-<span class="fc" id="L550">        operation.execute();</span>
-<span class="fc" id="L551">        return operation;</span>
+<span class="fc" id="L275">        operation.execute();</span>
+<span class="fc" id="L276">        return operation;</span>
     }
 
-    // ========== parallel methods ==========
-
     @Override
-    public ParallelContext parallel(String name, ParallelConfig config) {
-<span class="fc" id="L558">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
-<span class="fc" id="L559">        var operationId = nextOperationId();</span>
+    public ParallelDurableFuture parallel(String name, ParallelConfig config) {
+<span class="fc" id="L281">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="fc" id="L282">        var operationId = nextOperationId();</span>
 
-<span class="fc" id="L561">        var parallelOp = new ParallelOperation(</span>
-<span class="fc" id="L562">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL),</span>
-<span class="fc" id="L563">                getDurableConfig().getSerDes(),</span>
+<span class="fc" id="L284">        var parallelOp = new ParallelOperation(</span>
+<span class="fc" id="L285">                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL),</span>
+<span class="fc" id="L286">                getDurableConfig().getSerDes(),</span>
                 this,
-<span class="fc" id="L565">                config.maxConcurrency(),</span>
-<span class="fc" id="L566">                config.minSuccessful(),</span>
-<span class="fc" id="L567">                config.toleratedFailureCount());</span>
+                config);
 
-<span class="fc" id="L569">        parallelOp.execute();</span>
+<span class="fc" id="L290">        parallelOp.execute();</span>
 
-<span class="fc" id="L571">        return new ParallelContext(parallelOp, this);</span>
-    }
-
-    // ========= waitForCallback methods =============
-
-    @Override
-    public &lt;T&gt; T waitForCallback(String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="fc" id="L578">        return waitForCallbackAsync(</span>
-                        name,
-<span class="fc" id="L580">                        TypeToken.get(resultType),</span>
-                        func,
-<span class="fc" id="L582">                        WaitForCallbackConfig.builder().build())</span>
-<span class="fc" id="L583">                .get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T waitForCallback(String name, TypeToken&lt;T&gt; typeToken, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="nc" id="L588">        return waitForCallbackAsync(</span>
-<span class="nc" id="L589">                        name, typeToken, func, WaitForCallbackConfig.builder().build())</span>
-<span class="nc" id="L590">                .get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T waitForCallback(
-            String name,
-            Class&lt;T&gt; resultType,
-            BiConsumer&lt;String, StepContext&gt; func,
-            WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L599">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
-<span class="nc" id="L600">                .get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T waitForCallback(
-            String name,
-            TypeToken&lt;T&gt; typeToken,
-            BiConsumer&lt;String, StepContext&gt; func,
-            WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L609">        return waitForCallbackAsync(name, typeToken, func, waitForCallbackConfig)</span>
-<span class="nc" id="L610">                .get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
-            String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="fc" id="L616">        return waitForCallbackAsync(</span>
-                name,
-<span class="fc" id="L618">                TypeToken.get(resultType),</span>
-                func,
-<span class="fc" id="L620">                WaitForCallbackConfig.builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
-            String name, TypeToken&lt;T&gt; typeToken, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="nc" id="L626">        return waitForCallbackAsync(</span>
-<span class="nc" id="L627">                name, typeToken, func, WaitForCallbackConfig.builder().build());</span>
+<span class="fc" id="L292">        return parallelOp;</span>
     }
 
     @Override
     public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
             String name,
-            Class&lt;T&gt; resultType,
+            TypeToken&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L636">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
-            String name,
-            TypeToken&lt;T&gt; typeToken,
-            BiConsumer&lt;String, StepContext&gt; func,
-            WaitForCallbackConfig waitForCallbackConfig) {
-<span class="fc" id="L645">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
-<span class="fc" id="L646">        Objects.requireNonNull(waitForCallbackConfig, &quot;waitForCallbackConfig cannot be null&quot;);</span>
+<span class="fc" id="L301">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
+<span class="fc" id="L302">        Objects.requireNonNull(waitForCallbackConfig, &quot;waitForCallbackConfig cannot be null&quot;);</span>
         // waitForCallback adds a suffix for the callback operation name and the submitter operation name so
         // the length restriction of waitForCallback name is different from the other operations.
-<span class="fc" id="L649">        ParameterValidator.validateOperationName(name, MAX_WAIT_FOR_CALLBACK_NAME_LENGTH);</span>
+<span class="fc" id="L305">        ParameterValidator.validateOperationName(name, MAX_WAIT_FOR_CALLBACK_NAME_LENGTH);</span>
 
-<span class="pc bpc" id="L651" title="1 of 2 branches missed.">        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null</span>
-<span class="fc" id="L652">                ? waitForCallbackConfig.toBuilder()</span>
-<span class="fc" id="L653">                        .stepConfig(waitForCallbackConfig.stepConfig().toBuilder()</span>
-<span class="fc" id="L654">                                .serDes(getDurableConfig().getSerDes())</span>
-<span class="fc" id="L655">                                .build())</span>
-<span class="fc" id="L656">                        .build()</span>
-<span class="pc" id="L657">                : waitForCallbackConfig;</span>
+<span class="pc bpc" id="L307" title="1 of 2 branches missed.">        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null</span>
+<span class="fc" id="L308">                ? waitForCallbackConfig.toBuilder()</span>
+<span class="fc" id="L309">                        .stepConfig(waitForCallbackConfig.stepConfig().toBuilder()</span>
+<span class="fc" id="L310">                                .serDes(getDurableConfig().getSerDes())</span>
+<span class="fc" id="L311">                                .build())</span>
+<span class="fc" id="L312">                        .build()</span>
+<span class="pc" id="L313">                : waitForCallbackConfig;</span>
 
-<span class="fc" id="L659">        return runInChildContextAsync(</span>
+<span class="fc" id="L315">        return runInChildContextAsync(</span>
                 name,
-                typeToken,
+                resultType,
                 childCtx -&gt; {
-<span class="fc" id="L663">                    var callback = childCtx.createCallback(</span>
+<span class="fc" id="L319">                    var callback = childCtx.createCallback(</span>
                             name + WAIT_FOR_CALLBACK_CALLBACK_SUFFIX,
-                            typeToken,
-<span class="fc" id="L666">                            finalWaitForCallbackConfig.callbackConfig());</span>
-<span class="fc" id="L667">                    childCtx.step(</span>
+                            resultType,
+<span class="fc" id="L322">                            finalWaitForCallbackConfig.callbackConfig());</span>
+<span class="fc" id="L323">                    childCtx.step(</span>
                             name + WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX,
                             Void.class,
                             stepCtx -&gt; {
-<span class="fc" id="L671">                                func.accept(callback.callbackId(), stepCtx);</span>
-<span class="fc" id="L672">                                return null;</span>
+<span class="fc" id="L327">                                func.accept(callback.callbackId(), stepCtx);</span>
+<span class="fc" id="L328">                                return null;</span>
                             },
-<span class="fc" id="L674">                            finalWaitForCallbackConfig.stepConfig());</span>
-<span class="fc" id="L675">                    return callback.get();</span>
+<span class="fc" id="L330">                            finalWaitForCallbackConfig.stepConfig());</span>
+<span class="fc" id="L331">                    return callback.get();</span>
                 },
+<span class="fc" id="L333">                RunInChildContextConfig.builder()</span>
+<span class="fc" id="L334">                        .serDes(finalWaitForCallbackConfig.stepConfig().serDes())</span>
+<span class="fc" id="L335">                        .build(),</span>
                 OperationSubType.WAIT_FOR_CALLBACK);
     }
 
-    // ========== waitForCondition methods ==========
-    @Override
-    public &lt;T&gt; T waitForCondition(
-            String name,
-            Class&lt;T&gt; resultType,
-            BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState) {
-<span class="fc" id="L687">        return waitForConditionAsync(</span>
-                        name,
-<span class="fc" id="L689">                        TypeToken.get(resultType),</span>
-                        checkFunc,
-                        initialState,
-<span class="fc" id="L692">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
-<span class="fc" id="L693">                .get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T waitForCondition(
-            String name,
-            Class&lt;T&gt; resultType,
-            BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState,
-            WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L703">        return waitForConditionAsync(name, resultType, checkFunc, initialState, config)</span>
-<span class="fc" id="L704">                .get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T waitForCondition(
-            String name,
-            TypeToken&lt;T&gt; typeToken,
-            BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState) {
-<span class="nc" id="L713">        return waitForConditionAsync(</span>
-                        name,
-                        typeToken,
-                        checkFunc,
-                        initialState,
-<span class="nc" id="L718">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
-<span class="nc" id="L719">                .get();</span>
-    }
-
-    @Override
-    public &lt;T&gt; T waitForCondition(
-            String name,
-            TypeToken&lt;T&gt; typeToken,
-            BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState,
-            WaitForConditionConfig&lt;T&gt; config) {
-<span class="nc" id="L729">        return waitForConditionAsync(name, typeToken, checkFunc, initialState, config)</span>
-<span class="nc" id="L730">                .get();</span>
-    }
-
     @Override
     public &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
             String name,
-            Class&lt;T&gt; resultType,
-            BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState) {
-<span class="nc" id="L739">        return waitForConditionAsync(</span>
-                name,
-<span class="nc" id="L741">                TypeToken.get(resultType),</span>
-                checkFunc,
-                initialState,
-<span class="nc" id="L744">                WaitForConditionConfig.&lt;T&gt;builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
-            String name,
-            Class&lt;T&gt; resultType,
+            TypeToken&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             T initialState,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L754">        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, initialState, config);</span>
-    }
+<span class="fc" id="L346">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="fc" id="L347">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
+<span class="fc" id="L348">        Objects.requireNonNull(checkFunc, &quot;checkFunc cannot be null&quot;);</span>
+<span class="fc" id="L349">        Objects.requireNonNull(initialState, &quot;initialState cannot be null&quot;);</span>
+<span class="fc" id="L350">        ParameterValidator.validateOperationName(name);</span>
 
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
-            String name,
-            TypeToken&lt;T&gt; typeToken,
-            BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState) {
-<span class="nc" id="L763">        return waitForConditionAsync(</span>
-                name,
-                typeToken,
-                checkFunc,
-                initialState,
-<span class="nc" id="L768">                WaitForConditionConfig.&lt;T&gt;builder().build());</span>
-    }
-
-    @Override
-    public &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
-            String name,
-            TypeToken&lt;T&gt; typeToken,
-            BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState,
-            WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L778">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
-<span class="fc" id="L779">        Objects.requireNonNull(typeToken, &quot;typeToken cannot be null&quot;);</span>
-<span class="fc" id="L780">        Objects.requireNonNull(checkFunc, &quot;checkFunc cannot be null&quot;);</span>
-<span class="fc" id="L781">        Objects.requireNonNull(initialState, &quot;initialState cannot be null&quot;);</span>
-<span class="fc" id="L782">        ParameterValidator.validateOperationName(name);</span>
-
-<span class="pc bpc" id="L784" title="1 of 2 branches missed.">        if (config.serDes() == null) {</span>
-<span class="fc" id="L785">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+<span class="pc bpc" id="L352" title="1 of 2 branches missed.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L353">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
         }
-<span class="fc" id="L787">        var operationId = nextOperationId();</span>
+<span class="fc" id="L355">        var operationId = nextOperationId();</span>
 
-<span class="fc" id="L789">        var operation =</span>
-                new WaitForConditionOperation&lt;&gt;(operationId, name, checkFunc, typeToken, initialState, config, this);
+<span class="fc" id="L357">        var operation =</span>
+                new WaitForConditionOperation&lt;&gt;(operationId, name, checkFunc, resultType, initialState, config, this);
 
-<span class="fc" id="L792">        operation.execute();</span>
+<span class="fc" id="L360">        operation.execute();</span>
 
-<span class="fc" id="L794">        return operation;</span>
+<span class="fc" id="L362">        return operation;</span>
     }
 
     // =============== accessors ================
     @Override
     public DurableLogger getLogger() {
         // lazy initialize logger
-<span class="fc bfc" id="L801" title="All 2 branches covered.">        if (logger == null) {</span>
-<span class="fc" id="L802">            synchronized (this) {</span>
-<span class="pc bpc" id="L803" title="1 of 2 branches missed.">                if (logger == null) {</span>
-<span class="fc" id="L804">                    logger = new DurableLogger(LoggerFactory.getLogger(DurableContext.class), this);</span>
+<span class="fc bfc" id="L369" title="All 2 branches covered.">        if (logger == null) {</span>
+<span class="fc" id="L370">            synchronized (this) {</span>
+<span class="pc bpc" id="L371" title="1 of 2 branches missed.">                if (logger == null) {</span>
+<span class="fc" id="L372">                    logger = new DurableLogger(LoggerFactory.getLogger(DurableContext.class), this);</span>
                 }
-<span class="fc" id="L806">            }</span>
+<span class="fc" id="L374">            }</span>
         }
-<span class="fc" id="L808">        return logger;</span>
+<span class="fc" id="L376">        return logger;</span>
     }
 
     /**
@@ -814,11 +382,10 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      */
     @Override
     public void close() {
-<span class="fc bfc" id="L817" title="All 2 branches covered.">        if (logger != null) {</span>
-<span class="fc" id="L818">            logger.close();</span>
+<span class="fc bfc" id="L385" title="All 2 branches covered.">        if (logger != null) {</span>
+<span class="fc" id="L386">            logger.close();</span>
         }
-<span class="fc" id="L820">        super.close();</span>
-<span class="fc" id="L821">    }</span>
+<span class="fc" id="L388">    }</span>
 
     /**
      * Get the next operationId. Returns a globally unique operation ID by hashing a sequential operation counter. For
@@ -827,7 +394,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * matches the Python SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
     private String nextOperationId() {
-<span class="fc" id="L830">        return operationIdGenerator.nextOperationId();</span>
+<span class="fc" id="L397">        return operationIdGenerator.nextOperationId();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

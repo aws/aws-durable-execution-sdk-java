@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.model;
 
 import java.util.Collections;
 import java.util.List;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Result container for map operations.
@@ -22,45 +23,44 @@ import java.util.List;
 public record MapResult&lt;T&gt;(List&lt;MapResultItem&lt;T&gt;&gt; items, ConcurrencyCompletionStatus completionReason) {
 
     /** Compact constructor that applies defensive copy and defaults. */
-<span class="fc" id="L25">    public MapResult {</span>
-<span class="pc bpc" id="L26" title="1 of 2 branches missed.">        items = items != null ? List.copyOf(items) : Collections.emptyList();</span>
-<span class="pc bpc" id="L27" title="1 of 2 branches missed.">        completionReason = completionReason != null ? completionReason : ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
-<span class="fc" id="L28">    }</span>
+<span class="fc" id="L26">    public MapResult {</span>
+<span class="pc bpc" id="L27" title="1 of 2 branches missed.">        items = items != null ? List.copyOf(items) : Collections.emptyList();</span>
+<span class="pc bpc" id="L28" title="1 of 2 branches missed.">        completionReason = completionReason != null ? completionReason : ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
+<span class="fc" id="L29">    }</span>
 
     /** Returns an empty MapResult with no items. */
     public static &lt;T&gt; MapResult&lt;T&gt; empty() {
-<span class="fc" id="L32">        return new MapResult&lt;&gt;(Collections.emptyList(), ConcurrencyCompletionStatus.ALL_COMPLETED);</span>
+<span class="fc" id="L33">        return new MapResult&lt;&gt;(Collections.emptyList(), ConcurrencyCompletionStatus.ALL_COMPLETED);</span>
     }
 
     /** Returns the result item at the given index. */
     public MapResultItem&lt;T&gt; getItem(int index) {
-<span class="fc" id="L37">        return items.get(index);</span>
+<span class="fc" id="L38">        return items.get(index);</span>
     }
 
     /** Returns the result at the given index, or null if that item failed or was not started. */
     public T getResult(int index) {
-<span class="fc" id="L42">        return items.get(index).result();</span>
+<span class="fc" id="L43">        return items.get(index).result();</span>
     }
 
     /** Returns the error at the given index, or null if that item succeeded or was not started. */
     public MapError getError(int index) {
-<span class="fc" id="L47">        return items.get(index).error();</span>
+<span class="fc" id="L48">        return items.get(index).error();</span>
     }
 
     /** Returns true if all items succeeded (no failures or not-started items). */
     public boolean allSucceeded() {
-<span class="fc bfc" id="L52" title="All 2 branches covered.">        return items.stream().allMatch(item -&gt; item.status() == MapResultItem.Status.SUCCEEDED);</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        return items.stream().allMatch(item -&gt; item.status() == MapResultItem.Status.SUCCEEDED);</span>
     }
 
     /** Returns the number of items in this result. */
     public int size() {
-<span class="fc" id="L57">        return items.size();</span>
+<span class="fc" id="L58">        return items.size();</span>
     }
 
     /** Returns all results as an unmodifiable list (nulls for failed/not-started items). */
     public List&lt;T&gt; results() {
-<span class="fc" id="L62">        return Collections.unmodifiableList(</span>
-<span class="fc" id="L63">                items.stream().map(MapResultItem::result).toList());</span>
+<span class="fc" id="L63">        return items.stream().map(MapResultItem::result).toList();</span>
     }
 
     /** Returns results from items that succeeded (includes null results from successful items). */
@@ -77,6 +77,62 @@ public record MapResult&lt;T&gt;(List&lt;MapResultItem&lt;T&gt;&gt; items, Concu
 <span class="fc bfc" id="L77" title="All 2 branches covered.">                .filter(item -&gt; item.status() == MapResultItem.Status.FAILED)</span>
 <span class="fc" id="L78">                .map(MapResultItem::error)</span>
 <span class="fc" id="L79">                .toList();</span>
+    }
+
+    /**
+     * Represents the outcome of a single item in a map operation.
+     *
+     * &lt;p&gt;Each item either succeeds with a result, fails with an error, or was never started. The status field indicates
+     * which case applies.
+     *
+     * &lt;p&gt;Errors are stored as {@link MapError} (plain strings) rather than raw Throwable, so they survive serialization
+     * across checkpoint-and-replay cycles without requiring AWS SDK-specific Jackson modules.
+     *
+     * @param status the status of this item
+     * @param result the result value, or null if failed/not started
+     * @param error the error details, or null if succeeded/not started
+     * @param &lt;T&gt; the result type
+     */
+<span class="fc" id="L96">    public record MapResultItem&lt;T&gt;(Status status, T result, MapError error) {</span>
+
+        /** Status of an individual map item. */
+<span class="fc" id="L99">        public enum Status {</span>
+<span class="fc" id="L100">            SUCCEEDED,</span>
+<span class="fc" id="L101">            FAILED,</span>
+<span class="fc" id="L102">            SKIPPED</span>
+        }
+
+        /** Creates a successful result item. */
+        public static &lt;T&gt; MapResultItem&lt;T&gt; succeeded(T result) {
+<span class="fc" id="L107">            return new MapResultItem&lt;&gt;(Status.SUCCEEDED, result, null);</span>
+        }
+
+        /** Creates a failed result item. */
+        public static &lt;T&gt; MapResultItem&lt;T&gt; failed(MapError error) {
+<span class="fc" id="L112">            return new MapResultItem&lt;&gt;(Status.FAILED, null, error);</span>
+        }
+
+        /** Creates a skipped result item. */
+        public static &lt;T&gt; MapResultItem&lt;T&gt; skipped() {
+<span class="fc" id="L117">            return new MapResultItem&lt;&gt;(Status.SKIPPED, null, null);</span>
+        }
+    }
+
+    /**
+     * Error details for a failed map item.
+     *
+     * &lt;p&gt;Stores error information as plain strings so that {@link MapResult} can be serialized through the user's
+     * SerDes without requiring AWS SDK-specific Jackson modules.
+     *
+     * @param errorType the fully qualified exception class name
+     * @param errorMessage the error message
+     * @param stackTrace the stack trace frames, or null
+     */
+<span class="fc" id="L131">    public record MapError(String errorType, String errorMessage, List&lt;String&gt; stackTrace) {</span>
+        public static MapError of(Throwable e) {
+<span class="fc" id="L133">            return new MapError(</span>
+<span class="fc" id="L134">                    e.getClass().getName(), e.getMessage(), ExceptionHelper.serializeStackTrace(e.getStackTrace()));</span>
+        }
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

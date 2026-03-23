@@ -4,6 +4,8 @@ package software.amazon.lambda.durable;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
  * A future representing the result of an asynchronous durable operation.
@@ -36,7 +38,7 @@ public interface DurableFuture&lt;T&gt; {
      */
     @SafeVarargs
     static &lt;T&gt; List&lt;T&gt; allOf(DurableFuture&lt;T&gt;... futures) {
-<span class="fc" id="L39">        return Arrays.stream(futures).map(DurableFuture::get).toList();</span>
+<span class="fc" id="L41">        return Arrays.stream(futures).map(DurableFuture::get).toList();</span>
     }
 
     /**
@@ -50,7 +52,22 @@ public interface DurableFuture&lt;T&gt; {
      * @return a list of results in the same order as the input futures
      */
     static &lt;T&gt; List&lt;T&gt; allOf(List&lt;DurableFuture&lt;T&gt;&gt; futures) {
-<span class="fc" id="L53">        return futures.stream().map(DurableFuture::get).toList();</span>
+<span class="fc" id="L55">        return futures.stream().map(DurableFuture::get).toList();</span>
+    }
+
+    /**
+     * Waits for any of the provided futures to complete and returns its result.
+     *
+     * @param futures the futures to wait for
+     * @return the result of the first future to complete
+     */
+    static Object anyOf(DurableFuture&lt;?&gt;... futures) {
+<span class="nc" id="L65">        return CompletableFuture.anyOf(Arrays.stream(futures)</span>
+<span class="nc" id="L66">                        .map(f -&gt; ((BaseDurableOperation) f).getCompletionFuture())</span>
+<span class="nc" id="L67">                        .toArray(CompletableFuture[]::new))</span>
+<span class="nc" id="L68">                .thenApply(o -&gt; (DurableFuture) o)</span>
+<span class="nc" id="L69">                .join()</span>
+<span class="nc" id="L70">                .get();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -4,7 +4,7 @@ package software.amazon.lambda.durable.examples;
 
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.InvokeConfig;
+import software.amazon.lambda.durable.config.InvokeConfig;
 
 /**
  * Simple example demonstrating basic invoke execution with the Durable Execution SDK.

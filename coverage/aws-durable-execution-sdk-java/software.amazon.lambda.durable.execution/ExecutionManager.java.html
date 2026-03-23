@@ -56,74 +56,73 @@ public class ExecutionManager implements AutoCloseable {
     private final AtomicReference&lt;ExecutionMode&gt; executionMode;
 
     // ===== Thread Coordination =====
-<span class="fc" id="L59">    private final Map&lt;String, BaseDurableOperation&lt;?&gt;&gt; registeredOperations =</span>
-<span class="fc" id="L60">            Collections.synchronizedMap(new HashMap&lt;&gt;());</span>
-<span class="fc" id="L61">    private final Set&lt;String&gt; activeThreads = Collections.synchronizedSet(new HashSet&lt;&gt;());</span>
-<span class="fc" id="L62">    private static final ThreadLocal&lt;ThreadContext&gt; currentThreadContext = new ThreadLocal&lt;&gt;();</span>
-<span class="fc" id="L63">    private final CompletableFuture&lt;Void&gt; executionExceptionFuture = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L59">    private final Map&lt;String, BaseDurableOperation&gt; registeredOperations = Collections.synchronizedMap(new HashMap&lt;&gt;());</span>
+<span class="fc" id="L60">    private final Set&lt;String&gt; activeThreads = Collections.synchronizedSet(new HashSet&lt;&gt;());</span>
+<span class="fc" id="L61">    private static final ThreadLocal&lt;ThreadContext&gt; currentThreadContext = new ThreadLocal&lt;&gt;();</span>
+<span class="fc" id="L62">    private final CompletableFuture&lt;Void&gt; executionExceptionFuture = new CompletableFuture&lt;&gt;();</span>
 
     // ===== Checkpoint Batching =====
     private final CheckpointManager checkpointManager;
 
-<span class="fc" id="L68">    public ExecutionManager(DurableExecutionInput input, DurableConfig config) {</span>
-<span class="fc" id="L69">        this.durableExecutionArn = input.durableExecutionArn();</span>
+<span class="fc" id="L67">    public ExecutionManager(DurableExecutionInput input, DurableConfig config) {</span>
+<span class="fc" id="L68">        this.durableExecutionArn = input.durableExecutionArn();</span>
 
         // Create checkpoint batcher for internal coordination
-<span class="fc" id="L72">        this.checkpointManager =</span>
-<span class="fc" id="L73">                new CheckpointManager(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);</span>
+<span class="fc" id="L71">        this.checkpointManager =</span>
+<span class="fc" id="L72">                new CheckpointManager(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);</span>
 
-<span class="fc" id="L75">        this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()</span>
-<span class="fc" id="L76">                .collect(Collectors.toConcurrentMap(Operation::id, op -&gt; op));</span>
+<span class="fc" id="L74">        this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()</span>
+<span class="fc" id="L75">                .collect(Collectors.toConcurrentMap(Operation::id, op -&gt; op));</span>
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
-<span class="fc" id="L79">        this.executionMode =</span>
-<span class="fc bfc" id="L80" title="All 2 branches covered.">                new AtomicReference&lt;&gt;(operationStorage.size() &gt; 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);</span>
+<span class="fc" id="L78">        this.executionMode =</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">                new AtomicReference&lt;&gt;(operationStorage.size() &gt; 1 ? ExecutionMode.REPLAY : ExecutionMode.EXECUTION);</span>
 
         // parse durableExecutionArn and get the last part after / which is the invocation id
-<span class="fc" id="L83">        var durableExecutionArnParts = durableExecutionArn.split(&quot;/&quot;, -1);</span>
-<span class="fc" id="L84">        var invocationId = durableExecutionArnParts[durableExecutionArnParts.length - 1];</span>
-<span class="fc" id="L85">        executionOp = operationStorage.get(invocationId);</span>
+<span class="fc" id="L82">        var durableExecutionArnParts = durableExecutionArn.split(&quot;/&quot;, -1);</span>
+<span class="fc" id="L83">        var invocationId = durableExecutionArnParts[durableExecutionArnParts.length - 1];</span>
+<span class="fc" id="L84">        executionOp = operationStorage.get(invocationId);</span>
 
         // Validate initial operation is an EXECUTION operation
-<span class="fc bfc" id="L88" title="All 2 branches covered.">        if (executionOp == null) {</span>
-<span class="fc" id="L89">            throw new IllegalStateException(&quot;EXECUTION operation not found&quot;);</span>
+<span class="fc bfc" id="L87" title="All 2 branches covered.">        if (executionOp == null) {</span>
+<span class="fc" id="L88">            throw new IllegalStateException(&quot;EXECUTION operation not found&quot;);</span>
         }
-<span class="fc" id="L91">        logger.debug(&quot;DurableExecution.execute() called&quot;);</span>
-<span class="fc" id="L92">        logger.debug(&quot;DurableExecutionArn: {}&quot;, durableExecutionArn);</span>
-<span class="fc" id="L93">        logger.debug(&quot;Initial operations count: {}&quot;, operationStorage.size());</span>
-<span class="fc" id="L94">        logger.debug(&quot;EXECUTION operation found: {}&quot;, executionOp.id());</span>
-<span class="fc" id="L95">    }</span>
+<span class="fc" id="L90">        logger.debug(&quot;DurableExecution.execute() called&quot;);</span>
+<span class="fc" id="L91">        logger.debug(&quot;DurableExecutionArn: {}&quot;, durableExecutionArn);</span>
+<span class="fc" id="L92">        logger.debug(&quot;Initial operations count: {}&quot;, operationStorage.size());</span>
+<span class="fc" id="L93">        logger.debug(&quot;EXECUTION operation found: {}&quot;, executionOp.id());</span>
+<span class="fc" id="L94">    }</span>
 
     // ===== State Management =====
 
     /** Returns the ARN of the durable execution being managed. */
     public String getDurableExecutionArn() {
-<span class="fc" id="L101">        return durableExecutionArn;</span>
+<span class="fc" id="L100">        return durableExecutionArn;</span>
     }
 
     /** Returns {@code true} if the execution is currently replaying completed operations. */
     public boolean isReplaying() {
-<span class="fc bfc" id="L106" title="All 2 branches covered.">        return executionMode.get() == ExecutionMode.REPLAY;</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        return executionMode.get() == ExecutionMode.REPLAY;</span>
     }
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
-    public void registerOperation(BaseDurableOperation&lt;?&gt; operation) {
-<span class="fc" id="L111">        registeredOperations.put(operation.getOperationId(), operation);</span>
-<span class="fc" id="L112">    }</span>
+    public void registerOperation(BaseDurableOperation operation) {
+<span class="fc" id="L110">        registeredOperations.put(operation.getOperationId(), operation);</span>
+<span class="fc" id="L111">    }</span>
 
     // ===== Checkpoint Completion Handler =====
     /** Called by CheckpointManager when a checkpoint completes. Updates operationStorage and notify operations . */
     private void onCheckpointComplete(List&lt;Operation&gt; newOperations) {
-<span class="fc" id="L117">        newOperations.forEach(op -&gt; {</span>
+<span class="fc" id="L116">        newOperations.forEach(op -&gt; {</span>
             // Update operation storage
-<span class="fc" id="L119">            operationStorage.put(op.id(), op);</span>
+<span class="fc" id="L118">            operationStorage.put(op.id(), op);</span>
             // call registered operation's onCheckpointComplete method for completed operations
-<span class="fc" id="L121">            registeredOperations.computeIfPresent(op.id(), (id, operation) -&gt; {</span>
-<span class="fc" id="L122">                operation.onCheckpointComplete(op);</span>
-<span class="fc" id="L123">                return operation;</span>
+<span class="fc" id="L120">            registeredOperations.computeIfPresent(op.id(), (id, operation) -&gt; {</span>
+<span class="fc" id="L121">                operation.onCheckpointComplete(op);</span>
+<span class="fc" id="L122">                return operation;</span>
             });
-<span class="fc" id="L125">        });</span>
-<span class="fc" id="L126">    }</span>
+<span class="fc" id="L124">        });</span>
+<span class="fc" id="L125">    }</span>
 
     /**
      * Gets all child operations for a given operationId.
@@ -133,13 +132,13 @@ public class ExecutionManager implements AutoCloseable {
      */
     public List&lt;Operation&gt; getChildOperations(String operationId) {
         // todo: this is O(n) - consider an improvement if performance becomes an issue
-<span class="fc" id="L136">        var children = new ArrayList&lt;Operation&gt;();</span>
-<span class="fc bfc" id="L137" title="All 2 branches covered.">        for (Operation op : operationStorage.values()) {</span>
-<span class="fc bfc" id="L138" title="All 2 branches covered.">            if (Objects.equals(op.parentId(), operationId)) {</span>
-<span class="fc" id="L139">                children.add(op);</span>
+<span class="fc" id="L135">        var children = new ArrayList&lt;Operation&gt;();</span>
+<span class="fc bfc" id="L136" title="All 2 branches covered.">        for (Operation op : operationStorage.values()) {</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">            if (Objects.equals(op.parentId(), operationId)) {</span>
+<span class="fc" id="L138">                children.add(op);</span>
             }
-<span class="fc" id="L141">        }</span>
-<span class="fc" id="L142">        return children;</span>
+<span class="fc" id="L140">        }</span>
+<span class="fc" id="L141">        return children;</span>
     }
 
     /**
@@ -150,18 +149,18 @@ public class ExecutionManager implements AutoCloseable {
      * @return the existing operation, or null if not found (first execution)
      */
     public Operation getOperationAndUpdateReplayState(String operationId) {
-<span class="fc" id="L153">        var existing = operationStorage.get(operationId);</span>
-<span class="fc bfc" id="L154" title="All 6 branches covered.">        if (executionMode.get() == ExecutionMode.REPLAY &amp;&amp; (existing == null || !isTerminalStatus(existing.status()))) {</span>
-<span class="pc bpc" id="L155" title="1 of 2 branches missed.">            if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {</span>
-<span class="fc" id="L156">                logger.debug(&quot;Transitioned to EXECUTION mode at operation '{}'&quot;, operationId);</span>
+<span class="fc" id="L152">        var existing = operationStorage.get(operationId);</span>
+<span class="fc bfc" id="L153" title="All 6 branches covered.">        if (executionMode.get() == ExecutionMode.REPLAY &amp;&amp; (existing == null || !isTerminalStatus(existing.status()))) {</span>
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">            if (executionMode.compareAndSet(ExecutionMode.REPLAY, ExecutionMode.EXECUTION)) {</span>
+<span class="fc" id="L155">                logger.debug(&quot;Transitioned to EXECUTION mode at operation '{}'&quot;, operationId);</span>
             }
         }
-<span class="fc" id="L159">        return existing;</span>
+<span class="fc" id="L158">        return existing;</span>
     }
 
     /** Returns the initial EXECUTION operation from the checkpoint state. */
     public Operation getExecutionOperation() {
-<span class="fc" id="L164">        return executionOp;</span>
+<span class="fc" id="L163">        return executionOp;</span>
     }
 
     /**
@@ -172,18 +171,18 @@ public class ExecutionManager implements AutoCloseable {
      * @return true if at least one operation exists with the given parentId
      */
     public boolean hasOperationsForContext(String parentId) {
-<span class="fc" id="L175">        return operationStorage.values().stream().anyMatch(op -&gt; Objects.equals(op.parentId(), parentId));</span>
+<span class="fc" id="L174">        return operationStorage.values().stream().anyMatch(op -&gt; Objects.equals(op.parentId(), parentId));</span>
     }
 
     // ===== Thread Coordination =====
     /** Sets the current thread's ThreadContext (threadId and threadType). Called when a user thread is started. */
     public void setCurrentThreadContext(ThreadContext threadContext) {
-<span class="fc" id="L181">        currentThreadContext.set(threadContext);</span>
-<span class="fc" id="L182">    }</span>
+<span class="fc" id="L180">        currentThreadContext.set(threadContext);</span>
+<span class="fc" id="L181">    }</span>
 
     /** Returns the current thread's ThreadContext (threadId and threadType), or null if not set. */
     public ThreadContext getCurrentThreadContext() {
-<span class="fc" id="L186">        return currentThreadContext.get();</span>
+<span class="fc" id="L185">        return currentThreadContext.get();</span>
     }
 
     /**
@@ -192,13 +191,13 @@ public class ExecutionManager implements AutoCloseable {
      * @see ThreadContext
      */
     public void registerActiveThread(String threadId) {
-<span class="pc bpc" id="L195" title="1 of 2 branches missed.">        if (activeThreads.contains(threadId)) {</span>
-<span class="nc" id="L196">            logger.trace(&quot;Thread '{}' already registered as active&quot;, threadId);</span>
-<span class="nc" id="L197">            return;</span>
+<span class="pc bpc" id="L194" title="1 of 2 branches missed.">        if (activeThreads.contains(threadId)) {</span>
+<span class="nc" id="L195">            logger.trace(&quot;Thread '{}' already registered as active&quot;, threadId);</span>
+<span class="nc" id="L196">            return;</span>
         }
-<span class="fc" id="L199">        activeThreads.add(threadId);</span>
-<span class="fc" id="L200">        logger.trace(&quot;Registered thread '{}' as active. Active threads: {}&quot;, threadId, activeThreads.size());</span>
-<span class="fc" id="L201">    }</span>
+<span class="fc" id="L198">        activeThreads.add(threadId);</span>
+<span class="fc" id="L199">        logger.trace(&quot;Registered thread '{}' as active. Active threads: {}&quot;, threadId, activeThreads.size());</span>
+<span class="fc" id="L200">    }</span>
 
     /**
      * Mark a thread as inactive. If no threads remain, suspends the execution.
@@ -207,29 +206,29 @@ public class ExecutionManager implements AutoCloseable {
      */
     public void deregisterActiveThread(String threadId) {
         // Skip if already suspended
-<span class="fc bfc" id="L210" title="All 2 branches covered.">        if (executionExceptionFuture.isDone()) {</span>
-<span class="fc" id="L211">            return;</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">        if (executionExceptionFuture.isDone()) {</span>
+<span class="fc" id="L210">            return;</span>
         }
 
-<span class="fc" id="L214">        boolean removed = activeThreads.remove(threadId);</span>
-<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (removed) {</span>
-<span class="fc" id="L216">            logger.trace(&quot;Deregistered thread '{}' Active threads: {}&quot;, threadId, activeThreads.size());</span>
+<span class="fc" id="L213">        boolean removed = activeThreads.remove(threadId);</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">        if (removed) {</span>
+<span class="fc" id="L215">            logger.trace(&quot;Deregistered thread '{}' Active threads: {}&quot;, threadId, activeThreads.size());</span>
         } else {
-<span class="fc" id="L218">            logger.warn(&quot;Thread '{}' not active, cannot deregister&quot;, threadId);</span>
+<span class="fc" id="L217">            logger.warn(&quot;Thread '{}' not active, cannot deregister&quot;, threadId);</span>
         }
 
-<span class="fc bfc" id="L221" title="All 2 branches covered.">        if (activeThreads.isEmpty()) {</span>
-<span class="fc" id="L222">            logger.info(&quot;No active threads remaining - suspending execution&quot;);</span>
-<span class="nc" id="L223">            suspendExecution();</span>
+<span class="fc bfc" id="L220" title="All 2 branches covered.">        if (activeThreads.isEmpty()) {</span>
+<span class="fc" id="L221">            logger.info(&quot;No active threads remaining - suspending execution&quot;);</span>
+<span class="nc" id="L222">            suspendExecution();</span>
         }
-<span class="fc" id="L225">    }</span>
+<span class="fc" id="L224">    }</span>
 
     // ===== Checkpointing =====
 
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture&lt;Void&gt; sendOperationUpdate(OperationUpdate update) {
-<span class="fc" id="L232">        return checkpointManager.checkpoint(update);</span>
+<span class="fc" id="L231">        return checkpointManager.checkpoint(update);</span>
     }
 
     // ===== Polling =====
@@ -240,23 +239,23 @@ public class ExecutionManager implements AutoCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId) {
-<span class="fc" id="L243">        return checkpointManager.pollForUpdate(operationId);</span>
+<span class="fc" id="L242">        return checkpointManager.pollForUpdate(operationId);</span>
     }
 
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId, Duration delay) {
-<span class="fc" id="L247">        return checkpointManager.pollForUpdate(operationId, delay);</span>
+<span class="fc" id="L246">        return checkpointManager.pollForUpdate(operationId, delay);</span>
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-<span class="fc" id="L254">        checkpointManager.shutdown();</span>
-<span class="fc" id="L255">    }</span>
+<span class="fc" id="L253">        checkpointManager.shutdown();</span>
+<span class="fc" id="L254">    }</span>
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */
     public static boolean isTerminalStatus(OperationStatus status) {
-<span class="fc bfc" id="L259" title="All 10 branches covered.">        return status == OperationStatus.SUCCEEDED</span>
+<span class="fc bfc" id="L258" title="All 10 branches covered.">        return status == OperationStatus.SUCCEEDED</span>
                 || status == OperationStatus.FAILED
                 || status == OperationStatus.CANCELLED
                 || status == OperationStatus.TIMED_OUT
@@ -269,15 +268,15 @@ public class ExecutionManager implements AutoCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-<span class="fc" id="L272">        executionExceptionFuture.completeExceptionally(exception);</span>
-<span class="fc" id="L273">        throw exception;</span>
+<span class="fc" id="L271">        executionExceptionFuture.completeExceptionally(exception);</span>
+<span class="fc" id="L272">        throw exception;</span>
     }
 
     /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
-<span class="fc" id="L278">        var ex = new SuspendExecutionException();</span>
-<span class="fc" id="L279">        executionExceptionFuture.completeExceptionally(ex);</span>
-<span class="fc" id="L280">        throw ex;</span>
+<span class="fc" id="L277">        var ex = new SuspendExecutionException();</span>
+<span class="fc" id="L278">        executionExceptionFuture.completeExceptionally(ex);</span>
+<span class="fc" id="L279">        throw ex;</span>
     }
 
     /**
@@ -290,12 +289,12 @@ public class ExecutionManager implements AutoCloseable {
      *     UnrecoverableDurableExecutionException if the execution is terminated.
      */
     public &lt;T&gt; CompletableFuture&lt;T&gt; runUntilCompleteOrSuspend(CompletableFuture&lt;T&gt; userFuture) {
-<span class="fc" id="L293">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
+<span class="fc" id="L292">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
             // reaches here only if userFuture complete successfully
-<span class="pc bpc" id="L295" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
-<span class="fc" id="L296">                return userFuture.join();</span>
+<span class="pc bpc" id="L294" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
+<span class="fc" id="L295">                return userFuture.join();</span>
             }
-<span class="nc" id="L298">            return null;</span>
+<span class="nc" id="L297">            return null;</span>
         });
     }
 }

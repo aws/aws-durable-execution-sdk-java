@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.examples;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 
 /**
@@ -19,29 +20,40 @@ import software.amazon.lambda.durable.DurableHandler;
  *   &lt;li&gt;Complete
  * &lt;/ol&gt;
  */
-<span class="fc" id="L22">public class WaitExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+<span class="fc" id="L23">public class WaitExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
         // Step 1: Start processing
-<span class="fc" id="L27">        var started =</span>
-<span class="fc" id="L28">                context.step(&quot;start-processing&quot;, String.class, stepCtx -&gt; &quot;Started processing for &quot; + input.getName());</span>
+<span class="fc" id="L28">        var started =</span>
+<span class="fc" id="L29">                context.step(&quot;start-processing&quot;, String.class, stepCtx -&gt; &quot;Started processing for &quot; + input.getName());</span>
 
         // Wait 10 seconds
-<span class="nc" id="L31">        context.wait(null, Duration.ofSeconds(10));</span>
+<span class="nc" id="L32">        context.wait(null, Duration.ofSeconds(10));</span>
 
         // Step 2: Continue processing
-<span class="nc" id="L34">        var continued =</span>
-<span class="nc" id="L35">                context.step(&quot;continue-processing&quot;, String.class, stepCtx -&gt; started + &quot; - continued after 10s&quot;);</span>
+<span class="nc" id="L35">        var continued = context.stepAsync(&quot;continue-processing&quot;, String.class, stepCtx -&gt; {</span>
+            try {
+<span class="nc" id="L37">                Thread.sleep(10000);</span>
+<span class="nc" id="L38">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L39">                throw new RuntimeException(e);</span>
+<span class="nc" id="L40">            }</span>
+<span class="nc" id="L41">            return started + &quot; - continued after 10s&quot;;</span>
+        });
 
-        // Wait 5 seconds
-<span class="nc" id="L38">        context.wait(null, Duration.ofSeconds(5));</span>
+        // Wait at most seconds
+<span class="nc" id="L45">        var wait5seconds = context.runInChildContextAsync(&quot;wait-5-seconds&quot;, String.class, ctx -&gt; {</span>
+<span class="nc" id="L46">            ctx.wait(&quot;wait-5-seconds&quot;, Duration.ofSeconds(5));</span>
+
+<span class="nc" id="L48">            return started + &quot; - waited 5 seconds&quot;;</span>
+        });
+
+<span class="nc" id="L51">        var step2 = DurableFuture.anyOf(continued, wait5seconds);</span>
 
         // Step 3: Complete
-<span class="nc" id="L41">        var result =</span>
-<span class="nc" id="L42">                context.step(&quot;complete-processing&quot;, String.class, stepCtx -&gt; continued + &quot; - completed after 5s more&quot;);</span>
+<span class="nc" id="L54">        var result = context.step(&quot;complete-processing&quot;, String.class, stepCtx -&gt; step2 + &quot; - completed after 5s more&quot;);</span>
 
-<span class="nc" id="L44">        return result;</span>
+<span class="nc" id="L56">        return result;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SerializableDurableOperation.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.operation</a> &gt; <span class="el_source">SerializableDurableOperation.java</span></div><h1>SerializableDurableOperation.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.operation;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
+
+/**
+ * Base class for all durable operations (STEP, WAIT, etc.).
+ *
+ * &lt;p&gt;Key methods:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@code execute()} starts the operation (returns immediately)
+ *   &lt;li&gt;{@code get()} blocks until complete and returns the result
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;The separation allows:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Starting multiple async operations quickly
+ *   &lt;li&gt;Blocking on results later when needed
+ *   &lt;li&gt;Proper thread coordination via future
+ * &lt;/ul&gt;
+ */
+public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableOperation implements DurableFuture&lt;T&gt; {
+<span class="fc" id="L37">    private static final Logger logger = LoggerFactory.getLogger(SerializableDurableOperation.class);</span>
+
+    private final TypeToken&lt;T&gt; resultTypeToken;
+    private final SerDes resultSerDes;
+
+    /**
+     * Constructs a new durable operation.
+     *
+     * @param operationIdentifier the unique identifier for this operation
+     * @param resultTypeToken the type token for deserializing the result
+     * @param resultSerDes the serializer/deserializer for the result
+     * @param durableContext the parent context this operation belongs to
+     */
+    protected SerializableDurableOperation(
+            OperationIdentifier operationIdentifier,
+            TypeToken&lt;T&gt; resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext) {
+<span class="fc" id="L55">        super(operationIdentifier, durableContext);</span>
+<span class="fc" id="L56">        this.resultTypeToken = resultTypeToken;</span>
+<span class="fc" id="L57">        this.resultSerDes = resultSerDes;</span>
+<span class="fc" id="L58">    }</span>
+
+    /**
+     * Checks if it's called from a Step.
+     *
+     * @throws IllegalDurableOperationException if it's in a step
+     */
+    private void validateCurrentThreadType() {
+<span class="nc" id="L66">        ThreadType current = getCurrentThreadContext().threadType();</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        if (current == ThreadType.STEP) {</span>
+<span class="nc" id="L68">            var message = String.format(</span>
+                    &quot;Nested %s operation is not supported on %s from within a %s execution.&quot;,
+<span class="nc" id="L70">                    getType(), getName(), current);</span>
+            // terminate execution and throw the exception
+<span class="nc" id="L72">            throw terminateExecutionWithIllegalDurableOperationException(message);</span>
+        }
+<span class="nc" id="L74">    }</span>
+
+    /**
+     * Deserializes a result string into the operation's result type.
+     *
+     * @param result the serialized result string
+     * @return the deserialized result
+     * @throws SerDesException if deserialization fails
+     */
+    protected T deserializeResult(String result) {
+        try {
+<span class="fc" id="L85">            return resultSerDes.deserialize(result, resultTypeToken);</span>
+<span class="fc" id="L86">        } catch (SerDesException e) {</span>
+<span class="fc" id="L87">            logger.warn(</span>
+                    &quot;Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.&quot;,
+<span class="fc" id="L89">                    getType(),</span>
+<span class="fc" id="L90">                    getName());</span>
+<span class="fc" id="L91">            throw e;</span>
+        }
+    }
+
+    /**
+     * Serializes the result to a string.
+     *
+     * @param result the result to serialize
+     * @return the serialized string
+     */
+    protected String serializeResult(T result) {
+<span class="fc" id="L102">        return resultSerDes.serialize(result);</span>
+    }
+
+    /**
+     * Serializes a throwable into an {@link ErrorObject} for checkpointing.
+     *
+     * @param throwable the exception to serialize
+     * @return the serialized error object
+     */
+    protected ErrorObject serializeException(Throwable throwable) {
+<span class="fc" id="L112">        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);</span>
+    }
+
+    /**
+     * Deserializes an {@link ErrorObject} back into a throwable, reconstructing the original exception type and stack
+     * trace when possible. Falls back to null if the exception class is not found or deserialization fails.
+     *
+     * @param errorObject the serialized error object
+     * @return the reconstructed throwable, or null if reconstruction is not possible
+     */
+    protected Throwable deserializeException(ErrorObject errorObject) {
+<span class="fc" id="L123">        Throwable original = null;</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        if (errorObject == null) {</span>
+<span class="fc" id="L125">            return original;</span>
+        }
+<span class="fc" id="L127">        var errorType = errorObject.errorType();</span>
+<span class="fc" id="L128">        var errorData = errorObject.errorData();</span>
+
+<span class="fc bfc" id="L130" title="All 2 branches covered.">        if (errorType == null) {</span>
+<span class="fc" id="L131">            return original;</span>
+        }
+        try {
+
+<span class="fc" id="L135">            Class&lt;?&gt; exceptionClass = Class.forName(errorType);</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">            if (Throwable.class.isAssignableFrom(exceptionClass)) {</span>
+<span class="fc" id="L137">                original =</span>
+<span class="fc" id="L138">                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));</span>
+
+<span class="fc bfc" id="L140" title="All 2 branches covered.">                if (original != null) {</span>
+<span class="fc" id="L141">                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));</span>
+                }
+            }
+<span class="fc" id="L144">        } catch (ClassNotFoundException e) {</span>
+<span class="fc" id="L145">            logger.warn(&quot;Cannot re-construct original exception type. Falling back to generic StepFailedException.&quot;);</span>
+<span class="fc" id="L146">        } catch (SerDesException e) {</span>
+<span class="fc" id="L147">            logger.warn(&quot;Cannot deserialize original exception data. Falling back to generic StepFailedException.&quot;, e);</span>
+<span class="fc" id="L148">        }</span>
+<span class="fc" id="L149">        return original;</span>
+    }
+
+    public abstract T get();
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

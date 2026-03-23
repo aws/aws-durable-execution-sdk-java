@@ -8,42 +8,5 @@ package software.amazon.lambda.durable.model;
  * &lt;p&gt;Captures the aggregate outcome of a parallel execution: how many branches were registered, how many succeeded, how
  * many failed, and why the operation completed.
  */
-public class ParallelResult {
-
-    private final int totalBranches;
-    private final int succeededBranches;
-    private final int failedBranches;
-    private final ConcurrencyCompletionStatus completionStatus;
-
-    public ParallelResult(
-            int totalBranches,
-            int succeededBranches,
-            int failedBranches,
-<span class="fc" id="L22">            ConcurrencyCompletionStatus completionStatus) {</span>
-<span class="fc" id="L23">        this.totalBranches = totalBranches;</span>
-<span class="fc" id="L24">        this.succeededBranches = succeededBranches;</span>
-<span class="fc" id="L25">        this.failedBranches = failedBranches;</span>
-<span class="fc" id="L26">        this.completionStatus = completionStatus;</span>
-<span class="fc" id="L27">    }</span>
-
-    /** Returns the total number of branches registered before {@code join()} was called. */
-    public int getTotalBranches() {
-<span class="fc" id="L31">        return totalBranches;</span>
-    }
-
-    /** Returns the number of branches that completed without throwing. */
-    public int getSucceededBranches() {
-<span class="fc" id="L36">        return succeededBranches;</span>
-    }
-
-    /** Returns the number of branches that threw an exception. */
-    public int getFailedBranches() {
-<span class="fc" id="L41">        return failedBranches;</span>
-    }
-
-    /** Returns the status indicating why the parallel operation completed. */
-    public ConcurrencyCompletionStatus getCompletionStatus() {
-<span class="fc" id="L46">        return completionStatus;</span>
-    }
-}
+<span class="fc" id="L11">public record ParallelResult(int size, int succeeded, int failed, ConcurrencyCompletionStatus completionStatus) {}</span>
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
