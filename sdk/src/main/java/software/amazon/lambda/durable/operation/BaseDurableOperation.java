@@ -67,7 +67,7 @@ public abstract class BaseDurableOperation {
         executionManager.registerOperation(this);
     }
 
-    protected CompletableFuture<BaseDurableOperation> getCompletionFuture() {
+    public CompletableFuture<BaseDurableOperation> getCompletionFuture() {
         return completionFuture;
     }
 

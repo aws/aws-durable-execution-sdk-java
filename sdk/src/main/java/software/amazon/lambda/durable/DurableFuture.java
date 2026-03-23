@@ -4,6 +4,8 @@ package software.amazon.lambda.durable;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
  * A future representing the result of an asynchronous durable operation.
@@ -51,5 +53,18 @@ public interface DurableFuture<T> {
      */
     static <T> List<T> allOf(List<DurableFuture<T>> futures) {
         return futures.stream().map(DurableFuture::get).toList();
+    }
+
+    /**
+     * Waits for any of the provided futures to complete and returns its result.
+     *
+     * @param futures the futures to wait for
+     * @return the result of the first future to complete
+     */
+    static Object anyOf(DurableFuture<?>... futures) {
+        return CompletableFuture.anyOf(Arrays.stream(futures)
+                        .map(f -> ((BaseDurableOperation) f).getCompletionFuture())
+                        .toArray(CompletableFuture[]::new))
+                .join();
     }
 }
