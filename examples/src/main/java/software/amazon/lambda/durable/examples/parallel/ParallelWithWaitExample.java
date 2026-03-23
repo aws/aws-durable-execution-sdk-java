@@ -8,7 +8,7 @@ import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.ParallelConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.model.ParallelResult;
 
 /**
@@ -68,6 +68,6 @@ public class ParallelWithWaitExample
         logger.info("All {} notifications delivered", deliveries.size());
         // Test replay
         context.wait("wait for finalization", Duration.ofSeconds(5));
-        return new Output(deliveries, result.getSucceededBranches(), result.getFailedBranches());
+        return new Output(deliveries, result.succeeded(), result.failed());
     }
 }

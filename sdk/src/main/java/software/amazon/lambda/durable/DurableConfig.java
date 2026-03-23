@@ -267,7 +267,7 @@ public final class DurableConfig {
         private PollingStrategy pollingStrategy;
         private Duration checkpointDelay;
 
-        private Builder() {}
+        public Builder() {}
 
         /**
          * Sets a custom LambdaClient for production use. Use this method to customize the AWS SDK client with specific

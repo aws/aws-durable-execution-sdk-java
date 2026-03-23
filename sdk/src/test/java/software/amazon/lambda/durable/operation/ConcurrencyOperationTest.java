@@ -12,7 +12,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -20,8 +19,9 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
@@ -37,19 +37,18 @@ class ConcurrencyOperationTest {
 
     private static final SerDes SER_DES = new JacksonSerDes();
     private static final String OPERATION_ID = "op-1";
+    private static final String CHILD_OP_1 = TestUtils.hashOperationId(OPERATION_ID + "-1");
+    private static final String CHILD_OP_2 = TestUtils.hashOperationId(OPERATION_ID + "-2");
     private static final TypeToken<Void> RESULT_TYPE = TypeToken.get(Void.class);
 
     private DurableContextImpl durableContext;
     private DurableContextImpl childContext;
     private ExecutionManager executionManager;
-    private AtomicInteger operationIdCounter;
-    private OperationIdGenerator mockIdGenerator;
 
     @BeforeEach
     void setUp() {
         durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
-        operationIdCounter = new AtomicInteger(0);
 
         var childContext = mock(DurableContextImpl.class);
         this.childContext = childContext;
@@ -65,11 +64,7 @@ class ConcurrencyOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
-        when(durableContext.createChildContextWithoutSettingThreadContext(anyString(), anyString()))
-                .thenReturn(childContext);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
-        mockIdGenerator = mock(OperationIdGenerator.class);
-        when(mockIdGenerator.nextOperationId()).thenAnswer(inv -> "child-" + operationIdCounter.incrementAndGet());
         // All child operations are NOT in replay
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
         // Simulate the real backend: the parent concurrency operation is available in storage after completion
@@ -86,19 +81,15 @@ class ConcurrencyOperationTest {
         when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
     }
 
-    private TestConcurrencyOperation createOperation(int maxConcurrency, int minSuccessful, int toleratedFailureCount)
-            throws Exception {
-        TestConcurrencyOperation testConcurrencyOperation = new TestConcurrencyOperation(
+    private TestConcurrencyOperation createOperation(CompletionConfig completionConfig) throws Exception {
+        return new TestConcurrencyOperation(
                 OperationIdentifier.of(
                         OPERATION_ID, "test-concurrency", OperationType.CONTEXT, OperationSubType.PARALLEL),
                 RESULT_TYPE,
                 SER_DES,
                 durableContext,
-                maxConcurrency,
-                minSuccessful,
-                toleratedFailureCount);
-        setOperationIdGenerator(testConcurrencyOperation, mockIdGenerator);
-        return testConcurrencyOperation;
+                Integer.MAX_VALUE,
+                completionConfig);
     }
 
     private void setOperationIdGenerator(ConcurrencyOperation<?> op, OperationIdGenerator mockGenerator)
@@ -112,9 +103,9 @@ class ConcurrencyOperationTest {
 
     @Test
     void allChildrenAlreadySucceed_callsHandleSuccess() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("branch-1")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -122,9 +113,9 @@ class ConcurrencyOperationTest {
                         .contextDetails(
                                 ContextDetails.builder().result("\"result-1\"").build())
                         .build());
-        when(executionManager.getOperationAndUpdateReplayState("child-2"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
                 .thenReturn(Operation.builder()
-                        .id("child-2")
+                        .id(CHILD_OP_2)
                         .name("branch-2")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -134,38 +125,42 @@ class ConcurrencyOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var op = createOperation(-1, -1, 0);
-        op.addItem(
+        var op = createOperation(CompletionConfig.allSuccessful());
+        op.execute();
+        op.enqueueItem(
                 "branch-1",
-                ctx -> {
+                ctx1 -> {
                     functionCalled.set(true);
                     return "result-1";
                 },
                 TypeToken.get(String.class),
-                SER_DES);
-        op.addItem(
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
                 "branch-2",
                 ctx -> {
                     functionCalled.set(true);
                     return "result-2";
                 },
                 TypeToken.get(String.class),
-                SER_DES);
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
 
         op.exposedJoin();
 
         assertTrue(op.isSuccessHandled());
         assertFalse(op.isFailureHandled());
-        assertEquals(2, op.getSucceededCount());
-        assertEquals(0, op.getFailedCount());
+        var items = op.getBranches();
+        assertEquals(2, items.size());
+        assertTrue(items.stream().allMatch(b -> b.getOperation().status().equals(OperationStatus.SUCCEEDED)));
         assertFalse(functionCalled.get(), "Functions should not be called during SUCCEEDED replay");
     }
 
     @Test
     void singleChildAlreadySucceeds_fullCycle() throws Exception {
-        when(executionManager.getOperationAndUpdateReplayState("child-1"))
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
                 .thenReturn(Operation.builder()
-                        .id("child-1")
+                        .id(CHILD_OP_1)
                         .name("only-branch")
                         .type(OperationType.CONTEXT)
                         .subType(OperationSubType.PARALLEL_BRANCH.getValue())
@@ -175,34 +170,25 @@ class ConcurrencyOperationTest {
                         .build());
 
         var functionCalled = new AtomicBoolean(false);
-        var op = createOperation(-1, 1, 0);
-        op.addItem(
+        var op = createOperation(CompletionConfig.minSuccessful(1));
+        op.enqueueItem(
                 "only-branch",
                 ctx -> {
                     functionCalled.set(true);
                     return "done";
                 },
                 TypeToken.get(String.class),
-                SER_DES);
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH);
 
+        op.execute();
         op.exposedJoin();
 
         assertTrue(op.isSuccessHandled());
-        assertEquals(1, op.getSucceededCount());
-        assertEquals(0, op.getFailedCount());
+        var items = op.getBranches();
+        assertEquals(1, items.size());
+        assertEquals(OperationStatus.SUCCEEDED, items.get(0).getOperation().status());
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
-    }
-
-    @Test
-    void addItem_usesRootChildContextAsParent() throws Exception {
-        var op = createOperation(-1, -1, 0);
-
-        op.addItem("branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES);
-
-        // rootContext is created via durableContext.createChildContext(...) in the constructor,
-        // so the parentContext passed to createItem must be that child context, not durableContext itself
-        assertNotSame(durableContext, op.getLastParentContext());
-        assertSame(childContext, op.getLastParentContext());
     }
 
     // ===== Test subclass =====
@@ -213,8 +199,6 @@ class ConcurrencyOperationTest {
         private boolean failureHandled = false;
         private final AtomicInteger executingCount = new AtomicInteger(0);
         private DurableContextImpl lastParentContext;
-        private final int minSuccessful;
-        private final int toleratedFailureCount;
 
         TestConcurrencyOperation(
                 OperationIdentifier operationIdentifier,
@@ -222,35 +206,15 @@ class ConcurrencyOperationTest {
                 SerDes resultSerDes,
                 DurableContextImpl durableContext,
                 int maxConcurrency,
-                int minSuccessful,
-                int toleratedFailureCount) {
-            super(operationIdentifier, resultTypeToken, resultSerDes, durableContext, maxConcurrency);
-            this.minSuccessful = minSuccessful;
-            this.toleratedFailureCount = toleratedFailureCount;
-        }
-
-        @Override
-        protected <R> ChildContextOperation<R> createItem(
-                String operationId,
-                String name,
-                Function<DurableContext, R> function,
-                TypeToken<R> resultType,
-                SerDes serDes,
-                DurableContextImpl parentContext) {
-            lastParentContext = parentContext;
-            return new ChildContextOperation<R>(
-                    OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),
-                    function,
-                    resultType,
-                    serDes,
-                    parentContext,
-                    this) {
-                @Override
-                public void execute() {
-                    executingCount.incrementAndGet();
-                    super.execute();
-                }
-            };
+                CompletionConfig completionConfig) {
+            super(
+                    operationIdentifier,
+                    resultTypeToken,
+                    resultSerDes,
+                    durableContext,
+                    maxConcurrency,
+                    completionConfig.minSuccessful(),
+                    completionConfig.toleratedFailureCount());
         }
 
         @Override
@@ -265,46 +229,13 @@ class ConcurrencyOperationTest {
         }
 
         @Override
-        protected void handleFailure(ConcurrencyCompletionStatus completionStatus) {
-            failureHandled = true;
-            onCheckpointComplete(Operation.builder()
-                    .id(getOperationId())
-                    .status(OperationStatus.SUCCEEDED) // always success for parallel
-                    .build());
+        protected void start() {
+            executeItems();
         }
 
         @Override
-        protected void start() {}
-
-        @Override
-        protected void replay(Operation existing) {}
-
-        @Override
-        protected void validateItemCount() {
-            if (minSuccessful > getTotalItems() - getFailedCount()) {
-                throw new IllegalArgumentException("minSuccessful (" + minSuccessful
-                        + ") exceeds the number of registered items (" + getTotalItems() + ")");
-            }
-        }
-
-        @Override
-        protected ConcurrencyCompletionStatus canComplete() {
-            int succeeded = getSucceededCount();
-            int failed = getFailedCount();
-
-            if (minSuccessful != -1 && succeeded >= minSuccessful) {
-                return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-            }
-
-            if ((minSuccessful == -1 && failed > 0) || failed > toleratedFailureCount) {
-                return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-            }
-
-            if (isAllItemsFinished()) {
-                return ConcurrencyCompletionStatus.ALL_COMPLETED;
-            }
-
-            return null;
+        protected void replay(Operation existing) {
+            executeItems();
         }
 
         @Override

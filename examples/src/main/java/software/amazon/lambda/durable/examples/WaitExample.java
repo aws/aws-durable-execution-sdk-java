@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.examples;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 
 /**
@@ -31,15 +32,26 @@ public class WaitExample extends DurableHandler<GreetingRequest, String> {
         context.wait(null, Duration.ofSeconds(10));
 
         // Step 2: Continue processing
-        var continued =
-                context.step("continue-processing", String.class, stepCtx -> started + " - continued after 10s");
+        var continued = context.stepAsync("continue-processing", String.class, stepCtx -> {
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            return started + " - continued after 10s";
+        });
 
-        // Wait 5 seconds
-        context.wait(null, Duration.ofSeconds(5));
+        // Wait at most seconds
+        var wait5seconds = context.runInChildContextAsync("wait-5-seconds", String.class, ctx -> {
+            ctx.wait("wait-5-seconds", Duration.ofSeconds(5));
+
+            return started + " - waited 5 seconds";
+        });
+
+        var step2 = DurableFuture.anyOf(continued, wait5seconds);
 
         // Step 3: Complete
-        var result =
-                context.step("complete-processing", String.class, stepCtx -> continued + " - completed after 5s more");
+        var result = context.step("complete-processing", String.class, stepCtx -> step2 + " - completed after 5s more");
 
         return result;
     }

@@ -6,8 +6,8 @@ import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.InvokeConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
@@ -22,7 +22,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  * @param <T> the result type from the invoked function
  * @param <I> the payload type sent to the invoked function
  */
-public class InvokeOperation<T, I> extends BaseDurableOperation<T> {
+public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
     private final String functionName;
     private final I payload;
     private final InvokeConfig invokeConfig;
@@ -58,7 +58,7 @@ public class InvokeOperation<T, I> extends BaseDurableOperation<T> {
             case STARTED -> pollForOperationUpdates();
             case SUCCEEDED, FAILED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
             default ->
-                terminateExecutionWithIllegalDurableOperationException(
+                throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected invoke status: " + existing.statusAsString());
         }
     }

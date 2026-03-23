@@ -7,7 +7,7 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.operation.SerializableDurableOperation;
 
 class DurableFutureTest {
 
@@ -63,15 +63,15 @@ class DurableFutureTest {
     void allOfPropagatesException() {
         var op1 = mockOperation("first");
         @SuppressWarnings("unchecked")
-        BaseDurableOperation<String> op2 = mock(BaseDurableOperation.class);
+        SerializableDurableOperation<String> op2 = mock(SerializableDurableOperation.class);
         when(op2.get()).thenThrow(new RuntimeException("Step failed"));
 
         assertThrows(RuntimeException.class, () -> DurableFuture.allOf(op1, op2));
     }
 
     @SuppressWarnings("unchecked")
-    private <T> BaseDurableOperation<T> mockOperation(T result) {
-        BaseDurableOperation<T> op = mock(BaseDurableOperation.class);
+    private <T> SerializableDurableOperation<T> mockOperation(T result) {
+        SerializableDurableOperation<T> op = mock(SerializableDurableOperation.class);
         when(op.get()).thenReturn(result);
         return op;
     }

@@ -6,16 +6,16 @@ import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.CallbackConfig;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 
 /** Durable operation for creating and waiting on external callbacks. */
-public class CallbackOperation<T> extends BaseDurableOperation<T> implements DurableCallbackFuture<T> {
+public class CallbackOperation<T> extends SerializableDurableOperation<T> implements DurableCallbackFuture<T> {
 
     private final CallbackConfig config;
 
@@ -65,7 +65,7 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
                 // Still waiting - continue to polling
             }
             default ->
-                terminateExecutionWithIllegalDurableOperationException(
+                throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected callback status: " + existing.status());
         }
         pollForOperationUpdates();
@@ -80,7 +80,8 @@ public class CallbackOperation<T> extends BaseDurableOperation<T> implements Dur
             case FAILED -> throw new CallbackFailedException(op);
             case TIMED_OUT -> throw new CallbackTimeoutException(op);
             default ->
-                terminateExecutionWithIllegalDurableOperationException("Unexpected callback status: " + op.status());
+                throw terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected callback status: " + op.status());
         };
     }
 

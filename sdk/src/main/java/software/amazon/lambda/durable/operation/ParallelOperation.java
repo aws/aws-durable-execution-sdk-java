@@ -6,10 +6,14 @@ import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.ParallelBranchConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -39,43 +43,37 @@ import software.amazon.lambda.durable.serde.SerDes;
  *         └── Branch N context (ChildContextOperation with PARALLEL_BRANCH)
  * </pre>
  */
-public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
+public class ParallelOperation extends ConcurrencyOperation<ParallelResult> implements ParallelDurableFuture {
 
-    private final int minSuccessful;
-    private final int toleratedFailureCount;
-    private boolean skipCheckpoint = false;
+    // this field could be written and read in different threads
+    private volatile boolean skipCheckpoint = false;
+    private volatile ParallelResult cachedResult;
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
             SerDes resultSerDes,
             DurableContextImpl durableContext,
-            int maxConcurrency,
-            int minSuccessful,
-            int toleratedFailureCount) {
-        super(operationIdentifier, new TypeToken<ParallelResult>() {}, resultSerDes, durableContext, maxConcurrency);
-        this.minSuccessful = minSuccessful;
-        this.toleratedFailureCount = toleratedFailureCount;
-    }
-
-    @Override
-    protected <R> ChildContextOperation<R> createItem(
-            String operationId,
-            String name,
-            Function<DurableContext, R> function,
-            TypeToken<R> resultType,
-            SerDes serDes,
-            DurableContextImpl parentContext) {
-        return new ChildContextOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL_BRANCH),
-                function,
-                resultType,
-                serDes,
-                parentContext,
-                this);
+            ParallelConfig config) {
+        super(
+                operationIdentifier,
+                TypeToken.get(ParallelResult.class),
+                resultSerDes,
+                durableContext,
+                config.maxConcurrency(),
+                config.completionConfig().minSuccessful(),
+                config.completionConfig().toleratedFailureCount());
     }
 
     @Override
     protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+        var items = getBranches();
+        int succeededCount = Math.toIntExact(items.stream()
+                .filter(item -> item.getOperation().status() == OperationStatus.SUCCEEDED)
+                .count());
+        int failedCount = Math.toIntExact(items.stream()
+                .filter(item -> item.getOperation().status() != OperationStatus.SUCCEEDED)
+                .count());
+        this.cachedResult = new ParallelResult(items.size(), succeededCount, failedCount, concurrencyCompletionStatus);
         if (skipCheckpoint) {
             // Do not send checkpoint during replay
             markAlreadyCompleted();
@@ -88,15 +86,12 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
     }
 
     @Override
-    protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        handleSuccess(concurrencyCompletionStatus);
-    }
-
-    @Override
     protected void start() {
         sendOperationUpdateAsync(OperationUpdate.builder()
                 .action(OperationAction.START)
                 .subType(getSubType().getValue()));
+
+        executeItems();
     }
 
     @Override
@@ -104,42 +99,27 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> {
         // No-op: child branches handle their own replay via ChildContextOperation.replay().
         // Set replaying=true so handleSuccess() skips re-checkpointing the already-completed parallel context.
         skipCheckpoint = ExecutionManager.isTerminalStatus(existing.status());
+        executeItems();
     }
 
     @Override
     public ParallelResult get() {
         join();
-        return new ParallelResult(getTotalItems(), getSucceededCount(), getFailedCount(), getCompletionStatus());
+        return cachedResult;
     }
 
+    /** Calls {@link #get()} if not already called. Guarantees that the context is closed. */
     @Override
-    protected void validateItemCount() {
-        if (minSuccessful > getTotalItems()) {
-            throw new IllegalArgumentException("minSuccessful (" + minSuccessful
-                    + ") exceeds the number of registered items (" + getTotalItems() + ")");
-        }
+    public void close() {
+        join();
     }
 
-    @Override
-    protected ConcurrencyCompletionStatus canComplete() {
-        int succeeded = getSucceededCount();
-        int failed = getFailedCount();
-
-        // If we've met the minimum successful count, we're done
-        if (minSuccessful != -1 && succeeded >= minSuccessful) {
-            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
+    public <T> DurableFuture<T> branch(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func, ParallelBranchConfig config) {
+        if (isJoined.get()) {
+            throw new IllegalStateException("Cannot add branches after join() has been called");
         }
-
-        // If we've exceeded the failure tolerance, we're done
-        if ((minSuccessful == -1 && failed > 0) || failed > toleratedFailureCount) {
-            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-        }
-
-        // All items finished — complete
-        if (isAllItemsFinished()) {
-            return ConcurrencyCompletionStatus.ALL_COMPLETED;
-        }
-
-        return null;
+        var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
+        return enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH);
     }
 }

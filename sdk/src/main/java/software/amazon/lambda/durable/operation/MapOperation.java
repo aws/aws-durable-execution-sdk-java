@@ -5,26 +5,20 @@ package software.amazon.lambda.durable.operation;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
-import software.amazon.lambda.durable.CompletionConfig;
 import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.MapConfig;
-import software.amazon.lambda.durable.MapFunction;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
-import software.amazon.lambda.durable.model.MapError;
 import software.amazon.lambda.durable.model.MapResult;
-import software.amazon.lambda.durable.model.MapResultItem;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Executes a map operation: applies a function to each item in a collection concurrently, with each item running in its
@@ -42,18 +36,16 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private final List<I> items;
-    private final MapFunction<I, O> function;
+    private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
-    private final CompletionConfig completionConfig;
     private boolean replayFromPayload;
     private volatile MapResult<O> cachedResult;
-    private ConcurrencyCompletionStatus completionStatus;
 
     public MapOperation(
             OperationIdentifier operationIdentifier,
             List<I> items,
-            MapFunction<I, O> function,
+            DurableContext.MapFunction<I, O> function,
             TypeToken<O> itemResultType,
             MapConfig config,
             DurableContextImpl durableContext) {
@@ -62,29 +54,56 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 new TypeToken<>() {},
                 config.serDes(),
                 durableContext,
-                config.maxConcurrency() != null ? config.maxConcurrency() : -1);
+                config.maxConcurrency(),
+                config.completionConfig().minSuccessful(),
+                getToleratedFailureCount(config.completionConfig(), items.size()));
+        if (config.completionConfig().minSuccessful() != null
+                && config.completionConfig().minSuccessful() > items.size()) {
+            throw new IllegalArgumentException("minSuccessful cannot be greater than total items: "
+                    + config.completionConfig().minSuccessful() + " > " + items.size());
+        }
         this.items = List.copyOf(items);
         this.function = function;
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
-        this.completionConfig = config.completionConfig();
+
+        addAllItems();
     }
 
-    @Override
-    protected <R> ChildContextOperation<R> createItem(
-            String operationId,
-            String name,
-            Function<DurableContext, R> function,
-            TypeToken<R> resultType,
-            SerDes serDes,
-            DurableContextImpl parentContext) {
-        return new ChildContextOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP_ITERATION),
-                function,
-                resultType,
-                serDes,
-                parentContext,
-                this);
+    private void addAllItems() {
+        // Enqueue all items first, then start execution. This prevents early termination
+        // criteria (e.g., minSuccessful) from completing the operation mid-loop on replay,
+        // which would cause subsequent enqueue calls to fail with "completed operation".
+        var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
+        for (int i = 0; i < items.size(); i++) {
+            var index = i;
+            var item = items.get(i);
+            enqueueItem(
+                    branchPrefix + i,
+                    childCtx -> function.apply(item, index, childCtx),
+                    itemResultType,
+                    serDes,
+                    OperationSubType.MAP_ITERATION);
+        }
+    }
+
+    private static Integer getToleratedFailureCount(CompletionConfig completionConfig, int totalItems) {
+        if (completionConfig == null
+                || (completionConfig.toleratedFailureCount() == null
+                        && completionConfig.toleratedFailurePercentage() == null)) {
+            // neither toleratedFailureCount nor toleratedFailurePercentage is specified.
+            return null;
+        }
+        int toleratedFailureCount = completionConfig.toleratedFailureCount() != null
+                ? completionConfig.toleratedFailureCount()
+                : Integer.MAX_VALUE;
+
+        // convert percentage to count
+        int toleratedFailureCountFromPercentage = completionConfig.toleratedFailurePercentage() != null
+                ? (int) Math.floor(totalItems * completionConfig.toleratedFailurePercentage())
+                : Integer.MAX_VALUE;
+        // minimum of two if both count and percentage is specified
+        return Math.min(toleratedFailureCount, toleratedFailureCountFromPercentage);
     }
 
     @Override
@@ -92,7 +111,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         sendOperationUpdateAsync(OperationUpdate.builder()
                 .action(OperationAction.START)
                 .subType(getSubType().getValue()));
-        addAllItems();
+
+        executeItems();
     }
 
     @Override
@@ -102,7 +122,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 if (existing.contextDetails() != null
                         && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute children to reconstruct MapResult
-                    addAllItems();
+                    executeItems();
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
                     replayFromPayload = true;
@@ -112,87 +132,35 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             case STARTED -> {
                 // Map was in progress when interrupted — re-create children without sending
                 // another START (the backend rejects duplicate START for existing operations)
-                addAllItems();
+                executeItems();
             }
             default ->
-                terminateExecutionWithIllegalDurableOperationException(
+                throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected map operation status: " + existing.status());
         }
     }
 
-    private void addAllItems() {
-        // Enqueue all items first, then start execution. This prevents early termination
-        // criteria (e.g., minSuccessful) from completing the operation mid-loop on replay,
-        // which would cause subsequent enqueue calls to fail with "completed operation".
-        for (int i = 0; i < items.size(); i++) {
-            var index = i;
-            var item = items.get(i);
-            enqueueItem(
-                    "map-iteration-" + i, childCtx -> function.apply(item, index, childCtx), itemResultType, serDes);
-        }
-        startPendingItems();
-    }
-
+    @SuppressWarnings("unchecked")
     @Override
     protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        this.completionStatus = concurrencyCompletionStatus;
-        checkpointMapResult();
-    }
+        var children = getBranches();
+        var resultItems = new ArrayList<MapResult.MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
-    @Override
-    protected void handleFailure(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        this.completionStatus = concurrencyCompletionStatus;
-        checkpointMapResult();
-    }
-
-    @Override
-    protected void validateItemCount() {
-        if (completionConfig.minSuccessful() != null && completionConfig.minSuccessful() > getTotalItems()) {
-            throw new IllegalArgumentException("minSuccessful (" + completionConfig.minSuccessful()
-                    + ") exceeds the number of items (" + getTotalItems() + ")");
-        }
-    }
-
-    /**
-     * Overrides the default completion logic from {@link ConcurrencyOperation} to support Map's
-     * {@link CompletionConfig} semantics. Unlike Parallel (where {@code minSuccessful == -1} means "all must succeed"),
-     * Map's default {@code allCompleted()} allows failures without early termination.
-     */
-    @Override
-    protected ConcurrencyCompletionStatus canComplete() {
-        int succeeded = getSucceededCount();
-        int failed = getFailedCount();
-        int totalCompleted = succeeded + failed;
-
-        // Check minSuccessful
-        if (completionConfig.minSuccessful() != null && succeeded >= completionConfig.minSuccessful()) {
-            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
+        for (int i = 0; i < children.size(); i++) {
+            var branch = (ChildContextOperation<O>) children.get(i);
+            if (!branch.isOperationCompleted()) {
+                resultItems.set(i, MapResult.MapResultItem.skipped());
+            } else {
+                try {
+                    resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));
+                } catch (Exception e) {
+                    resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(e)));
+                }
+            }
         }
 
-        // Check toleratedFailureCount
-        if (completionConfig.toleratedFailureCount() != null && failed > completionConfig.toleratedFailureCount()) {
-            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-        }
-
-        // Check toleratedFailurePercentage
-        if (completionConfig.toleratedFailurePercentage() != null
-                && totalCompleted > 0
-                && ((double) failed / totalCompleted) > completionConfig.toleratedFailurePercentage()) {
-            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-        }
-
-        // All items finished (no pending, no running) — complete with ALL_COMPLETED
-        if (isAllItemsFinished()) {
-            return ConcurrencyCompletionStatus.ALL_COMPLETED;
-        }
-
-        return null;
-    }
-
-    private void checkpointMapResult() {
-        var result = aggregateResults();
-        this.cachedResult = result;
-        var serialized = serializeResult(result);
+        this.cachedResult = new MapResult<>(resultItems, concurrencyCompletionStatus);
+        var serialized = serializeResult(cachedResult);
         var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
@@ -221,43 +189,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
         // First execution or large result replay: wait for children, then aggregate
         join();
-        return cachedResult != null ? cachedResult : aggregateResults();
-    }
-
-    /**
-     * Aggregates results from completed branches into a {@code MapResult}.
-     *
-     * <p>Called after all branches have completed. At this point every branch's {@code completionFuture} is already
-     * done, so {@code branch.get()} returns immediately without blocking.
-     */
-    @SuppressWarnings("unchecked")
-    private MapResult<O> aggregateResults() {
-        var children = getChildOperations();
-        var resultItems = new ArrayList<MapResultItem<O>>(Collections.nCopies(items.size(), null));
-
-        for (int i = 0; i < children.size(); i++) {
-            var branch = (ChildContextOperation<O>) children.get(i);
-            if (!branch.isOperationCompleted()) {
-                resultItems.set(i, MapResultItem.notStarted());
-                continue;
-            }
-            try {
-                resultItems.set(i, MapResultItem.success(branch.get()));
-            } catch (Exception e) {
-                resultItems.set(i, MapResultItem.failure(buildMapError(e)));
-            }
-        }
-
-        // Fill any remaining null slots (items beyond children size) with notStarted
-        for (int i = children.size(); i < items.size(); i++) {
-            resultItems.set(i, MapResultItem.notStarted());
-        }
-
-        return new MapResult<>(resultItems, completionStatus);
-    }
-
-    private static MapError buildMapError(Exception e) {
-        return new MapError(
-                e.getClass().getName(), e.getMessage(), ExceptionHelper.serializeStackTrace(e.getStackTrace()));
+        return cachedResult;
     }
 }

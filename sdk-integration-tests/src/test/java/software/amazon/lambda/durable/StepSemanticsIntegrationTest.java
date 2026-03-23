@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;

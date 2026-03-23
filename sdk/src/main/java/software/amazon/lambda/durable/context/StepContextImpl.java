@@ -66,6 +66,5 @@ public class StepContextImpl extends BaseContextImpl implements StepContext {
         if (logger != null) {
             logger.close();
         }
-        super.close();
     }
 }

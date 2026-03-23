@@ -10,12 +10,12 @@ class MapFunctionTest {
 
     @Test
     void isFunctionalInterface() {
-        assertTrue(MapFunction.class.isAnnotationPresent(FunctionalInterface.class));
+        assertTrue(DurableContext.MapFunction.class.isAnnotationPresent(FunctionalInterface.class));
     }
 
     @Test
     void canBeUsedAsLambda() {
-        MapFunction<String, String> fn = (item, index, ctx) -> item.toUpperCase();
+        DurableContext.MapFunction<String, String> fn = (item, index, ctx) -> item.toUpperCase();
 
         var result = fn.apply("hello", 0, null);
 
@@ -24,7 +24,7 @@ class MapFunctionTest {
 
     @Test
     void receivesCorrectIndex() {
-        MapFunction<String, Integer> fn = (item, index, ctx) -> index;
+        DurableContext.MapFunction<String, Integer> fn = (item, index, ctx) -> index;
 
         assertEquals(0, fn.apply("a", 0, null));
         assertEquals(5, fn.apply("b", 5, null));
@@ -32,7 +32,7 @@ class MapFunctionTest {
 
     @Test
     void canThrowRuntimeException() {
-        MapFunction<String, String> fn = (item, index, ctx) -> {
+        DurableContext.MapFunction<String, String> fn = (item, index, ctx) -> {
             throw new IllegalArgumentException("bad input");
         };
 

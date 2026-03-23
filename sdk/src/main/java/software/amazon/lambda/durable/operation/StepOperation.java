@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.operation;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -13,16 +12,17 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
-import software.amazon.lambda.durable.StepConfig;
 import software.amazon.lambda.durable.StepContext;
-import software.amazon.lambda.durable.StepSemantics;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -34,12 +34,11 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  *
  * @param <T> the result type of the step function
  */
-public class StepOperation<T> extends BaseDurableOperation<T> {
+public class StepOperation<T> extends SerializableDurableOperation<T> {
     private static final Integer FIRST_ATTEMPT = 0;
 
     private final Function<StepContext, T> function;
     private final StepConfig config;
-    private final ExecutorService userExecutor;
 
     public StepOperation(
             OperationIdentifier operationIdentifier,
@@ -51,7 +50,6 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
 
         this.function = function;
         this.config = config;
-        this.userExecutor = durableContext.getDurableConfig().getExecutorService();
     }
 
     /** Starts the operation. */
@@ -82,7 +80,8 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
             // Execute with current attempt
             case READY -> executeStepLogic(attempt);
             default ->
-                terminateExecutionWithIllegalDurableOperationException("Unexpected step status: " + existing.status());
+                throw terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected step status: " + existing.status());
         }
     }
 
@@ -96,10 +95,6 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
     }
 
     private void executeStepLogic(int attempt) {
-        // Register step thread as active BEFORE executor runs (prevents suspension when handler deregisters).
-        // The thread local ThreadContext is set inside the executor since that's where the step actually runs
-        registerActiveThread(getOperationId());
-
         Runnable userHandler = () -> {
             // use a try-with-resources to
             // - add thread id/type to thread local when the step starts
@@ -119,7 +114,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
         };
 
         // Execute user provided step code in user-configured executor
-        CompletableFuture.runAsync(userHandler, userExecutor);
+        runUserHandler(userHandler, getOperationId(), ThreadType.STEP);
     }
 
     private void checkpointStarted() {
@@ -155,7 +150,7 @@ public class StepOperation<T> extends BaseDurableOperation<T> {
         }
         if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
             // terminate the execution and throw the exception if it's not recoverable
-            terminateExecution(unrecoverableDurableExecutionException);
+            throw terminateExecution(unrecoverableDurableExecutionException);
         }
 
         final ErrorObject errorObject;

@@ -51,6 +51,7 @@ public class DurableExecutor {
             executionManager.registerActiveThread(null);
             var handlerFuture = CompletableFuture.supplyAsync(
                     () -> {
+                        executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
                         var userInput = extractUserInput(
                                 executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                         // use try-with-resources to clear logger properties

@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Test;
 
 class MapResultTest {
 
-    private static MapError testError(String message) {
-        return new MapError("java.lang.RuntimeException", message, null);
+    private static MapResult.MapError testError(String message) {
+        return new MapResult.MapError("java.lang.RuntimeException", message, null);
     }
 
     @Test
@@ -28,7 +28,7 @@ class MapResultTest {
     @Test
     void allSucceeded_trueWhenNoErrors() {
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.success("b")),
+                List.of(MapResult.MapResultItem.succeeded("a"), MapResult.MapResultItem.succeeded("b")),
                 ConcurrencyCompletionStatus.ALL_COMPLETED);
 
         assertTrue(result.allSucceeded());
@@ -43,7 +43,7 @@ class MapResultTest {
     void allSucceeded_falseWhenAnyError() {
         var error = testError("fail");
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error)),
+                List.of(MapResult.MapResultItem.succeeded("a"), MapResult.MapResultItem.<String>failed(error)),
                 ConcurrencyCompletionStatus.ALL_COMPLETED);
 
         assertFalse(result.allSucceeded());
@@ -53,7 +53,7 @@ class MapResultTest {
     void getResult_returnsNullForFailedItem() {
         var error = testError("fail");
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error)),
+                List.of(MapResult.MapResultItem.succeeded("a"), MapResult.MapResultItem.<String>failed(error)),
                 ConcurrencyCompletionStatus.ALL_COMPLETED);
 
         assertEquals("a", result.getResult(0));
@@ -64,7 +64,7 @@ class MapResultTest {
     void getError_returnsNullForSucceededItem() {
         var error = testError("fail");
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error)),
+                List.of(MapResult.MapResultItem.succeeded("a"), MapResult.MapResultItem.<String>failed(error)),
                 ConcurrencyCompletionStatus.ALL_COMPLETED);
 
         assertNull(result.getError(0));
@@ -75,9 +75,9 @@ class MapResultTest {
     void succeeded_filtersNullResults() {
         var result = new MapResult<>(
                 List.of(
-                        MapResultItem.success("a"),
-                        MapResultItem.<String>failure(testError("fail")),
-                        MapResultItem.success("c")),
+                        MapResult.MapResultItem.succeeded("a"),
+                        MapResult.MapResultItem.<String>failed(testError("fail")),
+                        MapResult.MapResultItem.succeeded("c")),
                 ConcurrencyCompletionStatus.ALL_COMPLETED);
 
         assertEquals(List.of("a", "c"), result.succeeded());
@@ -87,7 +87,10 @@ class MapResultTest {
     void failed_filtersNullErrors() {
         var error = testError("fail");
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.<String>failure(error), MapResultItem.success("c")),
+                List.of(
+                        MapResult.MapResultItem.succeeded("a"),
+                        MapResult.MapResultItem.<String>failed(error),
+                        MapResult.MapResultItem.succeeded("c")),
                 ConcurrencyCompletionStatus.ALL_COMPLETED);
 
         var failures = result.failed();
@@ -98,29 +101,33 @@ class MapResultTest {
     @Test
     void completionReason_preserved() {
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a")), ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED);
+                List.of(MapResult.MapResultItem.succeeded("a")), ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED);
 
         assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionReason());
     }
 
     @Test
     void items_returnsUnmodifiableList() {
-        var result = new MapResult<>(List.of(MapResultItem.success("a")), ConcurrencyCompletionStatus.ALL_COMPLETED);
+        var result = new MapResult<>(
+                List.of(MapResult.MapResultItem.succeeded("a")), ConcurrencyCompletionStatus.ALL_COMPLETED);
 
-        assertThrows(UnsupportedOperationException.class, () -> result.items().add(MapResultItem.success("b")));
+        assertThrows(
+                UnsupportedOperationException.class, () -> result.items().add(MapResult.MapResultItem.succeeded("b")));
     }
 
     @Test
     void getItem_returnsMapResultItem() {
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.<String>failure(testError("fail"))),
+                List.of(
+                        MapResult.MapResultItem.succeeded("a"),
+                        MapResult.MapResultItem.<String>failed(testError("fail"))),
                 ConcurrencyCompletionStatus.ALL_COMPLETED);
 
-        assertEquals(MapResultItem.Status.SUCCEEDED, result.getItem(0).status());
+        assertEquals(MapResult.MapResultItem.Status.SUCCEEDED, result.getItem(0).status());
         assertEquals("a", result.getItem(0).result());
         assertNull(result.getItem(0).error());
 
-        assertEquals(MapResultItem.Status.FAILED, result.getItem(1).status());
+        assertEquals(MapResult.MapResultItem.Status.FAILED, result.getItem(1).status());
         assertNull(result.getItem(1).result());
         assertNotNull(result.getItem(1).error());
     }
@@ -128,10 +135,10 @@ class MapResultTest {
     @Test
     void notStartedItems_haveNotStartedStatusAndNullResultAndError() {
         var result = new MapResult<>(
-                List.of(MapResultItem.success("a"), MapResultItem.<String>notStarted()),
+                List.of(MapResult.MapResultItem.succeeded("a"), MapResult.MapResultItem.<String>skipped()),
                 ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED);
 
-        assertEquals(MapResultItem.Status.NOT_STARTED, result.getItem(1).status());
+        assertEquals(MapResult.MapResultItem.Status.SKIPPED, result.getItem(1).status());
         assertNull(result.getResult(1));
         assertNull(result.getError(1));
     }

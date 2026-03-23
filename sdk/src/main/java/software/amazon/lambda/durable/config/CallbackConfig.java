@@ -1,0 +1,110 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.config;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ParameterValidator;
+
+/** Configuration for callback operations. */
+public class CallbackConfig {
+    private final Duration timeout;
+    private final Duration heartbeatTimeout;
+    private final SerDes serDes;
+
+    private CallbackConfig(Builder builder) {
+        this.timeout = builder.timeout;
+        this.heartbeatTimeout = builder.heartbeatTimeout;
+        this.serDes = builder.serDes;
+    }
+
+    /**
+     * Returns the maximum duration to wait for the callback to complete.
+     *
+     * @return the timeout duration, or null if not specified
+     */
+    public Duration timeout() {
+        return timeout;
+    }
+
+    /**
+     * Returns the maximum duration between heartbeats before the callback is considered failed.
+     *
+     * @return the heartbeat timeout duration, or null if not specified
+     */
+    public Duration heartbeatTimeout() {
+        return heartbeatTimeout;
+    }
+
+    /** Returns the custom serializer for this callback, or null if not specified (uses default SerDes). */
+    public SerDes serDes() {
+        return serDes;
+    }
+
+    /** Creates a new builder with default values. */
+    public static Builder builder() {
+        return new Builder(null, null, null);
+    }
+
+    /** Creates a new builder pre-populated with this config's values. */
+    public Builder toBuilder() {
+        return new Builder(timeout, heartbeatTimeout, serDes);
+    }
+
+    /** Builder for {@link CallbackConfig}. */
+    public static class Builder {
+        private Duration timeout;
+        private Duration heartbeatTimeout;
+        private SerDes serDes;
+
+        public Builder(Duration timeout, Duration heartbeatTimeout, SerDes serDes) {
+            this.timeout = timeout;
+            this.heartbeatTimeout = heartbeatTimeout;
+            this.serDes = serDes;
+        }
+
+        /**
+         * Sets the maximum duration to wait for the callback to complete before timing out.
+         *
+         * @param timeout the timeout duration
+         * @return this builder for method chaining
+         */
+        public Builder timeout(Duration timeout) {
+            ParameterValidator.validateOptionalDuration(timeout, "Callback timeout");
+            this.timeout = timeout;
+            return this;
+        }
+
+        /**
+         * Sets the maximum duration between heartbeats before the callback is considered failed.
+         *
+         * @param heartbeatTimeout the heartbeat timeout duration
+         * @return this builder for method chaining
+         */
+        public Builder heartbeatTimeout(Duration heartbeatTimeout) {
+            ParameterValidator.validateOptionalDuration(heartbeatTimeout, "Heartbeat timeout");
+            this.heartbeatTimeout = heartbeatTimeout;
+            return this;
+        }
+
+        /**
+         * Sets a custom serializer for the callback.
+         *
+         * <p>If not specified, the callback will use the default SerDes configured for the handler. This allows
+         * per-callback customization of serialization behavior, useful for callbacks that need special handling (e.g.,
+         * custom date formats, encryption, compression).
+         *
+         * @param serDes the custom serializer to use, or null to use the default
+         * @return this builder for method chaining
+         */
+        public Builder serDes(SerDes serDes) {
+            this.serDes = serDes;
+            return this;
+        }
+
+        /** Builds the {@link CallbackConfig} instance. */
+        public CallbackConfig build() {
+            return new CallbackConfig(this);
+        }
+    }
+}

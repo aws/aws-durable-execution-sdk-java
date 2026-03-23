@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable;
+package software.amazon.lambda.durable.config;
 
 /**
  * Controls when a concurrent operation (map or parallel) completes.
@@ -8,16 +8,8 @@ package software.amazon.lambda.durable;
  * <p>Provides factory methods for common completion strategies and fine-grained control via {@code minSuccessful},
  * {@code toleratedFailureCount}, and {@code toleratedFailurePercentage}.
  */
-public class CompletionConfig {
-    private final Integer minSuccessful;
-    private final Integer toleratedFailureCount;
-    private final Double toleratedFailurePercentage;
-
-    private CompletionConfig(Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {
-        this.minSuccessful = minSuccessful;
-        this.toleratedFailureCount = toleratedFailureCount;
-        this.toleratedFailurePercentage = toleratedFailurePercentage;
-    }
+public record CompletionConfig(
+        Integer minSuccessful, Integer toleratedFailureCount, Double toleratedFailurePercentage) {
 
     /** All items must succeed. Zero failures tolerated. */
     public static CompletionConfig allSuccessful() {
@@ -57,20 +49,5 @@ public class CompletionConfig {
                     "toleratedFailurePercentage must be between 0.0 and 1.0, got: " + percentage);
         }
         return new CompletionConfig(null, null, percentage);
-    }
-
-    /** @return minimum number of successful items required, or null if not set */
-    public Integer minSuccessful() {
-        return minSuccessful;
-    }
-
-    /** @return maximum number of failures tolerated, or null if unlimited */
-    public Integer toleratedFailureCount() {
-        return toleratedFailureCount;
-    }
-
-    /** @return maximum percentage of failures tolerated (0.0 to 1.0), or null if not set */
-    public Double toleratedFailurePercentage() {
-        return toleratedFailurePercentage;
     }
 }

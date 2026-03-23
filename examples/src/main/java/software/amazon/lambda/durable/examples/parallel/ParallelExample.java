@@ -7,7 +7,8 @@ import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.ParallelConfig;
+import software.amazon.lambda.durable.ParallelDurableFuture;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.model.ParallelResult;
 
 /**
@@ -21,8 +22,8 @@ import software.amazon.lambda.durable.model.ParallelResult;
  *   <li>A final step combines the results into a summary
  * </ol>
  *
- * <p>The {@link software.amazon.lambda.durable.ParallelContext} implements {@link AutoCloseable}, so try-with-resources
- * guarantees {@code join()} is called even if an exception occurs.
+ * <p>The {@link ParallelDurableFuture} implements {@link AutoCloseable}, so try-with-resources guarantees
+ * {@code join()} is called even if an exception occurs.
  */
 public class ParallelExample extends DurableHandler<ParallelExample.Input, ParallelExample.Output> {
 
@@ -54,9 +55,9 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
         ParallelResult parallelResult = parallel.get();
         logger.info(
                 "Parallel complete: total={}, succeeded={}, failed={}",
-                parallelResult.getTotalBranches(),
-                parallelResult.getSucceededBranches(),
-                parallelResult.getFailedBranches());
+                parallelResult.size(),
+                parallelResult.succeeded(),
+                parallelResult.failed());
 
         var results = futures.stream().map(DurableFuture::get).toList();
 
