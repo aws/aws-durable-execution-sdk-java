@@ -1,5 +1,6 @@
 software.amazon.lambda.durable
 software.amazon.lambda.durable.client
+software.amazon.lambda.durable.config
 software.amazon.lambda.durable.context
 software.amazon.lambda.durable.examples
 software.amazon.lambda.durable.examples.parallel
