@@ -174,6 +174,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                     next.execute();
                 }
                 var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);
+                // child may be null if the consumer thread is woken up due to a new item being added
                 if (child != null) {
                     if (runningChildren.contains(child)) {
                         runningChildren.remove(child);
@@ -213,6 +214,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                     .map(BaseDurableOperation::getCompletionFuture)
                     .toList());
             if (futures.size() < maxConcurrency) {
+                // add a future to listen to the new items if there is a vacancy
                 consumerThreadListener.compareAndSet(null, new CompletableFuture<>());
                 futures.add(consumerThreadListener.get());
             }

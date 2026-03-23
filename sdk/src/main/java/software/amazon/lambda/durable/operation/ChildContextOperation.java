@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -46,7 +47,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     private final Function<DurableContext, T> function;
     private final ConcurrencyOperation<?> parentOperation;
-    private boolean replayChildContext;
+    private final AtomicBoolean replayChildren = new AtomicBoolean(false);
     private T reconstructedResult;
 
     public ChildContextOperation(
@@ -86,7 +87,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 if (existing.contextDetails() != null
                         && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute child context to reconstruct result
-                    replayChildContext = true;
+                    replayChildren.set(true);
                     executeChildContext();
                 } else {
                     markAlreadyCompleted();
@@ -98,11 +99,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected child context status: " + existing.status());
         }
-    }
-
-    @Override
-    protected void markAlreadyCompleted() {
-        super.markAlreadyCompleted();
     }
 
     private void executeChildContext() {
@@ -137,7 +133,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextSuccess(T result) {
-        if (replayChildContext) {
+        if (replayChildren.get()) {
             // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
             // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
             this.reconstructedResult = result;
@@ -151,8 +147,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         // Skip checkpointing if parent ConcurrencyOperation has already completed —
         // prevents race conditions where a child finishes after the parent has already completed.
         if (parentOperation != null && parentOperation.isOperationCompleted()) {
-            this.reconstructedResult = result;
-            markAlreadyCompleted();
             return;
         }
 
@@ -187,7 +181,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         // Skip checkpointing if parent ConcurrencyOperation has already completed —
         // prevents race conditions where a child finishes after the parent has already succeeded.
         if (parentOperation != null && parentOperation.isOperationCompleted()) {
-            markAlreadyCompleted();
             return;
         }
 

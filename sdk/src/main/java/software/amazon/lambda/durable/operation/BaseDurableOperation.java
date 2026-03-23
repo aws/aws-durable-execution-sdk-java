@@ -266,15 +266,8 @@ public abstract class BaseDurableOperation {
             // This method handles only terminal status updates. Override this method if a DurableOperation needs to
             // handle other updates.
             logger.trace("In onCheckpointComplete, completing operation {} ({})", getOperationId(), completionFuture);
-            // It's important that we synchronize access to the future, otherwise the processing could happen
-            // on someone else's thread and cause a race condition.
-            synchronized (completionFuture) {
-                // Completing the future here will also run any other completion stages that have been attached
-                // to the future. In our case, other contexts may have attached a function to reactivate themselves,
-                // so they will definitely have a chance to reactivate before we finish completing and deactivating
-                // whatever operations were just checkpointed.
-                completionFuture.complete(this);
-            }
+
+            markCompletionFutureCompleted();
         }
     }
 
@@ -283,10 +276,17 @@ public abstract class BaseDurableOperation {
         // When the operation is already completed in a replay, we complete completionFuture immediately
         // so that the `get` method will be unblocked and the context thread will be registered
         logger.trace("In markAlreadyCompleted, completing operation: {} ({}).", getOperationId(), completionFuture);
+        markCompletionFutureCompleted();
+    }
 
+    private void markCompletionFutureCompleted() {
         // It's important that we synchronize access to the future, otherwise the processing could happen
         // on someone else's thread and cause a race condition.
         synchronized (completionFuture) {
+            // Completing the future here will also run any other completion stages that have been attached
+            // to the future. In our case, other contexts may have attached a function to reactivate themselves,
+            // so they will definitely have a chance to reactivate before we finish completing and deactivating
+            // whatever operations were just checkpointed.
             completionFuture.complete(this);
         }
     }
