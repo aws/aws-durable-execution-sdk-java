@@ -15,9 +15,9 @@ class WaitForConditionExampleTest {
         var handler = new WaitForConditionExample();
         var runner = LocalDurableTestRunner.create(Integer.class, handler);
 
-        var result = runner.runUntilComplete(123);
+        var result = runner.runUntilComplete(3);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(4, result.getResult(Integer.class));
+        assertEquals(3, result.getResult(Integer.class));
     }
 }
