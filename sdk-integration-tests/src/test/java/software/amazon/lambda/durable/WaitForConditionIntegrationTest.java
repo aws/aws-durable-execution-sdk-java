@@ -39,13 +39,15 @@ class WaitForConditionIntegrationTest {
                     "poll-counter",
                     Integer.class,
                     (state, stepCtx) -> {
+                        if (state == null) {
+                            state = 0;
+                        }
                         checkCount.incrementAndGet();
                         var next = state + 1;
                         return next >= targetCount
                                 ? WaitForConditionResult.stopPolling(next)
                                 : WaitForConditionResult.continuePolling(next);
                     },
-                    0,
                     config);
         });
 
@@ -70,12 +72,14 @@ class WaitForConditionIntegrationTest {
                     "custom-strategy",
                     String.class,
                     (state, stepCtx) -> {
+                        if (state == null) {
+                            state = "pending";
+                        }
                         if ("pending".equals(state)) {
                             return WaitForConditionResult.continuePolling("processing");
                         }
                         return WaitForConditionResult.stopPolling("done");
                     },
-                    "pending",
                     config);
         });
 
@@ -99,7 +103,6 @@ class WaitForConditionIntegrationTest {
                     "max-attempts",
                     String.class,
                     (state, stepCtx) -> WaitForConditionResult.continuePolling(state),
-                    "initial",
                     config);
         });
 
@@ -124,7 +127,6 @@ class WaitForConditionIntegrationTest {
                     (state, stepCtx) -> {
                         throw new IllegalStateException("Check function failed");
                     },
-                    "initial",
                     config);
         });
 
@@ -153,13 +155,15 @@ class WaitForConditionIntegrationTest {
                     "replay-poll",
                     Integer.class,
                     (state, stepCtx) -> {
+                        if (state == null) {
+                            state = 0;
+                        }
                         checkCount.incrementAndGet();
                         var next = state + 1;
                         return next >= 2
                                 ? WaitForConditionResult.stopPolling(next)
                                 : WaitForConditionResult.continuePolling(next);
                     },
-                    0,
                     config);
 
             return result.toString();
@@ -197,12 +201,14 @@ class WaitForConditionIntegrationTest {
                     "stop-polling-prop",
                     Integer.class,
                     (state, stepCtx) -> {
+                        if (state == null) {
+                            state = 0;
+                        }
                         var next = state + 1;
                         return next >= target
                                 ? WaitForConditionResult.stopPolling(next)
                                 : WaitForConditionResult.continuePolling(next);
                     },
-                    0,
                     config);
         });
 
@@ -238,12 +244,14 @@ class WaitForConditionIntegrationTest {
                     "state-attempt-prop",
                     Integer.class,
                     (state, stepCtx) -> {
+                        if (state == null) {
+                            state = 0;
+                        }
                         var next = state + 1;
                         return next >= totalChecks
                                 ? WaitForConditionResult.stopPolling(next)
                                 : WaitForConditionResult.continuePolling(next);
                     },
-                    0,
                     config);
         });
 

@@ -55,14 +55,12 @@ class WaitForConditionOperationTest {
             java.util.function.BiFunction<
                             Integer, software.amazon.lambda.durable.StepContext, WaitForConditionResult<Integer>>
                     checkFunc,
-            Integer initialState,
             WaitForConditionConfig<Integer> config) {
         return new WaitForConditionOperation<>(
                 OPERATION_ID,
                 OPERATION_NAME,
                 checkFunc,
                 TypeToken.get(Integer.class),
-                initialState,
                 config,
                 durableContext);
     }
@@ -88,7 +86,6 @@ class WaitForConditionOperationTest {
                     functionCalled.set(true);
                     return WaitForConditionResult.stopPolling(state);
                 },
-                0,
                 config);
 
         operation.execute();
@@ -123,7 +120,7 @@ class WaitForConditionOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
-        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), config);
 
         operation.execute();
 
@@ -150,7 +147,7 @@ class WaitForConditionOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
-        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), config);
 
         operation.execute();
 
@@ -178,7 +175,6 @@ class WaitForConditionOperationTest {
                     functionCalled.set(true);
                     return WaitForConditionResult.stopPolling(state + 1);
                 },
-                0,
                 config);
 
         operation.execute();
@@ -209,7 +205,6 @@ class WaitForConditionOperationTest {
                     functionCalled.set(true);
                     return WaitForConditionResult.stopPolling(state);
                 },
-                0,
                 config);
 
         operation.execute();
@@ -231,7 +226,7 @@ class WaitForConditionOperationTest {
                         .build());
 
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
-        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), config);
 
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }
@@ -247,7 +242,7 @@ class WaitForConditionOperationTest {
                         .build());
 
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
-        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), config);
 
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }
@@ -273,7 +268,7 @@ class WaitForConditionOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
-        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), config);
 
         operation.execute();
 
@@ -312,7 +307,6 @@ class WaitForConditionOperationTest {
                     functionCalled.set(true);
                     return WaitForConditionResult.stopPolling(state);
                 },
-                0,
                 config);
 
         operation.execute();
@@ -335,7 +329,7 @@ class WaitForConditionOperationTest {
                         .build());
 
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
-        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), config);
 
         assertThrows(IllegalDurableOperationException.class, operation::execute);
     }
@@ -354,20 +348,19 @@ class WaitForConditionOperationTest {
                 .build();
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
-        var receivedState = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var receivedState = new java.util.concurrent.atomic.AtomicReference<Integer>(-1);
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
         var operation = createOperation(
                 (state, ctx) -> {
                     receivedState.set(state);
                     return WaitForConditionResult.stopPolling(state);
                 },
-                42, // initialState
                 config);
 
         operation.execute();
 
         Thread.sleep(200);
-        assertEquals(42, receivedState.get(), "Should use initialState when checkpoint data is null");
+        assertNull(receivedState.get(), "Should use initialState when checkpoint data is null");
     }
 
     // ===== resumeCheckLoop checkpoint deserialize exception =====
@@ -388,7 +381,7 @@ class WaitForConditionOperationTest {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
         var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
-        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), 0, config);
+        var operation = createOperation((state, ctx) -> WaitForConditionResult.stopPolling(state), config);
 
         assertThrows(SerDesException.class, operation::execute);
     }

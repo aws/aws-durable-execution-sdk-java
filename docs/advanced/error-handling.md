@@ -17,7 +17,8 @@ DurableExecutionException              - General durable exception
     ├── CallbackException              - General callback exception
     │   ├── CallbackFailedException    - External system sent an error response to the callback. Handle the error or propagate failure
     │   └── CallbackTimeoutException   - Callback exceeded its timeout duration. Handle the error or propagate the failure
-    ├── WaitForConditionException      - waitForCondition exceeded max polling attempts or failed. Catch to implement fallback logic.
+    ├── WaitForConditionException      - waitForCondition operation exception
+    │   └── WaitForConditionFailedException  - waitForCondition exceeded max polling attempts or failed. Catch to implement fallback logic.
     └── ChildContextFailedException    - Child context failed and the original exception could not be reconstructed
 ```
 

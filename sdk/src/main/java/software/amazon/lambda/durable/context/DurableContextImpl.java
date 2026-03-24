@@ -341,12 +341,10 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             String name,
             TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
-            T initialState,
             WaitForConditionConfig<T> config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(checkFunc, "checkFunc cannot be null");
-        Objects.requireNonNull(initialState, "initialState cannot be null");
         ParameterValidator.validateOperationName(name);
 
         if (config.serDes() == null) {
@@ -355,7 +353,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var operation =
-                new WaitForConditionOperation<>(operationId, name, checkFunc, resultType, initialState, config, this);
+                new WaitForConditionOperation<>(operationId, name, checkFunc, resultType, config, this);
 
         operation.execute();
 

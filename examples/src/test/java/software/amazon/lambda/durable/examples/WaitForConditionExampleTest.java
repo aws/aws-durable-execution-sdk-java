@@ -13,11 +13,11 @@ class WaitForConditionExampleTest {
     @Test
     void testWaitForConditionExample() {
         var handler = new WaitForConditionExample();
-        var runner = LocalDurableTestRunner.create(String.class, handler);
+        var runner = LocalDurableTestRunner.create(Integer.class, handler);
 
-        var result = runner.runUntilComplete("order-123");
+        var result = runner.runUntilComplete(123);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("order-123: SHIPPED", result.getResult(String.class));
+        assertEquals(4, result.getResult(Integer.class));
     }
 }

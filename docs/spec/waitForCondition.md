@@ -8,11 +8,11 @@
 
 ### How it works
 
-1. User calls `ctx.waitForCondition(name, resultType, checkFunc, initialState)` (or with optional config)
+1. User calls `ctx.waitForCondition(name, resultType, checkFunc)` (or with optional config)
 2. A `WaitForConditionOperation` is created with a unique operation ID
 3. On first execution:
    - Checkpoint START with subtype `WAIT_FOR_CONDITION`
-   - Execute the check function with `initialState` and a `StepContext`
+   - Execute the check function with `null` state and a `StepContext`
    - If check function returns `WaitForConditionResult.stopPolling(value)`: checkpoint SUCCEED, return value
    - If check function returns `WaitForConditionResult.continuePolling(value)`: call wait strategy to compute delay, checkpoint RETRY with state and delay, poll for READY, then loop
    - If check function throws: checkpoint FAIL, propagate the error
@@ -43,14 +43,14 @@ sdk/src/main/java/software/amazon/lambda/durable/
 
 ```
 DurableContext (interface)
-  ├── waitForCondition(name, Class<T>, checkFunc, initialState) → T
-  ├── waitForCondition(name, Class<T>, checkFunc, initialState, config) → T
-  ├── waitForCondition(name, TypeToken<T>, checkFunc, initialState) → T
-  ├── waitForCondition(name, TypeToken<T>, checkFunc, initialState, config) → T
-  ├── waitForConditionAsync(name, Class<T>, checkFunc, initialState) → DurableFuture<T>
-  ├── waitForConditionAsync(name, Class<T>, checkFunc, initialState, config) → DurableFuture<T>
-  ├── waitForConditionAsync(name, TypeToken<T>, checkFunc, initialState) → DurableFuture<T>
-  └── waitForConditionAsync(name, TypeToken<T>, checkFunc, initialState, config) → DurableFuture<T>
+  ├── waitForCondition(name, Class<T>, checkFunc) → T
+  ├── waitForCondition(name, Class<T>, checkFunc, config) → T
+  ├── waitForCondition(name, TypeToken<T>, checkFunc) → T
+  ├── waitForCondition(name, TypeToken<T>, checkFunc, config) → T
+  ├── waitForConditionAsync(name, Class<T>, checkFunc) → DurableFuture<T>
+  ├── waitForConditionAsync(name, Class<T>, checkFunc, config) → DurableFuture<T>
+  ├── waitForConditionAsync(name, TypeToken<T>, checkFunc) → DurableFuture<T>
+  └── waitForConditionAsync(name, TypeToken<T>, checkFunc, config) → DurableFuture<T>
          │
          ▼
 WaitForConditionOperation<T> extends BaseDurableOperation<T>
@@ -143,7 +143,7 @@ public class WaitForConditionConfig<T> {
 }
 ```
 
-Holds only optional parameters. Required parameters (`initialState`, `checkFunc`) are direct method arguments on `DurableContext.waitForCondition()`.
+Holds only optional parameters. The required parameter `checkFunc` is direct method argument on `DurableContext.waitForCondition()`.
 
 ### DurableContext API (8 signatures)
 
@@ -151,17 +151,17 @@ Delegation chain (same pattern as `step()`):
 - All sync methods → corresponding async method → `.get()`
 - All Class-based methods → TypeToken-based via `TypeToken.get(resultType)`
 - All no-config methods → config method with `WaitForConditionConfig.builder().build()`
-- Core method: `waitForConditionAsync(name, TypeToken<T>, checkFunc, initialState, config)`
+- Core method: `waitForConditionAsync(name, TypeToken<T>, checkFunc, config)`
 
-The core method validates: `name` (via `ParameterValidator`), `typeToken` not null, `checkFunc` not null, `initialState` not null, `config` not null.
+The core method validates: `name` (via `ParameterValidator`), `typeToken` not null, `checkFunc` not null, `config` not null.
 
 ### WaitForConditionOperation\<T\>
 
 Extends `BaseDurableOperation<T>`. Key behaviors:
 
-- **start()**: Begins the check loop from `initialState` at attempt 0
+- **start()**: Begins the check loop from state = `null` at attempt 0
 - **replay(existing)**: Handles all operation statuses
-- **resumeCheckLoop(existing)**: Deserializes checkpointed state (falls back to `initialState` if null, throws `SerDesException` if corrupt)
+- **resumeCheckLoop(existing)**: Deserializes checkpointed state (throws `SerDesException` if corrupt)
 - **executeCheckLogic(state, attempt)**: Runs check function on user executor, handles `WaitForConditionResult`, checkpoints accordingly
 - **get()**: Blocks on completion, deserializes result or reconstructs and throws the original exception
 

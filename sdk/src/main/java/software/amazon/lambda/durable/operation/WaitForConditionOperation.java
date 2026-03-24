@@ -39,7 +39,6 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     private final BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc;
     private final WaitForConditionConfig<T> config;
-    private final T initialState;
     private final ExecutorService userExecutor;
 
     public WaitForConditionOperation(
@@ -47,7 +46,6 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             String name,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             TypeToken<T> resultTypeToken,
-            T initialState,
             WaitForConditionConfig<T> config,
             DurableContextImpl durableContext) {
         super(
@@ -58,13 +56,12 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
         this.checkFunc = checkFunc;
         this.config = config;
-        this.initialState = initialState;
         this.userExecutor = durableContext.getDurableConfig().getExecutorService();
     }
 
     @Override
     protected void start() {
-        executeCheckLogic(initialState, 0);
+        executeCheckLogic(null, 0);
     }
 
     @Override
@@ -108,7 +105,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         if (checkpointData != null) {
             currentState = deserializeResult(checkpointData);
         } else {
-            currentState = initialState;
+            currentState = null;
         }
         executeCheckLogic(currentState, attempt);
     }

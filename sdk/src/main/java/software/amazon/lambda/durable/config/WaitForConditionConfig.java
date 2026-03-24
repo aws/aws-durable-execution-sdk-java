@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -10,8 +9,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 /**
  * Configuration for {@code waitForCondition} operations.
  *
- * <p>Holds only optional parameters for a waitForCondition call. Required parameters ({@code initialState},
- * {@code checkFunc}) are direct method arguments on {@link DurableContext#waitForCondition}. Use {@link #builder()} to
+ * <p>Holds only optional parameters for a waitForCondition call. Use {@link #builder()} to
  * create instances.
  *
  * @param <T> the type of state being polled
