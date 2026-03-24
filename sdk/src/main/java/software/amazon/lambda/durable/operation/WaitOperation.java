@@ -29,7 +29,7 @@ public class WaitOperation extends BaseDurableOperation implements DurableFuture
 
     public WaitOperation(
             OperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
-        super(operationIdentifier, durableContext);
+        super(operationIdentifier, durableContext, null);
         this.duration = duration;
     }
 

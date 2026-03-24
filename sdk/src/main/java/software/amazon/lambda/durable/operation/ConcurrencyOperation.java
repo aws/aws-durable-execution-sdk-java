@@ -82,7 +82,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         this.toleratedFailureCount = toleratedFailureCount;
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
         this.rootContext = durableContext.createChildContext(getOperationId(), getName());
-        this.consumerThreadListener = new AtomicReference<>(null);
+        this.consumerThreadListener = new AtomicReference<>(new CompletableFuture<>());
     }
 
     // ========== Template methods for subclasses ==========
@@ -138,15 +138,13 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         pendingQueue.add(childOp);
         logger.debug("Item enqueued {}", name);
         // notify the consumer thread a new item is available
-        completeVacancyListenerIfSet();
+        notifyConsumerThread();
         return childOp;
     }
 
-    private void completeVacancyListenerIfSet() {
+    private void notifyConsumerThread() {
         synchronized (this) {
-            if (consumerThreadListener.get() != null) {
-                consumerThreadListener.get().complete(null);
-            }
+            consumerThreadListener.get().complete(null);
         }
     }
 
@@ -159,34 +157,46 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
 
         Runnable consumer = () -> {
             while (true) {
+                // Set a new future if it's completed so that it will be able to receive a notification of
+                // new items when the thread is checking completion condition and processing
+                // the queued items below.
+                synchronized (this) {
+                    if (consumerThreadListener.get() != null
+                            && consumerThreadListener.get().isDone()) {
+                        consumerThreadListener.set(new CompletableFuture<>());
+                    }
+                }
+
+                // Process completion condition. Quit the loop if the condition is met.
                 if (isOperationCompleted()) {
                     return;
                 }
                 var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
                 if (completionStatus != null) {
-                    handleComplete(completionStatus);
+                    handleSuccess(completionStatus);
                     return;
                 }
+
+                // process new items in the queue
                 while (runningChildren.size() < maxConcurrency && !pendingQueue.isEmpty()) {
                     var next = pendingQueue.poll();
                     runningChildren.add(next);
                     logger.debug("Executing operation {}", next.getName());
                     next.execute();
                 }
+
+                // If consumerThreadListener has been completed when processing above, waitForChildCompletion will
+                // immediately return null and repeat the above again
                 var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);
-                // child may be null if the consumer thread is woken up due to a new item being added
+
+                // child may be null if the consumer thread is woken up due to new items added or completion condition
+                // changed
                 if (child != null) {
                     if (runningChildren.contains(child)) {
                         runningChildren.remove(child);
                         onItemComplete(succeededCount, failedCount, (ChildContextOperation<?>) child);
                     } else {
                         throw new IllegalStateException("Unexpected completion: " + child);
-                    }
-                }
-                synchronized (this) {
-                    if (consumerThreadListener.get() != null
-                            && consumerThreadListener.get().isDone()) {
-                        consumerThreadListener.set(null);
                     }
                 }
             }
@@ -273,20 +283,13 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         }
 
         // All items finished — complete
+        // This condition relies on isJoined, so the consumer will wake up and check this again when
+        // isJoined is set to true.
         if (isJoined.get() && pendingQueue.isEmpty() && runningChildren.isEmpty()) {
             return ConcurrencyCompletionStatus.ALL_COMPLETED;
         }
 
         return null;
-    }
-
-    private void handleComplete(ConcurrencyCompletionStatus status) {
-        synchronized (this) {
-            if (isOperationCompleted()) {
-                return;
-            }
-            handleSuccess(status);
-        }
     }
 
     /**
@@ -299,8 +302,10 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                     + ") exceeds the number of registered items (" + branches.size() + ")");
         }
         isJoined.set(true);
-        // notify the execution thread this concurrency operation is joined
-        completeVacancyListenerIfSet();
+
+        // Notify the consumer thread this concurrency operation is joined. Consumer thread need to check the
+        // completion condition again.
+        notifyConsumerThread();
         waitForOperationCompletion();
     }
 

@@ -52,7 +52,16 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContextImpl durableContext) {
-        super(operationIdentifier, durableContext);
+        this(operationIdentifier, resultTypeToken, resultSerDes, durableContext, null);
+    }
+
+    protected SerializableDurableOperation(
+            OperationIdentifier operationIdentifier,
+            TypeToken<T> resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation) {
+        super(operationIdentifier, durableContext, parentOperation);
         this.resultTypeToken = resultTypeToken;
         this.resultSerDes = resultSerDes;
     }

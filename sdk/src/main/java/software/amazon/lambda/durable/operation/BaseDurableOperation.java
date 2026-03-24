@@ -47,6 +47,7 @@ public abstract class BaseDurableOperation {
     private final OperationIdentifier operationIdentifier;
     protected final ExecutionManager executionManager;
     protected final CompletableFuture<BaseDurableOperation> completionFuture;
+    protected final BaseDurableOperation parentOperation;
     private final DurableContextImpl durableContext;
     private final AtomicReference<CompletableFuture<Void>> runningUserHandler = new AtomicReference<>(null);
 
@@ -55,9 +56,14 @@ public abstract class BaseDurableOperation {
      *
      * @param operationIdentifier the unique identifier for this operation
      * @param durableContext the parent context this operation belongs to
+     * @param parentOperation the parent operation if this is a branch/iteration of a ConcurrencyOperation
      */
-    protected BaseDurableOperation(OperationIdentifier operationIdentifier, DurableContextImpl durableContext) {
+    protected BaseDurableOperation(
+            OperationIdentifier operationIdentifier,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation) {
         this.operationIdentifier = operationIdentifier;
+        this.parentOperation = parentOperation;
         this.durableContext = durableContext;
         this.executionManager = durableContext.getExecutionManager();
 
@@ -179,7 +185,9 @@ public abstract class BaseDurableOperation {
         // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
         // completionFuture is completed by a user thread (a step or child context thread) when the execution here
         // is between `isOperationCompleted` and `thenRun`.
-        synchronized (completionFuture) {
+        // If this operation is a branch/iteration of a ConcurrencyOperation (map or parallel), the branches/iterations
+        // must be completed sequentially to avoid race conditions.
+        synchronized (parentOperation == null ? completionFuture : parentOperation) {
             if (!isOperationCompleted()) {
                 // Operation not done yet
                 logger.trace(
@@ -282,7 +290,7 @@ public abstract class BaseDurableOperation {
     private void markCompletionFutureCompleted() {
         // It's important that we synchronize access to the future, otherwise the processing could happen
         // on someone else's thread and cause a race condition.
-        synchronized (completionFuture) {
+        synchronized (parentOperation == null ? completionFuture : parentOperation) {
             // Completing the future here will also run any other completion stages that have been attached
             // to the future. In our case, other contexts may have attached a function to reactivate themselves,
             // so they will definitely have a chance to reactivate before we finish completing and deactivating

@@ -46,7 +46,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private final Function<DurableContext, T> function;
-    private final ConcurrencyOperation<?> parentOperation;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
     private T reconstructedResult;
 
@@ -66,9 +65,8 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             RunInChildContextConfig config,
             DurableContextImpl durableContext,
             ConcurrencyOperation<?> parentOperation) {
-        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext, parentOperation);
         this.function = function;
-        this.parentOperation = parentOperation;
     }
 
     /** Starts the operation. */

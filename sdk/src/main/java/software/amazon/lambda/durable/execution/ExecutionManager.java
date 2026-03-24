@@ -191,12 +191,13 @@ public class ExecutionManager implements AutoCloseable {
      * @see ThreadContext
      */
     public void registerActiveThread(String threadId) {
-        if (activeThreads.contains(threadId)) {
-            logger.trace("Thread '{}' already registered as active", threadId);
-            return;
+        synchronized (activeThreads) {
+            if (activeThreads.add(threadId)) {
+                logger.trace("Registered thread '{}' as active. Active threads: {}", threadId, activeThreads.size());
+            } else {
+                logger.warn("Thread '{}' already registered as active", threadId);
+            }
         }
-        activeThreads.add(threadId);
-        logger.trace("Registered thread '{}' as active. Active threads: {}", threadId, activeThreads.size());
     }
 
     /**
@@ -210,16 +211,20 @@ public class ExecutionManager implements AutoCloseable {
             return;
         }
 
-        boolean removed = activeThreads.remove(threadId);
-        if (removed) {
-            logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
-        } else {
-            logger.warn("Thread '{}' not active, cannot deregister", threadId);
-        }
+        // Add synchronized block to avoid remove then check race condition and make sure that
+        // the suspendExecution is called only once
+        synchronized (activeThreads) {
+            boolean removed = activeThreads.remove(threadId);
+            if (removed) {
+                logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
+            } else {
+                logger.warn("Thread '{}' not active, cannot deregister", threadId);
+            }
 
-        if (activeThreads.isEmpty()) {
-            logger.info("No active threads remaining - suspending execution");
-            suspendExecution();
+            if (activeThreads.isEmpty()) {
+                logger.info("No active threads remaining - suspending execution");
+                suspendExecution();
+            }
         }
     }
 
