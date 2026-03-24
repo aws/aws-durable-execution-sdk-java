@@ -343,8 +343,11 @@ class WaitForConditionOperationTest {
                 .build();
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
-        var receivedState = new java.util.concurrent.atomic.AtomicReference<Integer>(-1);
-        var config = WaitForConditionConfig.<Integer>builder().serDes(SERDES).build();
+        var receivedState = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var config = WaitForConditionConfig.<Integer>builder()
+                .serDes(SERDES)
+                .initialState(42)
+                .build();
         var operation = createOperation(
                 (state, ctx) -> {
                     receivedState.set(state);
@@ -355,7 +358,7 @@ class WaitForConditionOperationTest {
         operation.execute();
 
         Thread.sleep(200);
-        assertNull(receivedState.get(), "Should use initialState when checkpoint data is null");
+        assertEquals(42, receivedState.get(), "Should use initialState when checkpoint data is null");
     }
 
     // ===== resumeCheckLoop checkpoint deserialize exception =====

@@ -61,7 +61,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     @Override
     protected void start() {
-        executeCheckLogic(null, 0);
+        executeCheckLogic(config.initialState(), 0);
     }
 
     @Override
@@ -105,7 +105,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         if (checkpointData != null) {
             currentState = deserializeResult(checkpointData);
         } else {
-            currentState = null;
+            currentState = config.initialState();
         }
         executeCheckLogic(currentState, attempt);
     }
