@@ -163,7 +163,7 @@ Extends `BaseDurableOperation<T>`. Key behaviors:
 
 - **start()**: Begins the check loop from `initialState` at attempt 0
 - **replay(existing)**: Handles all operation statuses
-- **resumeCheckLoop(existing)**: Deserializes checkpointed state (throws `SerDesException` if corrupt)
+- **resumeCheckLoop(existing)**: Deserializes checkpointed state (falls back to `initialState` if null, throws `SerDesException` if corrupt)
 - **executeCheckLogic(state, attempt)**: Runs check function on user executor, handles `WaitForConditionResult`, checkpoints accordingly
 - **get()**: Blocks on completion, deserializes result or reconstructs and throws the original exception
 
