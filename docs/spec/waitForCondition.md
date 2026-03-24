@@ -12,7 +12,7 @@
 2. A `WaitForConditionOperation` is created with a unique operation ID
 3. On first execution:
    - Checkpoint START with subtype `WAIT_FOR_CONDITION`
-   - Execute the check function with `null` state and a `StepContext`
+   - Execute the check function with `initialState` and a `StepContext`
    - If check function returns `WaitForConditionResult.stopPolling(value)`: checkpoint SUCCEED, return value
    - If check function returns `WaitForConditionResult.continuePolling(value)`: call wait strategy to compute delay, checkpoint RETRY with state and delay, poll for READY, then loop
    - If check function throws: checkpoint FAIL, propagate the error
@@ -159,7 +159,7 @@ The core method validates: `name` (via `ParameterValidator`), `typeToken` not nu
 
 Extends `BaseDurableOperation<T>`. Key behaviors:
 
-- **start()**: Begins the check loop from state = `null` at attempt 0
+- **start()**: Begins the check loop from `initialState` at attempt 0
 - **replay(existing)**: Handles all operation statuses
 - **resumeCheckLoop(existing)**: Deserializes checkpointed state (throws `SerDesException` if corrupt)
 - **executeCheckLogic(state, attempt)**: Runs check function on user executor, handles `WaitForConditionResult`, checkpoints accordingly
