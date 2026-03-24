@@ -17,8 +17,7 @@ public class WaitForConditionExample extends DurableHandler<Integer, Integer> {
     @Override
     public Integer handleRequest(Integer input, DurableContext context) {
         // Poll the shipment status until the order is shipped.
-        // The check function simulates an order shipment status
-        // which transitions from PENDING > PROCESSING > SHIPPED
+        // The check function simulates an order shipment (0 -> 1 -> 2 -> 3 -> 4)
         return context.waitForCondition(
                 "wait-for-shipment",
                 Integer.class,
