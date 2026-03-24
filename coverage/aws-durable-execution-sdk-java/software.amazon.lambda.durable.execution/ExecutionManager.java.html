@@ -191,13 +191,14 @@ public class ExecutionManager implements AutoCloseable {
      * @see ThreadContext
      */
     public void registerActiveThread(String threadId) {
-<span class="pc bpc" id="L194" title="1 of 2 branches missed.">        if (activeThreads.contains(threadId)) {</span>
-<span class="nc" id="L195">            logger.trace(&quot;Thread '{}' already registered as active&quot;, threadId);</span>
-<span class="nc" id="L196">            return;</span>
-        }
-<span class="fc" id="L198">        activeThreads.add(threadId);</span>
-<span class="fc" id="L199">        logger.trace(&quot;Registered thread '{}' as active. Active threads: {}&quot;, threadId, activeThreads.size());</span>
-<span class="fc" id="L200">    }</span>
+<span class="fc" id="L194">        synchronized (activeThreads) {</span>
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">            if (activeThreads.add(threadId)) {</span>
+<span class="fc" id="L196">                logger.trace(&quot;Registered thread '{}' as active. Active threads: {}&quot;, threadId, activeThreads.size());</span>
+            } else {
+<span class="nc" id="L198">                logger.warn(&quot;Thread '{}' already registered as active&quot;, threadId);</span>
+            }
+<span class="fc" id="L200">        }</span>
+<span class="fc" id="L201">    }</span>
 
     /**
      * Mark a thread as inactive. If no threads remain, suspends the execution.
@@ -206,29 +207,33 @@ public class ExecutionManager implements AutoCloseable {
      */
     public void deregisterActiveThread(String threadId) {
         // Skip if already suspended
-<span class="fc bfc" id="L209" title="All 2 branches covered.">        if (executionExceptionFuture.isDone()) {</span>
-<span class="fc" id="L210">            return;</span>
+<span class="fc bfc" id="L210" title="All 2 branches covered.">        if (executionExceptionFuture.isDone()) {</span>
+<span class="fc" id="L211">            return;</span>
         }
 
-<span class="fc" id="L213">        boolean removed = activeThreads.remove(threadId);</span>
-<span class="fc bfc" id="L214" title="All 2 branches covered.">        if (removed) {</span>
-<span class="fc" id="L215">            logger.trace(&quot;Deregistered thread '{}' Active threads: {}&quot;, threadId, activeThreads.size());</span>
-        } else {
-<span class="fc" id="L217">            logger.warn(&quot;Thread '{}' not active, cannot deregister&quot;, threadId);</span>
-        }
+        // Add synchronized block to avoid remove then check race condition and make sure that
+        // the suspendExecution is called only once
+<span class="fc" id="L216">        synchronized (activeThreads) {</span>
+<span class="fc" id="L217">            boolean removed = activeThreads.remove(threadId);</span>
+<span class="fc bfc" id="L218" title="All 2 branches covered.">            if (removed) {</span>
+<span class="fc" id="L219">                logger.trace(&quot;Deregistered thread '{}' Active threads: {}&quot;, threadId, activeThreads.size());</span>
+            } else {
+<span class="fc" id="L221">                logger.warn(&quot;Thread '{}' not active, cannot deregister&quot;, threadId);</span>
+            }
 
-<span class="fc bfc" id="L220" title="All 2 branches covered.">        if (activeThreads.isEmpty()) {</span>
-<span class="fc" id="L221">            logger.info(&quot;No active threads remaining - suspending execution&quot;);</span>
-<span class="nc" id="L222">            suspendExecution();</span>
-        }
-<span class="fc" id="L224">    }</span>
+<span class="fc bfc" id="L224" title="All 2 branches covered.">            if (activeThreads.isEmpty()) {</span>
+<span class="fc" id="L225">                logger.info(&quot;No active threads remaining - suspending execution&quot;);</span>
+<span class="nc" id="L226">                suspendExecution();</span>
+            }
+<span class="fc" id="L228">        }</span>
+<span class="fc" id="L229">    }</span>
 
     // ===== Checkpointing =====
 
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture&lt;Void&gt; sendOperationUpdate(OperationUpdate update) {
-<span class="fc" id="L231">        return checkpointManager.checkpoint(update);</span>
+<span class="fc" id="L236">        return checkpointManager.checkpoint(update);</span>
     }
 
     // ===== Polling =====
@@ -239,23 +244,23 @@ public class ExecutionManager implements AutoCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId) {
-<span class="fc" id="L242">        return checkpointManager.pollForUpdate(operationId);</span>
+<span class="fc" id="L247">        return checkpointManager.pollForUpdate(operationId);</span>
     }
 
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId, Duration delay) {
-<span class="fc" id="L246">        return checkpointManager.pollForUpdate(operationId, delay);</span>
+<span class="fc" id="L251">        return checkpointManager.pollForUpdate(operationId, delay);</span>
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-<span class="fc" id="L253">        checkpointManager.shutdown();</span>
-<span class="fc" id="L254">    }</span>
+<span class="fc" id="L258">        checkpointManager.shutdown();</span>
+<span class="fc" id="L259">    }</span>
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */
     public static boolean isTerminalStatus(OperationStatus status) {
-<span class="fc bfc" id="L258" title="All 10 branches covered.">        return status == OperationStatus.SUCCEEDED</span>
+<span class="fc bfc" id="L263" title="All 10 branches covered.">        return status == OperationStatus.SUCCEEDED</span>
                 || status == OperationStatus.FAILED
                 || status == OperationStatus.CANCELLED
                 || status == OperationStatus.TIMED_OUT
@@ -268,15 +273,15 @@ public class ExecutionManager implements AutoCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-<span class="fc" id="L271">        executionExceptionFuture.completeExceptionally(exception);</span>
-<span class="fc" id="L272">        throw exception;</span>
+<span class="fc" id="L276">        executionExceptionFuture.completeExceptionally(exception);</span>
+<span class="fc" id="L277">        throw exception;</span>
     }
 
     /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
-<span class="fc" id="L277">        var ex = new SuspendExecutionException();</span>
-<span class="fc" id="L278">        executionExceptionFuture.completeExceptionally(ex);</span>
-<span class="fc" id="L279">        throw ex;</span>
+<span class="fc" id="L282">        var ex = new SuspendExecutionException();</span>
+<span class="fc" id="L283">        executionExceptionFuture.completeExceptionally(ex);</span>
+<span class="fc" id="L284">        throw ex;</span>
     }
 
     /**
@@ -289,12 +294,12 @@ public class ExecutionManager implements AutoCloseable {
      *     UnrecoverableDurableExecutionException if the execution is terminated.
      */
     public &lt;T&gt; CompletableFuture&lt;T&gt; runUntilCompleteOrSuspend(CompletableFuture&lt;T&gt; userFuture) {
-<span class="fc" id="L292">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
+<span class="fc" id="L297">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
             // reaches here only if userFuture complete successfully
-<span class="pc bpc" id="L294" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
-<span class="fc" id="L295">                return userFuture.join();</span>
+<span class="pc bpc" id="L299" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
+<span class="fc" id="L300">                return userFuture.join();</span>
             }
-<span class="nc" id="L297">            return null;</span>
+<span class="nc" id="L302">            return null;</span>
         });
     }
 }

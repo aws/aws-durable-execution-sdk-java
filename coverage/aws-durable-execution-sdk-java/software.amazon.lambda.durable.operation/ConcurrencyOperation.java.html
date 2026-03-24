@@ -82,7 +82,7 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends SerializableDurableO
 <span class="fc" id="L82">        this.toleratedFailureCount = toleratedFailureCount;</span>
 <span class="fc" id="L83">        this.operationIdGenerator = new OperationIdGenerator(getOperationId());</span>
 <span class="fc" id="L84">        this.rootContext = durableContext.createChildContext(getOperationId(), getName());</span>
-<span class="fc" id="L85">        this.consumerThreadListener = new AtomicReference&lt;&gt;(null);</span>
+<span class="fc" id="L85">        this.consumerThreadListener = new AtomicReference&lt;&gt;(new CompletableFuture&lt;&gt;());</span>
 <span class="fc" id="L86">    }</span>
 
     // ========== Template methods for subclasses ==========
@@ -138,97 +138,107 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends SerializableDurableO
 <span class="fc" id="L138">        pendingQueue.add(childOp);</span>
 <span class="fc" id="L139">        logger.debug(&quot;Item enqueued {}&quot;, name);</span>
         // notify the consumer thread a new item is available
-<span class="fc" id="L141">        completeVacancyListenerIfSet();</span>
+<span class="fc" id="L141">        notifyConsumerThread();</span>
 <span class="fc" id="L142">        return childOp;</span>
     }
 
-    private void completeVacancyListenerIfSet() {
+    private void notifyConsumerThread() {
 <span class="fc" id="L146">        synchronized (this) {</span>
-<span class="fc bfc" id="L147" title="All 2 branches covered.">            if (consumerThreadListener.get() != null) {</span>
-<span class="fc" id="L148">                consumerThreadListener.get().complete(null);</span>
-            }
-<span class="fc" id="L150">        }</span>
-<span class="fc" id="L151">    }</span>
+<span class="fc" id="L147">            consumerThreadListener.get().complete(null);</span>
+<span class="fc" id="L148">        }</span>
+<span class="fc" id="L149">    }</span>
 
     /** Starts execution of all enqueued items. */
     protected void executeItems() {
         // variables accessed only by the consumer thread. Put them here to avoid accidentally used by other threads
-<span class="fc" id="L156">        Set&lt;BaseDurableOperation&gt; runningChildren = new HashSet&lt;&gt;();</span>
-<span class="fc" id="L157">        AtomicInteger succeededCount = new AtomicInteger(0);</span>
-<span class="fc" id="L158">        AtomicInteger failedCount = new AtomicInteger(0);</span>
+<span class="fc" id="L154">        Set&lt;BaseDurableOperation&gt; runningChildren = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L155">        AtomicInteger succeededCount = new AtomicInteger(0);</span>
+<span class="fc" id="L156">        AtomicInteger failedCount = new AtomicInteger(0);</span>
 
-<span class="fc" id="L160">        Runnable consumer = () -&gt; {</span>
+<span class="fc" id="L158">        Runnable consumer = () -&gt; {</span>
             while (true) {
-<span class="pc bpc" id="L162" title="1 of 2 branches missed.">                if (isOperationCompleted()) {</span>
-<span class="nc" id="L163">                    return;</span>
+                // Set a new future if it's completed so that it will be able to receive a notification of
+                // new items when the thread is checking completion condition and processing
+                // the queued items below.
+<span class="fc" id="L163">                synchronized (this) {</span>
+<span class="pc bpc" id="L164" title="1 of 2 branches missed.">                    if (consumerThreadListener.get() != null</span>
+<span class="fc bfc" id="L165" title="All 2 branches covered.">                            &amp;&amp; consumerThreadListener.get().isDone()) {</span>
+<span class="fc" id="L166">                        consumerThreadListener.set(new CompletableFuture&lt;&gt;());</span>
+                    }
+<span class="fc" id="L168">                }</span>
+
+                // Process completion condition. Quit the loop if the condition is met.
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">                if (isOperationCompleted()) {</span>
+<span class="nc" id="L172">                    return;</span>
                 }
-<span class="fc" id="L165">                var completionStatus = canComplete(succeededCount, failedCount, runningChildren);</span>
-<span class="fc bfc" id="L166" title="All 2 branches covered.">                if (completionStatus != null) {</span>
-<span class="fc" id="L167">                    handleComplete(completionStatus);</span>
-<span class="fc" id="L168">                    return;</span>
+<span class="fc" id="L174">                var completionStatus = canComplete(succeededCount, failedCount, runningChildren);</span>
+<span class="fc bfc" id="L175" title="All 2 branches covered.">                if (completionStatus != null) {</span>
+<span class="fc" id="L176">                    handleSuccess(completionStatus);</span>
+<span class="fc" id="L177">                    return;</span>
                 }
-<span class="fc bfc" id="L170" title="All 4 branches covered.">                while (runningChildren.size() &lt; maxConcurrency &amp;&amp; !pendingQueue.isEmpty()) {</span>
-<span class="fc" id="L171">                    var next = pendingQueue.poll();</span>
-<span class="fc" id="L172">                    runningChildren.add(next);</span>
-<span class="fc" id="L173">                    logger.debug(&quot;Executing operation {}&quot;, next.getName());</span>
-<span class="fc" id="L174">                    next.execute();</span>
-<span class="fc" id="L175">                }</span>
-<span class="fc" id="L176">                var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);</span>
-                // child may be null if the consumer thread is woken up due to a new item being added
-<span class="fc bfc" id="L178" title="All 2 branches covered.">                if (child != null) {</span>
-<span class="pc bpc" id="L179" title="1 of 2 branches missed.">                    if (runningChildren.contains(child)) {</span>
-<span class="fc" id="L180">                        runningChildren.remove(child);</span>
-<span class="fc" id="L181">                        onItemComplete(succeededCount, failedCount, (ChildContextOperation&lt;?&gt;) child);</span>
+
+                // process new items in the queue
+<span class="fc bfc" id="L181" title="All 4 branches covered.">                while (runningChildren.size() &lt; maxConcurrency &amp;&amp; !pendingQueue.isEmpty()) {</span>
+<span class="fc" id="L182">                    var next = pendingQueue.poll();</span>
+<span class="fc" id="L183">                    runningChildren.add(next);</span>
+<span class="fc" id="L184">                    logger.debug(&quot;Executing operation {}&quot;, next.getName());</span>
+<span class="fc" id="L185">                    next.execute();</span>
+<span class="fc" id="L186">                }</span>
+
+                // If consumerThreadListener has been completed when processing above, waitForChildCompletion will
+                // immediately return null and repeat the above again
+<span class="fc" id="L190">                var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);</span>
+
+                // child may be null if the consumer thread is woken up due to new items added or completion condition
+                // changed
+<span class="fc bfc" id="L194" title="All 2 branches covered.">                if (child != null) {</span>
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">                    if (runningChildren.contains(child)) {</span>
+<span class="fc" id="L196">                        runningChildren.remove(child);</span>
+<span class="fc" id="L197">                        onItemComplete(succeededCount, failedCount, (ChildContextOperation&lt;?&gt;) child);</span>
                     } else {
-<span class="nc" id="L183">                        throw new IllegalStateException(&quot;Unexpected completion: &quot; + child);</span>
+<span class="nc" id="L199">                        throw new IllegalStateException(&quot;Unexpected completion: &quot; + child);</span>
                     }
                 }
-<span class="fc" id="L186">                synchronized (this) {</span>
-<span class="fc bfc" id="L187" title="All 2 branches covered.">                    if (consumerThreadListener.get() != null</span>
-<span class="fc bfc" id="L188" title="All 2 branches covered.">                            &amp;&amp; consumerThreadListener.get().isDone()) {</span>
-<span class="fc" id="L189">                        consumerThreadListener.set(null);</span>
-                    }
-<span class="fc" id="L191">                }</span>
-<span class="fc" id="L192">            }</span>
+<span class="fc" id="L202">            }</span>
         };
         // run consumer in the user thread pool, although it's not a real user thread
-<span class="fc" id="L195">        runUserHandler(consumer, getOperationId(), ThreadType.CONTEXT);</span>
-<span class="fc" id="L196">    }</span>
+<span class="fc" id="L205">        runUserHandler(consumer, getOperationId(), ThreadType.CONTEXT);</span>
+<span class="fc" id="L206">    }</span>
 
     private BaseDurableOperation waitForChildCompletion(
             AtomicInteger succeededCount, AtomicInteger failedCount, Set&lt;BaseDurableOperation&gt; runningChildren) {
-<span class="fc" id="L200">        var threadContext = getCurrentThreadContext();</span>
+<span class="fc" id="L210">        var threadContext = getCurrentThreadContext();</span>
         CompletableFuture&lt;Object&gt; future;
 
-<span class="fc" id="L203">        synchronized (this) {</span>
+<span class="fc" id="L213">        synchronized (this) {</span>
             // check again in synchronized block to prevent race conditions
-<span class="pc bpc" id="L205" title="1 of 2 branches missed.">            if (isOperationCompleted()) {</span>
-<span class="nc" id="L206">                return null;</span>
+<span class="pc bpc" id="L215" title="1 of 2 branches missed.">            if (isOperationCompleted()) {</span>
+<span class="nc" id="L216">                return null;</span>
             }
-<span class="fc" id="L208">            var completionStatus = canComplete(succeededCount, failedCount, runningChildren);</span>
-<span class="pc bpc" id="L209" title="1 of 2 branches missed.">            if (completionStatus != null) {</span>
-<span class="nc" id="L210">                return null;</span>
+<span class="fc" id="L218">            var completionStatus = canComplete(succeededCount, failedCount, runningChildren);</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">            if (completionStatus != null) {</span>
+<span class="nc" id="L220">                return null;</span>
             }
             ArrayList&lt;CompletableFuture&lt;BaseDurableOperation&gt;&gt; futures;
-<span class="fc" id="L213">            futures = new ArrayList&lt;&gt;(runningChildren.stream()</span>
-<span class="fc" id="L214">                    .map(BaseDurableOperation::getCompletionFuture)</span>
-<span class="fc" id="L215">                    .toList());</span>
-<span class="fc bfc" id="L216" title="All 2 branches covered.">            if (futures.size() &lt; maxConcurrency) {</span>
+<span class="fc" id="L223">            futures = new ArrayList&lt;&gt;(runningChildren.stream()</span>
+<span class="fc" id="L224">                    .map(BaseDurableOperation::getCompletionFuture)</span>
+<span class="fc" id="L225">                    .toList());</span>
+<span class="fc bfc" id="L226" title="All 2 branches covered.">            if (futures.size() &lt; maxConcurrency) {</span>
                 // add a future to listen to the new items if there is a vacancy
-<span class="fc" id="L218">                consumerThreadListener.compareAndSet(null, new CompletableFuture&lt;&gt;());</span>
-<span class="fc" id="L219">                futures.add(consumerThreadListener.get());</span>
+<span class="fc" id="L228">                consumerThreadListener.compareAndSet(null, new CompletableFuture&lt;&gt;());</span>
+<span class="fc" id="L229">                futures.add(consumerThreadListener.get());</span>
             }
 
             // future will be completed immediately if any future of the list is already completed
-<span class="fc" id="L223">            future = CompletableFuture.anyOf(futures.toArray(CompletableFuture[]::new));</span>
+<span class="fc" id="L233">            future = CompletableFuture.anyOf(futures.toArray(CompletableFuture[]::new));</span>
             // skip deregistering the current thread if there is more completed future to process
-<span class="fc bfc" id="L225" title="All 2 branches covered.">            if (!future.isDone()) {</span>
-<span class="fc" id="L226">                future.thenRun(() -&gt; registerActiveThread(threadContext.threadId()));</span>
+<span class="fc bfc" id="L235" title="All 2 branches covered.">            if (!future.isDone()) {</span>
+<span class="fc" id="L236">                future.thenRun(() -&gt; registerActiveThread(threadContext.threadId()));</span>
                 // Deregister the current thread to allow suspension
-<span class="fc" id="L228">                executionManager.deregisterActiveThread(threadContext.threadId());</span>
+<span class="fc" id="L238">                executionManager.deregisterActiveThread(threadContext.threadId());</span>
             }
-<span class="fc" id="L230">        }</span>
-<span class="fc" id="L231">        return future.thenApply(o -&gt; (BaseDurableOperation) o).join();</span>
+<span class="fc" id="L240">        }</span>
+<span class="fc" id="L241">        return future.thenApply(o -&gt; (BaseDurableOperation) o).join();</span>
     }
 
     /**
@@ -240,16 +250,16 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends SerializableDurableO
     private void onItemComplete(
             AtomicInteger succeededCount, AtomicInteger failedCount, ChildContextOperation&lt;?&gt; child) {
         // Evaluate child result outside the lock — child.get() may block waiting for a checkpoint response.
-<span class="fc" id="L243">        logger.debug(&quot;OnItemComplete called by {}, Id: {}&quot;, child.getName(), child.getOperationId());</span>
+<span class="fc" id="L253">        logger.debug(&quot;OnItemComplete called by {}, Id: {}&quot;, child.getName(), child.getOperationId());</span>
         try {
-<span class="fc" id="L245">            child.get();</span>
-<span class="fc" id="L246">            logger.debug(&quot;Result succeeded - {}&quot;, child.getName());</span>
-<span class="fc" id="L247">            succeededCount.incrementAndGet();</span>
-<span class="fc" id="L248">        } catch (Throwable e) {</span>
-<span class="fc" id="L249">            logger.debug(&quot;Child operation {} failed: {}&quot;, child.getOperationId(), e.getMessage());</span>
-<span class="fc" id="L250">            failedCount.incrementAndGet();</span>
-<span class="fc" id="L251">        }</span>
-<span class="fc" id="L252">    }</span>
+<span class="fc" id="L255">            child.get();</span>
+<span class="fc" id="L256">            logger.debug(&quot;Result succeeded - {}&quot;, child.getName());</span>
+<span class="fc" id="L257">            succeededCount.incrementAndGet();</span>
+<span class="fc" id="L258">        } catch (Throwable e) {</span>
+<span class="fc" id="L259">            logger.debug(&quot;Child operation {} failed: {}&quot;, child.getOperationId(), e.getMessage());</span>
+<span class="fc" id="L260">            failedCount.incrementAndGet();</span>
+<span class="fc" id="L261">        }</span>
+<span class="fc" id="L262">    }</span>
 
     // ========== Completion logic ==========
     /**
@@ -259,53 +269,48 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends SerializableDurableO
      */
     private ConcurrencyCompletionStatus canComplete(
             AtomicInteger succeededCount, AtomicInteger failedCount, Set&lt;BaseDurableOperation&gt; runningChildren) {
-<span class="fc" id="L262">        int succeeded = succeededCount.get();</span>
-<span class="fc" id="L263">        int failed = failedCount.get();</span>
+<span class="fc" id="L272">        int succeeded = succeededCount.get();</span>
+<span class="fc" id="L273">        int failed = failedCount.get();</span>
 
         // If we've met the minimum successful count, we're done
-<span class="fc bfc" id="L266" title="All 4 branches covered.">        if (minSuccessful != null &amp;&amp; succeeded &gt;= minSuccessful) {</span>
-<span class="fc" id="L267">            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;</span>
+<span class="fc bfc" id="L276" title="All 4 branches covered.">        if (minSuccessful != null &amp;&amp; succeeded &gt;= minSuccessful) {</span>
+<span class="fc" id="L277">            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;</span>
         }
 
         // If we've exceeded the failure tolerance, we're done
-<span class="fc bfc" id="L271" title="All 4 branches covered.">        if (toleratedFailureCount != null &amp;&amp; failed &gt; toleratedFailureCount) {</span>
-<span class="fc" id="L272">            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
+<span class="fc bfc" id="L281" title="All 4 branches covered.">        if (toleratedFailureCount != null &amp;&amp; failed &gt; toleratedFailureCount) {</span>
+<span class="fc" id="L282">            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;</span>
         }
 
         // All items finished — complete
-<span class="fc bfc" id="L276" title="All 6 branches covered.">        if (isJoined.get() &amp;&amp; pendingQueue.isEmpty() &amp;&amp; runningChildren.isEmpty()) {</span>
-<span class="fc" id="L277">            return ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
+        // This condition relies on isJoined, so the consumer will wake up and check this again when
+        // isJoined is set to true.
+<span class="fc bfc" id="L288" title="All 6 branches covered.">        if (isJoined.get() &amp;&amp; pendingQueue.isEmpty() &amp;&amp; runningChildren.isEmpty()) {</span>
+<span class="fc" id="L289">            return ConcurrencyCompletionStatus.ALL_COMPLETED;</span>
         }
 
-<span class="fc" id="L280">        return null;</span>
+<span class="fc" id="L292">        return null;</span>
     }
-
-    private void handleComplete(ConcurrencyCompletionStatus status) {
-<span class="fc" id="L284">        synchronized (this) {</span>
-<span class="pc bpc" id="L285" title="1 of 2 branches missed.">            if (isOperationCompleted()) {</span>
-<span class="nc" id="L286">                return;</span>
-            }
-<span class="fc" id="L288">            handleSuccess(status);</span>
-<span class="fc" id="L289">        }</span>
-<span class="fc" id="L290">    }</span>
 
     /**
      * Blocks the calling thread until the concurrency operation reaches a terminal state. Validates item count, handles
      * zero-branch case, then delegates to {@code waitForOperationCompletion()} from BaseDurableOperation.
      */
     protected void join() {
-<span class="pc bpc" id="L297" title="1 of 4 branches missed.">        if (minSuccessful != null &amp;&amp; minSuccessful &gt; branches.size()) {</span>
-<span class="nc" id="L298">            throw new IllegalStateException(&quot;minSuccessful (&quot; + minSuccessful</span>
-<span class="nc" id="L299">                    + &quot;) exceeds the number of registered items (&quot; + branches.size() + &quot;)&quot;);</span>
+<span class="pc bpc" id="L300" title="1 of 4 branches missed.">        if (minSuccessful != null &amp;&amp; minSuccessful &gt; branches.size()) {</span>
+<span class="nc" id="L301">            throw new IllegalStateException(&quot;minSuccessful (&quot; + minSuccessful</span>
+<span class="nc" id="L302">                    + &quot;) exceeds the number of registered items (&quot; + branches.size() + &quot;)&quot;);</span>
         }
-<span class="fc" id="L301">        isJoined.set(true);</span>
-        // notify the execution thread this concurrency operation is joined
-<span class="fc" id="L303">        completeVacancyListenerIfSet();</span>
-<span class="fc" id="L304">        waitForOperationCompletion();</span>
-<span class="fc" id="L305">    }</span>
+<span class="fc" id="L304">        isJoined.set(true);</span>
+
+        // Notify the consumer thread this concurrency operation is joined. Consumer thread need to check the
+        // completion condition again.
+<span class="fc" id="L308">        notifyConsumerThread();</span>
+<span class="fc" id="L309">        waitForOperationCompletion();</span>
+<span class="fc" id="L310">    }</span>
 
     protected List&lt;ChildContextOperation&lt;?&gt;&gt; getBranches() {
-<span class="fc" id="L308">        return branches;</span>
+<span class="fc" id="L313">        return branches;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -29,7 +29,7 @@ public class WaitOperation extends BaseDurableOperation implements DurableFuture
 
     public WaitOperation(
             OperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
-<span class="fc" id="L32">        super(operationIdentifier, durableContext);</span>
+<span class="fc" id="L32">        super(operationIdentifier, durableContext, null);</span>
 <span class="fc" id="L33">        this.duration = duration;</span>
 <span class="fc" id="L34">    }</span>
 
