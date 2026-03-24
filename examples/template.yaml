@@ -518,6 +518,31 @@ Resources:
       DockerContext: ../
       DockerTag: durable-examples
 
+  WaitForConditionExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      FunctionName: !Join
+        - ''
+        - - 'wait-for-condition-example'
+          - !Ref FunctionNameSuffix
+      ImageConfig:
+        Command: ["software.amazon.lambda.durable.examples.WaitForConditionExample::handleRequest"]
+      DurableConfig:
+        ExecutionTimeout: 300
+        RetentionPeriodInDays: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-for-condition-example${FunctionNameSuffix}"
+    Metadata:
+      Dockerfile: !Ref DockerFile
+      DockerContext: ../
+      DockerTag: durable-examples
+
 Outputs:
   NoopExampleFunction:
     Description: Noop Example Function ARN
@@ -678,4 +703,12 @@ Outputs:
   ComplexMapExampleFunctionName:
     Description: Complex Map Example Function Name
     Value: !Ref ComplexMapExampleFunction
+
+  WaitForConditionExampleFunction:
+    Description: Wait For Condition Example Function ARN
+    Value: !GetAtt WaitForConditionExampleFunction.Arn
+
+  WaitForConditionExampleFunctionName:
+    Description: Wait For Condition Example Function Name
+    Value: !Ref WaitForConditionExampleFunction
 
