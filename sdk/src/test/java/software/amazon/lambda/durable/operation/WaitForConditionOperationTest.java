@@ -57,12 +57,7 @@ class WaitForConditionOperationTest {
                     checkFunc,
             WaitForConditionConfig<Integer> config) {
         return new WaitForConditionOperation<>(
-                OPERATION_ID,
-                OPERATION_NAME,
-                checkFunc,
-                TypeToken.get(Integer.class),
-                config,
-                durableContext);
+                OPERATION_ID, OPERATION_NAME, checkFunc, TypeToken.get(Integer.class), config, durableContext);
     }
 
     // ===== Replay SUCCEEDED =====

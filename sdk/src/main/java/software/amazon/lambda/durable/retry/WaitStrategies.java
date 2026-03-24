@@ -66,7 +66,8 @@ public final class WaitStrategies {
 
         return (state, attempt) -> {
             if (attempt + 1 >= maxAttempts) {
-                throw new WaitForConditionFailedException("waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
+                throw new WaitForConditionFailedException(
+                        "waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
             }
 
             double initialDelaySeconds = initialDelay.toSeconds();
@@ -95,7 +96,8 @@ public final class WaitStrategies {
 
         return (state, attempt) -> {
             if (attempt + 1 >= maxAttempts) {
-                throw new WaitForConditionFailedException("waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
+                throw new WaitForConditionFailedException(
+                        "waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
             }
             return fixedDelay;
         };

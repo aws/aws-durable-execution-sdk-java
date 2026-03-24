@@ -352,8 +352,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         }
         var operationId = nextOperationId();
 
-        var operation =
-                new WaitForConditionOperation<>(operationId, name, checkFunc, resultType, config, this);
+        var operation = new WaitForConditionOperation<>(operationId, name, checkFunc, resultType, config, this);
 
         operation.execute();
 

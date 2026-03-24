@@ -9,8 +9,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 /**
  * Configuration for {@code waitForCondition} operations.
  *
- * <p>Holds only optional parameters for a waitForCondition call. Use {@link #builder()} to
- * create instances.
+ * <p>Holds only optional parameters for a waitForCondition call. Use {@link #builder()} to create instances.
  *
  * @param <T> the type of state being polled
  */
