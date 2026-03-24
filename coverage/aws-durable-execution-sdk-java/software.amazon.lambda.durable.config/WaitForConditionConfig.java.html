@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -10,32 +9,37 @@ import software.amazon.lambda.durable.serde.SerDes;
 /**
  * Configuration for {@code waitForCondition} operations.
  *
- * &lt;p&gt;Holds only optional parameters for a waitForCondition call. Required parameters ({@code initialState},
- * {@code checkFunc}) are direct method arguments on {@link DurableContext#waitForCondition}. Use {@link #builder()} to
- * create instances.
+ * &lt;p&gt;Holds only optional parameters for a waitForCondition call. Use {@link #builder()} to create instances.
  *
  * @param &lt;T&gt; the type of state being polled
  */
 public class WaitForConditionConfig&lt;T&gt; {
     private final WaitForConditionWaitStrategy&lt;T&gt; waitStrategy;
     private final SerDes serDes;
+    private final T initialState;
 
-<span class="fc" id="L23">    private WaitForConditionConfig(Builder&lt;T&gt; builder) {</span>
-<span class="fc" id="L24">        this.waitStrategy = builder.waitStrategy;</span>
-<span class="fc" id="L25">        this.serDes = builder.serDes;</span>
-<span class="fc" id="L26">    }</span>
+<span class="fc" id="L21">    private WaitForConditionConfig(Builder&lt;T&gt; builder) {</span>
+<span class="fc" id="L22">        this.waitStrategy = builder.waitStrategy;</span>
+<span class="fc" id="L23">        this.serDes = builder.serDes;</span>
+<span class="fc" id="L24">        this.initialState = builder.initialState;</span>
+<span class="fc" id="L25">    }</span>
 
     /**
      * Returns the wait strategy that controls polling behavior. If no strategy was explicitly set, returns the default
      * strategy from {@link WaitStrategies#defaultStrategy()}.
      */
     public WaitForConditionWaitStrategy&lt;T&gt; waitStrategy() {
-<span class="fc bfc" id="L33" title="All 2 branches covered.">        return waitStrategy != null ? waitStrategy : WaitStrategies.defaultStrategy();</span>
+<span class="fc bfc" id="L32" title="All 2 branches covered.">        return waitStrategy != null ? waitStrategy : WaitStrategies.defaultStrategy();</span>
     }
 
     /** Returns the custom serializer, or null if not specified (uses default SerDes). */
     public SerDes serDes() {
-<span class="fc" id="L38">        return serDes;</span>
+<span class="fc" id="L37">        return serDes;</span>
+    }
+
+    /** Returns the initial state object, or null if not specified. */
+    public T initialState() {
+<span class="fc" id="L42">        return initialState;</span>
     }
 
     /**
@@ -45,10 +49,11 @@ public class WaitForConditionConfig&lt;T&gt; {
      * @return a new builder pre-populated with this config's values
      */
     public Builder&lt;T&gt; toBuilder() {
-<span class="fc" id="L48">        var b = new Builder&lt;T&gt;();</span>
-<span class="fc" id="L49">        b.waitStrategy = this.waitStrategy;</span>
-<span class="fc" id="L50">        b.serDes = this.serDes;</span>
-<span class="fc" id="L51">        return b;</span>
+<span class="fc" id="L52">        var b = new Builder&lt;T&gt;();</span>
+<span class="fc" id="L53">        b.waitStrategy = this.waitStrategy;</span>
+<span class="fc" id="L54">        b.serDes = this.serDes;</span>
+<span class="fc" id="L55">        b.initialState = this.initialState;</span>
+<span class="fc" id="L56">        return b;</span>
     }
 
     /**
@@ -58,12 +63,13 @@ public class WaitForConditionConfig&lt;T&gt; {
      * @return a new builder instance
      */
     public static &lt;T&gt; Builder&lt;T&gt; builder() {
-<span class="fc" id="L61">        return new Builder&lt;&gt;();</span>
+<span class="fc" id="L66">        return new Builder&lt;&gt;();</span>
     }
 
     public static class Builder&lt;T&gt; {
         private WaitForConditionWaitStrategy&lt;T&gt; waitStrategy;
         private SerDes serDes;
+        private T initialState;
 
         private Builder() {}
 
@@ -77,8 +83,8 @@ public class WaitForConditionConfig&lt;T&gt; {
          * @return this builder for method chaining
          */
         public Builder&lt;T&gt; waitStrategy(WaitForConditionWaitStrategy&lt;T&gt; waitStrategy) {
-<span class="fc" id="L80">            this.waitStrategy = waitStrategy;</span>
-<span class="fc" id="L81">            return this;</span>
+<span class="fc" id="L86">            this.waitStrategy = waitStrategy;</span>
+<span class="fc" id="L87">            return this;</span>
         }
 
         /**
@@ -90,12 +96,23 @@ public class WaitForConditionConfig&lt;T&gt; {
          * @return this builder for method chaining
          */
         public Builder&lt;T&gt; serDes(SerDes serDes) {
-<span class="fc" id="L93">            this.serDes = serDes;</span>
-<span class="fc" id="L94">            return this;</span>
+<span class="fc" id="L99">            this.serDes = serDes;</span>
+<span class="fc" id="L100">            return this;</span>
+        }
+
+        /**
+         * Sets the initial state for the waitForCondition operation. The initial state will be null if it's not set.
+         *
+         * @param initialState the initial state object to pass to the condition function
+         * @return this builder for method chaining
+         */
+        public Builder&lt;T&gt; initialState(T initialState) {
+<span class="fc" id="L110">            this.initialState = initialState;</span>
+<span class="fc" id="L111">            return this;</span>
         }
 
         public WaitForConditionConfig&lt;T&gt; build() {
-<span class="fc" id="L98">            return new WaitForConditionConfig&lt;&gt;(this);</span>
+<span class="fc" id="L115">            return new WaitForConditionConfig&lt;&gt;(this);</span>
         }
     }
 }

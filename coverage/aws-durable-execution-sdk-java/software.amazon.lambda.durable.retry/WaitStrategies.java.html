@@ -3,7 +3,7 @@
 package software.amazon.lambda.durable.retry;
 
 import java.time.Duration;
-import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
@@ -42,7 +42,7 @@ import software.amazon.lambda.durable.util.ParameterValidator;
      *
      * &lt;p&gt;The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^attempt, maxDelay)
      *
-     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionException}
+     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionFailedException}
      * @param initialDelay initial delay before first retry
      * @param maxDelay maximum delay between retries
      * @param backoffRate multiplier for exponential backoff (must be &gt;= 1.0)
@@ -66,38 +66,40 @@ import software.amazon.lambda.durable.util.ParameterValidator;
 
 <span class="fc" id="L67">        return (state, attempt) -&gt; {</span>
 <span class="fc bfc" id="L68" title="All 2 branches covered.">            if (attempt + 1 &gt;= maxAttempts) {</span>
-<span class="fc" id="L69">                throw new WaitForConditionException(&quot;waitForCondition exceeded maximum attempts (&quot; + maxAttempts + &quot;)&quot;);</span>
+<span class="fc" id="L69">                throw new WaitForConditionFailedException(</span>
+                        &quot;waitForCondition exceeded maximum attempts (&quot; + maxAttempts + &quot;)&quot;);
             }
 
-<span class="fc" id="L72">            double initialDelaySeconds = initialDelay.toSeconds();</span>
-<span class="fc" id="L73">            double maxDelaySeconds = maxDelay.toSeconds();</span>
-<span class="fc" id="L74">            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt), maxDelaySeconds);</span>
-<span class="fc" id="L75">            double delayWithJitter = jitter.apply(baseDelay);</span>
-<span class="fc" id="L76">            long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));</span>
+<span class="fc" id="L73">            double initialDelaySeconds = initialDelay.toSeconds();</span>
+<span class="fc" id="L74">            double maxDelaySeconds = maxDelay.toSeconds();</span>
+<span class="fc" id="L75">            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt), maxDelaySeconds);</span>
+<span class="fc" id="L76">            double delayWithJitter = jitter.apply(baseDelay);</span>
+<span class="fc" id="L77">            long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));</span>
 
-<span class="fc" id="L78">            return Duration.ofSeconds(finalDelaySeconds);</span>
+<span class="fc" id="L79">            return Duration.ofSeconds(finalDelaySeconds);</span>
         };
     }
 
     /**
      * Creates a fixed delay wait strategy that returns a constant delay regardless of attempt number or state.
      *
-     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionException}
+     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionFailedException}
      * @param fixedDelay the constant delay between polling attempts
      * @param &lt;T&gt; the type of state being polled
      * @return a {@link WaitForConditionWaitStrategy} with fixed delay
      */
     public static &lt;T&gt; WaitForConditionWaitStrategy&lt;T&gt; fixedDelay(int maxAttempts, Duration fixedDelay) {
-<span class="pc bpc" id="L91" title="1 of 2 branches missed.">        if (maxAttempts &lt;= 0) {</span>
-<span class="nc" id="L92">            throw new IllegalArgumentException(&quot;maxAttempts must be positive, got: &quot; + maxAttempts);</span>
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">        if (maxAttempts &lt;= 0) {</span>
+<span class="nc" id="L93">            throw new IllegalArgumentException(&quot;maxAttempts must be positive, got: &quot; + maxAttempts);</span>
         }
-<span class="fc" id="L94">        ParameterValidator.validateDuration(fixedDelay, &quot;fixedDelay&quot;);</span>
+<span class="fc" id="L95">        ParameterValidator.validateDuration(fixedDelay, &quot;fixedDelay&quot;);</span>
 
-<span class="fc" id="L96">        return (state, attempt) -&gt; {</span>
-<span class="fc bfc" id="L97" title="All 2 branches covered.">            if (attempt + 1 &gt;= maxAttempts) {</span>
-<span class="fc" id="L98">                throw new WaitForConditionException(&quot;waitForCondition exceeded maximum attempts (&quot; + maxAttempts + &quot;)&quot;);</span>
+<span class="fc" id="L97">        return (state, attempt) -&gt; {</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            if (attempt + 1 &gt;= maxAttempts) {</span>
+<span class="fc" id="L99">                throw new WaitForConditionFailedException(</span>
+                        &quot;waitForCondition exceeded maximum attempts (&quot; + maxAttempts + &quot;)&quot;);
             }
-<span class="fc" id="L100">            return fixedDelay;</span>
+<span class="fc" id="L102">            return fixedDelay;</span>
         };
     }
 }

@@ -341,39 +341,36 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             String name,
             TypeToken&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
-            T initialState,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L346">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
-<span class="fc" id="L347">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
-<span class="fc" id="L348">        Objects.requireNonNull(checkFunc, &quot;checkFunc cannot be null&quot;);</span>
-<span class="fc" id="L349">        Objects.requireNonNull(initialState, &quot;initialState cannot be null&quot;);</span>
-<span class="fc" id="L350">        ParameterValidator.validateOperationName(name);</span>
+<span class="fc" id="L345">        Objects.requireNonNull(config, &quot;config cannot be null&quot;);</span>
+<span class="fc" id="L346">        Objects.requireNonNull(resultType, &quot;resultType cannot be null&quot;);</span>
+<span class="fc" id="L347">        Objects.requireNonNull(checkFunc, &quot;checkFunc cannot be null&quot;);</span>
+<span class="fc" id="L348">        ParameterValidator.validateOperationName(name);</span>
 
-<span class="pc bpc" id="L352" title="1 of 2 branches missed.">        if (config.serDes() == null) {</span>
-<span class="fc" id="L353">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
+<span class="pc bpc" id="L350" title="1 of 2 branches missed.">        if (config.serDes() == null) {</span>
+<span class="fc" id="L351">            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();</span>
         }
-<span class="fc" id="L355">        var operationId = nextOperationId();</span>
+<span class="fc" id="L353">        var operationId = nextOperationId();</span>
 
-<span class="fc" id="L357">        var operation =</span>
-                new WaitForConditionOperation&lt;&gt;(operationId, name, checkFunc, resultType, initialState, config, this);
+<span class="fc" id="L355">        var operation = new WaitForConditionOperation&lt;&gt;(operationId, name, checkFunc, resultType, config, this);</span>
 
-<span class="fc" id="L360">        operation.execute();</span>
+<span class="fc" id="L357">        operation.execute();</span>
 
-<span class="fc" id="L362">        return operation;</span>
+<span class="fc" id="L359">        return operation;</span>
     }
 
     // =============== accessors ================
     @Override
     public DurableLogger getLogger() {
         // lazy initialize logger
-<span class="fc bfc" id="L369" title="All 2 branches covered.">        if (logger == null) {</span>
-<span class="fc" id="L370">            synchronized (this) {</span>
-<span class="pc bpc" id="L371" title="1 of 2 branches missed.">                if (logger == null) {</span>
-<span class="fc" id="L372">                    logger = new DurableLogger(LoggerFactory.getLogger(DurableContext.class), this);</span>
+<span class="fc bfc" id="L366" title="All 2 branches covered.">        if (logger == null) {</span>
+<span class="fc" id="L367">            synchronized (this) {</span>
+<span class="pc bpc" id="L368" title="1 of 2 branches missed.">                if (logger == null) {</span>
+<span class="fc" id="L369">                    logger = new DurableLogger(LoggerFactory.getLogger(DurableContext.class), this);</span>
                 }
-<span class="fc" id="L374">            }</span>
+<span class="fc" id="L371">            }</span>
         }
-<span class="fc" id="L376">        return logger;</span>
+<span class="fc" id="L373">        return logger;</span>
     }
 
     /**
@@ -382,10 +379,10 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      */
     @Override
     public void close() {
-<span class="fc bfc" id="L385" title="All 2 branches covered.">        if (logger != null) {</span>
-<span class="fc" id="L386">            logger.close();</span>
+<span class="fc bfc" id="L382" title="All 2 branches covered.">        if (logger != null) {</span>
+<span class="fc" id="L383">            logger.close();</span>
         }
-<span class="fc" id="L388">    }</span>
+<span class="fc" id="L385">    }</span>
 
     /**
      * Get the next operationId. Returns a globally unique operation ID by hashing a sequential operation counter. For
@@ -394,7 +391,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * matches the Python SDK's stepPrefix convention and prevents ID collisions in checkpoint batches.
      */
     private String nextOperationId() {
-<span class="fc" id="L397">        return operationIdGenerator.nextOperationId();</span>
+<span class="fc" id="L394">        return operationIdGenerator.nextOperationId();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

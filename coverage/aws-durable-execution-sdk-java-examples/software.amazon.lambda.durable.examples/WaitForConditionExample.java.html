@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
-import java.util.concurrent.atomic.AtomicInteger;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 /**
@@ -12,29 +12,25 @@ import software.amazon.lambda.durable.model.WaitForConditionResult;
  *
  * &lt;p&gt;This example simulates waiting for an order to ship, by repeatedly calling a check function.
  */
-<span class="fc" id="L15">public class WaitForConditionExample extends DurableHandler&lt;String, String&gt; {</span>
-
-<span class="fc" id="L17">    private final AtomicInteger callCount = new AtomicInteger(0);</span>
+<span class="fc" id="L15">public class WaitForConditionExample extends DurableHandler&lt;Integer, Integer&gt; {</span>
 
     @Override
-    public String handleRequest(String input, DurableContext context) {
+    public Integer handleRequest(Integer input, DurableContext context) {
         // Poll the shipment status until the order is shipped.
-        // The check function simulates an order shipment status
-        // which transitions from PENDING &gt; PROCESSING &gt; SHIPPED
-<span class="fc" id="L24">        return context.waitForCondition(</span>
+        // The check function simulates an order shipment (0 -&gt; 1 -&gt; 2 -&gt; 3 -&gt; 4)
+<span class="fc" id="L21">        return context.waitForCondition(</span>
                 &quot;wait-for-shipment&quot;,
-                String.class,
-                (status, stepCtx) -&gt; {
+                Integer.class,
+                (callCount, stepCtx) -&gt; {
                     // Simulate checking shipment status from an external service
-<span class="fc" id="L29">                    var count = callCount.incrementAndGet();</span>
-<span class="fc bfc" id="L30" title="All 2 branches covered.">                    if (count &gt;= 3) {</span>
+<span class="fc bfc" id="L26" title="All 2 branches covered.">                    if (callCount &gt;= 3) {</span>
                         // Order has shipped — stop polling
-<span class="fc" id="L32">                        return WaitForConditionResult.stopPolling(input + &quot;: SHIPPED&quot;);</span>
+<span class="fc" id="L28">                        return WaitForConditionResult.stopPolling(callCount + 1);</span>
                     }
                     // Order still processing — continue polling
-<span class="fc" id="L35">                    return WaitForConditionResult.continuePolling(input + &quot;: PROCESSING&quot;);</span>
+<span class="fc" id="L31">                    return WaitForConditionResult.continuePolling(callCount + 1);</span>
                 },
-                input + &quot;: PENDING&quot;); // Order pending - initial status
+<span class="fc" id="L33">                WaitForConditionConfig.&lt;Integer&gt;builder().initialState(1).build()); // Order pending - initial status</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
