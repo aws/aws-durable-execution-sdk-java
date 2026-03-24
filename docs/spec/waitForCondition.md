@@ -131,13 +131,15 @@ Validation: maxAttempts > 0, initialDelay >= 1s, maxDelay >= 1s, backoffRate >= 
 public class WaitForConditionConfig<T> {
     public static <T> Builder<T> builder();
 
-    public WaitForConditionWaitStrategy<T> waitStrategy();  // defaults to WaitStrategies.defaultStrategy()
+    public WaitForConditionWaitStrategy<T> waitStrategy();   // defaults to WaitStrategies.defaultStrategy()
     public SerDes serDes();                                  // defaults to null (uses handler default)
+    public T initialState();                                 // defaults to null
     public Builder<T> toBuilder();                           // for internal SerDes injection
 
     public static class Builder<T> {
         public Builder<T> waitStrategy(WaitForConditionWaitStrategy<T> waitStrategy);
         public Builder<T> serDes(SerDes serDes);
+        public Builder<T> initialState(T state);
         public WaitForConditionConfig<T> build();
     }
 }
