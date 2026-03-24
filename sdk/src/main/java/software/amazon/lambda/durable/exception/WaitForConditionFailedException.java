@@ -10,13 +10,13 @@ import software.amazon.awssdk.services.lambda.model.Operation;
  * <p>This can occur when the maximum number of polling attempts is exceeded, or when the check function throws an
  * error.
  */
-public class WaitForConditionException extends DurableOperationException {
+public class WaitForConditionFailedException extends DurableOperationException {
 
-    public WaitForConditionException(String message) {
+    public WaitForConditionFailedException(String message) {
         super(null, null, message);
     }
 
-    public WaitForConditionException(Operation operation) {
+    public WaitForConditionFailedException(Operation operation) {
         super(
                 operation,
                 operation.stepDetails() != null ? operation.stepDetails().error() : null);

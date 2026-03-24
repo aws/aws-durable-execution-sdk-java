@@ -3,7 +3,7 @@
 package software.amazon.lambda.durable.retry;
 
 import java.time.Duration;
-import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
@@ -42,7 +42,7 @@ public final class WaitStrategies {
      *
      * <p>The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^attempt, maxDelay)
      *
-     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionException}
+     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionFailedException}
      * @param initialDelay initial delay before first retry
      * @param maxDelay maximum delay between retries
      * @param backoffRate multiplier for exponential backoff (must be >= 1.0)
@@ -66,7 +66,7 @@ public final class WaitStrategies {
 
         return (state, attempt) -> {
             if (attempt + 1 >= maxAttempts) {
-                throw new WaitForConditionException("waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
+                throw new WaitForConditionFailedException("waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
             }
 
             double initialDelaySeconds = initialDelay.toSeconds();
@@ -82,7 +82,7 @@ public final class WaitStrategies {
     /**
      * Creates a fixed delay wait strategy that returns a constant delay regardless of attempt number or state.
      *
-     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionException}
+     * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionFailedException}
      * @param fixedDelay the constant delay between polling attempts
      * @param <T> the type of state being polled
      * @return a {@link WaitForConditionWaitStrategy} with fixed delay
@@ -95,7 +95,7 @@ public final class WaitStrategies {
 
         return (state, attempt) -> {
             if (attempt + 1 >= maxAttempts) {
-                throw new WaitForConditionException("waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
+                throw new WaitForConditionFailedException("waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
             }
             return fixedDelay;
         };

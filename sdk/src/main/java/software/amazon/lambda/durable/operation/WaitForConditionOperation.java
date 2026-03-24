@@ -18,7 +18,7 @@ import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
-import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -92,8 +92,8 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             if (original != null) {
                 ExceptionHelper.sneakyThrow(original);
             }
-            // Fallback: wrap in WaitForConditionException
-            throw new WaitForConditionException(op);
+            // Fallback: wrap in WaitForConditionFailedException
+            throw new WaitForConditionFailedException(op);
         }
     }
 

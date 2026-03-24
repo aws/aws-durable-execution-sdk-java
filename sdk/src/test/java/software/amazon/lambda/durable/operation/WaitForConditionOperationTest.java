@@ -23,7 +23,7 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -151,7 +151,7 @@ class WaitForConditionOperationTest {
 
         operation.execute();
 
-        assertThrows(WaitForConditionException.class, operation::get);
+        assertThrows(WaitForConditionFailedException.class, operation::get);
     }
 
     // ===== Replay STARTED =====
@@ -272,7 +272,7 @@ class WaitForConditionOperationTest {
 
         operation.execute();
 
-        assertThrows(WaitForConditionException.class, operation::get);
+        assertThrows(WaitForConditionFailedException.class, operation::get);
     }
 
     // ===== Replay PENDING =====

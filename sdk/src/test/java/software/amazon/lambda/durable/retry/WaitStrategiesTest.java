@@ -11,7 +11,7 @@ import java.time.Duration;
 import java.util.Random;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.exception.WaitForConditionException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 
 class WaitStrategiesTest {
 
@@ -60,7 +60,7 @@ class WaitStrategiesTest {
         assertEquals(Duration.ofSeconds(5), strategy.evaluate("x", 0));
         assertEquals(Duration.ofSeconds(8), strategy.evaluate("x", 1));
 
-        var exception = assertThrows(WaitForConditionException.class, () -> strategy.evaluate("x", 2));
+        var exception = assertThrows(WaitForConditionFailedException.class, () -> strategy.evaluate("x", 2));
         assertTrue(exception.getMessage().contains("maximum attempts"));
         assertTrue(exception.getMessage().contains("3"));
     }
@@ -97,7 +97,7 @@ class WaitStrategiesTest {
     @Test
     void fixedDelay_maxAttemptsExceeded_throwsException() {
         var strategy = WaitStrategies.<String>fixedDelay(3, Duration.ofSeconds(5));
-        assertThrows(WaitForConditionException.class, () -> strategy.evaluate("x", 2));
+        assertThrows(WaitForConditionFailedException.class, () -> strategy.evaluate("x", 2));
     }
 
     // ---- Validation ----
@@ -170,7 +170,7 @@ class WaitStrategiesTest {
                 maxAttempts, Duration.ofSeconds(5), Duration.ofSeconds(300), 1.5, JitterStrategy.NONE);
 
         var exception = assertThrows(
-                WaitForConditionException.class,
+                WaitForConditionFailedException.class,
                 () -> strategy.evaluate("any-state", attemptOverMax),
                 String.format("maxAttempts=%d, attempt=%d should throw", maxAttempts, attemptOverMax));
 
