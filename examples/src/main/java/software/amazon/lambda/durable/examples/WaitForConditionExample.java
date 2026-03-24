@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples;
 
-import java.util.concurrent.atomic.AtomicInteger;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
@@ -14,8 +13,6 @@ import software.amazon.lambda.durable.model.WaitForConditionResult;
  * <p>This example simulates waiting for an order to ship, by repeatedly calling a check function.
  */
 public class WaitForConditionExample extends DurableHandler<Integer, Integer> {
-
-    private final AtomicInteger callCount = new AtomicInteger(0);
 
     @Override
     public Integer handleRequest(Integer input, DurableContext context) {
@@ -34,6 +31,6 @@ public class WaitForConditionExample extends DurableHandler<Integer, Integer> {
                     // Order still processing — continue polling
                     return WaitForConditionResult.continuePolling(callCount + 1);
                 },
-                WaitForConditionConfig.<Integer>builder().initialState(0).build()); // Order pending - initial status
+                WaitForConditionConfig.<Integer>builder().initialState(1).build()); // Order pending - initial status
     }
 }
