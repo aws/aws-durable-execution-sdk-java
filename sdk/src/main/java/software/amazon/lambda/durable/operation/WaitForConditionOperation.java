@@ -115,7 +115,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                 .thenCompose(op -> op.status() == OperationStatus.READY
                         ? CompletableFuture.completedFuture(op)
                         : pollForOperationUpdates())
-                .thenRun(() -> resumeCheckLoop(existing));
+                .thenAccept(this::resumeCheckLoop);
     }
 
     private void executeCheckLogic(T currentState, int attempt) {
