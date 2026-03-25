@@ -39,7 +39,7 @@ import software.amazon.lambda.durable.retry.PollingStrategies;
 <span class="fc" id="L39">        context.getLogger().info(&quot;Starting workflow with input: {}&quot;, input);</span>
 
         // Step 1: low case the input
-<span class="fc" id="L42">        var lowered = context.stepAsync(&quot;validate&quot;, String.class, () -&gt; {</span>
+<span class="fc" id="L42">        var lowered = context.stepAsync(&quot;validate&quot;, String.class, stepCtx -&gt; {</span>
             try {
                 // prevent the execution from suspension
 <span class="fc" id="L45">                Thread.sleep(5000);</span>

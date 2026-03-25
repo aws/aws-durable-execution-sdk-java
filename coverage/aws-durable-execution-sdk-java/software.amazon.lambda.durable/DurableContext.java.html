@@ -171,8 +171,8 @@ public interface DurableContext extends BaseContext {
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="fc" id="L174">        return stepAsync(</span>
-<span class="fc" id="L175">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="nc" id="L174">        return stepAsync(</span>
+<span class="nc" id="L175">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
@@ -190,7 +190,7 @@ public interface DurableContext extends BaseContext {
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
-<span class="fc" id="L193">        return stepAsync(name, resultType, stepContext -&gt; func.get(), config);</span>
+<span class="nc" id="L193">        return stepAsync(name, resultType, stepContext -&gt; func.get(), config);</span>
     }
 
     /**
