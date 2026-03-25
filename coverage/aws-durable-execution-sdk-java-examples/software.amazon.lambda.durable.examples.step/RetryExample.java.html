@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RetryExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.step</a> &gt; <span class="el_source">RetryExample.java</span></div><h1>RetryExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.step;
+
+import java.time.Duration;
+import java.time.Instant;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.retry.RetryStrategies;
+
+/**
+ * Simple example demonstrating retry strategies with a flaky API.
+ *
+ * &lt;p&gt;This example shows:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;A step that never retries (fails immediately)
+ *   &lt;li&gt;A step that retries with default exponential backoff
+ *   &lt;li&gt;Time-based failure simulation for realistic retry behavior
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L25">public class RetryExample extends DurableHandler&lt;Object, String&gt; {</span>
+
+<span class="fc" id="L27">    private static final Logger logger = LoggerFactory.getLogger(RetryExample.class);</span>
+
+    private Instant startTime;
+
+    @Override
+    public String handleRequest(Object input, DurableContext context) {
+        // Step 1: Record start time
+<span class="fc" id="L34">        startTime = context.step(&quot;record-start-time&quot;, Instant.class, stepCtx -&gt; Instant.now());</span>
+<span class="fc" id="L35">        logger.info(&quot;Recorded start time: {}&quot;, startTime);</span>
+
+        // Step 2: Call that never retries (fails immediately)
+        try {
+<span class="pc" id="L39">            context.step(</span>
+                    &quot;no-retry-call&quot;,
+                    Void.class,
+                    stepCtx -&gt; {
+<span class="fc" id="L43">                        throw new RuntimeException(&quot;This operation never retries&quot;);</span>
+                    },
+<span class="fc" id="L45">                    StepConfig.builder()</span>
+<span class="fc" id="L46">                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)</span>
+<span class="fc" id="L47">                            .build());</span>
+<span class="fc" id="L48">        } catch (Exception e) {</span>
+<span class="fc" id="L49">            logger.info(&quot;No-retry step failed as expected: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L50">        }</span>
+
+        // Step 3: Flaky API call that succeeds after retries
+<span class="pc" id="L53">        var result = context.step(</span>
+                &quot;flaky-api-call&quot;,
+                String.class,
+                stepCtx -&gt; {
+                    // Fail for first 8 seconds, then succeed
+<span class="fc" id="L58">                    var failForMillis = 8000;</span>
+<span class="fc" id="L59">                    var elapsed = Duration.between(startTime, Instant.now());</span>
+
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">                    if (elapsed.toMillis() &lt; failForMillis) {</span>
+<span class="fc" id="L62">                        var message = String.format(</span>
+                                &quot;Flaky API failing - elapsed time (%.1fs) &lt; %.1fs&quot;,
+<span class="fc" id="L64">                                elapsed.toMillis() / 1000.0, failForMillis / 1000.0);</span>
+<span class="fc" id="L65">                        logger.warn(message);</span>
+<span class="fc" id="L66">                        throw new RuntimeException(message);</span>
+                    } else {
+<span class="nc" id="L68">                        var message = String.format(</span>
+                                &quot;Flaky API succeeded - elapsed time (%.1fs) &gt;= %.1fs&quot;,
+<span class="nc" id="L70">                                elapsed.toMillis() / 1000.0, failForMillis / 1000.0);</span>
+<span class="nc" id="L71">                        logger.info(message);</span>
+<span class="nc" id="L72">                        return message;</span>
+                    }
+                },
+<span class="fc" id="L75">                StepConfig.builder()</span>
+<span class="fc" id="L76">                        .retryStrategy(RetryStrategies.Presets.DEFAULT)</span>
+<span class="fc" id="L77">                        .build());</span>
+
+<span class="nc" id="L79">        logger.info(&quot;Flaky API result: {}&quot;, result);</span>
+
+        // Step 4: Wait a bit before finishing
+<span class="nc" id="L82">        context.wait(null, Duration.ofSeconds(2));</span>
+
+<span class="nc" id="L84">        logger.info(&quot;Retry example completed successfully&quot;);</span>
+<span class="nc" id="L85">        return &quot;Retry example completed: &quot; + result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

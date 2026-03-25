@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ComplexMapExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.map</a> &gt; <span class="el_source">ComplexMapExample.java</span></div><h1>ComplexMapExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.map;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.stream.Collectors;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.examples.types.GreetingRequest;
+
+/**
+ * Example demonstrating advanced map features: wait operations inside branches, error handling, and early termination.
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;Concurrent map with step + wait + step inside each branch — simulates multi-stage order processing with a
+ *       cooldown between stages
+ *   &lt;li&gt;Early termination with {@code minSuccessful(2)} — finds 2 healthy servers then stops
+ * &lt;/ol&gt;
+ */
+<span class="fc" id="L23">public class ComplexMapExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+<span class="fc" id="L27">        var name = input.getName();</span>
+<span class="fc" id="L28">        context.getLogger().info(&quot;Starting complex map example for {}&quot;, name);</span>
+
+        // Part 1: Concurrent map with step + wait inside each branch
+<span class="fc" id="L31">        var orderIds = List.of(&quot;order-1&quot;, &quot;order-2&quot;, &quot;order-3&quot;);</span>
+
+<span class="fc" id="L33">        var orderResult = context.map(&quot;process-orders&quot;, orderIds, String.class, (orderId, index, ctx) -&gt; {</span>
+            // Step 1: validate the order
+<span class="fc" id="L35">            var validated = ctx.step(&quot;validate-&quot; + index, String.class, stepCtx -&gt; &quot;validated:&quot; + orderId + &quot;:&quot; + name);</span>
+
+            // Wait between stages (simulates a cooldown or external dependency)
+<span class="fc" id="L38">            ctx.wait(&quot;cooldown-&quot; + index, Duration.ofSeconds(1));</span>
+
+            // Step 2: finalize the order
+<span class="fc" id="L41">            return ctx.step(&quot;finalize-&quot; + index, String.class, stepCtx -&gt; &quot;done:&quot; + validated);</span>
+        });
+
+<span class="fc" id="L44">        var orderSummary = String.join(&quot;, &quot;, orderResult.results());</span>
+
+        // Part 2: Early termination — find 2 healthy servers then stop
+<span class="fc" id="L47">        var servers = List.of(&quot;server-1&quot;, &quot;server-2&quot;, &quot;server-3&quot;, &quot;server-4&quot;, &quot;server-5&quot;);</span>
+<span class="fc" id="L48">        var earlyTermConfig = MapConfig.builder()</span>
+<span class="fc" id="L49">                .completionConfig(CompletionConfig.minSuccessful(2))</span>
+<span class="fc" id="L50">                .build();</span>
+
+<span class="fc" id="L52">        var serverResult = context.map(</span>
+                &quot;find-healthy-servers&quot;,
+                servers,
+                String.class,
+<span class="fc" id="L56">                (server, index, ctx) -&gt; ctx.step(&quot;health-check-&quot; + index, String.class, stepCtx -&gt; server + &quot;:healthy&quot;),</span>
+                earlyTermConfig);
+
+<span class="fc" id="L59">        var healthyServers = serverResult.succeeded().stream().collect(Collectors.joining(&quot;, &quot;));</span>
+
+<span class="fc" id="L61">        return String.format(</span>
+<span class="fc" id="L62">                &quot;orders=[%s] | servers=[%s] reason=%s&quot;, orderSummary, healthyServers, serverResult.completionReason());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

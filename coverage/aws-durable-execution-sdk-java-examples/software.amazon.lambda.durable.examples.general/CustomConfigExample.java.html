@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CustomConfigExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.general</a> &gt; <span class="el_source">CustomConfigExample.java</span></div><h1>CustomConfigExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.general;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import java.io.IOException;
+import java.time.Duration;
+import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
+import software.amazon.awssdk.core.SdkSystemSetting;
+import software.amazon.awssdk.http.apache.ApacheHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.serde.SerDes;
+
+/**
+ * Example demonstrating custom configuration with both custom HTTP client and custom SerDes. Shows how to configure a
+ * custom Apache HTTP client for the Lambda client while maintaining automatic credentials detection and region
+ * fallback, plus a custom SerDes with snake_case naming.
+ *
+ * &lt;p&gt;This example demonstrates:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Custom Apache HTTP client configuration for improved performance
+ *   &lt;li&gt;Automatic region detection with fallback to us-east-1 for testing environments
+ *   &lt;li&gt;Environment variable credentials provider
+ *   &lt;li&gt;Custom SerDes with snake_case property naming
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L36">public class CustomConfigExample extends DurableHandler&lt;String, String&gt; {</span>
+
+    @Override
+    protected DurableConfig createConfiguration() {
+        // Configure custom Apache HTTP client for better performance
+<span class="fc" id="L41">        var httpClient = ApacheHttpClient.builder()</span>
+<span class="fc" id="L42">                .maxConnections(50)</span>
+<span class="fc" id="L43">                .connectionTimeout(Duration.ofSeconds(30))</span>
+<span class="fc" id="L44">                .socketTimeout(Duration.ofSeconds(60))</span>
+<span class="fc" id="L45">                .build();</span>
+
+        // Get region with fallback to us-east-1 if AWS_REGION not set
+        // This prevents initialization failures in testing environments
+<span class="fc" id="L49">        var region = System.getenv(SdkSystemSetting.AWS_REGION.environmentVariable());</span>
+<span class="pc bpc" id="L50" title="3 of 4 branches missed.">        if (region == null || region.isEmpty()) {</span>
+<span class="fc" id="L51">            region = &quot;us-east-1&quot;;</span>
+        }
+
+        // Create Lambda client with custom HTTP client
+        // Uses automatic credentials detection and region fallback
+<span class="fc" id="L56">        var lambdaClient = LambdaClient.builder()</span>
+<span class="fc" id="L57">                .httpClient(httpClient)</span>
+<span class="fc" id="L58">                .credentialsProvider(EnvironmentVariableCredentialsProvider.create())</span>
+<span class="fc" id="L59">                .region(Region.of(region))</span>
+<span class="fc" id="L60">                .build();</span>
+
+        // Wrap the Lambda client with LambdaDurableFunctionsClient
+<span class="fc" id="L63">        var durableClient = new LambdaDurableFunctionsClient(lambdaClient);</span>
+
+        // Create custom SerDes with snake_case naming
+<span class="fc" id="L66">        var customSerDes = new SnakeCaseSerDes();</span>
+
+<span class="fc" id="L68">        return DurableConfig.builder()</span>
+<span class="fc" id="L69">                .withDurableExecutionClient(durableClient)</span>
+<span class="fc" id="L70">                .withSerDes(customSerDes)</span>
+<span class="fc" id="L71">                .build();</span>
+    }
+
+    @Override
+    public String handleRequest(String input, DurableContext context) {
+        // Step 1: Create a custom object with camelCase fields to demonstrate snake_case serialization
+<span class="fc" id="L77">        var customObject = context.step(</span>
+                &quot;create-custom-object&quot;,
+                CustomData.class,
+<span class="fc" id="L80">                stepCtx -&gt; new CustomData(&quot;user123&quot;, &quot;John Doe&quot;, 25, &quot;john.doe@example.com&quot;));</span>
+
+<span class="fc" id="L82">        return &quot;Created custom object: &quot; + customObject.userId + &quot;, &quot; + customObject.fullName + &quot;, &quot;</span>
+                + customObject.userAge + &quot;, &quot; + customObject.emailAddress;
+    }
+
+    /**
+     * Custom data class with camelCase field names to demonstrate snake_case serialization. The SerDes will convert
+     * these field names to snake_case in the JSON output.
+     */
+    public static class CustomData {
+        public String userId;
+        public String fullName;
+        public int userAge;
+        public String emailAddress;
+
+<span class="fc" id="L96">        public CustomData() {}</span>
+
+<span class="fc" id="L98">        public CustomData(String userId, String fullName, int userAge, String emailAddress) {</span>
+<span class="fc" id="L99">            this.userId = userId;</span>
+<span class="fc" id="L100">            this.fullName = fullName;</span>
+<span class="fc" id="L101">            this.userAge = userAge;</span>
+<span class="fc" id="L102">            this.emailAddress = emailAddress;</span>
+<span class="fc" id="L103">        }</span>
+    }
+
+    /**
+     * Custom SerDes implementation using snake_case property naming. Demonstrates how to provide custom serialization
+     * behavior.
+     */
+    private static class SnakeCaseSerDes implements SerDes {
+        private final ObjectMapper objectMapper;
+
+<span class="fc" id="L113">        public SnakeCaseSerDes() {</span>
+<span class="fc" id="L114">            this.objectMapper = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);</span>
+<span class="fc" id="L115">        }</span>
+
+        @Override
+        public String serialize(Object obj) {
+            try {
+<span class="fc" id="L120">                return objectMapper.writeValueAsString(obj);</span>
+<span class="nc" id="L121">            } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L122">                throw new RuntimeException(&quot;Serialization failed&quot;, e);</span>
+            }
+        }
+
+        @Override
+        public &lt;T&gt; T deserialize(String json, TypeToken&lt;T&gt; typeToken) {
+            try {
+<span class="fc" id="L129">                return objectMapper.readValue(json, objectMapper.constructType(typeToken.getType()));</span>
+<span class="nc" id="L130">            } catch (IOException e) {</span>
+<span class="nc" id="L131">                throw new RuntimeException(&quot;Deserialization failed&quot;, e);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

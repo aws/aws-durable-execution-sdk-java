@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LoggingExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.general</a> &gt; <span class="el_source">LoggingExample.java</span></div><h1>LoggingExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.general;
+
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.examples.types.GreetingRequest;
+
+/**
+ * Example demonstrating DurableLogger usage for structured logging with execution context.
+ *
+ * &lt;p&gt;The logger automatically includes execution metadata (durableExecutionArn, requestId, operationId, operationName)
+ * in log entries via MDC. By default, logs are suppressed during replay to avoid duplicates.
+ */
+<span class="fc" id="L15">public class LoggingExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+        // Log at execution level (outside any step)
+<span class="fc" id="L20">        context.getLogger().info(&quot;Processing greeting for: {}&quot;, input.getName());</span>
+
+        // Step 1: Create greeting - logs inside step include operation context
+<span class="fc" id="L23">        var greeting = context.step(&quot;create-greeting&quot;, String.class, ctx -&gt; {</span>
+<span class="fc" id="L24">            ctx.getLogger().info(&quot;Creating greeting message&quot;);</span>
+<span class="fc" id="L25">            return &quot;Hello, &quot; + input.getName();</span>
+        });
+
+        // Step 2: Transform
+<span class="fc" id="L29">        var result = context.step(&quot;transform&quot;, String.class, ctx -&gt; {</span>
+<span class="fc" id="L30">            ctx.getLogger().info(&quot;Transforming greeting to uppercase&quot;);</span>
+<span class="fc" id="L31">            return greeting.toUpperCase() + &quot;!&quot;;</span>
+        });
+
+<span class="fc" id="L34">        context.getLogger().info(&quot;Completed processing, result: {}&quot;, result);</span>
+<span class="fc" id="L35">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

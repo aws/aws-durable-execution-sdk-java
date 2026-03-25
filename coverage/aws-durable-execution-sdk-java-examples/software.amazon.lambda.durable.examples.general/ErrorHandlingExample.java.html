@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ErrorHandlingExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.general</a> &gt; <span class="el_source">ErrorHandlingExample.java</span></div><h1>ErrorHandlingExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.general;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.StepSemantics;
+import software.amazon.lambda.durable.exception.StepFailedException;
+import software.amazon.lambda.durable.exception.StepInterruptedException;
+import software.amazon.lambda.durable.retry.RetryStrategies;
+
+/**
+ * Example demonstrating error handling patterns with the Durable Execution SDK.
+ *
+ * &lt;p&gt;This example shows how to handle:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@link StepFailedException} - when a step exhausts all retry attempts
+ *   &lt;li&gt;{@link StepInterruptedException} - when an AT_MOST_ONCE step is interrupted
+ *   &lt;li&gt;Custom exceptions - original exception types are preserved and can be caught directly
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;Note: {@code NonDeterministicExecutionException} is thrown by the SDK when code changes between executions (e.g.,
+ * step order/names changed). It should be fixed in code, not caught.
+ */
+<span class="fc" id="L29">public class ErrorHandlingExample extends DurableHandler&lt;Object, String&gt; {</span>
+
+<span class="fc" id="L31">    private static final Logger logger = LoggerFactory.getLogger(ErrorHandlingExample.class);</span>
+
+    /** Custom exception to demonstrate that original exception types are preserved across checkpoints. */
+    public static class ServiceUnavailableException extends RuntimeException {
+        private String serviceName;
+
+        /** Default constructor required for Jackson deserialization. */
+        public ServiceUnavailableException() {
+<span class="fc" id="L39">            super();</span>
+<span class="fc" id="L40">        }</span>
+
+        public ServiceUnavailableException(String serviceName, String message) {
+<span class="fc" id="L43">            super(message);</span>
+<span class="fc" id="L44">            this.serviceName = serviceName;</span>
+<span class="fc" id="L45">        }</span>
+
+        public String getServiceName() {
+<span class="fc" id="L48">            return serviceName;</span>
+        }
+    }
+
+    @Override
+    public String handleRequest(Object input, DurableContext context) {
+        // Example 1: Catching a custom exception type with fallback logic
+        // The SDK preserves the original exception type, so you can catch specific exceptions directly.
+        // NOTE: Exception type needs to be serializable by your SerDes implementation.
+        String primaryResult;
+        try {
+<span class="pc" id="L59">            primaryResult = context.step(</span>
+                    &quot;call-primary-service&quot;,
+                    String.class,
+                    stepCtx -&gt; {
+<span class="fc" id="L63">                        throw new ServiceUnavailableException(&quot;primary-api&quot;, &quot;Primary service unavailable&quot;);</span>
+                    },
+<span class="fc" id="L65">                    StepConfig.builder()</span>
+<span class="fc" id="L66">                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)</span>
+<span class="fc" id="L67">                            .build());</span>
+<span class="fc" id="L68">        } catch (ServiceUnavailableException e) {</span>
+            // Catch the specific custom exception type - the SDK reconstructs the original exception
+<span class="fc" id="L70">            logger.warn(&quot;Service '{}' unavailable, using fallback: {}&quot;, e.getServiceName(), e.getMessage());</span>
+<span class="fc" id="L71">            primaryResult = context.step(&quot;call-fallback-service&quot;, String.class, stepCtx -&gt; &quot;fallback-result&quot;);</span>
+<span class="nc" id="L72">        }</span>
+
+        // Example 2: Handling StepInterruptedException for AT_MOST_ONCE operations
+        // StepInterruptedException is thrown when an AT_MOST_ONCE step was started
+        // but the function was interrupted before the step completed.
+        // In normal execution, this step succeeds. The catch block handles the
+        // interruption scenario that occurs during replay after an unexpected termination.
+        String paymentResult;
+        try {
+<span class="fc" id="L81">            paymentResult = context.step(</span>
+                    &quot;charge-payment&quot;,
+                    String.class,
+<span class="fc" id="L84">                    stepCtx -&gt; &quot;payment-&quot; + input,</span>
+<span class="fc" id="L85">                    StepConfig.builder()</span>
+<span class="fc" id="L86">                            .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)</span>
+<span class="fc" id="L87">                            .build());</span>
+<span class="fc" id="L88">        } catch (StepInterruptedException e) {</span>
+<span class="fc" id="L89">            logger.warn(</span>
+                    &quot;Payment step interrupted, checking external status: {}&quot;,
+<span class="fc" id="L91">                    e.getOperation().id());</span>
+            // In real code: check payment provider for transaction status
+            // If payment went through, return success; otherwise, handle appropriately
+<span class="fc" id="L94">            paymentResult = context.step(&quot;verify-payment-status&quot;, String.class, stepCtx -&gt; &quot;verified-payment&quot;);</span>
+<span class="fc" id="L95">        }</span>
+
+<span class="fc" id="L97">        return &quot;Completed: &quot; + primaryResult + &quot;, &quot; + paymentResult;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

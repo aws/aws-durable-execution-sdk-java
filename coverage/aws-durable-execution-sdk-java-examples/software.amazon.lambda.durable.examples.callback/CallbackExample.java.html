@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CallbackExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.callback</a> &gt; <span class="el_source">CallbackExample.java</span></div><h1>CallbackExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.callback;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.examples.types.ApprovalRequest;
+
+/**
+ * Example demonstrating callback operations for external system integration.
+ *
+ * &lt;p&gt;This handler demonstrates a human approval workflow:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;Prepare the request for approval
+ *   &lt;li&gt;Create a callback and send the callback ID to an external approval system
+ *   &lt;li&gt;Suspend execution until the external system responds
+ *   &lt;li&gt;Process the approval result
+ * &lt;/ol&gt;
+ *
+ * &lt;p&gt;External systems respond using AWS Lambda APIs:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@code SendDurableExecutionCallbackSuccess} - approve with result
+ *   &lt;li&gt;{@code SendDurableExecutionCallbackFailure} - reject with error
+ *   &lt;li&gt;{@code SendDurableExecutionCallbackHeartbeat} - keep callback alive
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L31">public class CallbackExample extends DurableHandler&lt;ApprovalRequest, String&gt; {</span>
+
+    @Override
+    public String handleRequest(ApprovalRequest input, DurableContext context) {
+        // Step 1: Prepare the approval request
+<span class="fc" id="L36">        var prepared = context.step(</span>
+                &quot;prepare&quot;,
+                String.class,
+<span class="fc" id="L39">                stepCtx -&gt; &quot;Approval request for: &quot; + input.description() + &quot; ($&quot; + input.amount() + &quot;)&quot;);</span>
+
+        // Step 2: Create callback for external approval
+        // Use timeout from input if provided, otherwise default to 5 minutes
+        var timeout =
+<span class="pc bpc" id="L44" title="1 of 2 branches missed.">                input.timeoutSeconds() != null ? Duration.ofSeconds(input.timeoutSeconds()) : Duration.ofMinutes(5);</span>
+
+<span class="fc" id="L46">        var config = CallbackConfig.builder().timeout(timeout).build();</span>
+
+<span class="fc" id="L48">        var preapprovalCallback = context.waitForCallbackAsync(&quot;preapproval&quot;, String.class, (callbackId, ctx) -&gt; {</span>
+<span class="fc" id="L49">            ctx.getLogger().info(&quot;Sending callback {} to preapproval system&quot;, callbackId);</span>
+<span class="fc" id="L50">        });</span>
+
+<span class="fc" id="L52">        var callback = context.createCallback(&quot;approval&quot;, String.class, config);</span>
+
+        // Step 2.5: Log AWS CLI command to complete the callback
+<span class="fc" id="L55">        context.step(&quot;log-callback-command&quot;, Void.class, ctx -&gt; {</span>
+<span class="fc" id="L56">            var callbackId = callback.callbackId();</span>
+            // The result must be base64-encoded JSON
+<span class="fc" id="L58">            var command = String.format(</span>
+                    &quot;aws lambda send-durable-execution-callback-success --callback-id %s --result $(echo -n '\&quot;approved\&quot;' | base64)&quot;,
+                    callbackId);
+<span class="fc" id="L61">            ctx.getLogger().info(&quot;To complete this callback, run: {}&quot;, command);</span>
+<span class="fc" id="L62">            return null;</span>
+        });
+
+<span class="fc" id="L65">        var preapprovalResult = preapprovalCallback.get();</span>
+
+        // Step 3: Wait for external approval (suspends execution)
+<span class="fc" id="L68">        var approvalResult = callback.get();</span>
+
+        // Step 4: Process the approval
+<span class="fc" id="L71">        return context.step(</span>
+                &quot;process-approval&quot;,
+                String.class,
+<span class="fc" id="L74">                stepCtx -&gt; prepared + &quot; - &quot; + preapprovalResult + &quot; - &quot; + approvalResult);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
