@@ -65,7 +65,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     }
 
     @Override
-    protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+    protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         var items = getBranches();
         int succeededCount = Math.toIntExact(items.stream()
                 .filter(item -> item.getOperation().status() == OperationStatus.SUCCEEDED)

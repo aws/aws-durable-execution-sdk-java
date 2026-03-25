@@ -116,8 +116,8 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                 this);
     }
 
-    /** Called when the concurrency operation succeeds. Subclasses define checkpointing behavior. */
-    protected abstract void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus);
+    /** Called when the concurrency operation completes. Subclasses define checkpointing behavior. */
+    protected abstract void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus);
 
     // ========== Concurrency control ==========
 
@@ -173,7 +173,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                 }
                 var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
                 if (completionStatus != null) {
-                    handleSuccess(completionStatus);
+                    handleCompletion(completionStatus);
                     return;
                 }
 

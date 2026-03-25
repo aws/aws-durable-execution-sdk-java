@@ -218,7 +218,7 @@ class ConcurrencyOperationTest {
         }
 
         @Override
-        protected void handleSuccess(ConcurrencyCompletionStatus completionStatus) {
+        protected void handleCompletion(ConcurrencyCompletionStatus completionStatus) {
             successHandled = true;
             // Simulate the checkpoint ACK that a real subclass would receive after sendOperationUpdate.
             // This drives completionFuture to completion so waitForOperationCompletion() unblocks.

@@ -23,6 +23,8 @@ import software.amazon.lambda.durable.exception.CallbackSubmitterException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.MapIterationFailedException;
+import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -217,12 +219,13 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // throw a general failed exception if a user exception is not reconstructed
             return switch (getSubType()) {
                 case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure();
-                case MAP -> throw new ChildContextFailedException(op);
-                case MAP_ITERATION -> throw new ChildContextFailedException(op);
-                case PARALLEL -> throw new ChildContextFailedException(op);
-                case PARALLEL_BRANCH -> throw new ChildContextFailedException(op);
+                case MAP_ITERATION -> throw new MapIterationFailedException(op);
+                case PARALLEL_BRANCH -> throw new ParallelBranchFailedException(op);
                 case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
-                case WAIT_FOR_CONDITION -> throw new ChildContextFailedException(op);
+
+                // the following subtypes should not be able to reach here
+                case PARALLEL, MAP, WAIT_FOR_CONDITION ->
+                    throw new IllegalStateException("Unexpected sub-type: " + getSubType());
             };
         }
     }
