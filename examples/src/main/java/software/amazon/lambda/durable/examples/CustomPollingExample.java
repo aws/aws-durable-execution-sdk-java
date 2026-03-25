@@ -39,7 +39,7 @@ public class CustomPollingExample extends DurableHandler<GreetingRequest, String
         context.getLogger().info("Starting workflow with input: {}", input);
 
         // Step 1: low case the input
-        var lowered = context.stepAsync("validate", String.class, () -> {
+        var lowered = context.stepAsync("validate", String.class, stepCtx -> {
             try {
                 // prevent the execution from suspension
                 Thread.sleep(5000);
