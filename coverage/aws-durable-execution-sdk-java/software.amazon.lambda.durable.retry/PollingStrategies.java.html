@@ -3,20 +3,21 @@
 package software.amazon.lambda.durable.retry;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 
 /** Factory class for creating common polling strategies. */
-<span class="nc" id="L9">public class PollingStrategies {</span>
+<span class="nc" id="L10">public class PollingStrategies {</span>
 
     /** Preset polling strategies for common use cases. */
-<span class="nc" id="L12">    public static class Presets {</span>
+<span class="nc" id="L13">    public static class Presets {</span>
 
         /**
          * Default polling strategy: - Base interval: 1 second - Backoff rate: 2x - Jitter: FULL - Max interval 10
          * second
          */
-<span class="fc" id="L18">        public static final PollingStrategy DEFAULT =</span>
-<span class="fc" id="L19">                exponentialBackoff(Duration.ofMillis(1000), 2.0, JitterStrategy.FULL, Duration.ofSeconds(10));</span>
+<span class="fc" id="L19">        public static final PollingStrategy DEFAULT =</span>
+<span class="fc" id="L20">                exponentialBackoff(Duration.ofMillis(1000), 2.0, JitterStrategy.FULL, Duration.ofSeconds(10));</span>
     }
 
     /**
@@ -32,25 +33,25 @@ import java.util.Objects;
      */
     public static PollingStrategy exponentialBackoff(
             Duration baseInterval, double backoffRate, JitterStrategy jitter, Duration maxInterval) {
-<span class="fc" id="L35">        Objects.requireNonNull(jitter, &quot;jitter must not be null&quot;);</span>
-<span class="fc" id="L36">        Objects.requireNonNull(baseInterval, &quot;base interval must not be null&quot;);</span>
-<span class="fc" id="L37">        Objects.requireNonNull(maxInterval, &quot;max interval must not be null&quot;);</span>
-<span class="fc bfc" id="L38" title="All 2 branches covered.">        if (backoffRate &lt;= 0) {</span>
-<span class="fc" id="L39">            throw new IllegalArgumentException(&quot;backoffRate must be positive&quot;);</span>
+<span class="fc" id="L36">        Objects.requireNonNull(jitter, &quot;jitter must not be null&quot;);</span>
+<span class="fc" id="L37">        Objects.requireNonNull(baseInterval, &quot;base interval must not be null&quot;);</span>
+<span class="fc" id="L38">        Objects.requireNonNull(maxInterval, &quot;max interval must not be null&quot;);</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (backoffRate &lt;= 0) {</span>
+<span class="fc" id="L40">            throw new IllegalArgumentException(&quot;backoffRate must be positive&quot;);</span>
         }
 
-<span class="fc bfc" id="L42" title="All 4 branches covered.">        if (baseInterval.isNegative() || baseInterval.isZero()) {</span>
-<span class="fc" id="L43">            throw new IllegalArgumentException(&quot;baseInterval must be positive&quot;);</span>
+<span class="fc bfc" id="L43" title="All 4 branches covered.">        if (baseInterval.isNegative() || baseInterval.isZero()) {</span>
+<span class="fc" id="L44">            throw new IllegalArgumentException(&quot;baseInterval must be positive&quot;);</span>
         }
 
-<span class="fc bfc" id="L46" title="All 4 branches covered.">        if (maxInterval.isNegative() || maxInterval.isZero()) {</span>
-<span class="fc" id="L47">            throw new IllegalArgumentException(&quot;maxInterval must be positive&quot;);</span>
+<span class="fc bfc" id="L47" title="All 4 branches covered.">        if (maxInterval.isNegative() || maxInterval.isZero()) {</span>
+<span class="fc" id="L48">            throw new IllegalArgumentException(&quot;maxInterval must be positive&quot;);</span>
         }
 
-<span class="fc" id="L50">        return (attempt) -&gt; {</span>
-<span class="fc" id="L51">            double delayMs = baseInterval.toMillis() * Math.pow(backoffRate, attempt);</span>
-<span class="fc" id="L52">            delayMs = Math.min(jitter.apply(delayMs), maxInterval.toMillis());</span>
-<span class="fc" id="L53">            return Duration.ofMillis(Math.round(delayMs));</span>
+<span class="fc" id="L51">        return (attempt) -&gt; {</span>
+<span class="fc" id="L52">            double delayMs = baseInterval.toMillis() * Math.pow(backoffRate, attempt);</span>
+<span class="fc" id="L53">            delayMs = Math.min(jitter.apply(delayMs), maxInterval.toMillis());</span>
+<span class="fc" id="L54">            return Duration.ofMillis(Math.round(delayMs));</span>
         };
     }
 
@@ -61,11 +62,29 @@ import java.util.Objects;
      * @return PollingStrategy with fixed delay
      */
     public static PollingStrategy fixedDelay(Duration interval) {
-<span class="fc" id="L64">        Objects.requireNonNull(interval, &quot;interval must not be null&quot;);</span>
-<span class="fc bfc" id="L65" title="All 4 branches covered.">        if (interval.isNegative() || interval.isZero()) {</span>
-<span class="fc" id="L66">            throw new IllegalArgumentException(&quot;interval must be positive&quot;);</span>
+<span class="fc" id="L65">        Objects.requireNonNull(interval, &quot;interval must not be null&quot;);</span>
+<span class="fc bfc" id="L66" title="All 4 branches covered.">        if (interval.isNegative() || interval.isZero()) {</span>
+<span class="fc" id="L67">            throw new IllegalArgumentException(&quot;interval must be positive&quot;);</span>
         }
-<span class="fc" id="L68">        return (attempt) -&gt; interval;</span>
+<span class="fc" id="L69">        return (attempt) -&gt; interval;</span>
+    }
+
+    /**
+     * Creates a polling strategy that polls at a specific instant in time.
+     *
+     * @param instant The instant to poll at
+     * @return PollingStrategy that calculates delay until the specified instant
+     */
+    public static PollingStrategy at(Instant instant) {
+<span class="fc" id="L79">        Objects.requireNonNull(instant, &quot;instant must not be null&quot;);</span>
+<span class="fc" id="L80">        return (attempt) -&gt; {</span>
+<span class="fc" id="L81">            var duration = Duration.between(Instant.now(), instant);</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">            if (duration.isNegative()) {</span>
+                // as soon as possible
+<span class="fc" id="L84">                return Duration.ZERO;</span>
+            }
+<span class="fc" id="L86">            return duration;</span>
+        };
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
