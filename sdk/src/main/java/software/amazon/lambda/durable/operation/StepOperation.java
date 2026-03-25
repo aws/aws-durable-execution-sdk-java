@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import java.time.Duration;
-import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -87,10 +85,10 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     private CompletableFuture<Void> pollReadyAndExecuteStepLogic(Operation existing, int attempt) {
         var nextAttemptInstant = existing.stepDetails().nextAttemptTimestamp();
-        return pollForOperationUpdates(Duration.between(Instant.now(), nextAttemptInstant))
+        return pollForOperationUpdates(nextAttemptInstant)
                 .thenCompose(op -> op.status() == OperationStatus.READY
                         ? CompletableFuture.completedFuture(op)
-                        : pollForOperationUpdates())
+                        : pollForOperationUpdates(nextAttemptInstant))
                 .thenRun(() -> executeStepLogic(attempt));
     }
 

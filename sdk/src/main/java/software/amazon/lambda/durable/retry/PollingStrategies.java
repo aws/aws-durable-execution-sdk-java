@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.retry;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 
 /** Factory class for creating common polling strategies. */
@@ -66,5 +67,23 @@ public class PollingStrategies {
             throw new IllegalArgumentException("interval must be positive");
         }
         return (attempt) -> interval;
+    }
+
+    /**
+     * Creates a polling strategy that polls at a specific instant in time.
+     *
+     * @param instant The instant to poll at
+     * @return PollingStrategy that calculates delay until the specified instant
+     */
+    public static PollingStrategy at(Instant instant) {
+        Objects.requireNonNull(instant, "instant must not be null");
+        return (attempt) -> {
+            var duration = Duration.between(Instant.now(), instant);
+            if (duration.isNegative()) {
+                // as soon as possible
+                return Duration.ZERO;
+            }
+            return duration;
+        };
     }
 }

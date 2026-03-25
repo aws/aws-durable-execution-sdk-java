@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.execution;
 
-import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -247,8 +247,15 @@ public class ExecutionManager implements AutoCloseable {
         return checkpointManager.pollForUpdate(operationId);
     }
 
-    public CompletableFuture<Operation> pollForOperationUpdates(String operationId, Duration delay) {
-        return checkpointManager.pollForUpdate(operationId, delay);
+    /**
+     * Pools for operation updates at a specific time
+     *
+     * @param operationId the operation id to poll for updates
+     * @param at the time to poll for updates
+     * @return a completable future that completes with the operation update
+     */
+    public CompletableFuture<Operation> pollForOperationUpdates(String operationId, Instant at) {
+        return checkpointManager.pollForUpdate(operationId, at);
     }
 
     // ===== Utilities =====

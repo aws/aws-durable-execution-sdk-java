@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -341,13 +341,13 @@ public abstract class BaseDurableOperation {
     }
 
     /**
-     * Polls the backend for updates to this operation after the specified delay.
+     * Polls the backend for updates to this operation at a specific time.
      *
-     * @param delay the delay before polling
+     * @param at the time to poll for updates
      * @return a future that completes with the updated operation
      */
-    protected CompletableFuture<Operation> pollForOperationUpdates(Duration delay) {
-        return executionManager.pollForOperationUpdates(getOperationId(), delay);
+    protected CompletableFuture<Operation> pollForOperationUpdates(Instant at) {
+        return executionManager.pollForOperationUpdates(getOperationId(), at);
     }
 
     /** Sends an operation update synchronously (blocks until the update is acknowledged). */

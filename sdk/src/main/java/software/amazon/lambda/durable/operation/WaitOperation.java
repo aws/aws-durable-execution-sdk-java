@@ -60,21 +60,14 @@ public class WaitOperation extends BaseDurableOperation implements DurableFuture
     }
 
     private void pollForWaitExpiration() {
-        // Always calculate remaining time from scheduledEndTimestamp if scheduledEndTimestamp exists
-        var remainingWaitTime = duration;
+        var scheduledEndTimestamp = Instant.now().plusMillis(duration.toMillis());
         var existing = getOperation();
         if (existing != null
                 && existing.waitDetails() != null
                 && existing.waitDetails().scheduledEndTimestamp() != null) {
-            remainingWaitTime =
-                    Duration.between(Instant.now(), existing.waitDetails().scheduledEndTimestamp());
-            // If the wait has already elapsed, poll immediately with a minimal positive interval
-            if (remainingWaitTime.isNegative() || remainingWaitTime.isZero()) {
-                remainingWaitTime = Duration.ofMillis(1);
-            }
+            scheduledEndTimestamp = existing.waitDetails().scheduledEndTimestamp();
         }
-        logger.debug("Remaining wait time: {} ms", remainingWaitTime.toMillis());
-        pollForOperationUpdates(remainingWaitTime);
+        pollForOperationUpdates(scheduledEndTimestamp);
     }
 
     @Override

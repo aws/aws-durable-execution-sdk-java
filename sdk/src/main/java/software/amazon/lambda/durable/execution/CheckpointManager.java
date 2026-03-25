@@ -72,12 +72,14 @@ class CheckpointManager {
     }
 
     /**
-     * Polls for updates of the specified operation with specified delay
+     * Polls for updates of the specified operation at the specified time. If the give time is at the past, SDK will
+     * immediately make a polling call.
      *
+     * @param at the time to poll for the update
      * @return a future that completes when the operation is updated
      */
-    CompletableFuture<Operation> pollForUpdate(String operationId, Duration delay) {
-        return pollForUpdate(operationId, PollingStrategies.fixedDelay(delay));
+    CompletableFuture<Operation> pollForUpdate(String operationId, Instant at) {
+        return pollForUpdate(operationId, PollingStrategies.at(at));
     }
 
     /**

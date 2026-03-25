@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -276,7 +277,7 @@ class CheckpointManagerTest {
                                 .build())
                         .build());
 
-        var future = batcher.pollForUpdate("op-1", Duration.ofMillis(100));
+        var future = batcher.pollForUpdate("op-1", Instant.now().plusMillis(100));
 
         var result = future.get(300, TimeUnit.MILLISECONDS);
 
@@ -410,7 +411,7 @@ class CheckpointManagerTest {
         });
 
         // Use explicit delay (fixed interval) — should NOT apply backoff
-        var future = backoffBatcher.pollForUpdate("op-1", Duration.ofMillis(20));
+        var future = backoffBatcher.pollForUpdate("op-1", Instant.now().plusMillis(20));
         var result = future.get(1000, TimeUnit.MILLISECONDS);
 
         assertEquals(operation, result);
