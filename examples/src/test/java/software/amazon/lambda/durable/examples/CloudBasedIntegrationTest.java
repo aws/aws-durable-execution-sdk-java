@@ -20,6 +20,11 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.examples.child.ManyAsyncChildContextExample;
+import software.amazon.lambda.durable.examples.general.GenericTypesExample;
+import software.amazon.lambda.durable.examples.step.ManyAsyncStepsExample;
+import software.amazon.lambda.durable.examples.types.ApprovalRequest;
+import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
