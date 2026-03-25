@@ -65,7 +65,7 @@ public class ParallelOperation extends ConcurrencyOperation&lt;ParallelResult&gt
 <span class="fc" id="L65">    }</span>
 
     @Override
-    protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+    protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
 <span class="fc" id="L69">        var items = getBranches();</span>
 <span class="fc" id="L70">        int succeededCount = Math.toIntExact(items.stream()</span>
 <span class="fc bfc" id="L71" title="All 2 branches covered.">                .filter(item -&gt; item.getOperation().status() == OperationStatus.SUCCEEDED)</span>
@@ -119,7 +119,7 @@ public class ParallelOperation extends ConcurrencyOperation&lt;ParallelResult&gt
 <span class="pc bpc" id="L119" title="1 of 2 branches missed.">        if (isJoined.get()) {</span>
 <span class="nc" id="L120">            throw new IllegalStateException(&quot;Cannot add branches after join() has been called&quot;);</span>
         }
-<span class="pc bpc" id="L122" title="1 of 2 branches missed.">        var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">        var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();</span>
 <span class="fc" id="L123">        return enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH);</span>
     }
 }

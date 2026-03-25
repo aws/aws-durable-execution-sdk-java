@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>DeserializationFailedParallelExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.parallel</a> &gt; <span class="el_source">DeserializationFailedParallelExample.java</span></div><h1>DeserializationFailedParallelExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.parallel;
+
+import java.util.List;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.ParallelDurableFuture;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.ParallelBranchConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
+import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+
+/**
+ * Example demonstrating parallel branch execution with the Durable Execution SDK.
+ *
+ * &lt;p&gt;This handler processes a list of items concurrently using {@code context.parallel()}:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;Each item is processed in its own branch (child context)
+ *   &lt;li&gt;All branches run concurrently and their results are collected
+ *   &lt;li&gt;A final step combines the results into a summary
+ * &lt;/ol&gt;
+ *
+ * &lt;p&gt;The {@link ParallelDurableFuture} implements {@link AutoCloseable}, so try-with-resources guarantees
+ * {@code join()} is called even if an exception occurs.
+ */
+<span class="fc" id="L29">public class DeserializationFailedParallelExample</span>
+        extends DurableHandler&lt;DeserializationFailedParallelExample.Input, String&gt; {
+
+<span class="fc" id="L32">    public record Input(List&lt;String&gt; items) {}</span>
+
+    @Override
+    public String handleRequest(Input input, DurableContext context) {
+<span class="fc" id="L36">        var logger = context.getLogger();</span>
+<span class="fc" id="L37">        var items = input.items();</span>
+<span class="fc" id="L38">        logger.info(&quot;Starting parallel processing of {} items&quot;, items.size());</span>
+
+<span class="fc" id="L40">        var config = ParallelConfig.builder().build();</span>
+
+<span class="fc" id="L42">        var parallel = context.parallel(&quot;process-items&quot;, config);</span>
+
+<span class="fc" id="L44">        try (parallel) {</span>
+<span class="fc" id="L45">            var future = parallel.branch(</span>
+                    &quot;process&quot;,
+                    String.class,
+                    branchCtx -&gt; {
+<span class="nc" id="L49">                        return branchCtx.step(&quot;transform&quot;, String.class, stepCtx -&gt; {</span>
+<span class="fc" id="L50">                            throw new RuntimeException(&quot;Intentional failure for transform&quot;);</span>
+                        });
+                    },
+<span class="fc" id="L53">                    ParallelBranchConfig.builder().serDes(new FailedSerDes()).build());</span>
+
+<span class="fc" id="L55">            parallel.get();</span>
+            try {
+<span class="nc" id="L57">                return future.get();</span>
+<span class="fc" id="L58">            } catch (Exception e) {</span>
+<span class="fc" id="L59">                return e.getMessage();</span>
+            }
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        }</span>
+    }
+
+    private static class FailedSerDes extends JacksonSerDes {
+
+        @Override
+        public &lt;T&gt; T deserialize(String json, TypeToken&lt;T&gt; typeToken) {
+<span class="fc" id="L68">            T result = super.deserialize(json, typeToken);</span>
+<span class="pc bpc" id="L69" title="1 of 2 branches missed.">            if (result instanceof RuntimeException ex) {</span>
+<span class="fc" id="L70">                throw new SerDesException(&quot;Deserialization failed&quot;, ex);</span>
+            }
+<span class="nc" id="L72">            return result;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -53,7 +53,7 @@ public interface ParallelDurableFuture extends AutoCloseable, DurableFuture&lt;P
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; branch(
             String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, ParallelBranchConfig config) {
-<span class="nc" id="L56">        return branch(name, TypeToken.get(resultType), func, config);</span>
+<span class="fc" id="L56">        return branch(name, TypeToken.get(resultType), func, config);</span>
     }
 
     /**

@@ -142,7 +142,7 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
 
     @SuppressWarnings(&quot;unchecked&quot;)
     @Override
-    protected void handleSuccess(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+    protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
 <span class="fc" id="L146">        var children = getBranches();</span>
 <span class="fc" id="L147">        var resultItems = new ArrayList&lt;MapResult.MapResultItem&lt;O&gt;&gt;(Collections.nCopies(items.size(), null));</span>
 
