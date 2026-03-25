@@ -25,7 +25,7 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.model,ParallelResult,0,15,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,ConcurrencyOperation,26,422,6,36,6,95,6,30,0,15
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,WaitOperation,3,86,4,8,1,29,4,8,0,6
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,WaitForConditionOperation,31,294,8,26,5,79,9,22,1,12
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,WaitForConditionOperation,31,289,8,26,5,79,9,21,1,11
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,StepOperation,62,267,7,32,13,71,8,26,2,11
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,CallbackOperation,14,116,3,10,4,29,3,11,0,6
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,MapOperation,20,298,6,29,4,77,6,20,0,8

@@ -115,7 +115,7 @@ public class WaitForConditionOperation&lt;T&gt; extends SerializableDurableOpera
 <span class="pc bpc" id="L115" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="fc" id="L116">                        ? CompletableFuture.completedFuture(op)</span>
 <span class="nc" id="L117">                        : pollForOperationUpdates())</span>
-<span class="fc" id="L118">                .thenRun(() -&gt; resumeCheckLoop(existing));</span>
+<span class="fc" id="L118">                .thenAccept(this::resumeCheckLoop);</span>
     }
 
     private void executeCheckLogic(T currentState, int attempt) {
