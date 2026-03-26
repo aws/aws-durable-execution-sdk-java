@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ConcurrentWaitForConditionExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.wait</a> &gt; <span class="el_source">ConcurrentWaitForConditionExample.java</span></div><h1>ConcurrentWaitForConditionExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.wait;
+
+import java.util.stream.IntStream;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
+
+/**
+ * Example demonstrating concurrent waitForCondition operations using map.
+ *
+ * &lt;p&gt;Runs many (totalOperations) waitForCondition operations concurrently (maxConcurrency). Each operation:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;Uses attempt count as state (replay-safe).
+ *   &lt;li&gt;Fails and retries until the attempt count reaches the given threshold, and then succeeds
+ * &lt;/ol&gt;
+ */
+<span class="fc" id="L22">public class ConcurrentWaitForConditionExample extends DurableHandler&lt;ConcurrentWaitForConditionExample.Input, String&gt; {</span>
+
+<span class="fc" id="L24">    public record Input(int threshold, int totalOperations, int maxConcurrency) {}</span>
+
+    @Override
+    public String handleRequest(Input input, DurableContext context) {
+<span class="fc" id="L28">        var items = IntStream.range(0, input.totalOperations()).boxed().toList();</span>
+
+<span class="fc" id="L30">        var config = MapConfig.builder().maxConcurrency(input.maxConcurrency()).build();</span>
+
+<span class="fc" id="L32">        var result = context.map(</span>
+                &quot;concurrent-wait-for-conditions&quot;,
+                items,
+                String.class,
+                (item, index, ctx) -&gt; {
+<span class="fc" id="L37">                    var conditionConfig = WaitForConditionConfig.&lt;Integer&gt;builder()</span>
+<span class="fc" id="L38">                            .initialState(1)</span>
+<span class="fc" id="L39">                            .build();</span>
+                    // Poll until the counter reaches the input threshold
+<span class="fc" id="L41">                    var count = ctx.waitForCondition(</span>
+                            &quot;condition-&quot; + index,
+                            Integer.class,
+                            (callCount, stepCtx) -&gt; {
+<span class="fc bfc" id="L45" title="All 2 branches covered.">                                if (callCount &gt;= input.threshold()) {</span>
+<span class="fc" id="L46">                                    return WaitForConditionResult.stopPolling(callCount);</span>
+                                }
+<span class="fc" id="L48">                                return WaitForConditionResult.continuePolling(callCount + 1);</span>
+                            },
+                            conditionConfig);
+<span class="fc" id="L51">                    return String.valueOf(count);</span>
+                },
+                config);
+
+<span class="fc" id="L55">        return String.join(&quot; | &quot;, result.results());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

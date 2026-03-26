@@ -157,9 +157,9 @@ public class WaitForConditionOperation&lt;T&gt; extends SerializableDurableOpera
 
                         // Poll for READY, then continue the loop
 <span class="fc" id="L159">                        pollForOperationUpdates()</span>
-<span class="pc bnc" id="L160" title="All 2 branches missed.">                                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+<span class="pc bpc" id="L160" title="1 of 2 branches missed.">                                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="nc" id="L161">                                        ? CompletableFuture.completedFuture(op)</span>
-<span class="nc" id="L162">                                        : pollForOperationUpdates())</span>
+<span class="fc" id="L162">                                        : pollForOperationUpdates())</span>
 <span class="pc" id="L163">                                .thenRun(() -&gt; executeCheckLogic(deserializedValue, attempt + 1));</span>
                     }
 <span class="fc" id="L165">                } catch (Throwable e) {</span>
