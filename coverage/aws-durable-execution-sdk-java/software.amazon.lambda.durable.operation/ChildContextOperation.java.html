@@ -242,7 +242,7 @@ public class ChildContextOperation&lt;T&gt; extends SerializableDurableOperation
 <span class="fc" id="L242">                .orElse(null);</span>
 <span class="pc bpc" id="L243" title="1 of 2 branches missed.">        if (callbackOp != null) {</span>
             // if callback failed
-<span class="pc bpc" id="L245" title="1 of 2 branches missed.">            if (isTerminalStatus(callbackOp.status())) {</span>
+<span class="fc bfc" id="L245" title="All 2 branches covered.">            if (isTerminalStatus(callbackOp.status())) {</span>
 <span class="pc bpc" id="L246" title="1 of 3 branches missed.">                switch (callbackOp.status()) {</span>
 <span class="fc" id="L247">                    case FAILED -&gt; throw new CallbackFailedException(callbackOp);</span>
 <span class="fc" id="L248">                    case TIMED_OUT -&gt; throw new CallbackTimeoutException(callbackOp);</span>
@@ -250,14 +250,14 @@ public class ChildContextOperation&lt;T&gt; extends SerializableDurableOperation
             }
 
             // if submitter failed
-<span class="nc bnc" id="L253" title="All 2 branches missed.">            if (submitterOp != null</span>
-<span class="nc bnc" id="L254" title="All 2 branches missed.">                    &amp;&amp; isTerminalStatus(submitterOp.status())</span>
-<span class="nc bnc" id="L255" title="All 2 branches missed.">                    &amp;&amp; submitterOp.status() != OperationStatus.SUCCEEDED) {</span>
-<span class="nc" id="L256">                var stepError = submitterOp.stepDetails().error();</span>
-<span class="nc bnc" id="L257" title="All 2 branches missed.">                if (StepInterruptedException.isStepInterruptedException(stepError)) {</span>
+<span class="pc bpc" id="L253" title="1 of 2 branches missed.">            if (submitterOp != null</span>
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">                    &amp;&amp; isTerminalStatus(submitterOp.status())</span>
+<span class="pc bpc" id="L255" title="1 of 2 branches missed.">                    &amp;&amp; submitterOp.status() != OperationStatus.SUCCEEDED) {</span>
+<span class="fc" id="L256">                var stepError = submitterOp.stepDetails().error();</span>
+<span class="pc bpc" id="L257" title="1 of 2 branches missed.">                if (StepInterruptedException.isStepInterruptedException(stepError)) {</span>
 <span class="nc" id="L258">                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));</span>
                 } else {
-<span class="nc" id="L260">                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));</span>
+<span class="fc" id="L260">                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));</span>
                 }
             }
         }

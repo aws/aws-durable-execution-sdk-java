@@ -560,7 +560,7 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L563">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
+<span class="pc" id="L563">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
 <span class="nc" id="L564">                .get();</span>
     }
 

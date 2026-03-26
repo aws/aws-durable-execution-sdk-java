@@ -304,13 +304,13 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         // the length restriction of waitForCallback name is different from the other operations.
 <span class="fc" id="L305">        ParameterValidator.validateOperationName(name, MAX_WAIT_FOR_CALLBACK_NAME_LENGTH);</span>
 
-<span class="pc bpc" id="L307" title="1 of 2 branches missed.">        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null</span>
+<span class="fc bfc" id="L307" title="All 2 branches covered.">        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null</span>
 <span class="fc" id="L308">                ? waitForCallbackConfig.toBuilder()</span>
 <span class="fc" id="L309">                        .stepConfig(waitForCallbackConfig.stepConfig().toBuilder()</span>
 <span class="fc" id="L310">                                .serDes(getDurableConfig().getSerDes())</span>
 <span class="fc" id="L311">                                .build())</span>
 <span class="fc" id="L312">                        .build()</span>
-<span class="pc" id="L313">                : waitForCallbackConfig;</span>
+<span class="fc" id="L313">                : waitForCallbackConfig;</span>
 
 <span class="fc" id="L315">        return runInChildContextAsync(</span>
                 name,
