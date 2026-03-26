@@ -68,10 +68,12 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         var items = getBranches();
         int succeededCount = Math.toIntExact(items.stream()
-                .filter(item -> item.getOperation().status() == OperationStatus.SUCCEEDED)
+                .filter(item ->
+                        item.getOperation() != null && item.getOperation().status() == OperationStatus.SUCCEEDED)
                 .count());
         int failedCount = Math.toIntExact(items.stream()
-                .filter(item -> item.getOperation().status() != OperationStatus.SUCCEEDED)
+                .filter(item ->
+                        item.getOperation() != null && item.getOperation().status() != OperationStatus.SUCCEEDED)
                 .count());
         this.cachedResult = new ParallelResult(items.size(), succeededCount, failedCount, concurrencyCompletionStatus);
         if (skipCheckpoint) {
