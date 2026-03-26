@@ -2,16 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /** Wrapper for AWS SDK Operation providing convenient access methods. */
@@ -50,6 +56,23 @@ public class TestOperation {
         return operation.type();
     }
 
+    /** Returns the operation's subtype */
+    public String getSubtype() {
+        return operation.subType();
+    }
+
+    /** Returns true if the operation has completed (either succeeded or failed). */
+    public boolean isCompleted() {
+        return ExecutionManager.isTerminalStatus(operation.status());
+    }
+
+    /** Returns the duration of the operation */
+    public Duration getDuration() {
+        return Duration.between(
+                operation.startTimestamp(),
+                operation.endTimestamp() != null ? operation.endTimestamp() : Instant.now());
+    }
+
     /** Returns the step details, or null if this is not a step operation. */
     public StepDetails getStepDetails() {
         return operation.stepDetails();
@@ -63,6 +86,21 @@ public class TestOperation {
     /** Returns the callback details, or null if this is not a callback operation. */
     public CallbackDetails getCallbackDetails() {
         return operation.callbackDetails();
+    }
+
+    /** Returns the chained invoke details, or null if this is not a chained invoke operation. */
+    public ChainedInvokeDetails getChainedInvokeDetails() {
+        return operation.chainedInvokeDetails();
+    }
+
+    /** Returns the context details, or null if this operation is not a context. */
+    public ContextDetails getContextDetails() {
+        return operation.contextDetails();
+    }
+
+    /** Returns the execution details, or null if this operation is not an EXECUTION operation. */
+    public ExecutionDetails getExecutionDetails() {
+        return operation.executionDetails();
     }
 
     /** Deserializes and returns the step result as the given type. */
