@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
@@ -223,9 +224,21 @@ public class ExecutionManager implements AutoCloseable {
 
             if (activeThreads.isEmpty()) {
                 logger.info("No active threads remaining - suspending execution");
+                preSuspendCheck();
                 suspendExecution();
             }
         }
+    }
+
+    private void preSuspendCheck() {
+        operationStorage.values().stream()
+                .filter(op -> !isTerminalStatus(op.status()))
+                .findFirst()
+                .ifPresentOrElse(op -> logger.debug("Found waiting operations"), () -> {
+                    logger.warn("Invalid suspension. No operation is in progress");
+                    terminateExecution(new IllegalDurableOperationException(
+                            "Cannot suspend execution without an operation in progress"));
+                });
     }
 
     // ===== Checkpointing =====
