@@ -23,7 +23,7 @@ public class PollingStrategies {
     /**
      * Creates an exponential backoff polling strategy.
      *
-     * <p>The delay calculation follows the formula: delay = jitter(baseInterval × backoffRate^attempt)
+     * <p>The delay calculation follows the formula: delay = jitter(baseInterval × backoffRate^(attempt-1))
      *
      * @param baseInterval Base delay before first poll
      * @param backoffRate Multiplier for exponential backoff (must be positive)
@@ -49,7 +49,8 @@ public class PollingStrategies {
         }
 
         return (attempt) -> {
-            double delayMs = baseInterval.toMillis() * Math.pow(backoffRate, attempt);
+            // attempt is 1-based
+            double delayMs = baseInterval.toMillis() * Math.pow(backoffRate, attempt - 1);
             delayMs = Math.min(jitter.apply(delayMs), maxInterval.toMillis());
             return Duration.ofMillis(Math.round(delayMs));
         };

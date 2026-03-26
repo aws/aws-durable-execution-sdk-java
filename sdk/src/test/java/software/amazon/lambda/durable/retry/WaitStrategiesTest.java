@@ -37,10 +37,10 @@ class WaitStrategiesTest {
         var strategy = WaitStrategies.<String>exponentialBackoff(
                 60, Duration.ofSeconds(2), Duration.ofSeconds(60), 2.0, JitterStrategy.NONE);
 
-        assertEquals(Duration.ofSeconds(2), strategy.evaluate("x", 0));
-        assertEquals(Duration.ofSeconds(4), strategy.evaluate("x", 1));
-        assertEquals(Duration.ofSeconds(8), strategy.evaluate("x", 2));
-        assertEquals(Duration.ofSeconds(16), strategy.evaluate("x", 3));
+        assertEquals(Duration.ofSeconds(2), strategy.evaluate("x", 1));
+        assertEquals(Duration.ofSeconds(4), strategy.evaluate("x", 2));
+        assertEquals(Duration.ofSeconds(8), strategy.evaluate("x", 3));
+        assertEquals(Duration.ofSeconds(16), strategy.evaluate("x", 4));
     }
 
     @Test
@@ -57,10 +57,10 @@ class WaitStrategiesTest {
         var strategy = WaitStrategies.<String>exponentialBackoff(
                 3, Duration.ofSeconds(5), Duration.ofSeconds(300), 1.5, JitterStrategy.NONE);
 
-        assertEquals(Duration.ofSeconds(5), strategy.evaluate("x", 0));
-        assertEquals(Duration.ofSeconds(8), strategy.evaluate("x", 1));
+        assertEquals(Duration.ofSeconds(5), strategy.evaluate("x", 1));
+        assertEquals(Duration.ofSeconds(8), strategy.evaluate("x", 2));
 
-        var exception = assertThrows(WaitForConditionFailedException.class, () -> strategy.evaluate("x", 2));
+        var exception = assertThrows(WaitForConditionFailedException.class, () -> strategy.evaluate("x", 3));
         assertTrue(exception.getMessage().contains("maximum attempts"));
         assertTrue(exception.getMessage().contains("3"));
     }
@@ -81,7 +81,7 @@ class WaitStrategiesTest {
                 60, Duration.ofSeconds(10), Duration.ofSeconds(60), 2.0, JitterStrategy.HALF);
 
         // attempt 1: base = 20, HALF jitter -> [10, 20]
-        var delay = strategy.evaluate("x", 1).toSeconds();
+        var delay = strategy.evaluate("x", 2).toSeconds();
         assertTrue(delay >= 10 && delay <= 20, "HALF jitter delay should be in [10, 20], got: " + delay);
     }
 
@@ -97,7 +97,7 @@ class WaitStrategiesTest {
     @Test
     void fixedDelay_maxAttemptsExceeded_throwsException() {
         var strategy = WaitStrategies.<String>fixedDelay(3, Duration.ofSeconds(5));
-        assertThrows(WaitForConditionFailedException.class, () -> strategy.evaluate("x", 2));
+        assertThrows(WaitForConditionFailedException.class, () -> strategy.evaluate("x", 3));
     }
 
     // ---- Validation ----
@@ -135,7 +135,7 @@ class WaitStrategiesTest {
         long initialDelaySeconds = 1 + random.nextInt(30);
         double backoffRate = 1.0 + random.nextDouble() * 4.0;
         long maxDelaySeconds = initialDelaySeconds + random.nextInt(600);
-        int attempt = random.nextInt(20);
+        int attempt = random.nextInt(20) + 1;
 
         var strategy = WaitStrategies.<String>exponentialBackoff(
                 100,
@@ -146,7 +146,7 @@ class WaitStrategiesTest {
 
         var delay = strategy.evaluate("x", attempt);
         var actualDelay = delay.toSeconds();
-        double expectedRaw = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt), maxDelaySeconds);
+        double expectedRaw = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt - 1), maxDelaySeconds);
         long expectedDelay = Math.max(1, Math.round(expectedRaw));
 
         assertEquals(
@@ -164,7 +164,7 @@ class WaitStrategiesTest {
         var random = new Random();
 
         int maxAttempts = 1 + random.nextInt(50);
-        int attemptOverMax = maxAttempts - 1 + random.nextInt(20);
+        int attemptOverMax = maxAttempts + random.nextInt(20);
 
         var strategy = WaitStrategies.<String>exponentialBackoff(
                 maxAttempts, Duration.ofSeconds(5), Duration.ofSeconds(300), 1.5, JitterStrategy.NONE);
@@ -187,7 +187,7 @@ class WaitStrategiesTest {
         var strategy = WaitStrategies.<String>exponentialBackoff(
                 100, Duration.ofSeconds(delaySeconds), Duration.ofSeconds(300), 1.0, JitterStrategy.NONE);
 
-        var delay = strategy.evaluate("x", 0);
+        var delay = strategy.evaluate("x", 1);
         assertEquals(delaySeconds, delay.toSeconds(), "NONE jitter should produce exact delay");
     }
 
@@ -199,7 +199,7 @@ class WaitStrategiesTest {
         var strategy = WaitStrategies.<String>exponentialBackoff(
                 100, Duration.ofSeconds(delaySeconds), Duration.ofSeconds(300), 1.0, JitterStrategy.FULL);
 
-        var delay = strategy.evaluate("x", 0);
+        var delay = strategy.evaluate("x", 1);
         var actualDelay = delay.toSeconds();
         assertTrue(
                 actualDelay >= 1 && actualDelay <= delaySeconds,
@@ -214,7 +214,7 @@ class WaitStrategiesTest {
         var strategy = WaitStrategies.<String>exponentialBackoff(
                 100, Duration.ofSeconds(delaySeconds), Duration.ofSeconds(300), 1.0, JitterStrategy.HALF);
 
-        var delay = strategy.evaluate("x", 0);
+        var delay = strategy.evaluate("x", 1);
         var actualDelay = delay.toSeconds();
         long minExpected = Math.max(1, Math.round(delaySeconds / 2.0));
         assertTrue(

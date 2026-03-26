@@ -36,6 +36,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * @param <T> the type of state being polled
  */
 public class WaitForConditionOperation<T> extends SerializableDurableOperation<T> {
+    private static final Integer FIRST_ATTEMPT = 1;
 
     private final BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc;
     private final WaitForConditionConfig<T> config;
@@ -61,7 +62,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     @Override
     protected void start() {
-        executeCheckLogic(config.initialState(), 0);
+        executeCheckLogic(config.initialState(), FIRST_ATTEMPT);
     }
 
     @Override
@@ -99,7 +100,8 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     private void resumeCheckLoop(Operation existing) {
         var stepDetails = existing.stepDetails();
-        int attempt = (stepDetails != null && stepDetails.attempt() != null) ? stepDetails.attempt() : 0;
+        int attempt =
+                (stepDetails != null && stepDetails.attempt() != null) ? stepDetails.attempt() + 1 : FIRST_ATTEMPT;
         var checkpointData = stepDetails != null ? stepDetails.result() : null;
         T currentState; // Get current state
         if (checkpointData != null) {

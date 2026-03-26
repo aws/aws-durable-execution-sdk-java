@@ -40,7 +40,7 @@ public final class WaitStrategies {
     /**
      * Creates an exponential backoff wait strategy.
      *
-     * <p>The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^attempt, maxDelay)
+     * <p>The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^(attempt-1), maxDelay)
      *
      * @param maxAttempts maximum number of attempts before throwing {@link WaitForConditionFailedException}
      * @param initialDelay initial delay before first retry
@@ -65,14 +65,15 @@ public final class WaitStrategies {
         }
 
         return (state, attempt) -> {
-            if (attempt + 1 >= maxAttempts) {
+            // attempt is 1-based
+            if (attempt >= maxAttempts) {
                 throw new WaitForConditionFailedException(
                         "waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
             }
 
             double initialDelaySeconds = initialDelay.toSeconds();
             double maxDelaySeconds = maxDelay.toSeconds();
-            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt), maxDelaySeconds);
+            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt - 1), maxDelaySeconds);
             double delayWithJitter = jitter.apply(baseDelay);
             long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));
 
@@ -95,7 +96,7 @@ public final class WaitStrategies {
         ParameterValidator.validateDuration(fixedDelay, "fixedDelay");
 
         return (state, attempt) -> {
-            if (attempt + 1 >= maxAttempts) {
+            if (attempt >= maxAttempts) {
                 throw new WaitForConditionFailedException(
                         "waitForCondition exceeded maximum attempts (" + maxAttempts + ")");
             }
