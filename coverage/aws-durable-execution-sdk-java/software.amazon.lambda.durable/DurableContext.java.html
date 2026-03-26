@@ -519,6 +519,15 @@ public interface DurableContext extends BaseContext {
             String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config);
 
     /**
+     * Creates a {@link ParallelDurableFuture} for executing multiple branches concurrently with default config
+     *
+     * @return a new ParallelDurableFuture for registering and executing branches
+     */
+    default ParallelDurableFuture parallel(String name) {
+<span class="nc" id="L527">        return parallel(name, ParallelConfig.builder().build());</span>
+    }
+
+    /**
      * Creates a {@link ParallelDurableFuture} for executing multiple branches concurrently.
      *
      * @param config the parallel execution configuration
@@ -539,19 +548,19 @@ public interface DurableContext extends BaseContext {
      * @return the callback result
      */
     default &lt;T&gt; T waitForCallback(String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="fc" id="L542">        return waitForCallbackAsync(</span>
+<span class="fc" id="L551">        return waitForCallbackAsync(</span>
                         name,
-<span class="fc" id="L544">                        TypeToken.get(resultType),</span>
+<span class="fc" id="L553">                        TypeToken.get(resultType),</span>
                         func,
-<span class="fc" id="L546">                        WaitForCallbackConfig.builder().build())</span>
-<span class="fc" id="L547">                .get();</span>
+<span class="fc" id="L555">                        WaitForCallbackConfig.builder().build())</span>
+<span class="fc" id="L556">                .get();</span>
     }
 
     /** Executes a submitter and waits for an external callback using a {@link TypeToken}, blocking until complete. */
     default &lt;T&gt; T waitForCallback(String name, TypeToken&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="nc" id="L552">        return waitForCallbackAsync(</span>
-<span class="nc" id="L553">                        name, resultType, func, WaitForCallbackConfig.builder().build())</span>
-<span class="nc" id="L554">                .get();</span>
+<span class="nc" id="L561">        return waitForCallbackAsync(</span>
+<span class="nc" id="L562">                        name, resultType, func, WaitForCallbackConfig.builder().build())</span>
+<span class="nc" id="L563">                .get();</span>
     }
 
     /** Executes a submitter and waits for an external callback with custom configuration, blocking until complete. */
@@ -560,8 +569,8 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="pc" id="L563">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
-<span class="nc" id="L564">                .get();</span>
+<span class="pc" id="L572">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
+<span class="nc" id="L573">                .get();</span>
     }
 
     /** Executes a submitter and waits for an external callback using a {@link TypeToken} and custom configuration. */
@@ -570,25 +579,25 @@ public interface DurableContext extends BaseContext {
             TypeToken&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L573">        return waitForCallbackAsync(name, resultType, func, waitForCallbackConfig)</span>
-<span class="nc" id="L574">                .get();</span>
+<span class="nc" id="L582">        return waitForCallbackAsync(name, resultType, func, waitForCallbackConfig)</span>
+<span class="nc" id="L583">                .get();</span>
     }
 
     /** Asynchronously executes a submitter and waits for an external callback. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
             String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="fc" id="L580">        return waitForCallbackAsync(</span>
+<span class="fc" id="L589">        return waitForCallbackAsync(</span>
                 name,
-<span class="fc" id="L582">                TypeToken.get(resultType),</span>
+<span class="fc" id="L591">                TypeToken.get(resultType),</span>
                 func,
-<span class="fc" id="L584">                WaitForCallbackConfig.builder().build());</span>
+<span class="fc" id="L593">                WaitForCallbackConfig.builder().build());</span>
     }
 
     /** Asynchronously executes a submitter and waits for an external callback using a {@link TypeToken}. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
             String name, TypeToken&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="nc" id="L590">        return waitForCallbackAsync(</span>
-<span class="nc" id="L591">                name, resultType, func, WaitForCallbackConfig.builder().build());</span>
+<span class="nc" id="L599">        return waitForCallbackAsync(</span>
+<span class="nc" id="L600">                name, resultType, func, WaitForCallbackConfig.builder().build());</span>
     }
 
     /** Asynchronously executes a submitter and waits for an external callback with custom configuration. */
@@ -597,7 +606,7 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L600">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);</span>
+<span class="nc" id="L609">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);</span>
     }
 
     /**
@@ -632,12 +641,12 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; T waitForCondition(
             String name, Class&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L635">        return waitForConditionAsync(</span>
+<span class="nc" id="L644">        return waitForConditionAsync(</span>
                         name,
-<span class="nc" id="L637">                        TypeToken.get(resultType),</span>
+<span class="nc" id="L646">                        TypeToken.get(resultType),</span>
                         checkFunc,
-<span class="nc" id="L639">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
-<span class="nc" id="L640">                .get();</span>
+<span class="nc" id="L648">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
+<span class="nc" id="L649">                .get();</span>
     }
 
     /** Polls a condition function until it signals done, using a custom configuration, blocking until complete. */
@@ -646,18 +655,18 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L649">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
+<span class="fc" id="L658">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
     }
 
     /** Polls a condition function until it signals done, using a {@link TypeToken}, blocking until complete. */
     default &lt;T&gt; T waitForCondition(
             String name, TypeToken&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L655">        return waitForConditionAsync(</span>
+<span class="nc" id="L664">        return waitForConditionAsync(</span>
                         name,
                         resultType,
                         checkFunc,
-<span class="nc" id="L659">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
-<span class="nc" id="L660">                .get();</span>
+<span class="nc" id="L668">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
+<span class="nc" id="L669">                .get();</span>
     }
 
     /**
@@ -669,17 +678,17 @@ public interface DurableContext extends BaseContext {
             TypeToken&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="nc" id="L672">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
+<span class="nc" id="L681">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
     }
 
     /** Asynchronously polls a condition function until it signals done. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
             String name, Class&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L678">        return waitForConditionAsync(</span>
+<span class="nc" id="L687">        return waitForConditionAsync(</span>
                 name,
-<span class="nc" id="L680">                TypeToken.get(resultType),</span>
+<span class="nc" id="L689">                TypeToken.get(resultType),</span>
                 checkFunc,
-<span class="nc" id="L682">                WaitForConditionConfig.&lt;T&gt;builder().build());</span>
+<span class="nc" id="L691">                WaitForConditionConfig.&lt;T&gt;builder().build());</span>
     }
 
     /** Asynchronously polls a condition function until it signals done, using custom configuration. */
@@ -688,14 +697,14 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L691">        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config);</span>
+<span class="fc" id="L700">        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config);</span>
     }
 
     /** Asynchronously polls a condition function until it signals done, using a {@link TypeToken}. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
             String name, TypeToken&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L697">        return waitForConditionAsync(</span>
-<span class="nc" id="L698">                name, resultType, checkFunc, WaitForConditionConfig.&lt;T&gt;builder().build());</span>
+<span class="nc" id="L706">        return waitForConditionAsync(</span>
+<span class="nc" id="L707">                name, resultType, checkFunc, WaitForConditionConfig.&lt;T&gt;builder().build());</span>
     }
 
     /**
