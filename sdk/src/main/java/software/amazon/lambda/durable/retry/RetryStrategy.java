@@ -15,8 +15,8 @@ public interface RetryStrategy {
      * Determines whether to retry a failed operation and calculates the retry delay.
      *
      * @param error The error that occurred during the operation
-     * @param attemptNumber The current attempt number (0-based, so first attempt is 0)
+     * @param attempt The current attempt number (1-based, so first attempt is 1)
      * @return RetryDecision indicating whether to retry and the delay before next attempt
      */
-    RetryDecision makeRetryDecision(Throwable error, int attemptNumber);
+    RetryDecision makeRetryDecision(Throwable error, int attempt);
 }

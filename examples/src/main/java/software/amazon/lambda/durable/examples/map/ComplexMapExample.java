@@ -5,11 +5,11 @@ package software.amazon.lambda.durable.examples.map;
 import java.time.Duration;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
-import software.amazon.lambda.durable.examples.types.GreetingRequest;
 
 /**
  * Example demonstrating advanced map features: wait operations inside branches, error handling, and early termination.
@@ -20,19 +20,18 @@ import software.amazon.lambda.durable.examples.types.GreetingRequest;
  *   <li>Early termination with {@code minSuccessful(2)} — finds 2 healthy servers then stops
  * </ol>
  */
-public class ComplexMapExample extends DurableHandler<GreetingRequest, String> {
+public class ComplexMapExample extends DurableHandler<Integer, String> {
 
     @Override
-    public String handleRequest(GreetingRequest input, DurableContext context) {
-        var name = input.getName();
-        context.getLogger().info("Starting complex map example for {}", name);
+    public String handleRequest(Integer input, DurableContext context) {
+        context.getLogger().info("Starting complex map example with {} items", input);
 
         // Part 1: Concurrent map with step + wait inside each branch
-        var orderIds = List.of("order-1", "order-2", "order-3");
+        var orderIds = IntStream.range(1, input + 1).mapToObj(x -> "order-" + x).collect(Collectors.toList());
 
         var orderResult = context.map("process-orders", orderIds, String.class, (orderId, index, ctx) -> {
             // Step 1: validate the order
-            var validated = ctx.step("validate-" + index, String.class, stepCtx -> "validated:" + orderId + ":" + name);
+            var validated = ctx.step("validate-" + index, String.class, stepCtx -> "validated:" + orderId);
 
             // Wait between stages (simulates a cooldown or external dependency)
             ctx.wait("cooldown-" + index, Duration.ofSeconds(1));

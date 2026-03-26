@@ -269,7 +269,7 @@ class WaitForConditionIntegrationTest {
             // Check function returns state + 1, starting from 0
             // So after check i, state = i + 1, and strategy receives that value
             assertEquals(i + 1, observedStates.get(i), "State at strategy call " + (i + 1));
-            assertEquals(i, observedAttempts.get(i), "Attempt at strategy call " + (i + 1));
+            assertEquals(i + 1, observedAttempts.get(i), "Attempt at strategy call " + (i + 1));
         }
     }
 }

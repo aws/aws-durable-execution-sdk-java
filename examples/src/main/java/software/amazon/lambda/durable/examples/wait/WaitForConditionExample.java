@@ -10,26 +10,29 @@ import software.amazon.lambda.durable.model.WaitForConditionResult;
 /**
  * Example demonstrating the waitForCondition operation.
  *
- * <p>This example simulates waiting for an order to ship, by repeatedly calling a check function.
+ * <p>This handler polls a condition function until it signals completion:
+ *
+ * <ol>
+ *   <li>The attempt count is used as a state (replay safe)
+ *   <li>Fails and retries until the attempt count reaches the given threshold, and then succeeds
+ * </ol>
  */
 public class WaitForConditionExample extends DurableHandler<Integer, Integer> {
 
     @Override
-    public Integer handleRequest(Integer input, DurableContext context) {
-        // Poll the shipment status until the order is shipped.
-        // The check function simulates an order shipment (0 -> 1 -> 2 -> 3 -> 4)
+    public Integer handleRequest(Integer threshold, DurableContext context) {
+        // Poll until the counter reaches the input threshold
         return context.waitForCondition(
-                "wait-for-shipment",
+                "wait-for-condition",
                 Integer.class,
                 (callCount, stepCtx) -> {
-                    // Simulate checking shipment status from an external service
-                    if (callCount >= 3) {
-                        // Order has shipped — stop polling
-                        return WaitForConditionResult.stopPolling(callCount + 1);
+                    if (callCount >= threshold) {
+                        // Condition met, stop polling
+                        return WaitForConditionResult.stopPolling(callCount);
                     }
-                    // Order still processing — continue polling
+                    // Condition not met, keep polling
                     return WaitForConditionResult.continuePolling(callCount + 1);
                 },
-                WaitForConditionConfig.<Integer>builder().initialState(1).build()); // Order pending - initial status
+                WaitForConditionConfig.<Integer>builder().initialState(1).build());
     }
 }

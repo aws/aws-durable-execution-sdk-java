@@ -29,13 +29,13 @@ public class RetryStrategies {
                 );
 
         /** No retry strategy - fails immediately on first error. Use this for operations that should not be retried. */
-        public static final RetryStrategy NO_RETRY = (error, attemptNumber) -> RetryDecision.fail();
+        public static final RetryStrategy NO_RETRY = (error, attempt) -> RetryDecision.fail();
     }
 
     /**
      * Creates an exponential backoff retry strategy.
      *
-     * <p>The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^attemptNumber, maxDelay)
+     * <p>The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^(attempt-1), maxDelay)
      *
      * @param maxAttempts Maximum number of attempts (including initial attempt)
      * @param initialDelay Initial delay before first retry
@@ -56,9 +56,9 @@ public class RetryStrategies {
             throw new IllegalArgumentException("backoffRate must be positive");
         }
 
-        return (error, attemptNumber) -> {
-            // Check if we've exceeded max attempts (attemptNumber is 0-based)
-            if (attemptNumber + 1 >= maxAttempts) {
+        return (error, attempt) -> {
+            // Check if we've exceeded max attempts (attemptNumber is 1-based)
+            if (attempt >= maxAttempts) {
                 return RetryDecision.fail();
             }
 
@@ -66,7 +66,7 @@ public class RetryStrategies {
             double initialDelaySeconds = initialDelay.toSeconds();
             double maxDelaySeconds = maxDelay.toSeconds();
 
-            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attemptNumber), maxDelaySeconds);
+            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt - 1), maxDelaySeconds);
 
             // Apply jitter
             double delayWithJitter = jitter.apply(baseDelay);
@@ -92,8 +92,8 @@ public class RetryStrategies {
         }
         ParameterValidator.validateDuration(fixedDelay, "fixedDelay");
 
-        return (error, attemptNumber) -> {
-            if (attemptNumber + 1 >= maxAttempts) {
+        return (error, attempt) -> {
+            if (attempt >= maxAttempts) {
                 return RetryDecision.fail();
             }
             return RetryDecision.retry(fixedDelay);

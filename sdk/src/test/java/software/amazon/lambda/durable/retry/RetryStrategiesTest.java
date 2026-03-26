@@ -15,9 +15,9 @@ class RetryStrategiesTest {
         var strategy = RetryStrategies.Presets.NO_RETRY;
 
         // Should never retry regardless of attempt number
-        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
-        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
-        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 5);
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 6);
 
         assertFalse(decision1.shouldRetry());
         assertFalse(decision2.shouldRetry());
@@ -29,14 +29,14 @@ class RetryStrategiesTest {
         var strategy = RetryStrategies.Presets.DEFAULT;
 
         // Should retry for first 5 attempts (0-4), fail on 6th (5)
-        for (int attempt = 0; attempt < 5; attempt++) {
+        for (int attempt = 1; attempt <= 5; attempt++) {
             var decision = strategy.makeRetryDecision(new RuntimeException("test"), attempt);
             assertTrue(decision.shouldRetry(), "Should retry on attempt " + attempt);
             assertTrue(decision.delay().toSeconds() >= 1, "Delay should be at least 1 second");
         }
 
         // Should not retry on 6th attempt (attempt number 5)
-        var finalDecision = strategy.makeRetryDecision(new RuntimeException("test"), 5);
+        var finalDecision = strategy.makeRetryDecision(new RuntimeException("test"), 6);
         assertFalse(finalDecision.shouldRetry());
     }
 
@@ -52,16 +52,16 @@ class RetryStrategiesTest {
                 );
 
         // Verify delay calculation: initialDelay * backoffRate^attemptNumber
-        var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
+        var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
         assertEquals(2, decision0.delay().toSeconds()); // 2 * 2^0 = 2
 
-        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
         assertEquals(4, decision1.delay().toSeconds()); // 2 * 2^1 = 4
 
-        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
         assertEquals(8, decision2.delay().toSeconds()); // 2 * 2^2 = 8
 
-        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 4);
         assertEquals(16, decision3.delay().toSeconds()); // 2 * 2^3 = 16
     }
 
@@ -76,7 +76,7 @@ class RetryStrategiesTest {
                 );
 
         // Should be capped at maxDelay
-        var decision = strategy.makeRetryDecision(new RuntimeException("test"), 5);
+        var decision = strategy.makeRetryDecision(new RuntimeException("test"), 6);
         assertEquals(20, decision.delay().toSeconds()); // Would be 5 * 2^5 = 160, but capped at 20
     }
 
@@ -93,9 +93,9 @@ class RetryStrategiesTest {
 
         // Test multiple times due to randomness
         for (int i = 0; i < 10; i++) {
-            var noneDecision = noneStrategy.makeRetryDecision(new RuntimeException("test"), 1);
-            var fullDecision = fullStrategy.makeRetryDecision(new RuntimeException("test"), 1);
-            var halfDecision = halfStrategy.makeRetryDecision(new RuntimeException("test"), 1);
+            var noneDecision = noneStrategy.makeRetryDecision(new RuntimeException("test"), 2);
+            var fullDecision = fullStrategy.makeRetryDecision(new RuntimeException("test"), 2);
+            var halfDecision = halfStrategy.makeRetryDecision(new RuntimeException("test"), 2);
 
             // NONE should always be exactly 20 (10 * 2^1)
             assertEquals(20, noneDecision.delay().toSeconds());
@@ -116,7 +116,7 @@ class RetryStrategiesTest {
         var strategy = RetryStrategies.exponentialBackoff(
                 5, Duration.ofSeconds(1), Duration.ofSeconds(60), 1.0, JitterStrategy.FULL);
 
-        var decision = strategy.makeRetryDecision(new RuntimeException("test"), 0);
+        var decision = strategy.makeRetryDecision(new RuntimeException("test"), 1);
         assertTrue(decision.delay().toSeconds() >= 1, "Delay should be at least 1 second");
     }
 
@@ -125,8 +125,8 @@ class RetryStrategiesTest {
         var strategy = RetryStrategies.fixedDelay(3, Duration.ofSeconds(5));
 
         // Should retry with fixed delay for first 2 attempts
-        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
-        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
 
         assertTrue(decision1.shouldRetry());
         assertTrue(decision2.shouldRetry());
@@ -134,7 +134,7 @@ class RetryStrategiesTest {
         assertEquals(5, decision2.delay().toSeconds());
 
         // Should not retry on 3rd attempt
-        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
         assertFalse(decision3.shouldRetry());
     }
 
@@ -243,9 +243,9 @@ class RetryStrategiesTest {
         assertNotNull(config2.retryStrategy());
         assertNotNull(config3.retryStrategy());
 
-        var decision1 = config1.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
-        var decision2 = config2.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
-        var decision3 = config3.retryStrategy().makeRetryDecision(new RuntimeException("test"), 0);
+        var decision1 = config1.retryStrategy().makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = config2.retryStrategy().makeRetryDecision(new RuntimeException("test"), 1);
+        var decision3 = config3.retryStrategy().makeRetryDecision(new RuntimeException("test"), 1);
 
         assertTrue(decision1.shouldRetry());
         assertFalse(decision2.shouldRetry());
@@ -257,11 +257,11 @@ class RetryStrategiesTest {
         var strategy = RetryStrategies.exponentialBackoff(
                 5, Duration.ofSeconds(2), Duration.ofSeconds(60), 2.0, JitterStrategy.NONE);
 
-        var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 0);
-        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
-        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
-        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
-        var decision4 = strategy.makeRetryDecision(new RuntimeException("test"), 4);
+        var decision0 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 4);
+        var decision4 = strategy.makeRetryDecision(new RuntimeException("test"), 5);
 
         assertTrue(decision0.shouldRetry());
         assertEquals(2, decision0.delay().toSeconds());

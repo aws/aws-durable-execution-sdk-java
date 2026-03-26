@@ -519,6 +519,15 @@ public interface DurableContext extends BaseContext {
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config);
 
     /**
+     * Creates a {@link ParallelDurableFuture} for executing multiple branches concurrently with default config
+     *
+     * @return a new ParallelDurableFuture for registering and executing branches
+     */
+    default ParallelDurableFuture parallel(String name) {
+        return parallel(name, ParallelConfig.builder().build());
+    }
+
+    /**
      * Creates a {@link ParallelDurableFuture} for executing multiple branches concurrently.
      *
      * @param config the parallel execution configuration

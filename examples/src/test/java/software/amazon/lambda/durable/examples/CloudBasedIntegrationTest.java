@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.examples;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.examples.general.GenericTypesExample;
 import software.amazon.lambda.durable.examples.step.ManyAsyncStepsExample;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
+import software.amazon.lambda.durable.examples.wait.ConcurrentWaitForConditionExample;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
@@ -578,20 +580,61 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testComplexMapExample() {
-        var runner = CloudDurableTestRunner.create(arn("complex-map-example"), GreetingRequest.class, String.class);
-        var result = runner.run(new GreetingRequest("Alice"));
+        var runner = CloudDurableTestRunner.create(arn("complex-map-example"), Integer.class, String.class);
+        var result = runner.run(100);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         var output = result.getResult(String.class);
         assertNotNull(output);
 
         // Part 1: Concurrent order processing with step + wait + step
-        assertTrue(output.contains("done:validated:order-1:Alice"));
-        assertTrue(output.contains("done:validated:order-2:Alice"));
-        assertTrue(output.contains("done:validated:order-3:Alice"));
+        assertTrue(output.contains("done:validated:order-1"));
+        assertTrue(output.contains("done:validated:order-2"));
+        assertTrue(output.contains("done:validated:order-100"));
 
         // Part 2: Early termination — find 2 healthy servers then stop
         assertTrue(output.contains("healthy"));
         assertTrue(output.contains("reason=MIN_SUCCESSFUL_REACHED"));
+    }
+
+    @Test
+    void testWaitForConditionExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("wait-for-condition-example"), Integer.class, Integer.class, lambdaClient);
+        var result = runner.run(3);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(3, result.getResult(Integer.class));
+    }
+
+    @Test
+    void testConcurrentWaitForConditionExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("concurrent-wait-for-condition-example"),
+                ConcurrentWaitForConditionExample.Input.class,
+                String.class,
+                lambdaClient);
+        var result = runner.run(new ConcurrentWaitForConditionExample.Input(3, 100, 50));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // Verify each operation finished with 3 attempts
+        var allOperationsOutput = result.getResult(String.class);
+        var operationOutputs = allOperationsOutput.split(" \\| ");
+        assertEquals(100, operationOutputs.length);
+        for (var operationOutput : operationOutputs) {
+            assertEquals("3", operationOutput);
+        }
+
+        // Verify each waitForCondition operation completes in under 30 seconds
+        var waitForConditionOps = result.getOperations().stream()
+                .filter(op -> "WaitForCondition".equals(op.getSubtype()))
+                .toList();
+        for (var waitForConditionResult : waitForConditionOps) {
+            assertTrue(
+                    waitForConditionResult.getDuration().compareTo(Duration.ofSeconds(30)) < 0,
+                    "waitForCondition operation took "
+                            + waitForConditionResult.getDuration().toSeconds() + "s, expected < 30s");
+        }
     }
 }
