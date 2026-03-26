@@ -280,6 +280,7 @@ public class ExecutionManager implements AutoCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
+        stopAllOperations(exception);
         executionExceptionFuture.completeExceptionally(exception);
         throw exception;
     }
@@ -287,8 +288,13 @@ public class ExecutionManager implements AutoCloseable {
     /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
         var ex = new SuspendExecutionException();
+        stopAllOperations(ex);
         executionExceptionFuture.completeExceptionally(ex);
         throw ex;
+    }
+
+    private void stopAllOperations(Exception cause) {
+        registeredOperations.values().forEach(op -> op.getCompletionFuture().completeExceptionally(cause));
     }
 
     /**

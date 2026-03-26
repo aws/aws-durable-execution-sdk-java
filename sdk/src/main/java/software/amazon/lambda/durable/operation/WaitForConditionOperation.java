@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.operation;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -40,7 +39,6 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     private final BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc;
     private final WaitForConditionConfig<T> config;
-    private final ExecutorService userExecutor;
 
     public WaitForConditionOperation(
             String operationId,
@@ -57,7 +55,6 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
         this.checkFunc = checkFunc;
         this.config = config;
-        this.userExecutor = durableContext.getDurableConfig().getExecutorService();
     }
 
     @Override

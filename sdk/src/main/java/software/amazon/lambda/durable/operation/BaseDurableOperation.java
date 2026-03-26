@@ -22,6 +22,7 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Base class for all durable operations (STEP, WAIT, etc.).
@@ -208,7 +209,11 @@ public abstract class BaseDurableOperation {
         }
 
         // Block until operation completes. No-op if the future is already completed.
-        completionFuture.join();
+        try {
+            completionFuture.join();
+        } catch (Throwable throwable) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+        }
 
         // Get result based on status
         var op = getOperation();

@@ -190,7 +190,7 @@ class DurableConfigTest {
         assertEquals(config1.getDurableExecutionClient(), config2.getDurableExecutionClient());
 
         // ExecutorService should be different instances (each gets its own)
-        assertNotSame(config1.getExecutorService(), config2.getExecutorService());
+        assertSame(config1.getExecutorService(), config2.getExecutorService());
     }
 
     @Test
@@ -210,7 +210,7 @@ class DurableConfigTest {
         var config2 = DurableConfig.defaultConfig();
 
         assertNotSame(config1, config2);
-        assertNotSame(config1.getExecutorService(), config2.getExecutorService());
+        assertSame(config1.getExecutorService(), config2.getExecutorService());
     }
 
     @Test

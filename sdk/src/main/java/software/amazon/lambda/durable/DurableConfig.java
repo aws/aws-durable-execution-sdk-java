@@ -74,6 +74,20 @@ public final class DurableConfig {
     private static final String PROJECT_VERSION = getProjectVersion(VERSION_FILE);
     private static final String USER_AGENT_SUFFIX = "@aws/durable-execution-sdk-java/" + PROJECT_VERSION;
 
+    /**
+     * A default ExecutorService for running user-defined operations. Uses a cached thread pool with daemon threads by
+     * default.
+     *
+     * <p>This executor is used exclusively for user operations. Internal SDK coordination uses the
+     * InternalExecutor::INSTANCE
+     */
+    private static final ExecutorService DEFAULT_USER_THREAD_POOL = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r);
+        t.setName("durable-exec-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
+
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
     private final ExecutorService executorService;
@@ -250,12 +264,7 @@ public final class DurableConfig {
      */
     private static ExecutorService createDefaultExecutor() {
         logger.debug("Creating default ExecutorService");
-        return Executors.newCachedThreadPool(r -> {
-            Thread t = new Thread(r);
-            t.setName("durable-exec-" + t.getId());
-            t.setDaemon(true);
-            return t;
-        });
+        return DEFAULT_USER_THREAD_POOL;
     }
 
     /** Builder for DurableConfig. Provides fluent API for configuring SDK components. */

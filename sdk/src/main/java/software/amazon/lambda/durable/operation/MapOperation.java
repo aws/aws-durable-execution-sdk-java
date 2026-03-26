@@ -14,11 +14,14 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Executes a map operation: applies a function to each item in a collection concurrently, with each item running in its
@@ -153,8 +156,18 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             } else {
                 try {
                     resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));
-                } catch (Exception e) {
-                    resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(e)));
+                } catch (Throwable exception) {
+                    Throwable throwable = ExceptionHelper.unwrapCompletableFuture(exception);
+                    if (throwable instanceof SuspendExecutionException suspendExecutionException) {
+                        // Rethrow Error immediately — do not checkpoint
+                        throw suspendExecutionException;
+                    }
+                    if (throwable
+                            instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
+                        // terminate the execution and throw the exception if it's not recoverable
+                        throw terminateExecution(unrecoverableDurableExecutionException);
+                    }
+                    resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(throwable)));
                 }
             }
         }
