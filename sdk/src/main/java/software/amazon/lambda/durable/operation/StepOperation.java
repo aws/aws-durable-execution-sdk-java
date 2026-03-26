@@ -33,7 +33,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * @param <T> the result type of the step function
  */
 public class StepOperation<T> extends SerializableDurableOperation<T> {
-    private static final Integer FIRST_ATTEMPT = 0;
+    private static final Integer FIRST_ATTEMPT = 1;
 
     private final Function<StepContext, T> function;
     private final StepConfig config;
@@ -60,7 +60,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
     @Override
     protected void replay(Operation existing) {
         var attempt = existing.stepDetails() != null && existing.stepDetails().attempt() != null
-                ? existing.stepDetails().attempt()
+                ? existing.stepDetails().attempt() + 1
                 : FIRST_ATTEMPT;
         switch (existing.status()) {
             case SUCCEEDED, FAILED -> markAlreadyCompleted();

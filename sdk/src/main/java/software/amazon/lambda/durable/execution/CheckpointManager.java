@@ -30,6 +30,7 @@ import software.amazon.lambda.durable.retry.PollingStrategy;
 class CheckpointManager {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
     private static final int MAX_ITEM_COUNT = 200; // max updates in one batch
+    private static final int FIRST_ATTEMPT = 1;
     private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);
 
     private final Consumer<List<Operation>> callback;
@@ -96,7 +97,7 @@ class CheckpointManager {
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
                     .add(future);
         }
-        pollForUpdateInternal(future, 0, Instant.now(), pollingStrategy);
+        pollForUpdateInternal(future, FIRST_ATTEMPT, Instant.now(), pollingStrategy);
         return future;
     }
 

@@ -23,7 +23,7 @@ public interface WaitForConditionWaitStrategy<T> {
      * Computes the delay before the next polling attempt based on the current state and attempt number.
      *
      * @param state the current state returned by the check function
-     * @param attempt the attempt number
+     * @param attempt the attempt number (1-based)
      * @return a {@link Duration} representing the delay before the next polling attempt
      * @throws WaitForConditionFailedException if the maximum number of attempts has been exceeded
      */

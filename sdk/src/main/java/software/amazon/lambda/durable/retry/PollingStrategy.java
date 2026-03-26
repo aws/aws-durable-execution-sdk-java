@@ -11,7 +11,7 @@ public interface PollingStrategy {
     /**
      * Computes the delay before the next polling attempt.
      *
-     * @param attempt The current attempt number (0-based)
+     * @param attempt The current attempt number (1-based)
      * @return Duration to wait before the next poll
      */
     Duration computeDelay(int attempt);
