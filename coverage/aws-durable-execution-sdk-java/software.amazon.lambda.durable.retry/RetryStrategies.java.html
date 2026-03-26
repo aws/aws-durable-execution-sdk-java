@@ -29,13 +29,13 @@ import software.amazon.lambda.durable.util.ParameterValidator;
                 );
 
         /** No retry strategy - fails immediately on first error. Use this for operations that should not be retried. */
-<span class="fc" id="L32">        public static final RetryStrategy NO_RETRY = (error, attemptNumber) -&gt; RetryDecision.fail();</span>
+<span class="fc" id="L32">        public static final RetryStrategy NO_RETRY = (error, attempt) -&gt; RetryDecision.fail();</span>
     }
 
     /**
      * Creates an exponential backoff retry strategy.
      *
-     * &lt;p&gt;The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^attemptNumber, maxDelay)
+     * &lt;p&gt;The delay calculation follows the formula: baseDelay = min(initialDelay × backoffRate^(attempt-1), maxDelay)
      *
      * @param maxAttempts Maximum number of attempts (including initial attempt)
      * @param initialDelay Initial delay before first retry
@@ -56,9 +56,9 @@ import software.amazon.lambda.durable.util.ParameterValidator;
 <span class="fc" id="L56">            throw new IllegalArgumentException(&quot;backoffRate must be positive&quot;);</span>
         }
 
-<span class="fc" id="L59">        return (error, attemptNumber) -&gt; {</span>
-            // Check if we've exceeded max attempts (attemptNumber is 0-based)
-<span class="fc bfc" id="L61" title="All 2 branches covered.">            if (attemptNumber + 1 &gt;= maxAttempts) {</span>
+<span class="fc" id="L59">        return (error, attempt) -&gt; {</span>
+            // Check if we've exceeded max attempts (attemptNumber is 1-based)
+<span class="fc bfc" id="L61" title="All 2 branches covered.">            if (attempt &gt;= maxAttempts) {</span>
 <span class="fc" id="L62">                return RetryDecision.fail();</span>
             }
 
@@ -66,7 +66,7 @@ import software.amazon.lambda.durable.util.ParameterValidator;
 <span class="fc" id="L66">            double initialDelaySeconds = initialDelay.toSeconds();</span>
 <span class="fc" id="L67">            double maxDelaySeconds = maxDelay.toSeconds();</span>
 
-<span class="fc" id="L69">            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attemptNumber), maxDelaySeconds);</span>
+<span class="fc" id="L69">            double baseDelay = Math.min(initialDelaySeconds * Math.pow(backoffRate, attempt - 1), maxDelaySeconds);</span>
 
             // Apply jitter
 <span class="fc" id="L72">            double delayWithJitter = jitter.apply(baseDelay);</span>
@@ -92,8 +92,8 @@ import software.amazon.lambda.durable.util.ParameterValidator;
         }
 <span class="fc" id="L93">        ParameterValidator.validateDuration(fixedDelay, &quot;fixedDelay&quot;);</span>
 
-<span class="fc" id="L95">        return (error, attemptNumber) -&gt; {</span>
-<span class="fc bfc" id="L96" title="All 2 branches covered.">            if (attemptNumber + 1 &gt;= maxAttempts) {</span>
+<span class="fc" id="L95">        return (error, attempt) -&gt; {</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">            if (attempt &gt;= maxAttempts) {</span>
 <span class="fc" id="L97">                return RetryDecision.fail();</span>
             }
 <span class="fc" id="L99">            return RetryDecision.retry(fixedDelay);</span>

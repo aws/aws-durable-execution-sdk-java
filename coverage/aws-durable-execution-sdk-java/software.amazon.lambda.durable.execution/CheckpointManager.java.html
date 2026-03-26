@@ -30,11 +30,12 @@ import software.amazon.lambda.durable.retry.PollingStrategy;
 class CheckpointManager {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
     private static final int MAX_ITEM_COUNT = 200; // max updates in one batch
-<span class="fc" id="L33">    private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);</span>
+    private static final int FIRST_ATTEMPT = 1;
+<span class="fc" id="L34">    private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);</span>
 
     private final Consumer&lt;List&lt;Operation&gt;&gt; callback;
     private final String durableExecutionArn;
-<span class="fc" id="L37">    private final Map&lt;String, List&lt;CompletableFuture&lt;Operation&gt;&gt;&gt; pollingFutures = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L38">    private final Map&lt;String, List&lt;CompletableFuture&lt;Operation&gt;&gt;&gt; pollingFutures = new ConcurrentHashMap&lt;&gt;();</span>
     private final ApiRequestDelayedBatcher&lt;OperationUpdate&gt; checkpointApiRequestDelayedBatcher;
     private final DurableConfig config;
     private String checkpointToken;
@@ -43,14 +44,14 @@ class CheckpointManager {
             DurableConfig config,
             String durableExecutionArn,
             String checkpointToken,
-<span class="fc" id="L46">            Consumer&lt;List&lt;Operation&gt;&gt; callback) {</span>
-<span class="fc" id="L47">        this.config = config;</span>
-<span class="fc" id="L48">        this.durableExecutionArn = durableExecutionArn;</span>
-<span class="fc" id="L49">        this.callback = callback;</span>
-<span class="fc" id="L50">        this.checkpointToken = checkpointToken;</span>
-<span class="fc" id="L51">        this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher&lt;&gt;(</span>
+<span class="fc" id="L47">            Consumer&lt;List&lt;Operation&gt;&gt; callback) {</span>
+<span class="fc" id="L48">        this.config = config;</span>
+<span class="fc" id="L49">        this.durableExecutionArn = durableExecutionArn;</span>
+<span class="fc" id="L50">        this.callback = callback;</span>
+<span class="fc" id="L51">        this.checkpointToken = checkpointToken;</span>
+<span class="fc" id="L52">        this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher&lt;&gt;(</span>
                 MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
-<span class="fc" id="L53">    }</span>
+<span class="fc" id="L54">    }</span>
 
     /**
      * Queues a checkpoint request for batched execution
@@ -58,8 +59,8 @@ class CheckpointManager {
      * @return a future that completes when the checkpoint request is executed
      */
     CompletableFuture&lt;Void&gt; checkpoint(OperationUpdate update) {
-<span class="fc" id="L61">        logger.debug(&quot;Checkpoint request received: Action {}&quot;, update.action());</span>
-<span class="fc" id="L62">        return checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());</span>
+<span class="fc" id="L62">        logger.debug(&quot;Checkpoint request received: Action {}&quot;, update.action());</span>
+<span class="fc" id="L63">        return checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());</span>
     }
 
     /**
@@ -68,7 +69,7 @@ class CheckpointManager {
      * @return a future that completes when the operation is updated
      */
     CompletableFuture&lt;Operation&gt; pollForUpdate(String operationId) {
-<span class="fc" id="L71">        return pollForUpdate(operationId, config.getPollingStrategy());</span>
+<span class="fc" id="L72">        return pollForUpdate(operationId, config.getPollingStrategy());</span>
     }
 
     /**
@@ -79,7 +80,7 @@ class CheckpointManager {
      * @return a future that completes when the operation is updated
      */
     CompletableFuture&lt;Operation&gt; pollForUpdate(String operationId, Instant at) {
-<span class="fc" id="L82">        return pollForUpdate(operationId, PollingStrategies.at(at));</span>
+<span class="fc" id="L83">        return pollForUpdate(operationId, PollingStrategies.at(at));</span>
     }
 
     /**
@@ -88,16 +89,16 @@ class CheckpointManager {
      * @return a future that completes when the operation is updated
      */
     CompletableFuture&lt;Operation&gt; pollForUpdate(String operationId, PollingStrategy pollingStrategy) {
-<span class="fc" id="L91">        logger.debug(&quot;Polling request received: operation id {}&quot;, operationId);</span>
-<span class="fc" id="L92">        var future = new CompletableFuture&lt;Operation&gt;();</span>
-<span class="fc" id="L93">        synchronized (pollingFutures) {</span>
+<span class="fc" id="L92">        logger.debug(&quot;Polling request received: operation id {}&quot;, operationId);</span>
+<span class="fc" id="L93">        var future = new CompletableFuture&lt;Operation&gt;();</span>
+<span class="fc" id="L94">        synchronized (pollingFutures) {</span>
             // register the future in pollingFutures, which will be completed by the polling thread
-<span class="fc" id="L95">            pollingFutures</span>
-<span class="fc" id="L96">                    .computeIfAbsent(operationId, k -&gt; Collections.synchronizedList(new ArrayList&lt;&gt;()))</span>
-<span class="fc" id="L97">                    .add(future);</span>
-<span class="fc" id="L98">        }</span>
-<span class="fc" id="L99">        pollForUpdateInternal(future, 0, Instant.now(), pollingStrategy);</span>
-<span class="fc" id="L100">        return future;</span>
+<span class="fc" id="L96">            pollingFutures</span>
+<span class="fc" id="L97">                    .computeIfAbsent(operationId, k -&gt; Collections.synchronizedList(new ArrayList&lt;&gt;()))</span>
+<span class="fc" id="L98">                    .add(future);</span>
+<span class="fc" id="L99">        }</span>
+<span class="fc" id="L100">        pollForUpdateInternal(future, FIRST_ATTEMPT, Instant.now(), pollingStrategy);</span>
+<span class="fc" id="L101">        return future;</span>
     }
 
     /**
@@ -113,19 +114,19 @@ class CheckpointManager {
             CompletableFuture&lt;Operation&gt; future, int attempt, Instant startTime, PollingStrategy pollingStrategy) {
 
         // the delay is the polling interval minus the time already elapsed in the current attempt
-<span class="fc" id="L116">        var delay = pollingStrategy.computeDelay(attempt).minus(Duration.between(startTime, Instant.now()));</span>
-<span class="fc" id="L117">        return checkpointApiRequestDelayedBatcher.submit(null, delay).thenCompose(v -&gt; {</span>
-<span class="fc bfc" id="L118" title="All 2 branches covered.">            if (future.isDone()) {</span>
-<span class="fc" id="L119">                return CompletableFuture.completedFuture(null);</span>
+<span class="fc" id="L117">        var delay = pollingStrategy.computeDelay(attempt).minus(Duration.between(startTime, Instant.now()));</span>
+<span class="fc" id="L118">        return checkpointApiRequestDelayedBatcher.submit(null, delay).thenCompose(v -&gt; {</span>
+<span class="fc bfc" id="L119" title="All 2 branches covered.">            if (future.isDone()) {</span>
+<span class="fc" id="L120">                return CompletableFuture.completedFuture(null);</span>
             }
-<span class="fc" id="L121">            var now = Instant.now();</span>
-<span class="fc bfc" id="L122" title="All 2 branches covered.">            if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) &gt; 0) {</span>
+<span class="fc" id="L122">            var now = Instant.now();</span>
+<span class="fc bfc" id="L123" title="All 2 branches covered.">            if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) &gt; 0) {</span>
                 // It has exceeded the previous attempt duration, starting a new attempt
-<span class="fc" id="L124">                return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);</span>
+<span class="fc" id="L125">                return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);</span>
             } else {
                 // continue the previous attempt. The future was completed just because
                 // it was batched with other checkpoint API calls.
-<span class="fc" id="L128">                return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);</span>
+<span class="fc" id="L129">                return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);</span>
             }
         });
     }
@@ -134,99 +135,99 @@ class CheckpointManager {
     void shutdown() {
         // complete all polling futures with an exception
         List&lt;List&lt;CompletableFuture&lt;Operation&gt;&gt;&gt; allFutures;
-<span class="fc" id="L137">        synchronized (pollingFutures) {</span>
-<span class="fc" id="L138">            allFutures = new ArrayList&lt;&gt;(pollingFutures.values());</span>
-<span class="fc" id="L139">            pollingFutures.clear();</span>
-<span class="fc" id="L140">        }</span>
+<span class="fc" id="L138">        synchronized (pollingFutures) {</span>
+<span class="fc" id="L139">            allFutures = new ArrayList&lt;&gt;(pollingFutures.values());</span>
+<span class="fc" id="L140">            pollingFutures.clear();</span>
+<span class="fc" id="L141">        }</span>
 
-<span class="fc bfc" id="L142" title="All 2 branches covered.">        for (var futures : allFutures) {</span>
-<span class="fc" id="L143">            futures.forEach(f -&gt; f.completeExceptionally(new IllegalStateException(&quot;CheckpointManager shutdown&quot;)));</span>
-<span class="fc" id="L144">        }</span>
+<span class="fc bfc" id="L143" title="All 2 branches covered.">        for (var futures : allFutures) {</span>
+<span class="fc" id="L144">            futures.forEach(f -&gt; f.completeExceptionally(new IllegalStateException(&quot;CheckpointManager shutdown&quot;)));</span>
+<span class="fc" id="L145">        }</span>
 
         // wait for all non-polling checkpoint requests to complete
-<span class="fc" id="L147">        checkpointApiRequestDelayedBatcher.shutdown();</span>
-<span class="fc" id="L148">    }</span>
+<span class="fc" id="L148">        checkpointApiRequestDelayedBatcher.shutdown();</span>
+<span class="fc" id="L149">    }</span>
 
     /**
      * Calling GetExecutionState API to get all pages of operations given CheckpointUpdatedExecutionState(operations,
      * nextMarker)
      */
     List&lt;Operation&gt; fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
-<span class="fc" id="L155">        List&lt;Operation&gt; operations = new ArrayList&lt;&gt;();</span>
-<span class="fc bfc" id="L156" title="All 2 branches covered.">        if (checkpointUpdatedExecutionState == null) {</span>
-<span class="fc" id="L157">            return operations;</span>
+<span class="fc" id="L156">        List&lt;Operation&gt; operations = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L157" title="All 2 branches covered.">        if (checkpointUpdatedExecutionState == null) {</span>
+<span class="fc" id="L158">            return operations;</span>
         }
-<span class="pc bpc" id="L159" title="1 of 2 branches missed.">        if (checkpointUpdatedExecutionState.operations() != null) {</span>
-<span class="fc" id="L160">            operations.addAll(checkpointUpdatedExecutionState.operations());</span>
+<span class="pc bpc" id="L160" title="1 of 2 branches missed.">        if (checkpointUpdatedExecutionState.operations() != null) {</span>
+<span class="fc" id="L161">            operations.addAll(checkpointUpdatedExecutionState.operations());</span>
         }
-<span class="fc" id="L162">        var nextMarker = checkpointUpdatedExecutionState.nextMarker();</span>
-<span class="fc bfc" id="L163" title="All 4 branches covered.">        while (nextMarker != null &amp;&amp; !nextMarker.isEmpty()) {</span>
-<span class="fc" id="L164">            var startTime = System.nanoTime();</span>
-<span class="fc" id="L165">            var response = config.getDurableExecutionClient()</span>
-<span class="fc" id="L166">                    .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);</span>
-<span class="fc" id="L167">            logger.debug(</span>
+<span class="fc" id="L163">        var nextMarker = checkpointUpdatedExecutionState.nextMarker();</span>
+<span class="fc bfc" id="L164" title="All 4 branches covered.">        while (nextMarker != null &amp;&amp; !nextMarker.isEmpty()) {</span>
+<span class="fc" id="L165">            var startTime = System.nanoTime();</span>
+<span class="fc" id="L166">            var response = config.getDurableExecutionClient()</span>
+<span class="fc" id="L167">                    .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);</span>
+<span class="fc" id="L168">            logger.debug(</span>
                     &quot;Durable getExecutionState API called (latency={}ns): {}.&quot;,
-<span class="fc" id="L169">                    System.nanoTime() - startTime,</span>
+<span class="fc" id="L170">                    System.nanoTime() - startTime,</span>
                     response);
-<span class="fc" id="L171">            operations.addAll(response.operations());</span>
-<span class="fc" id="L172">            nextMarker = response.nextMarker();</span>
-<span class="fc" id="L173">        }</span>
-<span class="fc" id="L174">        return operations;</span>
+<span class="fc" id="L172">            operations.addAll(response.operations());</span>
+<span class="fc" id="L173">            nextMarker = response.nextMarker();</span>
+<span class="fc" id="L174">        }</span>
+<span class="fc" id="L175">        return operations;</span>
     }
 
     private void checkpointBatch(List&lt;OperationUpdate&gt; updates) {
-<span class="fc" id="L178">        synchronized (pollingFutures) {</span>
+<span class="fc" id="L179">        synchronized (pollingFutures) {</span>
             // filter the null values from pollers
-<span class="fc" id="L180">            var request = updates.stream().filter(Objects::nonNull).toList();</span>
+<span class="fc" id="L181">            var request = updates.stream().filter(Objects::nonNull).toList();</span>
 
-<span class="fc bfc" id="L182" title="All 4 branches covered.">            if (pollingFutures.isEmpty() &amp;&amp; request.isEmpty()) {</span>
+<span class="fc bfc" id="L183" title="All 4 branches covered.">            if (pollingFutures.isEmpty() &amp;&amp; request.isEmpty()) {</span>
                 // ignore the batch if no pollers and no data to checkpoint
-<span class="fc" id="L184">                return;</span>
+<span class="fc" id="L185">                return;</span>
             }
 
-<span class="fc" id="L187">            var startTime = System.nanoTime();</span>
-<span class="fc" id="L188">            logger.debug(&quot;Calling durable checkpoint API with {} updates: {}&quot;, updates.size(), request);</span>
-<span class="fc" id="L189">            var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);</span>
-<span class="fc" id="L190">            logger.debug(&quot;Durable checkpoint API called (latency={}ns): {}.&quot;, System.nanoTime() - startTime, response);</span>
+<span class="fc" id="L188">            var startTime = System.nanoTime();</span>
+<span class="fc" id="L189">            logger.debug(&quot;Calling durable checkpoint API with {} updates: {}&quot;, updates.size(), request);</span>
+<span class="fc" id="L190">            var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);</span>
+<span class="fc" id="L191">            logger.debug(&quot;Durable checkpoint API called (latency={}ns): {}.&quot;, System.nanoTime() - startTime, response);</span>
 
             // Notify callback of completion
-<span class="fc" id="L193">            checkpointToken = response.checkpointToken();</span>
-<span class="fc bfc" id="L194" title="All 2 branches covered.">            if (response.newExecutionState() != null) {</span>
+<span class="fc" id="L194">            checkpointToken = response.checkpointToken();</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">            if (response.newExecutionState() != null) {</span>
                 // fetch all pages of operations
-<span class="fc" id="L196">                var operations = fetchAllPages(response.newExecutionState());</span>
+<span class="fc" id="L197">                var operations = fetchAllPages(response.newExecutionState());</span>
 
-<span class="fc" id="L198">                var processStartTime = System.nanoTime();</span>
-<span class="fc" id="L199">                int completedFutures = 0;</span>
-<span class="fc" id="L200">                logger.debug(</span>
-<span class="fc" id="L201">                        &quot;Processing {} operations. ({} pending pollers)&quot;, operations.size(), pollingFutures.size());</span>
+<span class="fc" id="L199">                var processStartTime = System.nanoTime();</span>
+<span class="fc" id="L200">                int completedFutures = 0;</span>
+<span class="fc" id="L201">                logger.debug(</span>
+<span class="fc" id="L202">                        &quot;Processing {} operations. ({} pending pollers)&quot;, operations.size(), pollingFutures.size());</span>
                 // call the callback
-<span class="fc" id="L203">                callback.accept(operations);</span>
+<span class="fc" id="L204">                callback.accept(operations);</span>
 
                 // complete the registered pollingFutures
-<span class="fc bfc" id="L206" title="All 2 branches covered.">                for (var operation : operations) {</span>
-<span class="fc" id="L207">                    var pollers = pollingFutures.remove(operation.id());</span>
-<span class="fc bfc" id="L208" title="All 2 branches covered.">                    if (pollers != null) {</span>
-<span class="fc" id="L209">                        completedFutures += pollers.size();</span>
-<span class="fc" id="L210">                        pollers.forEach(poller -&gt; poller.complete(operation));</span>
+<span class="fc bfc" id="L207" title="All 2 branches covered.">                for (var operation : operations) {</span>
+<span class="fc" id="L208">                    var pollers = pollingFutures.remove(operation.id());</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">                    if (pollers != null) {</span>
+<span class="fc" id="L210">                        completedFutures += pollers.size();</span>
+<span class="fc" id="L211">                        pollers.forEach(poller -&gt; poller.complete(operation));</span>
                     }
-<span class="fc" id="L212">                }</span>
-<span class="fc" id="L213">                logger.debug(</span>
+<span class="fc" id="L213">                }</span>
+<span class="fc" id="L214">                logger.debug(</span>
                         &quot;{} operations processed and {} pollers completed (latency={}ns). &quot;,
-<span class="fc" id="L215">                        operations.size(),</span>
-<span class="fc" id="L216">                        completedFutures,</span>
-<span class="fc" id="L217">                        System.nanoTime() - processStartTime);</span>
+<span class="fc" id="L216">                        operations.size(),</span>
+<span class="fc" id="L217">                        completedFutures,</span>
+<span class="fc" id="L218">                        System.nanoTime() - processStartTime);</span>
             }
-<span class="fc" id="L219">        }</span>
-<span class="fc" id="L220">    }</span>
+<span class="fc" id="L220">        }</span>
+<span class="fc" id="L221">    }</span>
 
     private static int estimateSize(OperationUpdate update) {
-<span class="fc bfc" id="L223" title="All 2 branches covered.">        if (update == null) {</span>
-<span class="fc" id="L224">            return 0;</span>
+<span class="fc bfc" id="L224" title="All 2 branches covered.">        if (update == null) {</span>
+<span class="fc" id="L225">            return 0;</span>
         }
-<span class="fc" id="L226">        return update.id().length()</span>
-<span class="fc" id="L227">                + update.type().toString().length()</span>
-<span class="fc" id="L228">                + update.action().toString().length()</span>
-<span class="fc bfc" id="L229" title="All 2 branches covered.">                + (update.payload() != null ? update.payload().length() : 0)</span>
+<span class="fc" id="L227">        return update.id().length()</span>
+<span class="fc" id="L228">                + update.type().toString().length()</span>
+<span class="fc" id="L229">                + update.action().toString().length()</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">                + (update.payload() != null ? update.payload().length() : 0)</span>
                 + 100;
     }
 }

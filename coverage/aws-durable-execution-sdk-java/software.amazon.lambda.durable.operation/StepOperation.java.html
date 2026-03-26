@@ -33,7 +33,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * @param &lt;T&gt; the result type of the step function
  */
 public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt; {
-<span class="fc" id="L36">    private static final Integer FIRST_ATTEMPT = 0;</span>
+<span class="fc" id="L36">    private static final Integer FIRST_ATTEMPT = 1;</span>
 
     private final Function&lt;StepContext, T&gt; function;
     private final StepConfig config;
@@ -60,7 +60,7 @@ public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt
     @Override
     protected void replay(Operation existing) {
 <span class="pc bpc" id="L62" title="1 of 4 branches missed.">        var attempt = existing.stepDetails() != null &amp;&amp; existing.stepDetails().attempt() != null</span>
-<span class="fc" id="L63">                ? existing.stepDetails().attempt()</span>
+<span class="fc" id="L63">                ? existing.stepDetails().attempt() + 1</span>
 <span class="fc" id="L64">                : FIRST_ATTEMPT;</span>
 <span class="pc bpc" id="L65" title="2 of 5 branches missed.">        switch (existing.status()) {</span>
 <span class="fc" id="L66">            case SUCCEEDED, FAILED -&gt; markAlreadyCompleted();</span>

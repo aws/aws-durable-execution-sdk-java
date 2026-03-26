@@ -36,6 +36,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * @param &lt;T&gt; the type of state being polled
  */
 public class WaitForConditionOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt; {
+<span class="fc" id="L39">    private static final Integer FIRST_ATTEMPT = 1;</span>
 
     private final BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc;
     private final WaitForConditionConfig&lt;T&gt; config;
@@ -48,145 +49,146 @@ public class WaitForConditionOperation&lt;T&gt; extends SerializableDurableOpera
             TypeToken&lt;T&gt; resultTypeToken,
             WaitForConditionConfig&lt;T&gt; config,
             DurableContextImpl durableContext) {
-<span class="fc" id="L51">        super(</span>
-<span class="fc" id="L52">                OperationIdentifier.of(operationId, name, OperationType.STEP, OperationSubType.WAIT_FOR_CONDITION),</span>
+<span class="fc" id="L52">        super(</span>
+<span class="fc" id="L53">                OperationIdentifier.of(operationId, name, OperationType.STEP, OperationSubType.WAIT_FOR_CONDITION),</span>
                 resultTypeToken,
-<span class="fc" id="L54">                config.serDes(),</span>
+<span class="fc" id="L55">                config.serDes(),</span>
                 durableContext);
 
-<span class="fc" id="L57">        this.checkFunc = checkFunc;</span>
-<span class="fc" id="L58">        this.config = config;</span>
-<span class="fc" id="L59">        this.userExecutor = durableContext.getDurableConfig().getExecutorService();</span>
-<span class="fc" id="L60">    }</span>
+<span class="fc" id="L58">        this.checkFunc = checkFunc;</span>
+<span class="fc" id="L59">        this.config = config;</span>
+<span class="fc" id="L60">        this.userExecutor = durableContext.getDurableConfig().getExecutorService();</span>
+<span class="fc" id="L61">    }</span>
 
     @Override
     protected void start() {
-<span class="fc" id="L64">        executeCheckLogic(config.initialState(), 0);</span>
-<span class="fc" id="L65">    }</span>
+<span class="fc" id="L65">        executeCheckLogic(config.initialState(), FIRST_ATTEMPT);</span>
+<span class="fc" id="L66">    }</span>
 
     @Override
     protected void replay(Operation existing) {
-<span class="fc bfc" id="L69" title="All 4 branches covered.">        switch (existing.status()) {</span>
-<span class="fc" id="L70">            case SUCCEEDED, FAILED -&gt; markAlreadyCompleted(); // Check if already completed / failed</span>
-<span class="fc" id="L71">            case PENDING -&gt; pollReadyAndResumeCheckLoop(existing); // Check if pending retry</span>
-<span class="fc" id="L72">            case STARTED, READY -&gt; resumeCheckLoop(existing);</span>
+<span class="fc bfc" id="L70" title="All 4 branches covered.">        switch (existing.status()) {</span>
+<span class="fc" id="L71">            case SUCCEEDED, FAILED -&gt; markAlreadyCompleted(); // Check if already completed / failed</span>
+<span class="fc" id="L72">            case PENDING -&gt; pollReadyAndResumeCheckLoop(existing); // Check if pending retry</span>
+<span class="fc" id="L73">            case STARTED, READY -&gt; resumeCheckLoop(existing);</span>
             default -&gt;
-<span class="pc" id="L74">                throw terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="fc" id="L75">                        &quot;Unexpected waitForCondition status: &quot; + existing.status());</span>
+<span class="pc" id="L75">                throw terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="fc" id="L76">                        &quot;Unexpected waitForCondition status: &quot; + existing.status());</span>
         }
-<span class="fc" id="L77">    }</span>
+<span class="fc" id="L78">    }</span>
 
     @Override
     public T get() {
-<span class="fc" id="L81">        var op = waitForOperationCompletion();</span>
+<span class="fc" id="L82">        var op = waitForOperationCompletion();</span>
 
-<span class="fc bfc" id="L83" title="All 2 branches covered.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
-<span class="fc" id="L84">            var stepDetails = op.stepDetails();</span>
-<span class="pc bpc" id="L85" title="1 of 2 branches missed.">            var result = (stepDetails != null) ? stepDetails.result() : null;</span>
-<span class="fc" id="L86">            return deserializeResult(result);</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        if (op.status() == OperationStatus.SUCCEEDED) {</span>
+<span class="fc" id="L85">            var stepDetails = op.stepDetails();</span>
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">            var result = (stepDetails != null) ? stepDetails.result() : null;</span>
+<span class="fc" id="L87">            return deserializeResult(result);</span>
         } else {
-<span class="fc" id="L88">            var errorObject = op.stepDetails().error();</span>
+<span class="fc" id="L89">            var errorObject = op.stepDetails().error();</span>
 
             // Attempt to reconstruct and throw the original exception
-<span class="fc" id="L91">            Throwable original = deserializeException(errorObject);</span>
-<span class="fc bfc" id="L92" title="All 2 branches covered.">            if (original != null) {</span>
-<span class="nc" id="L93">                ExceptionHelper.sneakyThrow(original);</span>
+<span class="fc" id="L92">            Throwable original = deserializeException(errorObject);</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">            if (original != null) {</span>
+<span class="nc" id="L94">                ExceptionHelper.sneakyThrow(original);</span>
             }
             // Fallback: wrap in WaitForConditionFailedException
-<span class="fc" id="L96">            throw new WaitForConditionFailedException(op);</span>
+<span class="fc" id="L97">            throw new WaitForConditionFailedException(op);</span>
         }
     }
 
     private void resumeCheckLoop(Operation existing) {
-<span class="fc" id="L101">        var stepDetails = existing.stepDetails();</span>
-<span class="pc bpc" id="L102" title="2 of 4 branches missed.">        int attempt = (stepDetails != null &amp;&amp; stepDetails.attempt() != null) ? stepDetails.attempt() : 0;</span>
-<span class="pc bpc" id="L103" title="1 of 2 branches missed.">        var checkpointData = stepDetails != null ? stepDetails.result() : null;</span>
+<span class="fc" id="L102">        var stepDetails = existing.stepDetails();</span>
+        int attempt =
+<span class="pc bpc" id="L104" title="2 of 4 branches missed.">                (stepDetails != null &amp;&amp; stepDetails.attempt() != null) ? stepDetails.attempt() + 1 : FIRST_ATTEMPT;</span>
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">        var checkpointData = stepDetails != null ? stepDetails.result() : null;</span>
         T currentState; // Get current state
-<span class="fc bfc" id="L105" title="All 2 branches covered.">        if (checkpointData != null) {</span>
-<span class="fc" id="L106">            currentState = deserializeResult(checkpointData);</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (checkpointData != null) {</span>
+<span class="fc" id="L108">            currentState = deserializeResult(checkpointData);</span>
         } else {
-<span class="fc" id="L108">            currentState = config.initialState();</span>
+<span class="fc" id="L110">            currentState = config.initialState();</span>
         }
-<span class="fc" id="L110">        executeCheckLogic(currentState, attempt);</span>
-<span class="fc" id="L111">    }</span>
+<span class="fc" id="L112">        executeCheckLogic(currentState, attempt);</span>
+<span class="fc" id="L113">    }</span>
 
     private CompletableFuture&lt;Void&gt; pollReadyAndResumeCheckLoop(Operation existing) {
-<span class="fc" id="L114">        return pollForOperationUpdates()</span>
-<span class="pc bpc" id="L115" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
-<span class="fc" id="L116">                        ? CompletableFuture.completedFuture(op)</span>
-<span class="nc" id="L117">                        : pollForOperationUpdates())</span>
-<span class="fc" id="L118">                .thenAccept(this::resumeCheckLoop);</span>
+<span class="fc" id="L116">        return pollForOperationUpdates()</span>
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+<span class="fc" id="L118">                        ? CompletableFuture.completedFuture(op)</span>
+<span class="nc" id="L119">                        : pollForOperationUpdates())</span>
+<span class="fc" id="L120">                .thenAccept(this::resumeCheckLoop);</span>
     }
 
     private void executeCheckLogic(T currentState, int attempt) {
-<span class="fc" id="L122">        Runnable userHandler = () -&gt; {</span>
-<span class="fc" id="L123">            try (var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {</span>
+<span class="fc" id="L124">        Runnable userHandler = () -&gt; {</span>
+<span class="fc" id="L125">            try (var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {</span>
                 try {
                     // Checkpoint START if not already started
-<span class="fc" id="L126">                    var existing = getOperation();</span>
-<span class="fc bfc" id="L127" title="All 4 branches covered.">                    if (existing == null || existing.status() != OperationStatus.STARTED) {</span>
-<span class="fc" id="L128">                        var startUpdate = OperationUpdate.builder().action(OperationAction.START);</span>
-<span class="fc" id="L129">                        sendOperationUpdateAsync(startUpdate);</span>
+<span class="fc" id="L128">                    var existing = getOperation();</span>
+<span class="fc bfc" id="L129" title="All 4 branches covered.">                    if (existing == null || existing.status() != OperationStatus.STARTED) {</span>
+<span class="fc" id="L130">                        var startUpdate = OperationUpdate.builder().action(OperationAction.START);</span>
+<span class="fc" id="L131">                        sendOperationUpdateAsync(startUpdate);</span>
                     }
 
                     // Execute check function in user executor
-<span class="fc" id="L133">                    WaitForConditionResult&lt;T&gt; result = checkFunc.apply(currentState, stepContext);</span>
+<span class="fc" id="L135">                    WaitForConditionResult&lt;T&gt; result = checkFunc.apply(currentState, stepContext);</span>
 
                     // Serialize/deserialize round-trip on the value to ensure state is checkpoint-safe
-<span class="fc" id="L136">                    var serializedState = serializeResult(result.value());</span>
-<span class="fc" id="L137">                    T deserializedValue = deserializeResult(serializedState);</span>
+<span class="fc" id="L138">                    var serializedState = serializeResult(result.value());</span>
+<span class="fc" id="L139">                    T deserializedValue = deserializeResult(serializedState);</span>
 
-<span class="fc bfc" id="L139" title="All 2 branches covered.">                    if (result.isDone()) {</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">                    if (result.isDone()) {</span>
                         // Condition met — checkpoint SUCCEED
-<span class="fc" id="L141">                        var successUpdate = OperationUpdate.builder()</span>
-<span class="fc" id="L142">                                .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L143">                                .payload(serializedState);</span>
-<span class="fc" id="L144">                        sendOperationUpdate(successUpdate);</span>
-<span class="fc" id="L145">                    } else {</span>
+<span class="fc" id="L143">                        var successUpdate = OperationUpdate.builder()</span>
+<span class="fc" id="L144">                                .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L145">                                .payload(serializedState);</span>
+<span class="fc" id="L146">                        sendOperationUpdate(successUpdate);</span>
+<span class="fc" id="L147">                    } else {</span>
                         // Compute delay from strategy
-<span class="fc" id="L147">                        Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);</span>
+<span class="fc" id="L149">                        Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);</span>
 
                         // Checkpoint RETRY with delay
-<span class="fc" id="L150">                        var retryUpdate = OperationUpdate.builder()</span>
-<span class="fc" id="L151">                                .action(OperationAction.RETRY)</span>
-<span class="fc" id="L152">                                .payload(serializedState)</span>
-<span class="fc" id="L153">                                .stepOptions(StepOptions.builder()</span>
-<span class="fc" id="L154">                                        .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))</span>
-<span class="fc" id="L155">                                        .build());</span>
-<span class="fc" id="L156">                        sendOperationUpdate(retryUpdate);</span>
+<span class="fc" id="L152">                        var retryUpdate = OperationUpdate.builder()</span>
+<span class="fc" id="L153">                                .action(OperationAction.RETRY)</span>
+<span class="fc" id="L154">                                .payload(serializedState)</span>
+<span class="fc" id="L155">                                .stepOptions(StepOptions.builder()</span>
+<span class="fc" id="L156">                                        .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))</span>
+<span class="fc" id="L157">                                        .build());</span>
+<span class="fc" id="L158">                        sendOperationUpdate(retryUpdate);</span>
 
                         // Poll for READY, then continue the loop
-<span class="fc" id="L159">                        pollForOperationUpdates()</span>
-<span class="pc bpc" id="L160" title="1 of 2 branches missed.">                                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
-<span class="nc" id="L161">                                        ? CompletableFuture.completedFuture(op)</span>
-<span class="fc" id="L162">                                        : pollForOperationUpdates())</span>
-<span class="pc" id="L163">                                .thenRun(() -&gt; executeCheckLogic(deserializedValue, attempt + 1));</span>
+<span class="fc" id="L161">                        pollForOperationUpdates()</span>
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">                                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+<span class="nc" id="L163">                                        ? CompletableFuture.completedFuture(op)</span>
+<span class="fc" id="L164">                                        : pollForOperationUpdates())</span>
+<span class="pc" id="L165">                                .thenRun(() -&gt; executeCheckLogic(deserializedValue, attempt + 1));</span>
                     }
-<span class="fc" id="L165">                } catch (Throwable e) {</span>
-<span class="fc" id="L166">                    handleCheckFailure(e);</span>
-<span class="fc" id="L167">                }</span>
+<span class="fc" id="L167">                } catch (Throwable e) {</span>
+<span class="fc" id="L168">                    handleCheckFailure(e);</span>
+<span class="fc" id="L169">                }</span>
             }
-<span class="fc" id="L169">        };</span>
+<span class="fc" id="L171">        };</span>
 
-<span class="fc" id="L171">        runUserHandler(userHandler, getOperationId(), ThreadType.STEP);</span>
-<span class="fc" id="L172">    }</span>
+<span class="fc" id="L173">        runUserHandler(userHandler, getOperationId(), ThreadType.STEP);</span>
+<span class="fc" id="L174">    }</span>
 
     private void handleCheckFailure(Throwable exception) {
-<span class="fc" id="L175">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
-<span class="pc bpc" id="L176" title="1 of 2 branches missed.">        if (exception instanceof SuspendExecutionException suspendExecutionException) {</span>
-<span class="nc" id="L177">            throw suspendExecutionException;</span>
+<span class="fc" id="L177">        exception = ExceptionHelper.unwrapCompletableFuture(exception);</span>
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">        if (exception instanceof SuspendExecutionException suspendExecutionException) {</span>
+<span class="nc" id="L179">            throw suspendExecutionException;</span>
         }
-<span class="pc bpc" id="L179" title="1 of 2 branches missed.">        if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {</span>
-<span class="nc" id="L180">            throw terminateExecution(unrecoverable);</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">        if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {</span>
+<span class="nc" id="L182">            throw terminateExecution(unrecoverable);</span>
         }
 
-<span class="fc bfc" id="L183" title="All 2 branches covered.">        final var errorObject = (exception instanceof DurableOperationException durableOpEx)</span>
-<span class="fc" id="L184">                ? durableOpEx.getErrorObject()</span>
-<span class="fc" id="L185">                : serializeException(exception);</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        final var errorObject = (exception instanceof DurableOperationException durableOpEx)</span>
+<span class="fc" id="L186">                ? durableOpEx.getErrorObject()</span>
+<span class="fc" id="L187">                : serializeException(exception);</span>
 
         // Checkpoint FAIL
-<span class="fc" id="L188">        var failUpdate = OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);</span>
-<span class="fc" id="L189">        sendOperationUpdate(failUpdate);</span>
-<span class="fc" id="L190">    }</span>
+<span class="fc" id="L190">        var failUpdate = OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);</span>
+<span class="fc" id="L191">        sendOperationUpdate(failUpdate);</span>
+<span class="fc" id="L192">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

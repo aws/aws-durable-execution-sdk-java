@@ -126,7 +126,7 @@ public class TestOperation {
     /** Returns the current retry attempt number (0-based), defaulting to 0 if not available. */
     public int getAttempt() {
 <span class="nc" id="L128">        var details = operation.stepDetails();</span>
-<span class="nc bnc" id="L129" title="All 4 branches missed.">        return details != null &amp;&amp; details.attempt() != null ? details.attempt() : 0;</span>
+<span class="nc bnc" id="L129" title="All 4 branches missed.">        return details != null &amp;&amp; details.attempt() != null ? details.attempt() : 1;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
