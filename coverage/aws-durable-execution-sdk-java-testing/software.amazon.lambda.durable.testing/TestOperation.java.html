@@ -2,16 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /** Wrapper for AWS SDK Operation providing convenient access methods. */
@@ -21,74 +27,106 @@ public class TestOperation {
     private final SerDes serDes;
 
     TestOperation(Operation operation, SerDes serDes) {
-<span class="fc" id="L24">        this(operation, List.of(), serDes);</span>
-<span class="fc" id="L25">    }</span>
-
-<span class="fc" id="L27">    TestOperation(Operation operation, List&lt;Event&gt; events, SerDes serDes) {</span>
-<span class="fc" id="L28">        this.operation = operation;</span>
-<span class="fc" id="L29">        this.events = events;</span>
-<span class="fc" id="L30">        this.serDes = serDes;</span>
+<span class="fc" id="L30">        this(operation, List.of(), serDes);</span>
 <span class="fc" id="L31">    }</span>
+
+<span class="fc" id="L33">    TestOperation(Operation operation, List&lt;Event&gt; events, SerDes serDes) {</span>
+<span class="fc" id="L34">        this.operation = operation;</span>
+<span class="fc" id="L35">        this.events = events;</span>
+<span class="fc" id="L36">        this.serDes = serDes;</span>
+<span class="fc" id="L37">    }</span>
 
     /** Returns the raw history events associated with this operation. */
     public List&lt;Event&gt; getEvents() {
-<span class="nc" id="L35">        return List.copyOf(events);</span>
+<span class="nc" id="L41">        return List.copyOf(events);</span>
     }
 
     /** Returns the operation name. */
     public String getName() {
-<span class="fc" id="L40">        return operation.name();</span>
+<span class="fc" id="L46">        return operation.name();</span>
     }
 
     /** Returns the current status of this operation (e.g. STARTED, SUCCEEDED, FAILED). */
     public OperationStatus getStatus() {
-<span class="fc" id="L45">        return operation.status();</span>
+<span class="fc" id="L51">        return operation.status();</span>
     }
 
     /** Returns the operation type (STEP, WAIT, CALLBACK, etc.). */
     public OperationType getType() {
-<span class="fc" id="L50">        return operation.type();</span>
+<span class="fc" id="L56">        return operation.type();</span>
+    }
+
+    /** Returns the operation's subtype */
+    public String getSubtype() {
+<span class="nc" id="L61">        return operation.subType();</span>
+    }
+
+    /** Returns true if the operation has completed (either succeeded or failed). */
+    public boolean isCompleted() {
+<span class="nc" id="L66">        return ExecutionManager.isTerminalStatus(operation.status());</span>
+    }
+
+    /** Returns the duration of the operation */
+    public Duration getDuration() {
+<span class="nc" id="L71">        return Duration.between(</span>
+<span class="nc" id="L72">                operation.startTimestamp(),</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">                operation.endTimestamp() != null ? operation.endTimestamp() : Instant.now());</span>
     }
 
     /** Returns the step details, or null if this is not a step operation. */
     public StepDetails getStepDetails() {
-<span class="fc" id="L55">        return operation.stepDetails();</span>
+<span class="fc" id="L78">        return operation.stepDetails();</span>
     }
 
     /** Returns the wait details, or null if this is not a wait operation. */
     public WaitDetails getWaitDetails() {
-<span class="nc" id="L60">        return operation.waitDetails();</span>
+<span class="nc" id="L83">        return operation.waitDetails();</span>
     }
 
     /** Returns the callback details, or null if this is not a callback operation. */
     public CallbackDetails getCallbackDetails() {
-<span class="nc" id="L65">        return operation.callbackDetails();</span>
+<span class="nc" id="L88">        return operation.callbackDetails();</span>
+    }
+
+    /** Returns the chained invoke details, or null if this is not a chained invoke operation. */
+    public ChainedInvokeDetails getChainedInvokeDetails() {
+<span class="nc" id="L93">        return operation.chainedInvokeDetails();</span>
+    }
+
+    /** Returns the context details, or null if this operation is not a context. */
+    public ContextDetails getContextDetails() {
+<span class="nc" id="L98">        return operation.contextDetails();</span>
+    }
+
+    /** Returns the execution details, or null if this operation is not an EXECUTION operation. */
+    public ExecutionDetails getExecutionDetails() {
+<span class="nc" id="L103">        return operation.executionDetails();</span>
     }
 
     /** Deserializes and returns the step result as the given type. */
     public &lt;T&gt; T getStepResult(Class&lt;T&gt; type) {
-<span class="fc" id="L70">        return getStepResult(TypeToken.get(type));</span>
+<span class="fc" id="L108">        return getStepResult(TypeToken.get(type));</span>
     }
 
     /** Deserializes and returns the step result using a TypeToken for generic types. */
     public &lt;T&gt; T getStepResult(TypeToken&lt;T&gt; type) {
-<span class="fc" id="L75">        var details = operation.stepDetails();</span>
-<span class="pc bpc" id="L76" title="2 of 4 branches missed.">        if (details == null || details.result() == null) {</span>
-<span class="nc" id="L77">            return null;</span>
+<span class="fc" id="L113">        var details = operation.stepDetails();</span>
+<span class="pc bpc" id="L114" title="2 of 4 branches missed.">        if (details == null || details.result() == null) {</span>
+<span class="nc" id="L115">            return null;</span>
         }
-<span class="fc" id="L79">        return serDes.deserialize(details.result(), type);</span>
+<span class="fc" id="L117">        return serDes.deserialize(details.result(), type);</span>
     }
 
     /** Returns the step error, or null if the step succeeded or this is not a step operation. */
     public ErrorObject getError() {
-<span class="fc" id="L84">        var details = operation.stepDetails();</span>
-<span class="pc bpc" id="L85" title="1 of 2 branches missed.">        return details != null ? details.error() : null;</span>
+<span class="fc" id="L122">        var details = operation.stepDetails();</span>
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">        return details != null ? details.error() : null;</span>
     }
 
     /** Returns the current retry attempt number (0-based), defaulting to 0 if not available. */
     public int getAttempt() {
-<span class="nc" id="L90">        var details = operation.stepDetails();</span>
-<span class="nc bnc" id="L91" title="All 4 branches missed.">        return details != null &amp;&amp; details.attempt() != null ? details.attempt() : 0;</span>
+<span class="nc" id="L128">        var details = operation.stepDetails();</span>
+<span class="nc bnc" id="L129" title="All 4 branches missed.">        return details != null &amp;&amp; details.attempt() != null ? details.attempt() : 0;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
