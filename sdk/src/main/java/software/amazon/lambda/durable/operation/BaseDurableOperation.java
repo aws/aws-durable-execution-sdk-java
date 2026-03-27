@@ -188,7 +188,7 @@ public abstract class BaseDurableOperation {
         // is between `isOperationCompleted` and `thenRun`.
         // If this operation is a branch/iteration of a ConcurrencyOperation (map or parallel), the branches/iterations
         // must be completed sequentially to avoid race conditions.
-        synchronized (parentOperation == null ? completionFuture : parentOperation) {
+        synchronized (parentOperation == null ? this : parentOperation) {
             if (!isOperationCompleted()) {
                 // Operation not done yet
                 logger.trace(
@@ -295,7 +295,7 @@ public abstract class BaseDurableOperation {
     private void markCompletionFutureCompleted() {
         // It's important that we synchronize access to the future, otherwise the processing could happen
         // on someone else's thread and cause a race condition.
-        synchronized (parentOperation == null ? completionFuture : parentOperation) {
+        synchronized (parentOperation == null ? this : parentOperation) {
             // Completing the future here will also run any other completion stages that have been attached
             // to the future. In our case, other contexts may have attached a function to reactivate themselves,
             // so they will definitely have a chance to reactivate before we finish completing and deactivating
