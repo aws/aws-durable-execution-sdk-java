@@ -9,9 +9,10 @@ import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
-<span class="fc" id="L14">public class WaitForCallbackFailedExample extends DurableHandler&lt;ApprovalRequest, String&gt; {</span>
+<span class="fc" id="L15">public class WaitForCallbackFailedExample extends DurableHandler&lt;ApprovalRequest, String&gt; {</span>
 
     @Override
     public String handleRequest(ApprovalRequest input, DurableContext context) {
@@ -19,33 +20,36 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
         String approvalResult;
 
         try {
-<span class="pc" id="L22">            approvalResult = context.waitForCallback(</span>
+<span class="pc" id="L23">            approvalResult = context.waitForCallback(</span>
                     &quot;preapproval&quot;,
                     String.class,
                     (callbackId, ctx) -&gt; {
-<span class="fc" id="L26">                        ctx.getLogger().info(&quot;Sending callback {} to preapproval system&quot;, callbackId);</span>
-<span class="fc" id="L27">                        throw new RuntimeException(&quot;Submitter failed with an exception&quot;);</span>
+<span class="fc" id="L27">                        ctx.getLogger().info(&quot;Sending callback {} to preapproval system&quot;, callbackId);</span>
+<span class="fc" id="L28">                        throw new RuntimeException(&quot;Submitter failed with an exception&quot;);</span>
                     },
-<span class="fc" id="L29">                    WaitForCallbackConfig.builder()</span>
-<span class="fc" id="L30">                            .stepConfig(StepConfig.builder()</span>
-<span class="fc" id="L31">                                    .serDes(new FailedSerDes())</span>
-<span class="fc" id="L32">                                    .build())</span>
-<span class="fc" id="L33">                            .build());</span>
-<span class="fc" id="L34">        } catch (Exception ex) {</span>
-<span class="fc" id="L35">            return ex.getClass().getSimpleName() + &quot;:&quot; + ex.getMessage();</span>
-<span class="nc" id="L36">        }</span>
+<span class="fc" id="L30">                    WaitForCallbackConfig.builder()</span>
+<span class="fc" id="L31">                            .stepConfig(StepConfig.builder()</span>
+<span class="fc" id="L32">                                    .serDes(new FailedSerDes())</span>
+<span class="fc" id="L33">                                    .build())</span>
+<span class="fc" id="L34">                            .build());</span>
+<span class="fc" id="L35">        } catch (SuspendExecutionException e) {</span>
+            // not to swallow the SuspendExecutionException
+<span class="fc" id="L37">            throw e;</span>
+<span class="fc" id="L38">        } catch (Exception ex) {</span>
+<span class="fc" id="L39">            return ex.getClass().getSimpleName() + &quot;:&quot; + ex.getMessage();</span>
+<span class="nc" id="L40">        }</span>
 
-<span class="nc" id="L38">        return approvalResult;</span>
+<span class="nc" id="L42">        return approvalResult;</span>
     }
 
     private static class FailedSerDes extends JacksonSerDes {
         @Override
         public &lt;T&gt; T deserialize(String json, TypeToken&lt;T&gt; typeToken) {
-<span class="fc" id="L44">            T result = super.deserialize(json, typeToken);</span>
-<span class="pc bpc" id="L45" title="1 of 2 branches missed.">            if (result instanceof RuntimeException ex) {</span>
-<span class="fc" id="L46">                throw new SerDesException(&quot;Deserialization failed&quot;, ex);</span>
+<span class="fc" id="L48">            T result = super.deserialize(json, typeToken);</span>
+<span class="pc bpc" id="L49" title="1 of 2 branches missed.">            if (result instanceof RuntimeException ex) {</span>
+<span class="fc" id="L50">                throw new SerDesException(&quot;Deserialization failed&quot;, ex);</span>
             }
-<span class="nc" id="L48">            return result;</span>
+<span class="nc" id="L52">            return result;</span>
         }
     }
 }

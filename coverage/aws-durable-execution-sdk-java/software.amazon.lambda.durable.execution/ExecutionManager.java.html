@@ -280,16 +280,22 @@ public class ExecutionManager implements AutoCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-<span class="fc" id="L283">        executionExceptionFuture.completeExceptionally(exception);</span>
-<span class="fc" id="L284">        throw exception;</span>
+<span class="fc" id="L283">        stopAllOperations(exception);</span>
+<span class="fc" id="L284">        executionExceptionFuture.completeExceptionally(exception);</span>
+<span class="fc" id="L285">        throw exception;</span>
     }
 
     /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
-<span class="fc" id="L289">        var ex = new SuspendExecutionException();</span>
-<span class="fc" id="L290">        executionExceptionFuture.completeExceptionally(ex);</span>
-<span class="fc" id="L291">        throw ex;</span>
+<span class="fc" id="L290">        var ex = new SuspendExecutionException();</span>
+<span class="fc" id="L291">        stopAllOperations(ex);</span>
+<span class="fc" id="L292">        executionExceptionFuture.completeExceptionally(ex);</span>
+<span class="fc" id="L293">        throw ex;</span>
     }
+
+    private void stopAllOperations(Exception cause) {
+<span class="fc" id="L297">        registeredOperations.values().forEach(op -&gt; op.getCompletionFuture().completeExceptionally(cause));</span>
+<span class="fc" id="L298">    }</span>
 
     /**
      * return a future that completes when userFuture completes successfully or the execution is terminated or
@@ -301,12 +307,12 @@ public class ExecutionManager implements AutoCloseable {
      *     UnrecoverableDurableExecutionException if the execution is terminated.
      */
     public &lt;T&gt; CompletableFuture&lt;T&gt; runUntilCompleteOrSuspend(CompletableFuture&lt;T&gt; userFuture) {
-<span class="fc" id="L304">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
+<span class="fc" id="L310">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
             // reaches here only if userFuture complete successfully
-<span class="pc bpc" id="L306" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
-<span class="fc" id="L307">                return userFuture.join();</span>
+<span class="pc bpc" id="L312" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
+<span class="fc" id="L313">                return userFuture.join();</span>
             }
-<span class="nc" id="L309">            return null;</span>
+<span class="nc" id="L315">            return null;</span>
         });
     }
 }

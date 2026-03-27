@@ -10,6 +10,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 /**
@@ -26,50 +27,52 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
  * &lt;p&gt;The {@link ParallelDurableFuture} implements {@link AutoCloseable}, so try-with-resources guarantees
  * {@code join()} is called even if an exception occurs.
  */
-<span class="fc" id="L29">public class DeserializationFailedParallelExample</span>
+<span class="fc" id="L30">public class DeserializationFailedParallelExample</span>
         extends DurableHandler&lt;DeserializationFailedParallelExample.Input, String&gt; {
 
-<span class="fc" id="L32">    public record Input(List&lt;String&gt; items) {}</span>
+<span class="fc" id="L33">    public record Input(List&lt;String&gt; items) {}</span>
 
     @Override
     public String handleRequest(Input input, DurableContext context) {
-<span class="fc" id="L36">        var logger = context.getLogger();</span>
-<span class="fc" id="L37">        var items = input.items();</span>
-<span class="fc" id="L38">        logger.info(&quot;Starting parallel processing of {} items&quot;, items.size());</span>
+<span class="fc" id="L37">        var logger = context.getLogger();</span>
+<span class="fc" id="L38">        var items = input.items();</span>
+<span class="fc" id="L39">        logger.info(&quot;Starting parallel processing of {} items&quot;, items.size());</span>
 
-<span class="fc" id="L40">        var config = ParallelConfig.builder().build();</span>
+<span class="fc" id="L41">        var config = ParallelConfig.builder().build();</span>
 
-<span class="fc" id="L42">        var parallel = context.parallel(&quot;process-items&quot;, config);</span>
+<span class="fc" id="L43">        var parallel = context.parallel(&quot;process-items&quot;, config);</span>
 
-<span class="fc" id="L44">        try (parallel) {</span>
-<span class="fc" id="L45">            var future = parallel.branch(</span>
+<span class="fc" id="L45">        try (parallel) {</span>
+<span class="fc" id="L46">            var future = parallel.branch(</span>
                     &quot;process&quot;,
                     String.class,
                     branchCtx -&gt; {
-<span class="nc" id="L49">                        return branchCtx.step(&quot;transform&quot;, String.class, stepCtx -&gt; {</span>
-<span class="fc" id="L50">                            throw new RuntimeException(&quot;Intentional failure for transform&quot;);</span>
+<span class="nc" id="L50">                        return branchCtx.step(&quot;transform&quot;, String.class, stepCtx -&gt; {</span>
+<span class="fc" id="L51">                            throw new RuntimeException(&quot;Intentional failure for transform&quot;);</span>
                         });
                     },
-<span class="fc" id="L53">                    ParallelBranchConfig.builder().serDes(new FailedSerDes()).build());</span>
+<span class="fc" id="L54">                    ParallelBranchConfig.builder().serDes(new FailedSerDes()).build());</span>
 
-<span class="fc" id="L55">            parallel.get();</span>
+<span class="fc" id="L56">            parallel.get();</span>
             try {
-<span class="nc" id="L57">                return future.get();</span>
-<span class="fc" id="L58">            } catch (Exception e) {</span>
-<span class="fc" id="L59">                return e.getMessage();</span>
+<span class="nc" id="L58">                return future.get();</span>
+<span class="nc" id="L59">            } catch (SuspendExecutionException e) {</span>
+<span class="nc" id="L60">                throw e;</span>
+<span class="fc" id="L61">            } catch (Exception e) {</span>
+<span class="fc" id="L62">                return e.getMessage();</span>
             }
-<span class="nc bnc" id="L61" title="All 2 branches missed.">        }</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        }</span>
     }
 
     private static class FailedSerDes extends JacksonSerDes {
 
         @Override
         public &lt;T&gt; T deserialize(String json, TypeToken&lt;T&gt; typeToken) {
-<span class="fc" id="L68">            T result = super.deserialize(json, typeToken);</span>
-<span class="pc bpc" id="L69" title="1 of 2 branches missed.">            if (result instanceof RuntimeException ex) {</span>
-<span class="fc" id="L70">                throw new SerDesException(&quot;Deserialization failed&quot;, ex);</span>
+<span class="fc" id="L71">            T result = super.deserialize(json, typeToken);</span>
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">            if (result instanceof RuntimeException ex) {</span>
+<span class="fc" id="L73">                throw new SerDesException(&quot;Deserialization failed&quot;, ex);</span>
             }
-<span class="nc" id="L72">            return result;</span>
+<span class="nc" id="L75">            return result;</span>
         }
     }
 }

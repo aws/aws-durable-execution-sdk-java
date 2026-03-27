@@ -8,37 +8,40 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
-<span class="fc" id="L13">public class DeserializationFailureExample extends DurableHandler&lt;String, String&gt; {</span>
+<span class="fc" id="L14">public class DeserializationFailureExample extends DurableHandler&lt;String, String&gt; {</span>
 
     @Override
     public String handleRequest(String input, DurableContext context) {
         try {
-<span class="pc" id="L18">            context.step(</span>
+<span class="pc" id="L19">            context.step(</span>
                     &quot;fail-step&quot;,
                     String.class,
                     stepCtx -&gt; {
-<span class="fc" id="L22">                        throw new RuntimeException(&quot;this is a test&quot;);</span>
+<span class="fc" id="L23">                        throw new RuntimeException(&quot;this is a test&quot;);</span>
                     },
-<span class="fc" id="L24">                    StepConfig.builder().serDes(new FailedSerDes()).build());</span>
-<span class="fc" id="L25">        } catch (Exception e) {</span>
-<span class="fc" id="L26">            context.wait(&quot;suspend and replay&quot;, Duration.ofSeconds(1));</span>
-<span class="fc" id="L27">            return e.getClass().getSimpleName() + &quot;:&quot; + e.getMessage();</span>
-<span class="nc" id="L28">        }</span>
+<span class="fc" id="L25">                    StepConfig.builder().serDes(new FailedSerDes()).build());</span>
+<span class="fc" id="L26">        } catch (SuspendExecutionException e) {</span>
+<span class="fc" id="L27">            throw e;</span>
+<span class="fc" id="L28">        } catch (Exception e) {</span>
+<span class="fc" id="L29">            context.wait(&quot;suspend and replay&quot;, Duration.ofSeconds(1));</span>
+<span class="fc" id="L30">            return e.getClass().getSimpleName() + &quot;:&quot; + e.getMessage();</span>
+<span class="nc" id="L31">        }</span>
 
-<span class="nc" id="L30">        throw new IllegalStateException(&quot;should not reach here&quot;);</span>
+<span class="nc" id="L33">        throw new IllegalStateException(&quot;should not reach here&quot;);</span>
     }
 
     private static class FailedSerDes extends JacksonSerDes {
 
         @Override
         public &lt;T&gt; T deserialize(String json, TypeToken&lt;T&gt; typeToken) {
-<span class="fc" id="L37">            T result = super.deserialize(json, typeToken);</span>
-<span class="pc bpc" id="L38" title="1 of 2 branches missed.">            if (result instanceof RuntimeException ex) {</span>
-<span class="fc" id="L39">                throw new SerDesException(&quot;Deserialization failed&quot;, ex);</span>
+<span class="fc" id="L40">            T result = super.deserialize(json, typeToken);</span>
+<span class="pc bpc" id="L41" title="1 of 2 branches missed.">            if (result instanceof RuntimeException ex) {</span>
+<span class="fc" id="L42">                throw new SerDesException(&quot;Deserialization failed&quot;, ex);</span>
             }
-<span class="nc" id="L41">            return result;</span>
+<span class="nc" id="L44">            return result;</span>
         }
     }
 }
