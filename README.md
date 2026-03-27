@@ -9,6 +9,7 @@
 [![E2E Tests](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/e2e-tests.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/e2e-tests.yml)
 [![CodeQL](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/github-code-scanning/codeql)
 [![Spotless](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/check-spotless.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/check-spotless.yml)
+[![Roadmap](https://raw.githubusercontent.com/aws/aws-durable-execution-sdk-java/refs/heads/docs/milestone/badge.svg)](https://github.com/orgs/aws/projects/346/views/6)
 
 Build resilient, long-running AWS Lambda functions that automatically checkpoint progress and resume after failures. Durable functions can run for up to one year while you pay only for active compute time.
 

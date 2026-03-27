@@ -1,0 +1,52 @@
+name: Update Milestone Badge
+
+on:
+  milestone:
+    types: [created, edited, closed, deleted]
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-badge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout docs branch
+        uses: actions/checkout@v4
+        with:
+          ref: docs
+          fetch-depth: 1
+
+      - name: Fetch nearest milestone and generate badge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Fetch open milestones with due dates, pick the nearest one
+          TITLE=$(gh api repos/${{ github.repository }}/milestones \
+            --jq '[.[] | select(.state == "open" and .due_on != null)] | sort_by(.due_on) | .[0].title // empty')
+
+          if [ -z "$TITLE" ]; then
+            URL="https://img.shields.io/badge/Next%20Milestone-No%20milestone-lightgrey"
+          else
+            # URL-encode the title using jq, then escape dashes for shields.io
+            ENCODED=$(echo -n "$TITLE" | jq -sRr @uri | sed 's/-/--/g')
+            URL="https://img.shields.io/badge/Next%20Milestone-${ENCODED}-blue"
+          fi
+
+          mkdir -p milestone
+          curl -sfL "$URL" -o milestone/badge.svg
+          echo "Badge generated for: ${TITLE:-No milestone}"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add milestone/badge.svg
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update milestone badge"
+          git push
