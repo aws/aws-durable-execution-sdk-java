@@ -113,6 +113,9 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     /** Calls {@link #get()} if not already called. Guarantees that the context is closed. */
     @Override
     public void close() {
+        if (isJoined.get()) {
+            return;
+        }
         join();
     }
 

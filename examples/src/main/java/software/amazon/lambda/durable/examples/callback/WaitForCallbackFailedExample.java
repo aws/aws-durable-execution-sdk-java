@@ -32,11 +32,10 @@ public class WaitForCallbackFailedExample extends DurableHandler<ApprovalRequest
                                     .serDes(new FailedSerDes())
                                     .build())
                             .build());
-        } catch (Exception ex) {
+        } catch (SuspendExecutionException e) {
             // not to swallow the SuspendExecutionException
-            if (ex instanceof SuspendExecutionException suspendExecutionException) {
-                throw suspendExecutionException;
-            }
+            throw e;
+        } catch (Exception ex) {
             return ex.getClass().getSimpleName() + ":" + ex.getMessage();
         }
 

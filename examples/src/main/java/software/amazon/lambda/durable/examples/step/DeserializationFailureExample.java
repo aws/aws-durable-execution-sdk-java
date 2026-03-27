@@ -8,6 +8,7 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 public class DeserializationFailureExample extends DurableHandler<String, String> {
@@ -22,6 +23,8 @@ public class DeserializationFailureExample extends DurableHandler<String, String
                         throw new RuntimeException("this is a test");
                     },
                     StepConfig.builder().serDes(new FailedSerDes()).build());
+        } catch (SuspendExecutionException e) {
+            throw e;
         } catch (Exception e) {
             context.wait("suspend and replay", Duration.ofSeconds(1));
             return e.getClass().getSimpleName() + ":" + e.getMessage();

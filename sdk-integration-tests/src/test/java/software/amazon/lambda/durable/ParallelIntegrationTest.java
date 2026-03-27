@@ -14,6 +14,7 @@ import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.testing.TestOperation;
 
 class ParallelIntegrationTest {
 
@@ -598,7 +599,14 @@ class ParallelIntegrationTest {
         });
 
         var result = runner.runUntilComplete("test");
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(
+                ExecutionStatus.SUCCEEDED,
+                result.getStatus(),
+                String.join(
+                        " ",
+                        result.getOperations().stream()
+                                .map(TestOperation::toString)
+                                .toList()));
     }
 
     @Test

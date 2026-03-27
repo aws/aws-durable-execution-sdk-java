@@ -21,12 +21,15 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Abstract base class for concurrent execution of multiple child context operations.
@@ -143,7 +146,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     }
 
     private void notifyConsumerThread() {
-        synchronized (this) {
+        synchronized (completionFuture) {
             consumerThreadListener.get().complete(null);
         }
     }
@@ -156,53 +159,72 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         AtomicInteger failedCount = new AtomicInteger(0);
 
         Runnable consumer = () -> {
-            while (true) {
-                // Set a new future if it's completed so that it will be able to receive a notification of
-                // new items when the thread is checking completion condition and processing
-                // the queued items below.
-                synchronized (this) {
-                    if (consumerThreadListener.get() != null
-                            && consumerThreadListener.get().isDone()) {
-                        consumerThreadListener.set(new CompletableFuture<>());
+            try {
+                while (true) {
+                    // Set a new future if it's completed so that it will be able to receive a notification of
+                    // new items when the thread is checking completion condition and processing
+                    // the queued items below.
+                    synchronized (completionFuture) {
+                        if (consumerThreadListener.get() != null
+                                && consumerThreadListener.get().isDone()) {
+                            consumerThreadListener.set(new CompletableFuture<>());
+                        }
+                    }
+
+                    // Process completion condition. Quit the loop if the condition is met.
+                    if (isOperationCompleted()) {
+                        return;
+                    }
+                    var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
+                    if (completionStatus != null) {
+                        handleCompletion(completionStatus);
+                        return;
+                    }
+
+                    // process new items in the queue
+                    while (runningChildren.size() < maxConcurrency && !pendingQueue.isEmpty()) {
+                        var next = pendingQueue.poll();
+                        runningChildren.add(next);
+                        logger.debug("Executing operation {}", next.getName());
+                        next.execute();
+                    }
+
+                    // If consumerThreadListener has been completed when processing above, waitForChildCompletion will
+                    // immediately return null and repeat the above again
+                    var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);
+
+                    // child may be null if the consumer thread is woken up due to new items added or completion
+                    // condition
+                    // changed
+                    if (child != null) {
+                        if (runningChildren.contains(child)) {
+                            runningChildren.remove(child);
+                            onItemComplete(succeededCount, failedCount, (ChildContextOperation<?>) child);
+                        } else {
+                            throw new IllegalStateException("Unexpected completion: " + child);
+                        }
                     }
                 }
-
-                // Process completion condition. Quit the loop if the condition is met.
-                if (isOperationCompleted()) {
-                    return;
-                }
-                var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
-                if (completionStatus != null) {
-                    handleCompletion(completionStatus);
-                    return;
-                }
-
-                // process new items in the queue
-                while (runningChildren.size() < maxConcurrency && !pendingQueue.isEmpty()) {
-                    var next = pendingQueue.poll();
-                    runningChildren.add(next);
-                    logger.debug("Executing operation {}", next.getName());
-                    next.execute();
-                }
-
-                // If consumerThreadListener has been completed when processing above, waitForChildCompletion will
-                // immediately return null and repeat the above again
-                var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);
-
-                // child may be null if the consumer thread is woken up due to new items added or completion condition
-                // changed
-                if (child != null) {
-                    if (runningChildren.contains(child)) {
-                        runningChildren.remove(child);
-                        onItemComplete(succeededCount, failedCount, (ChildContextOperation<?>) child);
-                    } else {
-                        throw new IllegalStateException("Unexpected completion: " + child);
-                    }
-                }
+            } catch (Throwable ex) {
+                handleException(ex);
             }
         };
         // run consumer in the user thread pool, although it's not a real user thread
         runUserHandler(consumer, getOperationId(), ThreadType.CONTEXT);
+    }
+
+    private void handleException(Throwable ex) {
+        Throwable throwable = ExceptionHelper.unwrapCompletableFuture(ex);
+        if (throwable instanceof SuspendExecutionException suspendExecutionException) {
+            // Rethrow Error immediately — do not checkpoint
+            throw suspendExecutionException;
+        }
+        if (throwable instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
+            throw terminateExecution(unrecoverableDurableExecutionException);
+        }
+
+        throw terminateExecutionWithIllegalDurableOperationException(
+                String.format("Unexpected exception in concurrency operation: %s", throwable));
     }
 
     private BaseDurableOperation waitForChildCompletion(
@@ -210,7 +232,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         var threadContext = getCurrentThreadContext();
         CompletableFuture<Object> future;
 
-        synchronized (this) {
+        synchronized (completionFuture) {
             // check again in synchronized block to prevent race conditions
             if (isOperationCompleted()) {
                 return null;
@@ -238,7 +260,12 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                 executionManager.deregisterActiveThread(threadContext.threadId());
             }
         }
-        return future.thenApply(o -> (BaseDurableOperation) o).join();
+        try {
+            return future.thenApply(o -> (BaseDurableOperation) o).join();
+        } catch (Throwable throwable) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+            throw throwable;
+        }
     }
 
     /**

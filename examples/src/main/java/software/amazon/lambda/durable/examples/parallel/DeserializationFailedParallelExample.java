@@ -10,6 +10,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 /**
@@ -55,6 +56,8 @@ public class DeserializationFailedParallelExample
             parallel.get();
             try {
                 return future.get();
+            } catch (SuspendExecutionException e) {
+                throw e;
             } catch (Exception e) {
                 return e.getMessage();
             }
