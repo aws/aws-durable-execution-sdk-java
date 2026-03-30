@@ -20,7 +20,6 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
@@ -231,14 +230,16 @@ public class ExecutionManager implements AutoCloseable {
     }
 
     private void preSuspendCheck() {
-        operationStorage.values().stream()
-                .filter(op -> !isTerminalStatus(op.status()))
-                .findFirst()
-                .ifPresentOrElse(op -> logger.debug("Found waiting operations"), () -> {
-                    logger.warn("Invalid suspension. No operation is in progress");
-                    terminateExecution(new IllegalDurableOperationException(
-                            "Cannot suspend execution without an operation in progress"));
-                });
+        if (operationStorage.values().stream().anyMatch(o -> switch (o.type()) {
+            case STEP -> o.status() == OperationStatus.PENDING;
+            case WAIT, CALLBACK -> o.status() == OperationStatus.STARTED;
+            case CHAINED_INVOKE -> o.status() == OperationStatus.PENDING || o.status() == OperationStatus.STARTED;
+            default -> false;
+        })) {
+            logger.debug("Found pending operations. Good to suspend now.");
+        } else {
+            logger.warn("Invalid suspension. No operation is in progress");
+        }
     }
 
     // ===== Checkpointing =====
