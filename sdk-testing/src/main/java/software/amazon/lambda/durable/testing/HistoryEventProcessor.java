@@ -53,8 +53,20 @@ public class HistoryEventProcessor {
             }
 
             switch (eventType) {
-                case EXECUTION_STARTED, INVOCATION_COMPLETED -> {
+                case EXECUTION_STARTED -> {
                     // Execution started - no action needed, just track the event
+                }
+                case INVOCATION_COMPLETED -> {
+                    var details = event.invocationCompletedDetails();
+                    if (details != null
+                            && details.error() != null
+                            && details.error().payload() != null) {
+                        // This will get overridden by the execution events but
+                        // the test cases will still be able to see the error
+                        // if the execution succeeds.
+                        status = ExecutionStatus.FAILED;
+                        error = details.error().payload();
+                    }
                 }
                 case EXECUTION_SUCCEEDED -> {
                     status = ExecutionStatus.SUCCEEDED;

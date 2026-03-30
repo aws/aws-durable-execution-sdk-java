@@ -51,6 +51,10 @@ public class TestResult<O> {
 
     /** Returns the execution status (SUCCEEDED, FAILED, or PENDING). */
     public ExecutionStatus getStatus() {
+        if (status == ExecutionStatus.SUCCEEDED && error != null) {
+            throw new IllegalStateException(
+                    "Execution succeeded while invocation failed with: " + error.errorMessage());
+        }
         return status;
     }
 
