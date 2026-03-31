@@ -293,6 +293,14 @@ public class ExecutionManager implements AutoCloseable {
         throw ex;
     }
 
+    /**
+     * returns {@code true} if the execution is terminated exceptionally (with a {@link SuspendExecutionException} or an
+     * unrecoverable error).
+     */
+    public boolean isExecutionCompletedExceptionally() {
+        return executionExceptionFuture.isCompletedExceptionally();
+    }
+
     private void stopAllOperations(Exception cause) {
         registeredOperations.values().forEach(op -> op.getCompletionFuture().completeExceptionally(cause));
     }
