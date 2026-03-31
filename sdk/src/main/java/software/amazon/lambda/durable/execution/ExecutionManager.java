@@ -230,15 +230,15 @@ public class ExecutionManager implements AutoCloseable {
     }
 
     private void preSuspendCheck() {
-        if (operationStorage.values().stream().anyMatch(o -> switch (o.type()) {
+        var hasAnyPendingOperation = operationStorage.values().stream().anyMatch(o -> switch (o.type()) {
             case STEP -> o.status() == OperationStatus.PENDING;
             case WAIT, CALLBACK -> o.status() == OperationStatus.STARTED;
             case CHAINED_INVOKE -> o.status() == OperationStatus.PENDING || o.status() == OperationStatus.STARTED;
             default -> false;
-        })) {
-            logger.debug("Found pending operations. Good to suspend now.");
-        } else {
-            logger.warn("Invalid suspension. No operation is in progress");
+        });
+
+        if (!hasAnyPendingOperation) {
+            logger.warn("Invalid suspension. No operation is pending");
         }
     }
 
