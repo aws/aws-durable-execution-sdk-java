@@ -229,6 +229,11 @@ public abstract class BaseDurableOperation {
             executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));
             try {
                 runnable.run();
+            } catch (Throwable throwable) {
+                // Operations always wrap the user's function and handles all possible exceptions.
+                logger.error("An unhandled exception is thrown from user function: ", throwable);
+                throw terminateExecutionWithIllegalDurableOperationException(
+                        "An unhandled exception is thrown from user function: " + throwable);
             } finally {
                 if (contextId != null) {
                     try {

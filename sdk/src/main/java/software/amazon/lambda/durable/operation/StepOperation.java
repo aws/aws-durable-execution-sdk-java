@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -74,7 +75,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
                 }
             }
             // Step is pending retry - Start polling for PENDING -> READY transition
-            case PENDING -> pollReadyAndExecuteStepLogic(existing, attempt);
+            case PENDING -> pollReadyAndExecuteStepLogic(existing.stepDetails().nextAttemptTimestamp(), attempt);
             // Execute with current attempt
             case READY -> executeStepLogic(attempt);
             default ->
@@ -83,9 +84,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
-    private CompletableFuture<Void> pollReadyAndExecuteStepLogic(Operation existing, int attempt) {
-        var nextAttemptInstant = existing.stepDetails().nextAttemptTimestamp();
-        return pollForOperationUpdates(nextAttemptInstant)
+    private void pollReadyAndExecuteStepLogic(Instant nextAttemptInstant, int attempt) {
+        pollForOperationUpdates(nextAttemptInstant)
                 .thenCompose(op -> op.status() == OperationStatus.READY
                         ? CompletableFuture.completedFuture(op)
                         : pollForOperationUpdates(nextAttemptInstant))
@@ -163,19 +163,19 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
         if (isRetryable && retryDecision.shouldRetry()) {
             // Send RETRY
+            var retryDelayInSeconds = Math.toIntExact(retryDecision.delay().toSeconds());
             var retryUpdate = OperationUpdate.builder()
                     .action(OperationAction.RETRY)
                     .error(errorObject)
                     .stepOptions(StepOptions.builder()
                             // RetryDecisions always produce integer number of seconds greater or equals to
                             // 1 (no sub-second numbers)
-                            .nextAttemptDelaySeconds(
-                                    Math.toIntExact(retryDecision.delay().toSeconds()))
+                            .nextAttemptDelaySeconds(retryDelayInSeconds)
                             .build());
             sendOperationUpdate(retryUpdate);
 
             // Poll for READY status and then execute the step again
-            pollReadyAndExecuteStepLogic(getOperation(), attempt + 1);
+            pollReadyAndExecuteStepLogic(Instant.now().plusSeconds(retryDelayInSeconds), attempt + 1);
         } else {
             // Send FAIL - retries exhausted
             var failUpdate =
