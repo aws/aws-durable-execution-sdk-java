@@ -229,27 +229,36 @@ public abstract class BaseDurableOperation {
 <span class="fc" id="L229">            executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));</span>
             try {
 <span class="fc" id="L231">                runnable.run();</span>
+<span class="fc" id="L232">            } catch (Throwable throwable) {</span>
+                // Operations always wrap the user's function and handles all possible exceptions except for
+                // SuspendExecutionException.
+<span class="pc bpc" id="L235" title="1 of 4 branches missed.">                if (!executionManager.isExecutionCompletedExceptionally()</span>
+                        &amp;&amp; !(throwable instanceof SuspendExecutionException)) {
+<span class="nc" id="L237">                    logger.error(&quot;An unhandled exception is thrown from user function: &quot;, throwable);</span>
+<span class="nc" id="L238">                    throw terminateExecutionWithIllegalDurableOperationException(</span>
+                            &quot;An unhandled exception is thrown from user function: &quot; + throwable);
+                }
             } finally {
-<span class="pc bpc" id="L233" title="1 of 2 branches missed.">                if (contextId != null) {</span>
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">                if (contextId != null) {</span>
                     try {
                         // if this is a child context or a step context, we need to
                         // deregister the context's thread from the execution manager
-<span class="fc" id="L237">                        executionManager.deregisterActiveThread(contextId);</span>
-<span class="fc" id="L238">                    } catch (SuspendExecutionException e) {</span>
+<span class="fc" id="L246">                        executionManager.deregisterActiveThread(contextId);</span>
+<span class="fc" id="L247">                    } catch (SuspendExecutionException e) {</span>
                         // Expected when this is the last active thread. Must catch here because:
                         // 1/ This runs in a worker thread detached from handlerFuture
                         // 2/ Uncaught exception would prevent stepAsync().get() from resume
                         // Suspension/Termination is already signaled via
                         // suspendExecutionFuture/terminateExecutionFuture
                         // before the throw.
-<span class="fc" id="L245">                    }</span>
+<span class="fc" id="L254">                    }</span>
                 }
             }
-<span class="fc" id="L248">        };</span>
+<span class="fc" id="L257">        };</span>
 
         // runUserHandler is used to ensure that only one user handler is running at a time
-<span class="fc bfc" id="L251" title="All 2 branches covered.">        if (runningUserHandler.get() != null) {</span>
-<span class="fc" id="L252">            throw new IllegalStateException(&quot;User handler already running&quot;);</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (runningUserHandler.get() != null) {</span>
+<span class="fc" id="L261">            throw new IllegalStateException(&quot;User handler already running&quot;);</span>
         }
 
         // Thread registration is intentionally split across two threads:
@@ -258,15 +267,15 @@ public abstract class BaseDurableOperation {
         // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
         //    the child context know which context they belong to.
         // registerActiveThread is idempotent (no-op if already registered).
-<span class="fc" id="L261">        registerActiveThread(contextId);</span>
+<span class="fc" id="L270">        registerActiveThread(contextId);</span>
 
-<span class="pc bpc" id="L263" title="1 of 2 branches missed.">        if (!runningUserHandler.compareAndSet(</span>
+<span class="pc bpc" id="L272" title="1 of 2 branches missed.">        if (!runningUserHandler.compareAndSet(</span>
                 null,
-<span class="fc" id="L265">                CompletableFuture.runAsync(</span>
-<span class="fc" id="L266">                        wrapped, getContext().getDurableConfig().getExecutorService()))) {</span>
-<span class="nc" id="L267">            throw new IllegalStateException(&quot;User handler already running&quot;);</span>
+<span class="fc" id="L274">                CompletableFuture.runAsync(</span>
+<span class="fc" id="L275">                        wrapped, getContext().getDurableConfig().getExecutorService()))) {</span>
+<span class="nc" id="L276">            throw new IllegalStateException(&quot;User handler already running&quot;);</span>
         }
-<span class="fc" id="L269">    }</span>
+<span class="fc" id="L278">    }</span>
 
     /**
      * Receives operation updates from ExecutionManager. Completes the internal future when the operation reaches a
@@ -275,34 +284,34 @@ public abstract class BaseDurableOperation {
      * @param operation the updated operation state
      */
     public void onCheckpointComplete(Operation operation) {
-<span class="fc bfc" id="L278" title="All 2 branches covered.">        if (ExecutionManager.isTerminalStatus(operation.status())) {</span>
+<span class="fc bfc" id="L287" title="All 2 branches covered.">        if (ExecutionManager.isTerminalStatus(operation.status())) {</span>
             // This method handles only terminal status updates. Override this method if a DurableOperation needs to
             // handle other updates.
-<span class="fc" id="L281">            logger.trace(&quot;In onCheckpointComplete, completing operation {} ({})&quot;, getOperationId(), completionFuture);</span>
+<span class="fc" id="L290">            logger.trace(&quot;In onCheckpointComplete, completing operation {} ({})&quot;, getOperationId(), completionFuture);</span>
 
-<span class="fc" id="L283">            markCompletionFutureCompleted();</span>
+<span class="fc" id="L292">            markCompletionFutureCompleted();</span>
         }
-<span class="fc" id="L285">    }</span>
+<span class="fc" id="L294">    }</span>
 
     /** Marks the operation as already completed (in replay). */
     protected void markAlreadyCompleted() {
         // When the operation is already completed in a replay, we complete completionFuture immediately
         // so that the `get` method will be unblocked and the context thread will be registered
-<span class="fc" id="L291">        logger.trace(&quot;In markAlreadyCompleted, completing operation: {} ({}).&quot;, getOperationId(), completionFuture);</span>
-<span class="fc" id="L292">        markCompletionFutureCompleted();</span>
-<span class="fc" id="L293">    }</span>
+<span class="fc" id="L300">        logger.trace(&quot;In markAlreadyCompleted, completing operation: {} ({}).&quot;, getOperationId(), completionFuture);</span>
+<span class="fc" id="L301">        markCompletionFutureCompleted();</span>
+<span class="fc" id="L302">    }</span>
 
     private void markCompletionFutureCompleted() {
         // It's important that we synchronize access to the future, otherwise the processing could happen
         // on someone else's thread and cause a race condition.
-<span class="fc bfc" id="L298" title="All 2 branches covered.">        synchronized (parentOperation == null ? completionFuture : parentOperation.completionFuture) {</span>
+<span class="fc bfc" id="L307" title="All 2 branches covered.">        synchronized (parentOperation == null ? completionFuture : parentOperation.completionFuture) {</span>
             // Completing the future here will also run any other completion stages that have been attached
             // to the future. In our case, other contexts may have attached a function to reactivate themselves,
             // so they will definitely have a chance to reactivate before we finish completing and deactivating
             // whatever operations were just checkpointed.
-<span class="fc" id="L303">            completionFuture.complete(this);</span>
-<span class="fc" id="L304">        }</span>
-<span class="fc" id="L305">    }</span>
+<span class="fc" id="L312">            completionFuture.complete(this);</span>
+<span class="fc" id="L313">        }</span>
+<span class="fc" id="L314">    }</span>
 
     /**
      * Terminates the execution with the given exception.
@@ -311,9 +320,9 @@ public abstract class BaseDurableOperation {
      * @return never returns normally; always throws
      */
     protected RuntimeException terminateExecution(UnrecoverableDurableExecutionException exception) {
-<span class="fc" id="L314">        executionManager.terminateExecution(exception);</span>
+<span class="fc" id="L323">        executionManager.terminateExecution(exception);</span>
         // Exception is already thrown from above. Keep the throw statement below to make tests happy
-<span class="fc" id="L316">        throw exception;</span>
+<span class="fc" id="L325">        throw exception;</span>
     }
 
     /**
@@ -323,7 +332,7 @@ public abstract class BaseDurableOperation {
      * @return never returns normally; always throws
      */
     protected RuntimeException terminateExecutionWithIllegalDurableOperationException(String message) {
-<span class="nc" id="L326">        return terminateExecution(new IllegalDurableOperationException(message));</span>
+<span class="nc" id="L335">        return terminateExecution(new IllegalDurableOperationException(message));</span>
     }
 
     /**
@@ -332,17 +341,17 @@ public abstract class BaseDurableOperation {
      * @param threadId the thread identifier to register
      */
     protected void registerActiveThread(String threadId) {
-<span class="fc" id="L335">        executionManager.registerActiveThread(threadId);</span>
-<span class="fc" id="L336">    }</span>
+<span class="fc" id="L344">        executionManager.registerActiveThread(threadId);</span>
+<span class="fc" id="L345">    }</span>
 
     /** Returns the current thread's context from the execution manager. */
     protected ThreadContext getCurrentThreadContext() {
-<span class="fc" id="L340">        return executionManager.getCurrentThreadContext();</span>
+<span class="fc" id="L349">        return executionManager.getCurrentThreadContext();</span>
     }
 
     /** Polls the backend for updates to this operation. */
     protected CompletableFuture&lt;Operation&gt; pollForOperationUpdates() {
-<span class="fc" id="L345">        return executionManager.pollForOperationUpdates(getOperationId());</span>
+<span class="fc" id="L354">        return executionManager.pollForOperationUpdates(getOperationId());</span>
     }
 
     /**
@@ -352,49 +361,49 @@ public abstract class BaseDurableOperation {
      * @return a future that completes with the updated operation
      */
     protected CompletableFuture&lt;Operation&gt; pollForOperationUpdates(Instant at) {
-<span class="fc" id="L355">        return executionManager.pollForOperationUpdates(getOperationId(), at);</span>
+<span class="fc" id="L364">        return executionManager.pollForOperationUpdates(getOperationId(), at);</span>
     }
 
     /** Sends an operation update synchronously (blocks until the update is acknowledged). */
     protected void sendOperationUpdate(OperationUpdate.Builder builder) {
-<span class="fc" id="L360">        sendOperationUpdateAsync(builder).join();</span>
-<span class="fc" id="L361">    }</span>
+<span class="fc" id="L369">        sendOperationUpdateAsync(builder).join();</span>
+<span class="fc" id="L370">    }</span>
 
     /** Sends an operation update asynchronously. */
     protected CompletableFuture&lt;Void&gt; sendOperationUpdateAsync(OperationUpdate.Builder builder) {
-<span class="fc" id="L365">        var updateBuilder =</span>
-<span class="fc" id="L366">                builder.id(getOperationId()).name(getName()).type(getType()).parentId(durableContext.getContextId());</span>
-<span class="fc bfc" id="L367" title="All 2 branches covered.">        if (getSubType() != null) {</span>
-<span class="fc" id="L368">            updateBuilder.subType(getSubType().getValue());</span>
+<span class="fc" id="L374">        var updateBuilder =</span>
+<span class="fc" id="L375">                builder.id(getOperationId()).name(getName()).type(getType()).parentId(durableContext.getContextId());</span>
+<span class="fc bfc" id="L376" title="All 2 branches covered.">        if (getSubType() != null) {</span>
+<span class="fc" id="L377">            updateBuilder.subType(getSubType().getValue());</span>
         }
-<span class="fc" id="L370">        return executionManager.sendOperationUpdate(updateBuilder.build());</span>
+<span class="fc" id="L379">        return executionManager.sendOperationUpdate(updateBuilder.build());</span>
     }
 
     /** Validates that current operation matches checkpointed operation during replay. */
     protected void validateReplay(Operation checkpointed) {
-<span class="fc bfc" id="L375" title="All 4 branches covered.">        if (checkpointed == null || checkpointed.type() == null) {</span>
-<span class="fc" id="L376">            return; // First execution, no validation needed</span>
+<span class="fc bfc" id="L384" title="All 4 branches covered.">        if (checkpointed == null || checkpointed.type() == null) {</span>
+<span class="fc" id="L385">            return; // First execution, no validation needed</span>
         }
 
-<span class="fc bfc" id="L379" title="All 2 branches covered.">        if (!checkpointed.type().equals(getType())) {</span>
-<span class="pc" id="L380">            throw terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+<span class="fc bfc" id="L388" title="All 2 branches covered.">        if (!checkpointed.type().equals(getType())) {</span>
+<span class="pc" id="L389">            throw terminateExecution(new NonDeterministicExecutionException(String.format(</span>
                     &quot;Operation type mismatch for \&quot;%s\&quot;. Expected %s, got %s&quot;,
-<span class="fc" id="L382">                    getOperationId(), checkpointed.type(), getType())));</span>
+<span class="fc" id="L391">                    getOperationId(), checkpointed.type(), getType())));</span>
         }
 
-<span class="fc bfc" id="L385" title="All 2 branches covered.">        if (!Objects.equals(checkpointed.name(), getName())) {</span>
-<span class="pc" id="L386">            throw terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+<span class="fc bfc" id="L394" title="All 2 branches covered.">        if (!Objects.equals(checkpointed.name(), getName())) {</span>
+<span class="pc" id="L395">            throw terminateExecution(new NonDeterministicExecutionException(String.format(</span>
                     &quot;Operation name mismatch for \&quot;%s\&quot;. Expected \&quot;%s\&quot;, got \&quot;%s\&quot;&quot;,
-<span class="fc" id="L388">                    getOperationId(), checkpointed.name(), getName())));</span>
+<span class="fc" id="L397">                    getOperationId(), checkpointed.name(), getName())));</span>
         }
 
-<span class="pc bpc" id="L391" title="1 of 4 branches missed.">        if ((getSubType() == null &amp;&amp; checkpointed.subType() != null)</span>
-<span class="fc bfc" id="L392" title="All 2 branches covered.">                || getSubType() != null</span>
-<span class="pc bpc" id="L393" title="1 of 2 branches missed.">                        &amp;&amp; !Objects.equals(checkpointed.subType(), getSubType().getValue())) {</span>
-<span class="nc" id="L394">            throw terminateExecution(new NonDeterministicExecutionException(String.format(</span>
+<span class="pc bpc" id="L400" title="1 of 4 branches missed.">        if ((getSubType() == null &amp;&amp; checkpointed.subType() != null)</span>
+<span class="fc bfc" id="L401" title="All 2 branches covered.">                || getSubType() != null</span>
+<span class="pc bpc" id="L402" title="1 of 2 branches missed.">                        &amp;&amp; !Objects.equals(checkpointed.subType(), getSubType().getValue())) {</span>
+<span class="nc" id="L403">            throw terminateExecution(new NonDeterministicExecutionException(String.format(</span>
                     &quot;Operation subType mismatch for \&quot;%s\&quot;. Expected \&quot;%s\&quot;, got \&quot;%s\&quot;&quot;,
-<span class="nc" id="L396">                    getOperationId(), checkpointed.subType(), getSubType())));</span>
+<span class="nc" id="L405">                    getOperationId(), checkpointed.subType(), getSubType())));</span>
         }
-<span class="fc" id="L398">    }</span>
+<span class="fc" id="L407">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

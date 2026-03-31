@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -33,7 +34,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * @param &lt;T&gt; the result type of the step function
  */
 public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt; {
-<span class="fc" id="L36">    private static final Integer FIRST_ATTEMPT = 1;</span>
+<span class="fc" id="L37">    private static final Integer FIRST_ATTEMPT = 1;</span>
 
     private final Function&lt;StepContext, T&gt; function;
     private final StepConfig config;
@@ -44,53 +45,52 @@ public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt
             TypeToken&lt;T&gt; resultTypeToken,
             StepConfig config,
             DurableContextImpl durableContext) {
-<span class="fc" id="L47">        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);</span>
+<span class="fc" id="L48">        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);</span>
 
-<span class="fc" id="L49">        this.function = function;</span>
-<span class="fc" id="L50">        this.config = config;</span>
-<span class="fc" id="L51">    }</span>
+<span class="fc" id="L50">        this.function = function;</span>
+<span class="fc" id="L51">        this.config = config;</span>
+<span class="fc" id="L52">    }</span>
 
     /** Starts the operation. */
     @Override
     protected void start() {
-<span class="fc" id="L56">        executeStepLogic(FIRST_ATTEMPT);</span>
-<span class="fc" id="L57">    }</span>
+<span class="fc" id="L57">        executeStepLogic(FIRST_ATTEMPT);</span>
+<span class="fc" id="L58">    }</span>
 
     /** Replays the operation. */
     @Override
     protected void replay(Operation existing) {
-<span class="pc bpc" id="L62" title="1 of 4 branches missed.">        var attempt = existing.stepDetails() != null &amp;&amp; existing.stepDetails().attempt() != null</span>
-<span class="fc" id="L63">                ? existing.stepDetails().attempt() + 1</span>
-<span class="fc" id="L64">                : FIRST_ATTEMPT;</span>
-<span class="pc bpc" id="L65" title="2 of 5 branches missed.">        switch (existing.status()) {</span>
-<span class="fc" id="L66">            case SUCCEEDED, FAILED -&gt; markAlreadyCompleted();</span>
+<span class="pc bpc" id="L63" title="1 of 4 branches missed.">        var attempt = existing.stepDetails() != null &amp;&amp; existing.stepDetails().attempt() != null</span>
+<span class="fc" id="L64">                ? existing.stepDetails().attempt() + 1</span>
+<span class="fc" id="L65">                : FIRST_ATTEMPT;</span>
+<span class="pc bpc" id="L66" title="2 of 5 branches missed.">        switch (existing.status()) {</span>
+<span class="fc" id="L67">            case SUCCEEDED, FAILED -&gt; markAlreadyCompleted();</span>
             case STARTED -&gt; {
-<span class="fc bfc" id="L68" title="All 2 branches covered.">                if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">                if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {</span>
                     // AT_MOST_ONCE: treat as interrupted, go through retry logic
-<span class="fc" id="L70">                    handleStepFailure(new StepInterruptedException(existing), attempt);</span>
+<span class="fc" id="L71">                    handleStepFailure(new StepInterruptedException(existing), attempt);</span>
                 } else {
                     // AT_LEAST_ONCE: re-execute the step
-<span class="fc" id="L73">                    executeStepLogic(attempt);</span>
+<span class="fc" id="L74">                    executeStepLogic(attempt);</span>
                 }
-<span class="fc" id="L75">            }</span>
+<span class="fc" id="L76">            }</span>
             // Step is pending retry - Start polling for PENDING -&gt; READY transition
-<span class="nc" id="L77">            case PENDING -&gt; pollReadyAndExecuteStepLogic(existing, attempt);</span>
+<span class="nc" id="L78">            case PENDING -&gt; pollReadyAndExecuteStepLogic(existing.stepDetails().nextAttemptTimestamp(), attempt);</span>
             // Execute with current attempt
-<span class="fc" id="L79">            case READY -&gt; executeStepLogic(attempt);</span>
+<span class="fc" id="L80">            case READY -&gt; executeStepLogic(attempt);</span>
             default -&gt;
-<span class="nc" id="L81">                throw terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="nc" id="L82">                        &quot;Unexpected step status: &quot; + existing.status());</span>
+<span class="nc" id="L82">                throw terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L83">                        &quot;Unexpected step status: &quot; + existing.status());</span>
         }
-<span class="fc" id="L84">    }</span>
+<span class="fc" id="L85">    }</span>
 
-    private CompletableFuture&lt;Void&gt; pollReadyAndExecuteStepLogic(Operation existing, int attempt) {
-<span class="fc" id="L87">        var nextAttemptInstant = existing.stepDetails().nextAttemptTimestamp();</span>
-<span class="nc" id="L88">        return pollForOperationUpdates(nextAttemptInstant)</span>
-<span class="nc bnc" id="L89" title="All 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+    private void pollReadyAndExecuteStepLogic(Instant nextAttemptInstant, int attempt) {
+<span class="fc" id="L88">        pollForOperationUpdates(nextAttemptInstant)</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="nc" id="L90">                        ? CompletableFuture.completedFuture(op)</span>
-<span class="nc" id="L91">                        : pollForOperationUpdates(nextAttemptInstant))</span>
-<span class="nc" id="L92">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
-    }
+<span class="fc" id="L91">                        : pollForOperationUpdates(nextAttemptInstant))</span>
+<span class="pc" id="L92">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
+<span class="fc" id="L93">    }</span>
 
     private void executeStepLogic(int attempt) {
 <span class="fc" id="L96">        Runnable userHandler = () -&gt; {</span>
@@ -163,20 +163,20 @@ public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt
 
 <span class="fc bfc" id="L164" title="All 4 branches covered.">        if (isRetryable &amp;&amp; retryDecision.shouldRetry()) {</span>
             // Send RETRY
-<span class="fc" id="L166">            var retryUpdate = OperationUpdate.builder()</span>
-<span class="fc" id="L167">                    .action(OperationAction.RETRY)</span>
-<span class="fc" id="L168">                    .error(errorObject)</span>
-<span class="fc" id="L169">                    .stepOptions(StepOptions.builder()</span>
+<span class="fc" id="L166">            var retryDelayInSeconds = Math.toIntExact(retryDecision.delay().toSeconds());</span>
+<span class="fc" id="L167">            var retryUpdate = OperationUpdate.builder()</span>
+<span class="fc" id="L168">                    .action(OperationAction.RETRY)</span>
+<span class="fc" id="L169">                    .error(errorObject)</span>
+<span class="fc" id="L170">                    .stepOptions(StepOptions.builder()</span>
                             // RetryDecisions always produce integer number of seconds greater or equals to
                             // 1 (no sub-second numbers)
-<span class="fc" id="L172">                            .nextAttemptDelaySeconds(</span>
-<span class="fc" id="L173">                                    Math.toIntExact(retryDecision.delay().toSeconds()))</span>
+<span class="fc" id="L173">                            .nextAttemptDelaySeconds(retryDelayInSeconds)</span>
 <span class="fc" id="L174">                            .build());</span>
 <span class="fc" id="L175">            sendOperationUpdate(retryUpdate);</span>
 
             // Poll for READY status and then execute the step again
-<span class="nc" id="L178">            pollReadyAndExecuteStepLogic(getOperation(), attempt + 1);</span>
-<span class="nc" id="L179">        } else {</span>
+<span class="fc" id="L178">            pollReadyAndExecuteStepLogic(Instant.now().plusSeconds(retryDelayInSeconds), attempt + 1);</span>
+<span class="fc" id="L179">        } else {</span>
             // Send FAIL - retries exhausted
             var failUpdate =
 <span class="fc" id="L182">                    OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);</span>

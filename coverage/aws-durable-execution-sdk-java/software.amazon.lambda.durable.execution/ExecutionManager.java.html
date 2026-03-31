@@ -293,9 +293,17 @@ public class ExecutionManager implements AutoCloseable {
 <span class="fc" id="L293">        throw ex;</span>
     }
 
+    /**
+     * returns {@code true} if the execution is terminated exceptionally (with a {@link SuspendExecutionException} or an
+     * unrecoverable error).
+     */
+    public boolean isExecutionCompletedExceptionally() {
+<span class="fc" id="L301">        return executionExceptionFuture.isCompletedExceptionally();</span>
+    }
+
     private void stopAllOperations(Exception cause) {
-<span class="fc" id="L297">        registeredOperations.values().forEach(op -&gt; op.getCompletionFuture().completeExceptionally(cause));</span>
-<span class="fc" id="L298">    }</span>
+<span class="fc" id="L305">        registeredOperations.values().forEach(op -&gt; op.getCompletionFuture().completeExceptionally(cause));</span>
+<span class="fc" id="L306">    }</span>
 
     /**
      * return a future that completes when userFuture completes successfully or the execution is terminated or
@@ -307,12 +315,12 @@ public class ExecutionManager implements AutoCloseable {
      *     UnrecoverableDurableExecutionException if the execution is terminated.
      */
     public &lt;T&gt; CompletableFuture&lt;T&gt; runUntilCompleteOrSuspend(CompletableFuture&lt;T&gt; userFuture) {
-<span class="fc" id="L310">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
+<span class="fc" id="L318">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
             // reaches here only if userFuture complete successfully
-<span class="pc bpc" id="L312" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
-<span class="fc" id="L313">                return userFuture.join();</span>
+<span class="pc bpc" id="L320" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
+<span class="fc" id="L321">                return userFuture.join();</span>
             }
-<span class="nc" id="L315">            return null;</span>
+<span class="nc" id="L323">            return null;</span>
         });
     }
 }
