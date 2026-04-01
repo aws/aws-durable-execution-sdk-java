@@ -62,14 +62,14 @@ jobs:
 
       - name: Generate JaCoCo Badge
         if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
-        uses: cicirello/jacoco-badge-generator@v2
+        uses: cicirello/jacoco-badge-generator@3bbf7f5f44bbe1e64d7d703b09f8f16abd4164e2 # v2
         with:
           jacoco-csv-file: coverage-report/target/site/jacoco-aggregate/jacoco.csv
           badges-directory: coverage-report/target/site/jacoco-aggregate
 
       - name: Publish coverage report to GitHub Pages
         if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
-        uses: JamesIves/github-pages-deploy-action@v4
+        uses: JamesIves/github-pages-deploy-action@d92aa235d04922e8f08b40ce78cc5442fcfbfa2f # v4
         with:
           branch: docs
           folder: coverage-report/target/site/jacoco-aggregate
@@ -77,7 +77,7 @@ jobs:
 
       - name: Deploy javadoc to Github Pages
         if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
-        uses: MathieuSoysal/Javadoc-publisher.yml@v3.0.2
+        uses: MathieuSoysal/Javadoc-publisher.yml@fda475b197081ba1eca7a1dfadf0c017080a1623 # v3.0.2
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           javadoc-branch: docs
