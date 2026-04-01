@@ -62,7 +62,7 @@ jobs:
 
       - name: Generate JaCoCo Badge
         if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
-        uses: cicirello/jacoco-badge-generator@3bbf7f5f44bbe1e64d7d703b09f8f16abd4164e2 # v2
+        uses: cicirello/jacoco-badge-generator@72266185b7ee48a6fd74eaf0238395cc8b14fef8 # v2
         with:
           jacoco-csv-file: coverage-report/target/site/jacoco-aggregate/jacoco.csv
           badges-directory: coverage-report/target/site/jacoco-aggregate
