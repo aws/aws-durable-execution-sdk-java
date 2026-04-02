@@ -75,7 +75,14 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
                 }
             }
             // Step is pending retry - Start polling for PENDING -> READY transition
-            case PENDING -> pollReadyAndExecuteStepLogic(existing.stepDetails().nextAttemptTimestamp(), attempt);
+            case PENDING -> {
+                if (existing.stepDetails() != null && existing.stepDetails().nextAttemptTimestamp() != null) {
+                    pollReadyAndExecuteStepLogic(existing.stepDetails().nextAttemptTimestamp(), attempt);
+                } else {
+                    throw terminateExecutionWithIllegalDurableOperationException(
+                            "Unexpected PENDING step without nextAttemptTimestamp: " + getOperationId());
+                }
+            }
             // Execute with current attempt
             case READY -> executeStepLogic(attempt);
             default ->
