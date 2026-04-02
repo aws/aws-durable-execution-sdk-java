@@ -249,95 +249,103 @@ import software.amazon.lambda.durable.serde.SerDes;
 <span class="fc bfc" id="L249" title="All 2 branches covered.">        var existing = existingOp != null ? existingOp.stepDetails() : null;</span>
 
 <span class="fc bfc" id="L251" title="All 2 branches covered.">        var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();</span>
+<span class="fc bfc" id="L252" title="All 4 branches covered.">        var attempt = existing != null &amp;&amp; existing.attempt() != null ? existing.attempt() + 1 : 1;</span>
 
-<span class="fc bfc" id="L253" title="All 4 branches covered.">        if (update.action() == OperationAction.RETRY || update.action() == OperationAction.FAIL) {</span>
-<span class="pc bpc" id="L254" title="1 of 4 branches missed.">            var attempt = existing != null &amp;&amp; existing.attempt() != null ? existing.attempt() + 1 : 1;</span>
+<span class="fc bfc" id="L254" title="All 2 branches covered.">        if (update.action() == OperationAction.FAIL) {</span>
 <span class="fc" id="L255">            detailsBuilder.attempt(attempt).error(update.error());</span>
         }
 
-<span class="fc bfc" id="L258" title="All 2 branches covered.">        if (update.payload() != null) {</span>
-<span class="fc" id="L259">            detailsBuilder.result(update.payload());</span>
+<span class="fc bfc" id="L258" title="All 2 branches covered.">        if (update.action() == OperationAction.RETRY) {</span>
+<span class="fc" id="L259">            detailsBuilder</span>
+<span class="fc" id="L260">                    .attempt(attempt)</span>
+<span class="fc" id="L261">                    .error(update.error())</span>
+<span class="fc" id="L262">                    .nextAttemptTimestamp(</span>
+<span class="fc" id="L263">                            Instant.now().plusSeconds(update.stepOptions().nextAttemptDelaySeconds()));</span>
         }
 
-<span class="fc" id="L262">        return detailsBuilder.build();</span>
+<span class="fc bfc" id="L266" title="All 2 branches covered.">        if (update.payload() != null) {</span>
+<span class="fc" id="L267">            detailsBuilder.result(update.payload());</span>
+        }
+
+<span class="fc" id="L270">        return detailsBuilder.build();</span>
     }
 
     private CallbackDetails buildCallbackDetails(OperationUpdate update) {
-<span class="fc" id="L266">        var key = compositeKey(update.parentId(), update.id());</span>
-<span class="fc" id="L267">        var existingOp = operations.get(key);</span>
-<span class="pc bpc" id="L268" title="1 of 2 branches missed.">        var existing = existingOp != null ? existingOp.callbackDetails() : null;</span>
+<span class="fc" id="L274">        var key = compositeKey(update.parentId(), update.id());</span>
+<span class="fc" id="L275">        var existingOp = operations.get(key);</span>
+<span class="pc bpc" id="L276" title="1 of 2 branches missed.">        var existing = existingOp != null ? existingOp.callbackDetails() : null;</span>
 
         // Preserve existing callbackId, or generate new one on START
         var callbackId =
-<span class="pc bpc" id="L272" title="1 of 2 branches missed.">                existing != null ? existing.callbackId() : UUID.randomUUID().toString();</span>
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">                existing != null ? existing.callbackId() : UUID.randomUUID().toString();</span>
 
-<span class="fc" id="L274">        return CallbackDetails.builder()</span>
-<span class="fc" id="L275">                .callbackId(callbackId)</span>
-<span class="pc bpc" id="L276" title="1 of 2 branches missed.">                .result(existing != null ? existing.result() : null)</span>
-<span class="fc" id="L277">                .build();</span>
+<span class="fc" id="L282">        return CallbackDetails.builder()</span>
+<span class="fc" id="L283">                .callbackId(callbackId)</span>
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">                .result(existing != null ? existing.result() : null)</span>
+<span class="fc" id="L285">                .build();</span>
     }
 
     /** Get callback ID for a named callback operation. */
     public String getCallbackId(String operationName) {
-<span class="fc" id="L282">        var op = getOperationByName(operationName);</span>
-<span class="pc bpc" id="L283" title="2 of 4 branches missed.">        if (op == null || op.callbackDetails() == null) {</span>
-<span class="nc" id="L284">            return null;</span>
+<span class="fc" id="L290">        var op = getOperationByName(operationName);</span>
+<span class="pc bpc" id="L291" title="2 of 4 branches missed.">        if (op == null || op.callbackDetails() == null) {</span>
+<span class="nc" id="L292">            return null;</span>
         }
-<span class="fc" id="L286">        return op.callbackDetails().callbackId();</span>
+<span class="fc" id="L294">        return op.callbackDetails().callbackId();</span>
     }
 
     /** Simulate external system completing callback successfully. */
     public void completeCallback(String callbackId, String result) {
-<span class="fc" id="L291">        var op = findOperationByCallbackId(callbackId);</span>
-<span class="pc bpc" id="L292" title="1 of 2 branches missed.">        if (op == null) {</span>
-<span class="nc" id="L293">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
+<span class="fc" id="L299">        var op = findOperationByCallbackId(callbackId);</span>
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">        if (op == null) {</span>
+<span class="nc" id="L301">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
         }
-<span class="fc" id="L295">        var updated = op.toBuilder()</span>
-<span class="fc" id="L296">                .status(OperationStatus.SUCCEEDED)</span>
-<span class="fc" id="L297">                .callbackDetails(op.callbackDetails().toBuilder().result(result).build())</span>
-<span class="fc" id="L298">                .build();</span>
-<span class="fc" id="L299">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
-<span class="fc" id="L300">    }</span>
+<span class="fc" id="L303">        var updated = op.toBuilder()</span>
+<span class="fc" id="L304">                .status(OperationStatus.SUCCEEDED)</span>
+<span class="fc" id="L305">                .callbackDetails(op.callbackDetails().toBuilder().result(result).build())</span>
+<span class="fc" id="L306">                .build();</span>
+<span class="fc" id="L307">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
+<span class="fc" id="L308">    }</span>
 
     /** Simulate external system failing callback. */
     public void failCallback(String callbackId, ErrorObject error) {
-<span class="fc" id="L304">        var op = findOperationByCallbackId(callbackId);</span>
-<span class="pc bpc" id="L305" title="1 of 2 branches missed.">        if (op == null) {</span>
-<span class="nc" id="L306">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
+<span class="fc" id="L312">        var op = findOperationByCallbackId(callbackId);</span>
+<span class="pc bpc" id="L313" title="1 of 2 branches missed.">        if (op == null) {</span>
+<span class="nc" id="L314">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
         }
-<span class="fc" id="L308">        var updated = op.toBuilder()</span>
-<span class="fc" id="L309">                .status(OperationStatus.FAILED)</span>
-<span class="fc" id="L310">                .callbackDetails(op.callbackDetails().toBuilder().error(error).build())</span>
-<span class="fc" id="L311">                .build();</span>
-<span class="fc" id="L312">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
-<span class="fc" id="L313">    }</span>
+<span class="fc" id="L316">        var updated = op.toBuilder()</span>
+<span class="fc" id="L317">                .status(OperationStatus.FAILED)</span>
+<span class="fc" id="L318">                .callbackDetails(op.callbackDetails().toBuilder().error(error).build())</span>
+<span class="fc" id="L319">                .build();</span>
+<span class="fc" id="L320">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
+<span class="fc" id="L321">    }</span>
 
     /** Simulate callback timeout. */
     public void timeoutCallback(String callbackId) {
-<span class="fc" id="L317">        var op = findOperationByCallbackId(callbackId);</span>
-<span class="pc bpc" id="L318" title="1 of 2 branches missed.">        if (op == null) {</span>
-<span class="nc" id="L319">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
+<span class="fc" id="L325">        var op = findOperationByCallbackId(callbackId);</span>
+<span class="pc bpc" id="L326" title="1 of 2 branches missed.">        if (op == null) {</span>
+<span class="nc" id="L327">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
         }
-<span class="fc" id="L321">        var updated = op.toBuilder().status(OperationStatus.TIMED_OUT).build();</span>
-<span class="fc" id="L322">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
-<span class="fc" id="L323">    }</span>
+<span class="fc" id="L329">        var updated = op.toBuilder().status(OperationStatus.TIMED_OUT).build();</span>
+<span class="fc" id="L330">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
+<span class="fc" id="L331">    }</span>
 
     private Operation findOperationByCallbackId(String callbackId) {
-<span class="fc" id="L326">        return operations.values().stream()</span>
-<span class="fc bfc" id="L327" title="All 2 branches covered.">                .filter(op -&gt; op.callbackDetails() != null</span>
-<span class="fc bfc" id="L328" title="All 2 branches covered.">                        &amp;&amp; callbackId.equals(op.callbackDetails().callbackId()))</span>
-<span class="fc" id="L329">                .findFirst()</span>
-<span class="fc" id="L330">                .orElse(null);</span>
+<span class="fc" id="L334">        return operations.values().stream()</span>
+<span class="fc bfc" id="L335" title="All 2 branches covered.">                .filter(op -&gt; op.callbackDetails() != null</span>
+<span class="fc bfc" id="L336" title="All 2 branches covered.">                        &amp;&amp; callbackId.equals(op.callbackDetails().callbackId()))</span>
+<span class="fc" id="L337">                .findFirst()</span>
+<span class="fc" id="L338">                .orElse(null);</span>
     }
 
     private OperationStatus deriveStatus(OperationAction action) {
-<span class="pc bpc" id="L334" title="2 of 6 branches missed.">        return switch (action) {</span>
-<span class="fc" id="L335">            case START -&gt; OperationStatus.STARTED;</span>
-<span class="fc" id="L336">            case SUCCEED -&gt; OperationStatus.SUCCEEDED;</span>
-<span class="fc" id="L337">            case FAIL -&gt; OperationStatus.FAILED;</span>
-<span class="fc" id="L338">            case RETRY -&gt; OperationStatus.PENDING;</span>
-<span class="nc" id="L339">            case CANCEL -&gt; OperationStatus.CANCELLED;</span>
-<span class="nc" id="L340">            case UNKNOWN_TO_SDK_VERSION -&gt; null; // Todo: Check this</span>
+<span class="pc bpc" id="L342" title="2 of 6 branches missed.">        return switch (action) {</span>
+<span class="fc" id="L343">            case START -&gt; OperationStatus.STARTED;</span>
+<span class="fc" id="L344">            case SUCCEED -&gt; OperationStatus.SUCCEEDED;</span>
+<span class="fc" id="L345">            case FAIL -&gt; OperationStatus.FAILED;</span>
+<span class="fc" id="L346">            case RETRY -&gt; OperationStatus.PENDING;</span>
+<span class="nc" id="L347">            case CANCEL -&gt; OperationStatus.CANCELLED;</span>
+<span class="nc" id="L348">            case UNKNOWN_TO_SDK_VERSION -&gt; null; // Todo: Check this</span>
         };
     }
 }

@@ -405,5 +405,9 @@ public abstract class BaseDurableOperation {
 <span class="nc" id="L405">                    getOperationId(), checkpointed.subType(), getSubType())));</span>
         }
 <span class="fc" id="L407">    }</span>
+
+    public CompletableFuture&lt;Void&gt; getRunningUserHandler() {
+<span class="fc" id="L410">        return runningUserHandler.get();</span>
+    }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
