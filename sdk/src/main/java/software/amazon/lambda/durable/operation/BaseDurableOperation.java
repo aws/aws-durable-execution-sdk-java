@@ -405,4 +405,8 @@ public abstract class BaseDurableOperation {
                     getOperationId(), checkpointed.subType(), getSubType())));
         }
     }
+
+    public CompletableFuture<Void> getRunningUserHandler() {
+        return runningUserHandler.get();
+    }
 }

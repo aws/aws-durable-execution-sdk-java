@@ -12,6 +12,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -54,6 +57,7 @@ public class ExecutionManager implements AutoCloseable {
     private final Operation executionOp;
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
+    private final DurableConfig durableConfig;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = Collections.synchronizedMap(new HashMap<>());
@@ -65,6 +69,7 @@ public class ExecutionManager implements AutoCloseable {
     private final CheckpointManager checkpointManager;
 
     public ExecutionManager(DurableExecutionInput input, DurableConfig config) {
+        durableConfig = config;
         this.durableExecutionArn = input.durableExecutionArn();
 
         // Create checkpoint batcher for internal coordination
@@ -277,6 +282,35 @@ public class ExecutionManager implements AutoCloseable {
     @Override
     public void close() {
         checkpointManager.shutdown();
+
+        validateRunningThreads();
+    }
+
+    private void validateRunningThreads() {
+        // This will detect stuck user thread and thread leaks in the thread pool
+        for (BaseDurableOperation op : registeredOperations.values()) {
+            var userHandlerFuture = op.getRunningUserHandler();
+            if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
+                // We wait a few more milliseconds for the last user thread to complete because
+                // it may have deregistered itself but haven't released the thread yet.
+                try {
+                    userHandlerFuture.get(100, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException | TimeoutException e) {
+                    // if the user handler is stuck
+                    throw new IllegalStateException("Active running user handler in operation: " + op.getOperationId());
+                } catch (Exception e) {
+                    // ok if the future completed exceptionally
+                }
+            }
+        }
+
+        if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
+            var threadCount = threadPoolExecutor.getActiveCount();
+            if (threadCount > 0) {
+                // this may or may not be a problem because getActiveCount doesn't return an accurate number
+                logger.warn("{} active threads in user executor pool when shutting down", threadCount);
+            }
+        }
     }
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */

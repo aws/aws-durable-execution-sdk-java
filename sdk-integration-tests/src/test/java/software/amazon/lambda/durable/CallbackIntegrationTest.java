@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -306,6 +307,9 @@ class CallbackIntegrationTest {
                 fail();
                 return "should not reach here";
             } catch (Exception e) {
+                if (e instanceof SuspendExecutionException) {
+                    throw e;
+                }
                 assertInstanceOf(CallbackTimeoutException.class, e);
                 throw e;
             }
@@ -333,6 +337,9 @@ class CallbackIntegrationTest {
                     throw new IllegalArgumentException(errorMessage);
                 });
             } catch (Exception e) {
+                if (e instanceof SuspendExecutionException) {
+                    throw e;
+                }
                 assertInstanceOf(IllegalArgumentException.class, e);
                 assertEquals(errorMessage, e.getMessage());
                 throw e;
