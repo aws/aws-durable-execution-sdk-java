@@ -272,6 +272,9 @@ class CallbackIntegrationTest {
                 fail();
                 return "should not reach here";
             } catch (Exception e) {
+                if (e instanceof SuspendExecutionException) {
+                    throw e;
+                }
                 assertInstanceOf(CallbackFailedException.class, e);
                 throw e;
             }
