@@ -167,7 +167,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             }
         };
 
-        runUserHandler(userHandler, getOperationId(), ThreadType.STEP);
+        runUserHandler(userHandler, ThreadType.STEP);
     }
 
     private void handleCheckFailure(Throwable exception) {

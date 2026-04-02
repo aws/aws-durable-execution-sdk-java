@@ -129,7 +129,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         };
 
         // Execute user provided child context code in user-configured executor
-        runUserHandler(userHandler, contextId, ThreadType.CONTEXT);
+        runUserHandler(userHandler, ThreadType.CONTEXT);
     }
 
     private void handleChildContextSuccess(T result) {

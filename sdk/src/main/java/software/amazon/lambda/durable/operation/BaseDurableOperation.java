@@ -224,9 +224,11 @@ public abstract class BaseDurableOperation {
         return op;
     }
 
-    protected void runUserHandler(Runnable runnable, String contextId, ThreadType threadType) {
+    protected void runUserHandler(Runnable runnable, ThreadType threadType) {
+        String operationId = getOperationId();
+        logger.debug("Starting user handler for operation {} ({})", operationId, threadType);
         Runnable wrapped = () -> {
-            executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));
+            executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));
             try {
                 runnable.run();
             } catch (Throwable throwable) {
@@ -239,11 +241,11 @@ public abstract class BaseDurableOperation {
                             "An unhandled exception is thrown from user function: " + throwable);
                 }
             } finally {
-                if (contextId != null) {
+                if (operationId != null) {
                     try {
                         // if this is a child context or a step context, we need to
                         // deregister the context's thread from the execution manager
-                        executionManager.deregisterActiveThread(contextId);
+                        executionManager.deregisterActiveThread(operationId);
                     } catch (SuspendExecutionException e) {
                         // Expected when this is the last active thread. Must catch here because:
                         // 1/ This runs in a worker thread detached from handlerFuture
@@ -257,8 +259,10 @@ public abstract class BaseDurableOperation {
         };
 
         // runUserHandler is used to ensure that only one user handler is running at a time
-        if (runningUserHandler.get() != null) {
-            throw new IllegalStateException("User handler already running");
+        if (runningUserHandler.get() != null && !runningUserHandler.get().isDone()) {
+            logger.error("User handler already running for operation {} ({})", getOperationId(), threadType);
+            throw terminateExecutionWithIllegalDurableOperationException(
+                    "User handler already running: " + getOperationId());
         }
 
         // Thread registration is intentionally split across two threads:
@@ -267,14 +271,10 @@ public abstract class BaseDurableOperation {
         // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
         //    the child context know which context they belong to.
         // registerActiveThread is idempotent (no-op if already registered).
-        registerActiveThread(contextId);
+        registerActiveThread(operationId);
 
-        if (!runningUserHandler.compareAndSet(
-                null,
-                CompletableFuture.runAsync(
-                        wrapped, getContext().getDurableConfig().getExecutorService()))) {
-            throw new IllegalStateException("User handler already running");
-        }
+        runningUserHandler.set(CompletableFuture.runAsync(
+                wrapped, getContext().getDurableConfig().getExecutorService()));
     }
 
     /**
