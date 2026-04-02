@@ -51,78 +51,82 @@ public class TestResult&lt;O&gt; {
 
     /** Returns the execution status (SUCCEEDED, FAILED, or PENDING). */
     public ExecutionStatus getStatus() {
-<span class="fc" id="L54">        return status;</span>
+<span class="pc bpc" id="L54" title="1 of 4 branches missed.">        if (status == ExecutionStatus.SUCCEEDED &amp;&amp; error != null) {</span>
+<span class="nc" id="L55">            throw new IllegalStateException(</span>
+<span class="nc" id="L56">                    &quot;Execution succeeded while invocation failed with: &quot; + error.errorMessage());</span>
+        }
+<span class="fc" id="L58">        return status;</span>
     }
 
     /** Deserializes and returns the execution output, throwing if the execution did not succeed. */
     public &lt;T&gt; T getResult(Class&lt;T&gt; resultType) {
-<span class="fc" id="L59">        return getResult(TypeToken.get(resultType));</span>
+<span class="fc" id="L63">        return getResult(TypeToken.get(resultType));</span>
     }
 
     /** Deserializes and returns the execution output using a TypeToken for generic types. */
     public &lt;T&gt; T getResult(TypeToken&lt;T&gt; resultType) {
-<span class="fc bfc" id="L64" title="All 2 branches covered.">        if (status != ExecutionStatus.SUCCEEDED) {</span>
-<span class="fc" id="L65">            throw new IllegalStateException(&quot;Execution did not succeed: &quot; + status);</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        if (status != ExecutionStatus.SUCCEEDED) {</span>
+<span class="fc" id="L69">            throw new IllegalStateException(&quot;Execution did not succeed: &quot; + status);</span>
         }
-<span class="pc bpc" id="L67" title="1 of 4 branches missed.">        if (resultPayload == null || resultPayload.isEmpty()) {</span>
-<span class="fc" id="L68">            var lastEvent = allEvents.get(allEvents.size() - 1);</span>
-<span class="pc bpc" id="L69" title="1 of 2 branches missed.">            if (lastEvent.eventType() == EventType.EXECUTION_SUCCEEDED) {</span>
-<span class="fc" id="L70">                return serDes.deserialize(</span>
-<span class="fc" id="L71">                        lastEvent.executionSucceededDetails().result().payload(), resultType);</span>
+<span class="pc bpc" id="L71" title="1 of 4 branches missed.">        if (resultPayload == null || resultPayload.isEmpty()) {</span>
+<span class="fc" id="L72">            var lastEvent = allEvents.get(allEvents.size() - 1);</span>
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">            if (lastEvent.eventType() == EventType.EXECUTION_SUCCEEDED) {</span>
+<span class="fc" id="L74">                return serDes.deserialize(</span>
+<span class="fc" id="L75">                        lastEvent.executionSucceededDetails().result().payload(), resultType);</span>
             }
-<span class="nc" id="L73">            return null;</span>
+<span class="nc" id="L77">            return null;</span>
         }
-<span class="fc" id="L75">        return serDes.deserialize(resultPayload, resultType);</span>
+<span class="fc" id="L79">        return serDes.deserialize(resultPayload, resultType);</span>
     }
 
     /** Returns the execution error, if present. */
     public Optional&lt;ErrorObject&gt; getError() {
-<span class="fc" id="L80">        return Optional.ofNullable(error);</span>
+<span class="fc" id="L84">        return Optional.ofNullable(error);</span>
     }
 
     /** Returns all operations from the execution. */
     public List&lt;TestOperation&gt; getOperations() {
-<span class="fc" id="L85">        return operations;</span>
+<span class="fc" id="L89">        return operations;</span>
     }
 
     /** Returns the {@link TestOperation} with the given name, or null if not found. */
     public TestOperation getOperation(String name) {
-<span class="fc" id="L90">        return operationsByName.get(name);</span>
+<span class="fc" id="L94">        return operationsByName.get(name);</span>
     }
 
     /** Returns all raw history events from the execution. */
     public List&lt;Event&gt; getHistoryEvents() {
-<span class="nc" id="L95">        return allEvents;</span>
+<span class="nc" id="L99">        return allEvents;</span>
     }
 
     /** Returns the raw history events for the given operation name, or an empty list if not found. */
     public List&lt;Event&gt; getEventsForOperation(String operationName) {
-<span class="nc" id="L100">        var testOp = operationsByName.get(operationName);</span>
-<span class="nc bnc" id="L101" title="All 2 branches missed.">        return testOp != null ? testOp.getEvents() : List.of();</span>
+<span class="nc" id="L104">        var testOp = operationsByName.get(operationName);</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        return testOp != null ? testOp.getEvents() : List.of();</span>
     }
 
     /** Returns true if the execution completed successfully. */
     public boolean isSucceeded() {
-<span class="nc bnc" id="L106" title="All 2 branches missed.">        return status == ExecutionStatus.SUCCEEDED;</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        return status == ExecutionStatus.SUCCEEDED;</span>
     }
 
     /** Returns true if the execution failed. */
     public boolean isFailed() {
-<span class="nc bnc" id="L111" title="All 2 branches missed.">        return status == ExecutionStatus.FAILED;</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        return status == ExecutionStatus.FAILED;</span>
     }
 
     /** Returns all operations that completed successfully. */
     public List&lt;TestOperation&gt; getSucceededOperations() {
-<span class="fc" id="L116">        return operations.stream()</span>
-<span class="fc bfc" id="L117" title="All 2 branches covered.">                .filter(op -&gt; op.getStatus() == OperationStatus.SUCCEEDED)</span>
-<span class="fc" id="L118">                .toList();</span>
+<span class="fc" id="L120">        return operations.stream()</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">                .filter(op -&gt; op.getStatus() == OperationStatus.SUCCEEDED)</span>
+<span class="fc" id="L122">                .toList();</span>
     }
 
     /** Returns all operations that failed, were cancelled, timed out, or stopped. */
     public List&lt;TestOperation&gt; getFailedOperations() {
-<span class="fc" id="L123">        return operations.stream()</span>
-<span class="fc" id="L124">                .filter(op -&gt; FAIL_OPERATION_STATUS.contains(op.getStatus()))</span>
-<span class="fc" id="L125">                .toList();</span>
+<span class="fc" id="L127">        return operations.stream()</span>
+<span class="fc" id="L128">                .filter(op -&gt; FAIL_OPERATION_STATUS.contains(op.getStatus()))</span>
+<span class="fc" id="L129">                .toList();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

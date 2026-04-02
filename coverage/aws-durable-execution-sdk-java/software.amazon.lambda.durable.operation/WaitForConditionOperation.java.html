@@ -159,7 +159,7 @@ public class WaitForConditionOperation&lt;T&gt; extends SerializableDurableOpera
 <span class="pc bpc" id="L159" title="1 of 2 branches missed.">                                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="nc" id="L160">                                        ? CompletableFuture.completedFuture(op)</span>
 <span class="fc" id="L161">                                        : pollForOperationUpdates())</span>
-<span class="pc" id="L162">                                .thenRun(() -&gt; executeCheckLogic(deserializedValue, attempt + 1));</span>
+<span class="fc" id="L162">                                .thenRun(() -&gt; executeCheckLogic(deserializedValue, attempt + 1));</span>
                     }
 <span class="fc" id="L164">                } catch (Throwable e) {</span>
 <span class="fc" id="L165">                    handleCheckFailure(e);</span>
@@ -167,7 +167,7 @@ public class WaitForConditionOperation&lt;T&gt; extends SerializableDurableOpera
             }
 <span class="fc" id="L168">        };</span>
 
-<span class="fc" id="L170">        runUserHandler(userHandler, getOperationId(), ThreadType.STEP);</span>
+<span class="fc" id="L170">        runUserHandler(userHandler, ThreadType.STEP);</span>
 <span class="fc" id="L171">    }</span>
 
     private void handleCheckFailure(Throwable exception) {

@@ -224,41 +224,45 @@ public abstract class BaseDurableOperation {
 <span class="fc" id="L224">        return op;</span>
     }
 
-    protected void runUserHandler(Runnable runnable, String contextId, ThreadType threadType) {
-<span class="fc" id="L228">        Runnable wrapped = () -&gt; {</span>
-<span class="fc" id="L229">            executionManager.setCurrentThreadContext(new ThreadContext(contextId, threadType));</span>
+    protected void runUserHandler(Runnable runnable, ThreadType threadType) {
+<span class="fc" id="L228">        String operationId = getOperationId();</span>
+<span class="fc" id="L229">        logger.debug(&quot;Starting user handler for operation {} ({})&quot;, operationId, threadType);</span>
+<span class="fc" id="L230">        Runnable wrapped = () -&gt; {</span>
+<span class="fc" id="L231">            executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));</span>
             try {
-<span class="fc" id="L231">                runnable.run();</span>
-<span class="fc" id="L232">            } catch (Throwable throwable) {</span>
+<span class="fc" id="L233">                runnable.run();</span>
+<span class="fc" id="L234">            } catch (Throwable throwable) {</span>
                 // Operations always wrap the user's function and handles all possible exceptions except for
                 // SuspendExecutionException.
-<span class="pc bpc" id="L235" title="1 of 4 branches missed.">                if (!executionManager.isExecutionCompletedExceptionally()</span>
+<span class="pc bpc" id="L237" title="1 of 4 branches missed.">                if (!executionManager.isExecutionCompletedExceptionally()</span>
                         &amp;&amp; !(throwable instanceof SuspendExecutionException)) {
-<span class="nc" id="L237">                    logger.error(&quot;An unhandled exception is thrown from user function: &quot;, throwable);</span>
-<span class="nc" id="L238">                    throw terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L239">                    logger.error(&quot;An unhandled exception is thrown from user function: &quot;, throwable);</span>
+<span class="nc" id="L240">                    throw terminateExecutionWithIllegalDurableOperationException(</span>
                             &quot;An unhandled exception is thrown from user function: &quot; + throwable);
                 }
             } finally {
-<span class="pc bpc" id="L242" title="1 of 2 branches missed.">                if (contextId != null) {</span>
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">                if (operationId != null) {</span>
                     try {
                         // if this is a child context or a step context, we need to
                         // deregister the context's thread from the execution manager
-<span class="fc" id="L246">                        executionManager.deregisterActiveThread(contextId);</span>
-<span class="fc" id="L247">                    } catch (SuspendExecutionException e) {</span>
+<span class="fc" id="L248">                        executionManager.deregisterActiveThread(operationId);</span>
+<span class="fc" id="L249">                    } catch (SuspendExecutionException e) {</span>
                         // Expected when this is the last active thread. Must catch here because:
                         // 1/ This runs in a worker thread detached from handlerFuture
                         // 2/ Uncaught exception would prevent stepAsync().get() from resume
                         // Suspension/Termination is already signaled via
                         // suspendExecutionFuture/terminateExecutionFuture
                         // before the throw.
-<span class="fc" id="L254">                    }</span>
+<span class="fc" id="L256">                    }</span>
                 }
             }
-<span class="fc" id="L257">        };</span>
+<span class="fc" id="L259">        };</span>
 
         // runUserHandler is used to ensure that only one user handler is running at a time
-<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (runningUserHandler.get() != null) {</span>
-<span class="fc" id="L261">            throw new IllegalStateException(&quot;User handler already running&quot;);</span>
+<span class="pc bpc" id="L262" title="1 of 4 branches missed.">        if (runningUserHandler.get() != null &amp;&amp; !runningUserHandler.get().isDone()) {</span>
+<span class="nc" id="L263">            logger.error(&quot;User handler already running for operation {} ({})&quot;, getOperationId(), threadType);</span>
+<span class="nc" id="L264">            throw terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L265">                    &quot;User handler already running: &quot; + getOperationId());</span>
         }
 
         // Thread registration is intentionally split across two threads:
@@ -267,14 +271,10 @@ public abstract class BaseDurableOperation {
         // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
         //    the child context know which context they belong to.
         // registerActiveThread is idempotent (no-op if already registered).
-<span class="fc" id="L270">        registerActiveThread(contextId);</span>
+<span class="fc" id="L274">        registerActiveThread(operationId);</span>
 
-<span class="pc bpc" id="L272" title="1 of 2 branches missed.">        if (!runningUserHandler.compareAndSet(</span>
-                null,
-<span class="fc" id="L274">                CompletableFuture.runAsync(</span>
-<span class="fc" id="L275">                        wrapped, getContext().getDurableConfig().getExecutorService()))) {</span>
-<span class="nc" id="L276">            throw new IllegalStateException(&quot;User handler already running&quot;);</span>
-        }
+<span class="fc" id="L276">        runningUserHandler.set(CompletableFuture.runAsync(</span>
+<span class="fc" id="L277">                wrapped, getContext().getDurableConfig().getExecutorService()));</span>
 <span class="fc" id="L278">    }</span>
 
     /**

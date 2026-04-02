@@ -223,17 +223,31 @@ public class ExecutionManager implements AutoCloseable {
 
 <span class="fc bfc" id="L224" title="All 2 branches covered.">            if (activeThreads.isEmpty()) {</span>
 <span class="fc" id="L225">                logger.info(&quot;No active threads remaining - suspending execution&quot;);</span>
-<span class="nc" id="L226">                suspendExecution();</span>
+<span class="fc" id="L226">                preSuspendCheck();</span>
+<span class="nc" id="L227">                suspendExecution();</span>
             }
-<span class="fc" id="L228">        }</span>
-<span class="fc" id="L229">    }</span>
+<span class="fc" id="L229">        }</span>
+<span class="fc" id="L230">    }</span>
+
+    private void preSuspendCheck() {
+<span class="fc bfc" id="L233" title="All 4 branches covered.">        var hasAnyPendingOperation = operationStorage.values().stream().anyMatch(o -&gt; switch (o.type()) {</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">            case STEP -&gt; o.status() == OperationStatus.PENDING;</span>
+<span class="fc bfc" id="L235" title="All 2 branches covered.">            case WAIT, CALLBACK -&gt; o.status() == OperationStatus.STARTED;</span>
+<span class="pc bpc" id="L236" title="2 of 4 branches missed.">            case CHAINED_INVOKE -&gt; o.status() == OperationStatus.PENDING || o.status() == OperationStatus.STARTED;</span>
+<span class="fc" id="L237">            default -&gt; false;</span>
+        });
+
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">        if (!hasAnyPendingOperation) {</span>
+<span class="nc" id="L241">            logger.warn(&quot;Invalid suspension. No operation is pending&quot;);</span>
+        }
+<span class="fc" id="L243">    }</span>
 
     // ===== Checkpointing =====
 
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture&lt;Void&gt; sendOperationUpdate(OperationUpdate update) {
-<span class="fc" id="L236">        return checkpointManager.checkpoint(update);</span>
+<span class="fc" id="L250">        return checkpointManager.checkpoint(update);</span>
     }
 
     // ===== Polling =====
@@ -244,7 +258,7 @@ public class ExecutionManager implements AutoCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId) {
-<span class="fc" id="L247">        return checkpointManager.pollForUpdate(operationId);</span>
+<span class="fc" id="L261">        return checkpointManager.pollForUpdate(operationId);</span>
     }
 
     /**
@@ -255,19 +269,19 @@ public class ExecutionManager implements AutoCloseable {
      * @return a completable future that completes with the operation update
      */
     public CompletableFuture&lt;Operation&gt; pollForOperationUpdates(String operationId, Instant at) {
-<span class="fc" id="L258">        return checkpointManager.pollForUpdate(operationId, at);</span>
+<span class="fc" id="L272">        return checkpointManager.pollForUpdate(operationId, at);</span>
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-<span class="fc" id="L265">        checkpointManager.shutdown();</span>
-<span class="fc" id="L266">    }</span>
+<span class="fc" id="L279">        checkpointManager.shutdown();</span>
+<span class="fc" id="L280">    }</span>
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */
     public static boolean isTerminalStatus(OperationStatus status) {
-<span class="fc bfc" id="L270" title="All 10 branches covered.">        return status == OperationStatus.SUCCEEDED</span>
+<span class="fc bfc" id="L284" title="All 10 branches covered.">        return status == OperationStatus.SUCCEEDED</span>
                 || status == OperationStatus.FAILED
                 || status == OperationStatus.CANCELLED
                 || status == OperationStatus.TIMED_OUT
@@ -280,17 +294,17 @@ public class ExecutionManager implements AutoCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-<span class="fc" id="L283">        stopAllOperations(exception);</span>
-<span class="fc" id="L284">        executionExceptionFuture.completeExceptionally(exception);</span>
-<span class="fc" id="L285">        throw exception;</span>
+<span class="fc" id="L297">        stopAllOperations(exception);</span>
+<span class="fc" id="L298">        executionExceptionFuture.completeExceptionally(exception);</span>
+<span class="fc" id="L299">        throw exception;</span>
     }
 
     /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
-<span class="fc" id="L290">        var ex = new SuspendExecutionException();</span>
-<span class="fc" id="L291">        stopAllOperations(ex);</span>
-<span class="fc" id="L292">        executionExceptionFuture.completeExceptionally(ex);</span>
-<span class="fc" id="L293">        throw ex;</span>
+<span class="fc" id="L304">        var ex = new SuspendExecutionException();</span>
+<span class="fc" id="L305">        stopAllOperations(ex);</span>
+<span class="fc" id="L306">        executionExceptionFuture.completeExceptionally(ex);</span>
+<span class="fc" id="L307">        throw ex;</span>
     }
 
     /**
@@ -298,12 +312,12 @@ public class ExecutionManager implements AutoCloseable {
      * unrecoverable error).
      */
     public boolean isExecutionCompletedExceptionally() {
-<span class="fc" id="L301">        return executionExceptionFuture.isCompletedExceptionally();</span>
+<span class="fc" id="L315">        return executionExceptionFuture.isCompletedExceptionally();</span>
     }
 
     private void stopAllOperations(Exception cause) {
-<span class="fc" id="L305">        registeredOperations.values().forEach(op -&gt; op.getCompletionFuture().completeExceptionally(cause));</span>
-<span class="fc" id="L306">    }</span>
+<span class="fc" id="L319">        registeredOperations.values().forEach(op -&gt; op.getCompletionFuture().completeExceptionally(cause));</span>
+<span class="fc" id="L320">    }</span>
 
     /**
      * return a future that completes when userFuture completes successfully or the execution is terminated or
@@ -315,12 +329,12 @@ public class ExecutionManager implements AutoCloseable {
      *     UnrecoverableDurableExecutionException if the execution is terminated.
      */
     public &lt;T&gt; CompletableFuture&lt;T&gt; runUntilCompleteOrSuspend(CompletableFuture&lt;T&gt; userFuture) {
-<span class="fc" id="L318">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
+<span class="fc" id="L332">        return CompletableFuture.anyOf(userFuture, executionExceptionFuture).thenApply(v -&gt; {</span>
             // reaches here only if userFuture complete successfully
-<span class="pc bpc" id="L320" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
-<span class="fc" id="L321">                return userFuture.join();</span>
+<span class="pc bpc" id="L334" title="1 of 2 branches missed.">            if (userFuture.isDone()) {</span>
+<span class="fc" id="L335">                return userFuture.join();</span>
             }
-<span class="nc" id="L323">            return null;</span>
+<span class="nc" id="L337">            return null;</span>
         });
     }
 }

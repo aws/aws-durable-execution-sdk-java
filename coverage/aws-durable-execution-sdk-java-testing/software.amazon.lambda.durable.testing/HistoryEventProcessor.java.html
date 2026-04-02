@@ -52,155 +52,167 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
 <span class="nc" id="L52">                        .add(event);</span>
             }
 
-<span class="nc bnc" id="L55" title="All 21 branches missed.">            switch (eventType) {</span>
-                case EXECUTION_STARTED, INVOCATION_COMPLETED -&gt; {
+<span class="nc bnc" id="L55" title="All 22 branches missed.">            switch (eventType) {</span>
+                case EXECUTION_STARTED -&gt; {
                     // Execution started - no action needed, just track the event
 <span class="nc" id="L58">                }</span>
+                case INVOCATION_COMPLETED -&gt; {
+<span class="nc" id="L60">                    var details = event.invocationCompletedDetails();</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">                    if (details != null</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">                            &amp;&amp; details.error() != null</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">                            &amp;&amp; details.error().payload() != null) {</span>
+                        // This will get overridden by the execution events but
+                        // the test cases will still be able to see the error
+                        // if the execution succeeds.
+<span class="nc" id="L67">                        status = ExecutionStatus.FAILED;</span>
+<span class="nc" id="L68">                        error = details.error().payload();</span>
+                    }
+<span class="nc" id="L70">                }</span>
                 case EXECUTION_SUCCEEDED -&gt; {
-<span class="nc" id="L60">                    status = ExecutionStatus.SUCCEEDED;</span>
-<span class="nc" id="L61">                    var details = event.executionSucceededDetails();</span>
-<span class="nc bnc" id="L62" title="All 2 branches missed.">                    if (details != null</span>
-<span class="nc bnc" id="L63" title="All 2 branches missed.">                            &amp;&amp; details.result() != null</span>
-<span class="nc bnc" id="L64" title="All 2 branches missed.">                            &amp;&amp; details.result().payload() != null) {</span>
-<span class="nc" id="L65">                        result = details.result().payload();</span>
+<span class="nc" id="L72">                    status = ExecutionStatus.SUCCEEDED;</span>
+<span class="nc" id="L73">                    var details = event.executionSucceededDetails();</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">                    if (details != null</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">                            &amp;&amp; details.result() != null</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">                            &amp;&amp; details.result().payload() != null) {</span>
+<span class="nc" id="L77">                        result = details.result().payload();</span>
                     }
-<span class="nc" id="L67">                }</span>
+<span class="nc" id="L79">                }</span>
                 case EXECUTION_FAILED -&gt; {
-<span class="nc" id="L69">                    status = ExecutionStatus.FAILED;</span>
-<span class="nc" id="L70">                    var details = event.executionFailedDetails();</span>
-<span class="nc bnc" id="L71" title="All 2 branches missed.">                    if (details != null</span>
-<span class="nc bnc" id="L72" title="All 2 branches missed.">                            &amp;&amp; details.error() != null</span>
-<span class="nc bnc" id="L73" title="All 2 branches missed.">                            &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L74">                        error = details.error().payload();</span>
+<span class="nc" id="L81">                    status = ExecutionStatus.FAILED;</span>
+<span class="nc" id="L82">                    var details = event.executionFailedDetails();</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">                    if (details != null</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">                            &amp;&amp; details.error() != null</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">                            &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L86">                        error = details.error().payload();</span>
                     }
-<span class="nc" id="L76">                }</span>
+<span class="nc" id="L88">                }</span>
                 case EXECUTION_TIMED_OUT -&gt; {
-<span class="nc" id="L78">                    status = ExecutionStatus.FAILED;</span>
-<span class="nc" id="L79">                    var details = event.executionTimedOutDetails();</span>
-<span class="nc bnc" id="L80" title="All 2 branches missed.">                    if (details != null</span>
-<span class="nc bnc" id="L81" title="All 2 branches missed.">                            &amp;&amp; details.error() != null</span>
-<span class="nc bnc" id="L82" title="All 2 branches missed.">                            &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L83">                        error = details.error().payload();</span>
+<span class="nc" id="L90">                    status = ExecutionStatus.FAILED;</span>
+<span class="nc" id="L91">                    var details = event.executionTimedOutDetails();</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">                    if (details != null</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">                            &amp;&amp; details.error() != null</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">                            &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L95">                        error = details.error().payload();</span>
                     }
-<span class="nc" id="L85">                }</span>
+<span class="nc" id="L97">                }</span>
                 case EXECUTION_STOPPED -&gt; {
-<span class="nc" id="L87">                    status = ExecutionStatus.FAILED;</span>
+<span class="nc" id="L99">                    status = ExecutionStatus.FAILED;</span>
 
-<span class="nc" id="L89">                    var details = event.executionStoppedDetails();</span>
-<span class="nc bnc" id="L90" title="All 2 branches missed.">                    if (details != null</span>
-<span class="nc bnc" id="L91" title="All 2 branches missed.">                            &amp;&amp; details.error() != null</span>
-<span class="nc bnc" id="L92" title="All 2 branches missed.">                            &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L93">                        error = details.error().payload();</span>
+<span class="nc" id="L101">                    var details = event.executionStoppedDetails();</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">                    if (details != null</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">                            &amp;&amp; details.error() != null</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">                            &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L105">                        error = details.error().payload();</span>
                     }
-<span class="nc" id="L95">                }</span>
+<span class="nc" id="L107">                }</span>
                 case STEP_STARTED -&gt; {
-<span class="nc bnc" id="L97" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L98">                        operations.putIfAbsent(</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L110">                        operations.putIfAbsent(</span>
                                 operationId,
-<span class="nc" id="L100">                                createStepOperation(operationId, event.name(), null, OperationStatus.STARTED, 1));</span>
+<span class="nc" id="L112">                                createStepOperation(operationId, event.name(), null, OperationStatus.STARTED, 1));</span>
                     }
                 }
                 case STEP_SUCCEEDED -&gt; {
-<span class="nc bnc" id="L104" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L105">                        var details = event.stepSucceededDetails();</span>
-<span class="nc bnc" id="L106" title="All 4 branches missed.">                        var stepResult = details != null &amp;&amp; details.result() != null</span>
-<span class="nc" id="L107">                                ? details.result().payload()</span>
-<span class="nc" id="L108">                                : null;</span>
-<span class="nc bnc" id="L109" title="All 4 branches missed.">                        var attempt = details != null &amp;&amp; details.retryDetails() != null</span>
-<span class="nc" id="L110">                                ? details.retryDetails().currentAttempt()</span>
-<span class="nc" id="L111">                                : 1;</span>
-<span class="nc" id="L112">                        operations.put(</span>
-                                operationId,
-<span class="nc" id="L114">                                createStepOperation(</span>
-<span class="nc" id="L115">                                        operationId, event.name(), stepResult, OperationStatus.SUCCEEDED, attempt));</span>
-<span class="nc" id="L116">                    }</span>
-                }
-                case STEP_FAILED -&gt; {
-<span class="nc bnc" id="L119" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L120">                        var details = event.stepFailedDetails();</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L117">                        var details = event.stepSucceededDetails();</span>
+<span class="nc bnc" id="L118" title="All 4 branches missed.">                        var stepResult = details != null &amp;&amp; details.result() != null</span>
+<span class="nc" id="L119">                                ? details.result().payload()</span>
+<span class="nc" id="L120">                                : null;</span>
 <span class="nc bnc" id="L121" title="All 4 branches missed.">                        var attempt = details != null &amp;&amp; details.retryDetails() != null</span>
 <span class="nc" id="L122">                                ? details.retryDetails().currentAttempt()</span>
 <span class="nc" id="L123">                                : 1;</span>
 <span class="nc" id="L124">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L126">                                createStepOperation(operationId, event.name(), null, OperationStatus.FAILED, attempt));</span>
-<span class="nc" id="L127">                    }</span>
+<span class="nc" id="L126">                                createStepOperation(</span>
+<span class="nc" id="L127">                                        operationId, event.name(), stepResult, OperationStatus.SUCCEEDED, attempt));</span>
+<span class="nc" id="L128">                    }</span>
+                }
+                case STEP_FAILED -&gt; {
+<span class="nc bnc" id="L131" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L132">                        var details = event.stepFailedDetails();</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">                        var attempt = details != null &amp;&amp; details.retryDetails() != null</span>
+<span class="nc" id="L134">                                ? details.retryDetails().currentAttempt()</span>
+<span class="nc" id="L135">                                : 1;</span>
+<span class="nc" id="L136">                        operations.put(</span>
+                                operationId,
+<span class="nc" id="L138">                                createStepOperation(operationId, event.name(), null, OperationStatus.FAILED, attempt));</span>
+<span class="nc" id="L139">                    }</span>
                 }
 
                 case WAIT_STARTED -&gt; {
-<span class="nc bnc" id="L131" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L132">                        operations.putIfAbsent(</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L144">                        operations.putIfAbsent(</span>
                                 operationId,
-<span class="nc" id="L134">                                createWaitOperation(operationId, event.name(), OperationStatus.STARTED, event));</span>
+<span class="nc" id="L146">                                createWaitOperation(operationId, event.name(), OperationStatus.STARTED, event));</span>
                     }
                 }
                 case WAIT_SUCCEEDED -&gt; {
-<span class="nc bnc" id="L138" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L139">                        operations.put(</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L151">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L141">                                createWaitOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));</span>
+<span class="nc" id="L153">                                createWaitOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));</span>
                     }
                 }
                 case WAIT_CANCELLED -&gt; {
-<span class="nc bnc" id="L145" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L146">                        operations.put(</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L158">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L148">                                createWaitOperation(operationId, event.name(), OperationStatus.CANCELLED, event));</span>
+<span class="nc" id="L160">                                createWaitOperation(operationId, event.name(), OperationStatus.CANCELLED, event));</span>
                     }
                 }
 
                 case CALLBACK_STARTED -&gt; {
-<span class="nc bnc" id="L153" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L154">                        operations.putIfAbsent(</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L166">                        operations.putIfAbsent(</span>
                                 operationId,
-<span class="nc" id="L156">                                createCallbackOperation(operationId, event.name(), OperationStatus.STARTED, event));</span>
+<span class="nc" id="L168">                                createCallbackOperation(operationId, event.name(), OperationStatus.STARTED, event));</span>
                     }
                 }
                 case CALLBACK_SUCCEEDED -&gt; {
-<span class="nc bnc" id="L160" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L161">                        operations.put(</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L173">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L163">                                createCallbackOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));</span>
+<span class="nc" id="L175">                                createCallbackOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));</span>
                     }
                 }
                 case CALLBACK_FAILED -&gt; {
-<span class="nc bnc" id="L167" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L168">                        operations.put(</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L180">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L170">                                createCallbackOperation(operationId, event.name(), OperationStatus.FAILED, event));</span>
+<span class="nc" id="L182">                                createCallbackOperation(operationId, event.name(), OperationStatus.FAILED, event));</span>
                     }
                 }
                 case CALLBACK_TIMED_OUT -&gt; {
-<span class="nc bnc" id="L174" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L175">                        operations.put(</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L187">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L177">                                createCallbackOperation(operationId, event.name(), OperationStatus.TIMED_OUT, event));</span>
+<span class="nc" id="L189">                                createCallbackOperation(operationId, event.name(), OperationStatus.TIMED_OUT, event));</span>
                     }
                 }
 
                 case UNKNOWN_TO_SDK_VERSION -&gt; {
                     // Unknown event type - log and ignore gracefully
-<span class="nc" id="L183">                }</span>
+<span class="nc" id="L195">                }</span>
 
                 case CONTEXT_STARTED -&gt; {
-<span class="nc bnc" id="L186" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L187">                        operations.putIfAbsent(</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L199">                        operations.putIfAbsent(</span>
                                 operationId,
-<span class="nc" id="L189">                                createContextOperation(operationId, event.name(), OperationStatus.STARTED, event));</span>
+<span class="nc" id="L201">                                createContextOperation(operationId, event.name(), OperationStatus.STARTED, event));</span>
                     }
                 }
                 case CONTEXT_SUCCEEDED -&gt; {
-<span class="nc bnc" id="L193" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L194">                        operations.put(</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L206">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L196">                                createContextOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));</span>
+<span class="nc" id="L208">                                createContextOperation(operationId, event.name(), OperationStatus.SUCCEEDED, event));</span>
                     }
                 }
                 case CONTEXT_FAILED -&gt; {
-<span class="nc bnc" id="L200" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L201">                        operations.put(</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L213">                        operations.put(</span>
                                 operationId,
-<span class="nc" id="L203">                                createContextOperation(operationId, event.name(), OperationStatus.FAILED, event));</span>
+<span class="nc" id="L215">                                createContextOperation(operationId, event.name(), OperationStatus.FAILED, event));</span>
                     }
                 }
 
@@ -209,171 +221,171 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
                         CHAINED_INVOKE_FAILED,
                         CHAINED_INVOKE_TIMED_OUT,
                         CHAINED_INVOKE_STOPPED -&gt; {
-<span class="nc bnc" id="L212" title="All 2 branches missed.">                    if (operationId != null) {</span>
-<span class="nc" id="L213">                        operations.putIfAbsent(operationId, createInvokeOperation(operationId, event));</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                    if (operationId != null) {</span>
+<span class="nc" id="L225">                        operations.putIfAbsent(operationId, createInvokeOperation(operationId, event));</span>
                     }
                 }
 
-<span class="nc" id="L217">                default -&gt; throw new UnsupportedOperationException(&quot;Unknown operation: &quot; + eventType);</span>
+<span class="nc" id="L229">                default -&gt; throw new UnsupportedOperationException(&quot;Unknown operation: &quot; + eventType);</span>
             }
-<span class="nc" id="L219">        }</span>
+<span class="nc" id="L231">        }</span>
 
         // Build TestOperations with events
-<span class="nc" id="L222">        var testOperations = new ArrayList&lt;TestOperation&gt;();</span>
-<span class="nc bnc" id="L223" title="All 2 branches missed.">        for (var entry : operations.entrySet()) {</span>
-<span class="nc" id="L224">            var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());</span>
-<span class="nc" id="L225">            testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));</span>
-<span class="nc" id="L226">        }</span>
+<span class="nc" id="L234">        var testOperations = new ArrayList&lt;TestOperation&gt;();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        for (var entry : operations.entrySet()) {</span>
+<span class="nc" id="L236">            var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());</span>
+<span class="nc" id="L237">            testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));</span>
+<span class="nc" id="L238">        }</span>
 
-<span class="nc" id="L228">        return new TestResult&lt;&gt;(status, result, error, testOperations, events, serDes);</span>
+<span class="nc" id="L240">        return new TestResult&lt;&gt;(status, result, error, testOperations, events, serDes);</span>
     }
 
     private Operation createStepOperation(
             String id, String name, String stepResult, OperationStatus status, Integer attempt) {
-<span class="nc" id="L233">        var stepDetails = StepDetails.builder()</span>
-<span class="nc" id="L234">                .result(stepResult)</span>
-<span class="nc bnc" id="L235" title="All 2 branches missed.">                .attempt(attempt != null ? attempt : 1)</span>
-<span class="nc" id="L236">                .build();</span>
+<span class="nc" id="L245">        var stepDetails = StepDetails.builder()</span>
+<span class="nc" id="L246">                .result(stepResult)</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">                .attempt(attempt != null ? attempt : 1)</span>
+<span class="nc" id="L248">                .build();</span>
 
-<span class="nc" id="L238">        return Operation.builder()</span>
-<span class="nc" id="L239">                .id(id)</span>
-<span class="nc" id="L240">                .name(name)</span>
-<span class="nc" id="L241">                .status(status)</span>
-<span class="nc" id="L242">                .type(OperationType.STEP)</span>
-<span class="nc" id="L243">                .stepDetails(stepDetails)</span>
-<span class="nc" id="L244">                .build();</span>
+<span class="nc" id="L250">        return Operation.builder()</span>
+<span class="nc" id="L251">                .id(id)</span>
+<span class="nc" id="L252">                .name(name)</span>
+<span class="nc" id="L253">                .status(status)</span>
+<span class="nc" id="L254">                .type(OperationType.STEP)</span>
+<span class="nc" id="L255">                .stepDetails(stepDetails)</span>
+<span class="nc" id="L256">                .build();</span>
     }
 
     private Operation createWaitOperation(String id, String name, OperationStatus status, Event event) {
-<span class="nc" id="L248">        var builder = WaitDetails.builder();</span>
-<span class="nc bnc" id="L249" title="All 2 branches missed.">        if (event.waitStartedDetails() != null) {</span>
-<span class="nc" id="L250">            builder.scheduledEndTimestamp(event.waitStartedDetails().scheduledEndTimestamp());</span>
+<span class="nc" id="L260">        var builder = WaitDetails.builder();</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        if (event.waitStartedDetails() != null) {</span>
+<span class="nc" id="L262">            builder.scheduledEndTimestamp(event.waitStartedDetails().scheduledEndTimestamp());</span>
         }
 
-<span class="nc" id="L253">        return Operation.builder()</span>
-<span class="nc" id="L254">                .id(id)</span>
-<span class="nc" id="L255">                .name(name)</span>
-<span class="nc" id="L256">                .status(status)</span>
-<span class="nc" id="L257">                .type(OperationType.WAIT)</span>
-<span class="nc" id="L258">                .waitDetails(builder.build())</span>
-<span class="nc" id="L259">                .build();</span>
+<span class="nc" id="L265">        return Operation.builder()</span>
+<span class="nc" id="L266">                .id(id)</span>
+<span class="nc" id="L267">                .name(name)</span>
+<span class="nc" id="L268">                .status(status)</span>
+<span class="nc" id="L269">                .type(OperationType.WAIT)</span>
+<span class="nc" id="L270">                .waitDetails(builder.build())</span>
+<span class="nc" id="L271">                .build();</span>
     }
 
     private Operation createCallbackOperation(String id, String name, OperationStatus status, Event event) {
-<span class="nc" id="L263">        var builder = CallbackDetails.builder();</span>
+<span class="nc" id="L275">        var builder = CallbackDetails.builder();</span>
 
         // Extract callback ID and details from event
-<span class="nc bnc" id="L266" title="All 2 branches missed.">        if (event.callbackStartedDetails() != null) {</span>
-<span class="nc" id="L267">            var details = event.callbackStartedDetails();</span>
-<span class="nc bnc" id="L268" title="All 2 branches missed.">            if (details.callbackId() != null) {</span>
-<span class="nc" id="L269">                builder.callbackId(details.callbackId());</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if (event.callbackStartedDetails() != null) {</span>
+<span class="nc" id="L279">            var details = event.callbackStartedDetails();</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            if (details.callbackId() != null) {</span>
+<span class="nc" id="L281">                builder.callbackId(details.callbackId());</span>
             }
-<span class="nc bnc" id="L271" title="All 2 branches missed.">        } else if (event.callbackSucceededDetails() != null) {</span>
-<span class="nc" id="L272">            var details = event.callbackSucceededDetails();</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        } else if (event.callbackSucceededDetails() != null) {</span>
+<span class="nc" id="L284">            var details = event.callbackSucceededDetails();</span>
             // CallbackSucceededDetails doesn't have callbackId, need to get it from started event
-<span class="nc bnc" id="L274" title="All 4 branches missed.">            if (details.result() != null &amp;&amp; details.result().payload() != null) {</span>
-<span class="nc" id="L275">                builder.result(details.result().payload());</span>
+<span class="nc bnc" id="L286" title="All 4 branches missed.">            if (details.result() != null &amp;&amp; details.result().payload() != null) {</span>
+<span class="nc" id="L287">                builder.result(details.result().payload());</span>
             }
-<span class="nc bnc" id="L277" title="All 2 branches missed.">        } else if (event.callbackFailedDetails() != null) {</span>
-<span class="nc" id="L278">            var details = event.callbackFailedDetails();</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        } else if (event.callbackFailedDetails() != null) {</span>
+<span class="nc" id="L290">            var details = event.callbackFailedDetails();</span>
             // CallbackFailedDetails doesn't have callbackId, need to get it from started event
-<span class="nc bnc" id="L280" title="All 4 branches missed.">            if (details.error() != null &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L281">                builder.error(ErrorObject.builder()</span>
-<span class="nc" id="L282">                        .errorType(details.error().payload().errorType())</span>
-<span class="nc" id="L283">                        .errorMessage(details.error().payload().errorMessage())</span>
-<span class="nc" id="L284">                        .build());</span>
+<span class="nc bnc" id="L292" title="All 4 branches missed.">            if (details.error() != null &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L293">                builder.error(ErrorObject.builder()</span>
+<span class="nc" id="L294">                        .errorType(details.error().payload().errorType())</span>
+<span class="nc" id="L295">                        .errorMessage(details.error().payload().errorMessage())</span>
+<span class="nc" id="L296">                        .build());</span>
             }
         }
 
-<span class="nc" id="L288">        return Operation.builder()</span>
-<span class="nc" id="L289">                .id(id)</span>
-<span class="nc" id="L290">                .name(name)</span>
-<span class="nc" id="L291">                .status(status)</span>
-<span class="nc" id="L292">                .type(OperationType.CALLBACK)</span>
-<span class="nc" id="L293">                .callbackDetails(builder.build())</span>
-<span class="nc" id="L294">                .build();</span>
+<span class="nc" id="L300">        return Operation.builder()</span>
+<span class="nc" id="L301">                .id(id)</span>
+<span class="nc" id="L302">                .name(name)</span>
+<span class="nc" id="L303">                .status(status)</span>
+<span class="nc" id="L304">                .type(OperationType.CALLBACK)</span>
+<span class="nc" id="L305">                .callbackDetails(builder.build())</span>
+<span class="nc" id="L306">                .build();</span>
     }
 
     private Operation createInvokeOperation(String id, Event event) {
-<span class="nc" id="L298">        var builder = ChainedInvokeDetails.builder();</span>
+<span class="nc" id="L310">        var builder = ChainedInvokeDetails.builder();</span>
 
-<span class="nc" id="L300">        OperationStatus status =</span>
-<span class="nc bnc" id="L301" title="All 6 branches missed.">                switch (event.eventType()) {</span>
-<span class="nc" id="L302">                    case CHAINED_INVOKE_STARTED -&gt; OperationStatus.STARTED;</span>
+<span class="nc" id="L312">        OperationStatus status =</span>
+<span class="nc bnc" id="L313" title="All 6 branches missed.">                switch (event.eventType()) {</span>
+<span class="nc" id="L314">                    case CHAINED_INVOKE_STARTED -&gt; OperationStatus.STARTED;</span>
                     case CHAINED_INVOKE_SUCCEEDED -&gt; {
-<span class="nc" id="L304">                        var details = event.callbackSucceededDetails();</span>
-<span class="nc bnc" id="L305" title="All 2 branches missed.">                        if (details != null</span>
-<span class="nc bnc" id="L306" title="All 2 branches missed.">                                &amp;&amp; details.result() != null</span>
-<span class="nc bnc" id="L307" title="All 2 branches missed.">                                &amp;&amp; details.result().payload() != null) {</span>
-<span class="nc" id="L308">                            builder.result(details.result().payload());</span>
+<span class="nc" id="L316">                        var details = event.callbackSucceededDetails();</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">                        if (details != null</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">                                &amp;&amp; details.result() != null</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">                                &amp;&amp; details.result().payload() != null) {</span>
+<span class="nc" id="L320">                            builder.result(details.result().payload());</span>
                         }
-<span class="nc" id="L310">                        yield OperationStatus.SUCCEEDED;</span>
+<span class="nc" id="L322">                        yield OperationStatus.SUCCEEDED;</span>
                     }
                     case CHAINED_INVOKE_FAILED -&gt; {
-<span class="nc" id="L313">                        var details = event.callbackFailedDetails();</span>
-<span class="nc bnc" id="L314" title="All 2 branches missed.">                        if (details != null</span>
-<span class="nc bnc" id="L315" title="All 2 branches missed.">                                &amp;&amp; details.error() != null</span>
-<span class="nc bnc" id="L316" title="All 2 branches missed.">                                &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L317">                            builder.error(details.error().payload());</span>
+<span class="nc" id="L325">                        var details = event.callbackFailedDetails();</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                        if (details != null</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">                                &amp;&amp; details.error() != null</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">                                &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L329">                            builder.error(details.error().payload());</span>
                         }
-<span class="nc" id="L319">                        yield OperationStatus.FAILED;</span>
+<span class="nc" id="L331">                        yield OperationStatus.FAILED;</span>
                     }
                     case CHAINED_INVOKE_STOPPED -&gt; {
-<span class="nc" id="L322">                        var details = event.chainedInvokeStoppedDetails();</span>
-<span class="nc bnc" id="L323" title="All 2 branches missed.">                        if (details != null</span>
-<span class="nc bnc" id="L324" title="All 2 branches missed.">                                &amp;&amp; details.error() != null</span>
-<span class="nc bnc" id="L325" title="All 2 branches missed.">                                &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L326">                            builder.error(details.error().payload());</span>
+<span class="nc" id="L334">                        var details = event.chainedInvokeStoppedDetails();</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">                        if (details != null</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">                                &amp;&amp; details.error() != null</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                                &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L338">                            builder.error(details.error().payload());</span>
                         }
 
-<span class="nc" id="L329">                        yield OperationStatus.STOPPED;</span>
+<span class="nc" id="L341">                        yield OperationStatus.STOPPED;</span>
                     }
                     case CHAINED_INVOKE_TIMED_OUT -&gt; {
-<span class="nc" id="L332">                        var details = event.chainedInvokeTimedOutDetails();</span>
-<span class="nc bnc" id="L333" title="All 2 branches missed.">                        if (details != null</span>
-<span class="nc bnc" id="L334" title="All 2 branches missed.">                                &amp;&amp; details.error() != null</span>
-<span class="nc bnc" id="L335" title="All 2 branches missed.">                                &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L336">                            builder.error(details.error().payload());</span>
+<span class="nc" id="L344">                        var details = event.chainedInvokeTimedOutDetails();</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">                        if (details != null</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">                                &amp;&amp; details.error() != null</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">                                &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L348">                            builder.error(details.error().payload());</span>
                         }
-<span class="nc" id="L338">                        yield OperationStatus.TIMED_OUT;</span>
+<span class="nc" id="L350">                        yield OperationStatus.TIMED_OUT;</span>
                     }
                     default -&gt;
-<span class="nc" id="L341">                        throw new UnsupportedOperationException(</span>
-<span class="nc" id="L342">                                &quot;Unknown chained invocation operation: &quot; + event.eventType());</span>
+<span class="nc" id="L353">                        throw new UnsupportedOperationException(</span>
+<span class="nc" id="L354">                                &quot;Unknown chained invocation operation: &quot; + event.eventType());</span>
                 };
 
-<span class="nc" id="L345">        return Operation.builder()</span>
-<span class="nc" id="L346">                .id(id)</span>
-<span class="nc" id="L347">                .name(event.name())</span>
-<span class="nc" id="L348">                .status(status)</span>
-<span class="nc" id="L349">                .type(OperationType.CHAINED_INVOKE)</span>
-<span class="nc" id="L350">                .chainedInvokeDetails(builder.build())</span>
-<span class="nc" id="L351">                .build();</span>
+<span class="nc" id="L357">        return Operation.builder()</span>
+<span class="nc" id="L358">                .id(id)</span>
+<span class="nc" id="L359">                .name(event.name())</span>
+<span class="nc" id="L360">                .status(status)</span>
+<span class="nc" id="L361">                .type(OperationType.CHAINED_INVOKE)</span>
+<span class="nc" id="L362">                .chainedInvokeDetails(builder.build())</span>
+<span class="nc" id="L363">                .build();</span>
     }
 
     private Operation createContextOperation(String id, String name, OperationStatus status, Event event) {
-<span class="nc" id="L355">        var builder = ContextDetails.builder();</span>
+<span class="nc" id="L367">        var builder = ContextDetails.builder();</span>
 
-<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (event.contextSucceededDetails() != null) {</span>
-<span class="nc" id="L358">            var details = event.contextSucceededDetails();</span>
-<span class="nc bnc" id="L359" title="All 4 branches missed.">            if (details.result() != null &amp;&amp; details.result().payload() != null) {</span>
-<span class="nc" id="L360">                builder.result(details.result().payload());</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">        if (event.contextSucceededDetails() != null) {</span>
+<span class="nc" id="L370">            var details = event.contextSucceededDetails();</span>
+<span class="nc bnc" id="L371" title="All 4 branches missed.">            if (details.result() != null &amp;&amp; details.result().payload() != null) {</span>
+<span class="nc" id="L372">                builder.result(details.result().payload());</span>
             }
-<span class="nc bnc" id="L362" title="All 2 branches missed.">        } else if (event.contextFailedDetails() != null) {</span>
-<span class="nc" id="L363">            var details = event.contextFailedDetails();</span>
-<span class="nc bnc" id="L364" title="All 4 branches missed.">            if (details.error() != null &amp;&amp; details.error().payload() != null) {</span>
-<span class="nc" id="L365">                builder.error(details.error().payload());</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">        } else if (event.contextFailedDetails() != null) {</span>
+<span class="nc" id="L375">            var details = event.contextFailedDetails();</span>
+<span class="nc bnc" id="L376" title="All 4 branches missed.">            if (details.error() != null &amp;&amp; details.error().payload() != null) {</span>
+<span class="nc" id="L377">                builder.error(details.error().payload());</span>
             }
         }
 
-<span class="nc" id="L369">        return Operation.builder()</span>
-<span class="nc" id="L370">                .id(id)</span>
-<span class="nc" id="L371">                .name(name)</span>
-<span class="nc" id="L372">                .status(status)</span>
-<span class="nc" id="L373">                .type(OperationType.CONTEXT)</span>
-<span class="nc" id="L374">                .subType(event.subType())</span>
-<span class="nc" id="L375">                .contextDetails(builder.build())</span>
-<span class="nc" id="L376">                .build();</span>
+<span class="nc" id="L381">        return Operation.builder()</span>
+<span class="nc" id="L382">                .id(id)</span>
+<span class="nc" id="L383">                .name(name)</span>
+<span class="nc" id="L384">                .status(status)</span>
+<span class="nc" id="L385">                .type(OperationType.CONTEXT)</span>
+<span class="nc" id="L386">                .subType(event.subType())</span>
+<span class="nc" id="L387">                .contextDetails(builder.build())</span>
+<span class="nc" id="L388">                .build();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -89,7 +89,7 @@ public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt
 <span class="pc bpc" id="L89" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="nc" id="L90">                        ? CompletableFuture.completedFuture(op)</span>
 <span class="fc" id="L91">                        : pollForOperationUpdates(nextAttemptInstant))</span>
-<span class="pc" id="L92">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
+<span class="fc" id="L92">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
 <span class="fc" id="L93">    }</span>
 
     private void executeStepLogic(int attempt) {
@@ -112,7 +112,7 @@ public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt
 <span class="fc" id="L112">        };</span>
 
         // Execute user provided step code in user-configured executor
-<span class="fc" id="L115">        runUserHandler(userHandler, getOperationId(), ThreadType.STEP);</span>
+<span class="fc" id="L115">        runUserHandler(userHandler, ThreadType.STEP);</span>
 <span class="fc" id="L116">    }</span>
 
     private void checkpointStarted() {

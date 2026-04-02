@@ -210,7 +210,7 @@ public abstract class ConcurrencyOperation&lt;T&gt; extends SerializableDurableO
             }
 <span class="nc" id="L211">        };</span>
         // run consumer in the user thread pool, although it's not a real user thread
-<span class="fc" id="L213">        runUserHandler(consumer, getOperationId(), ThreadType.CONTEXT);</span>
+<span class="fc" id="L213">        runUserHandler(consumer, ThreadType.CONTEXT);</span>
 <span class="fc" id="L214">    }</span>
 
     private void handleException(Throwable ex) {
