@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -293,11 +294,12 @@ public class ExecutionManager implements AutoCloseable {
             if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
                 // We wait a few more milliseconds for the last user thread to complete because
                 // it may have deregistered itself but haven't released the thread yet.
+                logger.info("Waiting for operation to complete before shutting down: {}", op.getOperationId());
                 try {
-                    userHandlerFuture.get(100, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException | TimeoutException e) {
+                    userHandlerFuture.get();
+                } catch (InterruptedException | CancellationException e) {
                     // if the user handler is stuck
-                    throw new IllegalStateException("Active running user handler in operation: " + op.getOperationId());
+                    throw new IllegalStateException("Stuck running user handler when shutting down: " + op.getOperationId());
                 } catch (Exception e) {
                     // ok if the future completed exceptionally
                 }
