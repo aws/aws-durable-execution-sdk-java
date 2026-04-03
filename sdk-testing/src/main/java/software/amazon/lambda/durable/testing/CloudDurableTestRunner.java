@@ -10,6 +10,8 @@ import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
+import software.amazon.lambda.durable.testing.cloud.HistoryPoller;
 
 /**
  * Test runner for durable Lambda functions deployed to AWS. Invokes a real Lambda function, polls execution history,

@@ -15,9 +15,9 @@ import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.lambda.durable.TypeToken;
@@ -344,8 +344,7 @@ class CloudBasedIntegrationTest {
         // Complete the preapproval callback
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambdaClient.sendDurableExecutionCallbackSuccess(
-                req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
+        execution.completeCallback(preapprovalCallbackId, "\"preapproved\"");
 
         // Wait for callback to appear
         execution.pollUntil(exec -> exec.hasCallback("approval"));
@@ -355,8 +354,7 @@ class CloudBasedIntegrationTest {
         assertNotNull(callbackId);
 
         // Complete the callback using AWS SDK
-        lambdaClient.sendDurableExecutionCallbackSuccess(
-                req -> req.callbackId(callbackId).result(SdkBytes.fromUtf8String("\"approved\"")));
+        execution.completeCallback(callbackId, "\"approved\"");
 
         // Wait for execution to complete
         var result = execution.pollUntilComplete();
@@ -385,8 +383,7 @@ class CloudBasedIntegrationTest {
 
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambdaClient.sendDurableExecutionCallbackSuccess(
-                req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
+        execution.completeCallback(preapprovalCallbackId, "\"preapproved\"");
 
         // Wait for callback to appear
         execution.pollUntil(exec -> exec.hasCallback("approval"));
@@ -396,8 +393,12 @@ class CloudBasedIntegrationTest {
         assertNotNull(callbackId);
 
         // Fail the callback using AWS SDK
-        lambdaClient.sendDurableExecutionCallbackFailure(req -> req.callbackId(callbackId)
-                .error(err -> err.errorType("ApprovalRejected").errorMessage("Approval rejected by manager")));
+        execution.failCallback(
+                callbackId,
+                ErrorObject.builder()
+                        .errorType("ApprovalRejected")
+                        .errorMessage("Approval rejected by manager")
+                        .build());
 
         // Wait for execution to complete
         var result = execution.pollUntilComplete();
@@ -423,8 +424,7 @@ class CloudBasedIntegrationTest {
 
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambdaClient.sendDurableExecutionCallbackSuccess(
-                req -> req.callbackId(preapprovalCallbackId).result(SdkBytes.fromUtf8String("\"preapproved\"")));
+        execution.completeCallback(preapprovalCallbackId, "\"preapproved\"");
 
         // Wait for callback to appear
         execution.pollUntil(exec -> exec.hasCallback("approval"));
@@ -454,8 +454,9 @@ class CloudBasedIntegrationTest {
 
         execution.pollUntil(exec -> exec.hasCallback("preapproval-callback"));
         var preapprovalCallbackId = execution.getCallbackId("preapproval-callback");
-        lambdaClient.sendDurableExecutionCallbackFailure(
-                req -> req.callbackId(preapprovalCallbackId).error(err -> err.errorMessage("preapproval denied")));
+        execution.failCallback(
+                preapprovalCallbackId,
+                ErrorObject.builder().errorMessage("preapproval denied").build());
 
         // Wait for callback to appear
         execution.pollUntil(exec -> exec.hasCallback("approval"));

@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.testing;
+package software.amazon.lambda.durable.testing.cloud;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
+import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
 /**
  * Polls the GetDurableExecutionHistory API until execution completes or a timeout is reached. Used by

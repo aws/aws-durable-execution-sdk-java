@@ -26,11 +26,11 @@ public class TestOperation {
     private final List<Event> events;
     private final SerDes serDes;
 
-    TestOperation(Operation operation, SerDes serDes) {
+    public TestOperation(Operation operation, SerDes serDes) {
         this(operation, List.of(), serDes);
     }
 
-    TestOperation(Operation operation, List<Event> events, SerDes serDes) {
+    public TestOperation(Operation operation, List<Event> events, SerDes serDes) {
         this.operation = operation;
         this.events = events;
         this.serDes = serDes;

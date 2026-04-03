@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.testing;
+package software.amazon.lambda.durable.testing.cloud;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -18,6 +18,10 @@ import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.testing.AsyncExecution;
+import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
+import software.amazon.lambda.durable.testing.TestOperation;
+import software.amazon.lambda.durable.testing.TestResult;
 
 /**
  * Processes execution history events from the GetDurableExecutionHistory API into {@link TestResult} objects. Used by

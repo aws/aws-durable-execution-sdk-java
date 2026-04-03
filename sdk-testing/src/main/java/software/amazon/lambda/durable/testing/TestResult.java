@@ -32,7 +32,7 @@ public class TestResult<O> {
     private final List<Event> allEvents;
     private final SerDes serDes;
 
-    TestResult(
+    public TestResult(
             ExecutionStatus status,
             String resultPayload,
             ErrorObject error,

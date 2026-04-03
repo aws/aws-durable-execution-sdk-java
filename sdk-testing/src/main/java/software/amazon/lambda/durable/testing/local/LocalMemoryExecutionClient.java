@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.testing;
+package software.amazon.lambda.durable.testing.local;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -16,6 +16,8 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.testing.TestOperation;
+import software.amazon.lambda.durable.testing.TestResult;
 
 /**
  * In-memory implementation of {@link DurableExecutionClient} for local testing. Stores operations and checkpoint state

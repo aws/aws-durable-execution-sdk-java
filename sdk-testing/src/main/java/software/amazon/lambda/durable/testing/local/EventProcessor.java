@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.testing;
+package software.amazon.lambda.durable.testing.local;
 
 import static software.amazon.awssdk.services.lambda.model.EventType.*;
 

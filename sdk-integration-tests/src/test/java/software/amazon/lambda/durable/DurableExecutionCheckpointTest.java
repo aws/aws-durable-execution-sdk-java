@@ -10,7 +10,7 @@ import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.testing.LocalMemoryExecutionClient;
+import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 /** Integration tests that verify checkpoint behavior using LocalMemoryExecutionClient */
 class DurableExecutionCheckpointTest {

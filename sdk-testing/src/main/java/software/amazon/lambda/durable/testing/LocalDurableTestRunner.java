@@ -22,6 +22,8 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
+import software.amazon.lambda.durable.testing.local.OperationResult;
 
 /**
  * In-memory test runner for durable Lambda functions. Simulates the Lambda re-invocation loop locally without requiring

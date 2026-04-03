@@ -6,13 +6,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.function.Predicate;
+import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 
 /**
  * Handle for an asynchronously executing durable function. Allows incremental polling and inspection of execution
@@ -161,6 +164,23 @@ public class AsyncExecution<O> {
     /** Get the execution ARN. */
     public String getExecutionArn() {
         return executionArn;
+    }
+
+    /** calls sendDurableExecutionCallbackSuccess with the given callbackId and result */
+    public void completeCallback(String callbackId, String result) {
+        lambdaClient.sendDurableExecutionCallbackSuccess(
+                req -> req.callbackId(callbackId).result(SdkBytes.fromUtf8String(result)));
+    }
+
+    /** calls sendDurableExecutionCallbackFailure with the give callbackId and error */
+    public void failCallback(String callbackId, ErrorObject error) {
+        lambdaClient.sendDurableExecutionCallbackFailure(
+                req -> req.callbackId(callbackId).error(error));
+    }
+
+    /** call sendDurableExecutionCallbackHeartbeat API with the give callbackId */
+    public void heartbeatCallback(String callbackId) {
+        lambdaClient.sendDurableExecutionCallbackHeartbeat(req -> req.callbackId(callbackId));
     }
 
     private void refreshHistory() {
