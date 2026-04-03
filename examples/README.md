@@ -7,7 +7,6 @@ Example applications demonstrating the AWS Lambda Durable Execution SDK for Java
 - Java 17+
 - Maven 3.8+
 - AWS SAM CLI (for deployment)
-- Docker (for SAM build)
 - AWS credentials configured
 
 ## Local Testing

@@ -10,14 +10,10 @@ Parameters:
     AllowedValues:
       - x86_64
       - arm64
-  DockerFile:
+  JavaVersion:
     Type: String
-    Default: examples/Dockerfile
-    Description: path to Dockerfile
-  FunctionNameSuffix:
-    Type: String
-    Default: ''
-    Description: Suffix to append to all function names
+    Default: 'java17'
+    Description: Java runtime version
 
 Globals:
   Function:
@@ -25,57 +21,40 @@ Globals:
     MemorySize: 512
     Architectures:
       - !Ref Architecture
+    DurableConfig:
+      ExecutionTimeout: 300
+      RetentionPeriodInDays: 7
 
 Resources:
   NoopExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - noop-example
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: [ "software.amazon.lambda.durable.examples.general.NoopExample::handleRequest" ]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.general.NoopExample"
+      Runtime: !Ref JavaVersion
 
   SimpleStepExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - simple-step-example
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.step.SimpleStepExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.step.SimpleStepExample"
+      Runtime: !Ref JavaVersion
 
   SimpleInvokeExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'simple-invoke-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.invoke.SimpleInvokeExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.invoke.SimpleInvokeExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
@@ -83,665 +62,420 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
                 - lambda:InvokeFunction
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-invoke-example${FunctionNameSuffix}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-invoke-example${JavaVersion}"
             - Effect: Allow
               Action:
                 - lambda:InvokeFunction
               Resource: '*'
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
 
   WaitExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'wait-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.wait.WaitExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.wait.WaitExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example${JavaVersion}"
 
   RetryExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'retry-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.step.RetryExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.step.RetryExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example${JavaVersion}"
 
   WaitAtLeastExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'wait-at-least-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.wait.WaitAtLeastExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.wait.WaitAtLeastExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example${JavaVersion}"
 
   WaitAtLeastInProcessExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'wait-at-least-in-process-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.wait.WaitAtLeastInProcessExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.wait.WaitAtLeastInProcessExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example${JavaVersion}"
 
   RetryInProcessExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'retry-in-process-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.step.RetryInProcessExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.step.RetryInProcessExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example${JavaVersion}"
 
   GenericTypesExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'generic-types-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.general.GenericTypesExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.general.GenericTypesExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example${JavaVersion}"
 
   GenericInputOutputExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'generic-input-output-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.general.GenericInputOutputExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.general.GenericInputOutputExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-input-output-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-input-output-example${JavaVersion}"
 
   CustomConfigExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'custom-config-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.general.CustomConfigExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.general.CustomConfigExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example${JavaVersion}"
 
   LoggingExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'logging-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.general.LoggingExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.general.LoggingExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example${JavaVersion}"
 
   ErrorHandlingExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'error-handling-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.general.ErrorHandlingExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.general.ErrorHandlingExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example${JavaVersion}"
 
   CallbackExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'callback-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.callback.CallbackExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.callback.CallbackExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example${JavaVersion}"
 
   ManyAsyncStepsExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'many-async-steps-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.step.ManyAsyncStepsExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.step.ManyAsyncStepsExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example${JavaVersion}"
 
   ChildContextExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'child-context-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.child.ChildContextExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.child.ChildContextExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:child-context-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:child-context-example${JavaVersion}"
 
   WaitAsyncExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'wait-async-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.wait.WaitAsyncExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.wait.WaitAsyncExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-async-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-async-example${JavaVersion}"
 
   ManyAsyncChildContextExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'many-async-child-context-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.child.ManyAsyncChildContextExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.child.ManyAsyncChildContextExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-child-context-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-child-context-example${JavaVersion}"
 
   SimpleMapExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'simple-map-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.map.SimpleMapExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.map.SimpleMapExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-map-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-map-example${JavaVersion}"
 
   ComplexMapExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'complex-map-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.map.ComplexMapExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.map.ComplexMapExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:complex-map-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:complex-map-example${JavaVersion}"
 
   WaitForConditionExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'wait-for-condition-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.wait.WaitForConditionExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.wait.WaitForConditionExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-for-condition-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-for-condition-example${JavaVersion}"
 
   ConcurrentWaitForConditionExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
       FunctionName: !Join
-        - ''
+        - '-'
         - - 'concurrent-wait-for-condition-example'
-          - !Ref FunctionNameSuffix
-      ImageConfig:
-        Command: ["software.amazon.lambda.durable.examples.wait.ConcurrentWaitForConditionExample::handleRequest"]
-      DurableConfig:
-        ExecutionTimeout: 300
-        RetentionPeriodInDays: 7
+          - !Ref JavaVersion
+      Handler: "software.amazon.lambda.durable.examples.wait.ConcurrentWaitForConditionExample"
+      Runtime: !Ref JavaVersion
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:concurrent-wait-for-condition-example${FunctionNameSuffix}"
-    Metadata:
-      Dockerfile: !Ref DockerFile
-      DockerContext: ../
-      DockerTag: durable-examples
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:concurrent-wait-for-condition-example${JavaVersion}"
 
 Outputs:
   NoopExampleFunction:
     Description: Noop Example Function ARN
     Value: !GetAtt NoopExampleFunction.Arn
 
-  NoopExampleFunctionName:
-    Description: Noop Example Function Name
-    Value: !Ref NoopExampleFunction
-
   SimpleStepExampleFunction:
     Description: Simple Step Example Function ARN
     Value: !GetAtt SimpleStepExampleFunction.Arn
-
-  SimpleStepExampleFunctionName:
-    Description: Simple Step Example Function Name
-    Value: !Ref SimpleStepExampleFunction
 
   SimpleInvokeExampleFunction:
     Description: Simple Invoke Example Function ARN
     Value: !GetAtt SimpleInvokeExampleFunction.Arn
 
-  SimpleInvokeExampleFunctionName:
-    Description: Simple Invoke Example Function Name
-    Value: !Ref SimpleInvokeExampleFunction
-
   WaitExampleFunction:
     Description: Wait Example Function ARN
     Value: !GetAtt WaitExampleFunction.Arn
-
-  WaitExampleFunctionName:
-    Description: Wait Example Function Name
-    Value: !Ref WaitExampleFunction
 
   RetryExampleFunction:
     Description: Retry Example Function ARN
     Value: !GetAtt RetryExampleFunction.Arn
 
-  RetryExampleFunctionName:
-    Description: Retry Example Function Name
-    Value: !Ref RetryExampleFunction
-
   WaitAtLeastExampleFunction:
     Description: Wait At Least Example Function ARN
     Value: !GetAtt WaitAtLeastExampleFunction.Arn
-
-  WaitAtLeastExampleFunctionName:
-    Description: Wait At Least Example Function Name
-    Value: !Ref WaitAtLeastExampleFunction
 
   WaitAtLeastInProcessExampleFunction:
     Description: Wait At Least In Process Example Function ARN
     Value: !GetAtt WaitAtLeastInProcessExampleFunction.Arn
 
-  WaitAtLeastInProcessExampleFunctionName:
-    Description: Wait At Least In Process Example Function Name
-    Value: !Ref WaitAtLeastInProcessExampleFunction
-
   RetryInProcessExampleFunction:
     Description: Retry In Process Example Function ARN
     Value: !GetAtt RetryInProcessExampleFunction.Arn
-
-  RetryInProcessExampleFunctionName:
-    Description: Retry In Process Example Function Name
-    Value: !Ref RetryInProcessExampleFunction
 
   GenericTypesExampleFunction:
     Description: Generic Types Example Function ARN
     Value: !GetAtt GenericTypesExampleFunction.Arn
 
-  GenericTypesExampleFunctionName:
-    Description: Generic Types Example Function Name
-    Value: !Ref GenericTypesExampleFunction
-
   GenericInputOutputExampleFunction:
     Description: Generic Input Output Example Function ARN
     Value: !GetAtt GenericInputOutputExampleFunction.Arn
-
-  GenericInputOutputExampleFunctionName:
-    Description: Generic Input Output Example Function Name
-    Value: !Ref GenericInputOutputExampleFunction
 
   CustomConfigExampleFunction:
     Description: Custom Config Example Function ARN
     Value: !GetAtt CustomConfigExampleFunction.Arn
 
-  CustomConfigExampleFunctionName:
-    Description: Custom Config Example Function Name
-    Value: !Ref CustomConfigExampleFunction
-
   LoggingExampleFunction:
     Description: Logging Example Function ARN
     Value: !GetAtt LoggingExampleFunction.Arn
-
-  LoggingExampleFunctionName:
-    Description: Logging Example Function Name
-    Value: !Ref LoggingExampleFunction
 
   ErrorHandlingExampleFunction:
     Description: Error Handling Example Function ARN
     Value: !GetAtt ErrorHandlingExampleFunction.Arn
 
-  ErrorHandlingExampleFunctionName:
-    Description: Error Handling Example Function Name
-    Value: !Ref ErrorHandlingExampleFunction
-
   CallbackExampleFunction:
     Description: Callback Example Function ARN
     Value: !GetAtt CallbackExampleFunction.Arn
-
-  CallbackExampleFunctionName:
-    Description: Callback Example Function Name
-    Value: !Ref CallbackExampleFunction
 
   ManyAsyncStepsExampleFunction:
     Description: Many Async Steps Example Function ARN
     Value: !GetAtt ManyAsyncStepsExampleFunction.Arn
 
-  ManyAsyncStepsExampleFunctionName:
-    Description: Many Async Steps Example Function Name
-    Value: !Ref ManyAsyncStepsExampleFunction
-
   ChildContextExampleFunction:
     Description: Child Context Example Function ARN
     Value: !GetAtt ChildContextExampleFunction.Arn
-
-  ChildContextExampleFunctionName:
-    Description: Child Context Example Function Name
-    Value: !Ref ChildContextExampleFunction
 
   WaitAsyncExampleFunction:
     Description: Wait Async Example Function ARN
     Value: !GetAtt WaitAsyncExampleFunction.Arn
 
-  WaitAsyncExampleFunctionName:
-    Description: Wait Async Example Function Name
-    Value: !Ref WaitAsyncExampleFunction
-
   ManyAsyncChildContextExampleFunction:
     Description: Many Async Child Context Example Function ARN
     Value: !GetAtt ManyAsyncChildContextExampleFunction.Arn
-
-  ManyAsyncChildContextExampleFunctionName:
-    Description: Many Async Child Context Example Function Name
-    Value: !Ref ManyAsyncChildContextExampleFunction
 
   SimpleMapExampleFunction:
     Description: Simple Map Example Function ARN
     Value: !GetAtt SimpleMapExampleFunction.Arn
 
-  SimpleMapExampleFunctionName:
-    Description: Simple Map Example Function Name
-    Value: !Ref SimpleMapExampleFunction
-
   ComplexMapExampleFunction:
     Description: Complex Map Example Function ARN
     Value: !GetAtt ComplexMapExampleFunction.Arn
-
-  ComplexMapExampleFunctionName:
-    Description: Complex Map Example Function Name
-    Value: !Ref ComplexMapExampleFunction
 
   WaitForConditionExampleFunction:
     Description: Wait For Condition Example Function ARN
     Value: !GetAtt WaitForConditionExampleFunction.Arn
 
-  WaitForConditionExampleFunctionName:
-    Description: Wait For Condition Example Function Name
-    Value: !Ref WaitForConditionExampleFunction
-
   ConcurrentWaitForConditionExampleFunction:
     Description: Concurrent Wait For Condition Example Function ARN
     Value: !GetAtt ConcurrentWaitForConditionExampleFunction.Arn
-
-  ConcurrentWaitForConditionExampleFunctionName:
-    Description: Concurrent Wait For Condition Example Function Name
-    Value: !Ref ConcurrentWaitForConditionExampleFunction
-
