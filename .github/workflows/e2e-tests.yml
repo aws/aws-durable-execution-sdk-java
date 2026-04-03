@@ -57,6 +57,8 @@ jobs:
           role-to-assume: "${{ secrets.ACTIONS_INTEGRATION_ROLE_NAME }}"
           role-session-name: java-language-sdk-test
           aws-region: ${{ env.AWS_REGION }}
+      - name: Build locally
+        run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: sam build
         run: | # add --no-cached  if debugging sam build
           sam build --parameter-overrides \
