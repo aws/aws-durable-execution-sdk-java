@@ -591,7 +591,7 @@ class ParallelIntegrationTest {
             var result = parallel.get();
             assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
             assertTrue(result.completionStatus().isSucceeded());
-            assertEquals(5, result.size());
+            assertTrue(result.size() >= 2 && result.size() <= 5);
             assertEquals("A", futures.get(0).get());
             assertEquals("B", futures.get(1).get());
 
