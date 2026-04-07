@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HistoryPoller.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-testing</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.testing.cloud</a> &gt; <span class="el_source">HistoryPoller.java</span></div><h1>HistoryPoller.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.testing.cloud;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.EventType;
+import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
+import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
+
+/**
+ * Polls the GetDurableExecutionHistory API until execution completes or a timeout is reached. Used by
+ * {@link CloudDurableTestRunner} for synchronous test execution.
+ */
+public class HistoryPoller {
+    private final LambdaClient lambdaClient;
+
+    /** Creates a poller backed by the given Lambda client. */
+<span class="nc" id="L23">    public HistoryPoller(LambdaClient lambdaClient) {</span>
+<span class="nc" id="L24">        this.lambdaClient = lambdaClient;</span>
+<span class="nc" id="L25">    }</span>
+
+    /**
+     * Polls execution history until a terminal event is found or the timeout is exceeded.
+     *
+     * @param executionArn the durable execution ARN to poll
+     * @param pollInterval the interval between poll requests
+     * @param timeout the maximum time to wait for completion
+     * @return all history events collected during polling
+     * @throws RuntimeException if the timeout is exceeded or polling is interrupted
+     */
+    public List&lt;Event&gt; pollUntilComplete(String executionArn, Duration pollInterval, Duration timeout) {
+<span class="nc" id="L37">        var allEvents = new ArrayList&lt;Event&gt;();</span>
+<span class="nc" id="L38">        var startTime = Instant.now();</span>
+<span class="nc" id="L39">        String marker = null;</span>
+
+<span class="nc bnc" id="L41" title="All 2 branches missed.">        while (Duration.between(startTime, Instant.now()).compareTo(timeout) &lt; 0) {</span>
+<span class="nc" id="L42">            var request = GetDurableExecutionHistoryRequest.builder()</span>
+<span class="nc" id="L43">                    .durableExecutionArn(executionArn)</span>
+<span class="nc" id="L44">                    .includeExecutionData(true)</span>
+<span class="nc" id="L45">                    .marker(marker)</span>
+<span class="nc" id="L46">                    .build();</span>
+
+<span class="nc" id="L48">            var response = lambdaClient.getDurableExecutionHistory(request);</span>
+<span class="nc" id="L49">            var events = response.events();</span>
+
+<span class="nc" id="L51">            allEvents.addAll(events);</span>
+
+<span class="nc bnc" id="L53" title="All 2 branches missed.">            if (isExecutionComplete(events)) {</span>
+<span class="nc" id="L54">                return allEvents;</span>
+            }
+
+<span class="nc" id="L57">            marker = response.nextMarker();</span>
+<span class="nc bnc" id="L58" title="All 4 branches missed.">            if (marker == null &amp;&amp; events.isEmpty()) {</span>
+                // No more events and no new events - wait and try again
+            }
+
+            try {
+<span class="nc" id="L63">                Thread.sleep(pollInterval.toMillis());</span>
+<span class="nc" id="L64">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L65">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L66">                throw new RuntimeException(&quot;Polling interrupted&quot;, e);</span>
+<span class="nc" id="L67">            }</span>
+<span class="nc" id="L68">        }</span>
+
+<span class="nc" id="L70">        throw new RuntimeException(&quot;Execution timeout exceeded&quot;);</span>
+    }
+
+    private boolean isExecutionComplete(List&lt;Event&gt; events) {
+<span class="nc" id="L74">        return events.stream().anyMatch(event -&gt; {</span>
+<span class="nc" id="L75">            var eventType = event.eventType();</span>
+<span class="nc bnc" id="L76" title="All 4 branches missed.">            return EventType.EXECUTION_SUCCEEDED.equals(eventType) || EventType.EXECUTION_FAILED.equals(eventType);</span>
+        });
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
