@@ -43,7 +43,7 @@ jobs:
           cache: maven
 
       - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@v6.1.0
         with:
           role-to-assume: "${{ secrets.ACTIONS_MVN_ROLE_NAME }}"
           role-session-name: mavenreleasesession
