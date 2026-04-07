@@ -45,7 +45,7 @@ class EventProcessor {
                                 .retryDetails(buildRetryDetails(operation))
                                 .build())
                         .build();
-            case FAIL, RETRY ->
+            case FAIL ->
                 builder.eventType(STEP_FAILED)
                         .stepFailedDetails(StepFailedDetails.builder()
                                 .error(EventError.builder()
@@ -53,6 +53,10 @@ class EventProcessor {
                                         .build())
                                 .retryDetails(buildRetryDetails(operation))
                                 .build())
+                        .build();
+            case RETRY ->
+                builder.eventType(STEP_STARTED)
+                        .stepStartedDetails(StepStartedDetails.builder().build())
                         .build();
             default -> throw new IllegalArgumentException("Unsupported step action: " + update.action());
         };
