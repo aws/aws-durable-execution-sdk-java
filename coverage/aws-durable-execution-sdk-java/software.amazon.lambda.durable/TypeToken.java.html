@@ -59,8 +59,23 @@ public abstract class TypeToken&lt;T&gt; {
 <span class="fc" id="L59">        return new TypeToken&lt;&gt;(clazz) {};</span>
     }
 
-    static &lt;U&gt; TypeToken&lt;U&gt; get(Type clazz) {
-<span class="fc" id="L63">        return new TypeToken&lt;&gt;(clazz) {};</span>
+    /**
+     * Creates a TypeToken by extracting a type parameter from a generic superclass.
+     *
+     * @param clazz the subclass to extract the type from
+     * @param typeParameterPosition the position of the type parameter in the superclass declaration (0-based)
+     * @param &lt;U&gt; the type to extract
+     * @param &lt;V&gt; the superclass type
+     * @return a TypeToken representing the extracted type
+     */
+    static &lt;U, V&gt; TypeToken&lt;U&gt; fromGenericSuperClass(Class&lt;V&gt; clazz, int typeParameterPosition) {
+        // Extract input type from generic superclass
+<span class="fc" id="L73">        var superClass = clazz.getGenericSuperclass();</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        if (superClass instanceof ParameterizedType paramType) {</span>
+<span class="fc" id="L75">            return new TypeToken&lt;&gt;(paramType.getActualTypeArguments()[typeParameterPosition]) {};</span>
+        } else {
+<span class="fc" id="L77">            throw new IllegalArgumentException(&quot;Cannot determine type from base class: &quot; + clazz);</span>
+        }
     }
 
     /**
@@ -69,28 +84,28 @@ public abstract class TypeToken&lt;T&gt; {
      * @return the type represented by this token
      */
     public Type getType() {
-<span class="fc" id="L72">        return type;</span>
+<span class="fc" id="L87">        return type;</span>
     }
 
     @Override
     public boolean equals(Object obj) {
-<span class="pc bpc" id="L77" title="1 of 2 branches missed.">        if (this == obj) {</span>
-<span class="nc" id="L78">            return true;</span>
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">        if (this == obj) {</span>
+<span class="nc" id="L93">            return true;</span>
         }
-<span class="pc bpc" id="L80" title="1 of 2 branches missed.">        if (obj instanceof TypeToken&lt;?&gt; other) {</span>
-<span class="fc" id="L81">            return type.equals(other.type);</span>
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">        if (obj instanceof TypeToken&lt;?&gt; other) {</span>
+<span class="fc" id="L96">            return type.equals(other.type);</span>
         }
-<span class="nc" id="L83">        return false;</span>
+<span class="nc" id="L98">        return false;</span>
     }
 
     @Override
     public int hashCode() {
-<span class="fc" id="L88">        return type.hashCode();</span>
+<span class="fc" id="L103">        return type.hashCode();</span>
     }
 
     @Override
     public String toString() {
-<span class="fc" id="L93">        return &quot;TypeToken&lt;&quot; + type.getTypeName() + &quot;&gt;&quot;;</span>
+<span class="fc" id="L108">        return &quot;TypeToken&lt;&quot; + type.getTypeName() + &quot;&gt;&quot;;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

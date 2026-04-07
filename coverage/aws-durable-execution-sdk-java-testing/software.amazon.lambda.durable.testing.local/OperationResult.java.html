@@ -6,5 +6,21 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 
 /** The operation status and result/error from Step, Context, Callback and ChainedInvoke operations */
-<span class="fc" id="L9">public record OperationResult(OperationStatus operationStatus, String result, ErrorObject error) {}</span>
+<span class="fc" id="L9">public record OperationResult(OperationStatus operationStatus, String result, ErrorObject error) {</span>
+    public static OperationResult succeeded(String result) {
+<span class="fc" id="L11">        return new OperationResult(OperationStatus.SUCCEEDED, result, null);</span>
+    }
+
+    public static OperationResult failed(ErrorObject error) {
+<span class="fc" id="L15">        return new OperationResult(OperationStatus.FAILED, null, error);</span>
+    }
+
+    public static OperationResult stopped(ErrorObject error) {
+<span class="fc" id="L19">        return new OperationResult(OperationStatus.STOPPED, null, error);</span>
+    }
+
+    public static OperationResult timedout() {
+<span class="fc" id="L23">        return new OperationResult(OperationStatus.TIMED_OUT, null, null);</span>
+    }
+}
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRe
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 
 /**
@@ -25,6 +26,7 @@ public class AsyncExecution&lt;O&gt; {
     private final String executionArn;
     private final LambdaClient lambdaClient;
     private final TypeToken&lt;O&gt; outputType;
+    private final SerDes serDes;
     private final Duration pollInterval;
     private final Duration timeout;
     private final HistoryEventProcessor processor;
@@ -35,15 +37,17 @@ public class AsyncExecution&lt;O&gt; {
             String executionArn,
             LambdaClient lambdaClient,
             TypeToken&lt;O&gt; outputType,
+            SerDes serDes,
             Duration pollInterval,
-<span class="nc" id="L39">            Duration timeout) {</span>
-<span class="nc" id="L40">        this.executionArn = executionArn;</span>
-<span class="nc" id="L41">        this.lambdaClient = lambdaClient;</span>
-<span class="nc" id="L42">        this.outputType = outputType;</span>
-<span class="nc" id="L43">        this.pollInterval = pollInterval;</span>
-<span class="nc" id="L44">        this.timeout = timeout;</span>
-<span class="nc" id="L45">        this.processor = new HistoryEventProcessor();</span>
-<span class="nc" id="L46">    }</span>
+<span class="nc" id="L42">            Duration timeout) {</span>
+<span class="nc" id="L43">        this.executionArn = executionArn;</span>
+<span class="nc" id="L44">        this.lambdaClient = lambdaClient;</span>
+<span class="nc" id="L45">        this.outputType = outputType;</span>
+<span class="nc" id="L46">        this.pollInterval = pollInterval;</span>
+<span class="nc" id="L47">        this.timeout = timeout;</span>
+<span class="nc" id="L48">        this.serDes = serDes;</span>
+<span class="nc" id="L49">        this.processor = new HistoryEventProcessor();</span>
+<span class="nc" id="L50">    }</span>
 
     /**
      * Poll execution history until the given condition is met.
@@ -52,24 +56,24 @@ public class AsyncExecution&lt;O&gt; {
      * @return this execution for chaining
      */
     public AsyncExecution&lt;O&gt; pollUntil(Predicate&lt;AsyncExecution&lt;O&gt;&gt; condition) {
-<span class="nc" id="L55">        var startTime = Instant.now();</span>
+<span class="nc" id="L59">        var startTime = Instant.now();</span>
 
-<span class="nc bnc" id="L57" title="All 2 branches missed.">        while (Duration.between(startTime, Instant.now()).compareTo(timeout) &lt; 0) {</span>
-<span class="nc" id="L58">            refreshHistory();</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        while (Duration.between(startTime, Instant.now()).compareTo(timeout) &lt; 0) {</span>
+<span class="nc" id="L62">            refreshHistory();</span>
 
-<span class="nc bnc" id="L60" title="All 2 branches missed.">            if (condition.test(this)) {</span>
-<span class="nc" id="L61">                return this;</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">            if (condition.test(this)) {</span>
+<span class="nc" id="L65">                return this;</span>
             }
 
             try {
-<span class="nc" id="L65">                Thread.sleep(pollInterval.toMillis());</span>
-<span class="nc" id="L66">            } catch (InterruptedException e) {</span>
-<span class="nc" id="L67">                Thread.currentThread().interrupt();</span>
-<span class="nc" id="L68">                throw new RuntimeException(&quot;Polling interrupted&quot;, e);</span>
-<span class="nc" id="L69">            }</span>
+<span class="nc" id="L69">                Thread.sleep(pollInterval.toMillis());</span>
+<span class="nc" id="L70">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L71">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L72">                throw new RuntimeException(&quot;Polling interrupted&quot;, e);</span>
+<span class="nc" id="L73">            }</span>
         }
 
-<span class="nc" id="L72">        throw new RuntimeException(&quot;Condition not met within timeout of &quot; + timeout);</span>
+<span class="nc" id="L76">        throw new RuntimeException(&quot;Condition not met within timeout of &quot; + timeout);</span>
     }
 
     /**
@@ -78,37 +82,37 @@ public class AsyncExecution&lt;O&gt; {
      * @return test result with execution status and output
      */
     public TestResult&lt;O&gt; pollUntilComplete() {
-<span class="nc" id="L81">        pollUntil(AsyncExecution::isComplete);</span>
-<span class="nc" id="L82">        return currentResult;</span>
+<span class="nc" id="L85">        pollUntil(AsyncExecution::isComplete);</span>
+<span class="nc" id="L86">        return currentResult;</span>
     }
 
     /** Check if execution has completed (succeeded or failed). */
     public boolean isComplete() {
-<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (currentHistory == null) {</span>
-<span class="nc" id="L88">            return false;</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (currentHistory == null) {</span>
+<span class="nc" id="L92">            return false;</span>
         }
-<span class="nc" id="L90">        return currentHistory.stream().anyMatch(e -&gt; {</span>
-<span class="nc" id="L91">            var eventType = e.eventType();</span>
-<span class="nc bnc" id="L92" title="All 4 branches missed.">            return EventType.EXECUTION_SUCCEEDED.equals(eventType) || EventType.EXECUTION_FAILED.equals(eventType);</span>
+<span class="nc" id="L94">        return currentHistory.stream().anyMatch(e -&gt; {</span>
+<span class="nc" id="L95">            var eventType = e.eventType();</span>
+<span class="nc bnc" id="L96" title="All 4 branches missed.">            return EventType.EXECUTION_SUCCEEDED.equals(eventType) || EventType.EXECUTION_FAILED.equals(eventType);</span>
         });
     }
 
     /** Check if an operation with the given name exists. */
     public boolean hasOperation(String name) {
-<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (currentResult == null) {</span>
-<span class="nc" id="L99">            return false;</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (currentResult == null) {</span>
+<span class="nc" id="L103">            return false;</span>
         }
-<span class="nc" id="L101">        return currentResult.getOperations().stream().anyMatch(op -&gt; name.equals(op.getName()));</span>
+<span class="nc" id="L105">        return currentResult.getOperations().stream().anyMatch(op -&gt; name.equals(op.getName()));</span>
     }
 
     /** Check if a callback operation with the given name exists and is started. */
     public boolean hasCallback(String name) {
-<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (currentHistory == null) {</span>
-<span class="nc" id="L107">            return false;</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (currentHistory == null) {</span>
+<span class="nc" id="L111">            return false;</span>
         }
         // Look for CallbackStarted event with this name
-<span class="nc" id="L110">        return currentHistory.stream()</span>
-<span class="nc bnc" id="L111" title="All 4 branches missed.">                .anyMatch(e -&gt; name.equals(e.name()) &amp;&amp; EventType.CALLBACK_STARTED.equals(e.eventType()));</span>
+<span class="nc" id="L114">        return currentHistory.stream()</span>
+<span class="nc bnc" id="L115" title="All 4 branches missed.">                .anyMatch(e -&gt; name.equals(e.name()) &amp;&amp; EventType.CALLBACK_STARTED.equals(e.eventType()));</span>
     }
 
     /**
@@ -119,85 +123,85 @@ public class AsyncExecution&lt;O&gt; {
      * @throws IllegalStateException if no callback found for operation
      */
     public String getCallbackId(String operationName) {
-<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (currentResult == null) {</span>
-<span class="nc" id="L123">            throw new IllegalStateException(&quot;No history available - call pollUntil first&quot;);</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        if (currentResult == null) {</span>
+<span class="nc" id="L127">            throw new IllegalStateException(&quot;No history available - call pollUntil first&quot;);</span>
         }
 
-<span class="nc" id="L126">        var operation = currentResult.getOperations().stream()</span>
-<span class="nc" id="L127">                .filter(op -&gt; operationName.equals(op.getName()))</span>
-<span class="nc" id="L128">                .findFirst()</span>
-<span class="nc" id="L129">                .orElseThrow(() -&gt; new IllegalStateException(&quot;No operation found with name: &quot; + operationName));</span>
+<span class="nc" id="L130">        var operation = currentResult.getOperations().stream()</span>
+<span class="nc" id="L131">                .filter(op -&gt; operationName.equals(op.getName()))</span>
+<span class="nc" id="L132">                .findFirst()</span>
+<span class="nc" id="L133">                .orElseThrow(() -&gt; new IllegalStateException(&quot;No operation found with name: &quot; + operationName));</span>
 
-<span class="nc" id="L131">        var callbackDetails = operation.getCallbackDetails();</span>
-<span class="nc bnc" id="L132" title="All 4 branches missed.">        if (callbackDetails == null || callbackDetails.callbackId() == null) {</span>
-<span class="nc" id="L133">            throw new IllegalStateException(</span>
+<span class="nc" id="L135">        var callbackDetails = operation.getCallbackDetails();</span>
+<span class="nc bnc" id="L136" title="All 4 branches missed.">        if (callbackDetails == null || callbackDetails.callbackId() == null) {</span>
+<span class="nc" id="L137">            throw new IllegalStateException(</span>
                     &quot;Operation '&quot; + operationName + &quot;' is not a callback or has no callback ID&quot;);
         }
 
-<span class="nc" id="L137">        return callbackDetails.callbackId();</span>
+<span class="nc" id="L141">        return callbackDetails.callbackId();</span>
     }
 
     /** Get details for a specific operation. */
     public TestOperation getOperation(String name) {
-<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (currentResult == null) {</span>
-<span class="nc" id="L143">            throw new IllegalStateException(&quot;No history available - call pollUntil first&quot;);</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (currentResult == null) {</span>
+<span class="nc" id="L147">            throw new IllegalStateException(&quot;No history available - call pollUntil first&quot;);</span>
         }
-<span class="nc" id="L145">        return currentResult.getOperation(name);</span>
+<span class="nc" id="L149">        return currentResult.getOperation(name);</span>
     }
 
     /** Get all operations in the execution. */
     public List&lt;TestOperation&gt; getOperations() {
-<span class="nc bnc" id="L150" title="All 2 branches missed.">        if (currentResult == null) {</span>
-<span class="nc" id="L151">            throw new IllegalStateException(&quot;No history available - call pollUntil first&quot;);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (currentResult == null) {</span>
+<span class="nc" id="L155">            throw new IllegalStateException(&quot;No history available - call pollUntil first&quot;);</span>
         }
-<span class="nc" id="L153">        return currentResult.getOperations();</span>
+<span class="nc" id="L157">        return currentResult.getOperations();</span>
     }
 
     /** Get current execution status. */
     public ExecutionStatus getStatus() {
-<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (currentResult == null) {</span>
-<span class="nc" id="L159">            return ExecutionStatus.PENDING;</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (currentResult == null) {</span>
+<span class="nc" id="L163">            return ExecutionStatus.PENDING;</span>
         }
-<span class="nc" id="L161">        return currentResult.getStatus();</span>
+<span class="nc" id="L165">        return currentResult.getStatus();</span>
     }
 
     /** Get the execution ARN. */
     public String getExecutionArn() {
-<span class="nc" id="L166">        return executionArn;</span>
+<span class="nc" id="L170">        return executionArn;</span>
     }
 
     /** calls sendDurableExecutionCallbackSuccess with the given callbackId and result */
     public void completeCallback(String callbackId, String result) {
-<span class="nc" id="L171">        lambdaClient.sendDurableExecutionCallbackSuccess(</span>
-<span class="nc" id="L172">                req -&gt; req.callbackId(callbackId).result(SdkBytes.fromUtf8String(result)));</span>
-<span class="nc" id="L173">    }</span>
+<span class="nc" id="L175">        lambdaClient.sendDurableExecutionCallbackSuccess(</span>
+<span class="nc" id="L176">                req -&gt; req.callbackId(callbackId).result(SdkBytes.fromUtf8String(result)));</span>
+<span class="nc" id="L177">    }</span>
 
     /** calls sendDurableExecutionCallbackFailure with the give callbackId and error */
     public void failCallback(String callbackId, ErrorObject error) {
-<span class="nc" id="L177">        lambdaClient.sendDurableExecutionCallbackFailure(</span>
-<span class="nc" id="L178">                req -&gt; req.callbackId(callbackId).error(error));</span>
-<span class="nc" id="L179">    }</span>
+<span class="nc" id="L181">        lambdaClient.sendDurableExecutionCallbackFailure(</span>
+<span class="nc" id="L182">                req -&gt; req.callbackId(callbackId).error(error));</span>
+<span class="nc" id="L183">    }</span>
 
     /** call sendDurableExecutionCallbackHeartbeat API with the give callbackId */
     public void heartbeatCallback(String callbackId) {
-<span class="nc" id="L183">        lambdaClient.sendDurableExecutionCallbackHeartbeat(req -&gt; req.callbackId(callbackId));</span>
-<span class="nc" id="L184">    }</span>
+<span class="nc" id="L187">        lambdaClient.sendDurableExecutionCallbackHeartbeat(req -&gt; req.callbackId(callbackId));</span>
+<span class="nc" id="L188">    }</span>
 
     private void refreshHistory() {
         try {
-<span class="nc" id="L188">            var request = GetDurableExecutionHistoryRequest.builder()</span>
-<span class="nc" id="L189">                    .durableExecutionArn(executionArn)</span>
-<span class="nc" id="L190">                    .includeExecutionData(true)</span>
-<span class="nc" id="L191">                    .build();</span>
-<span class="nc" id="L192">            var response = lambdaClient.getDurableExecutionHistory(request);</span>
-<span class="nc" id="L193">            this.currentHistory = response.events();</span>
-<span class="nc" id="L194">            this.currentResult = processor.processEvents(currentHistory, outputType);</span>
-<span class="nc" id="L195">        } catch (ResourceNotFoundException e) {</span>
+<span class="nc" id="L192">            var request = GetDurableExecutionHistoryRequest.builder()</span>
+<span class="nc" id="L193">                    .durableExecutionArn(executionArn)</span>
+<span class="nc" id="L194">                    .includeExecutionData(true)</span>
+<span class="nc" id="L195">                    .build();</span>
+<span class="nc" id="L196">            var response = lambdaClient.getDurableExecutionHistory(request);</span>
+<span class="nc" id="L197">            this.currentHistory = response.events();</span>
+<span class="nc" id="L198">            this.currentResult = processor.processEvents(currentHistory, outputType, serDes);</span>
+<span class="nc" id="L199">        } catch (ResourceNotFoundException e) {</span>
             // Execution doesn't exist yet - this can happen immediately after async invoke
             // Leave currentHistory as null, pollUntil will retry
-<span class="nc" id="L198">            this.currentHistory = null;</span>
-<span class="nc" id="L199">            this.currentResult = null;</span>
-<span class="nc" id="L200">        }</span>
-<span class="nc" id="L201">    }</span>
+<span class="nc" id="L202">            this.currentHistory = null;</span>
+<span class="nc" id="L203">            this.currentResult = null;</span>
+<span class="nc" id="L204">        }</span>
+<span class="nc" id="L205">    }</span>
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

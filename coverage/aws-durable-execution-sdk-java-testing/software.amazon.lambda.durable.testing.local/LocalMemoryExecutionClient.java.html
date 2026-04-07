@@ -10,11 +10,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.TestOperation;
 import software.amazon.lambda.durable.testing.TestResult;
@@ -23,51 +22,47 @@ import software.amazon.lambda.durable.testing.TestResult;
  * In-memory implementation of {@link DurableExecutionClient} for local testing. Stores operations and checkpoint state
  * in memory, simulating the durable execution backend without AWS infrastructure.
  */
-<span class="fc" id="L26">public class LocalMemoryExecutionClient implements DurableExecutionClient {</span>
-<span class="fc" id="L27">    private final Map&lt;String, Operation&gt; operations = new ConcurrentHashMap&lt;&gt;();</span>
-<span class="fc" id="L28">    private final List&lt;Event&gt; allEvents = new CopyOnWriteArrayList&lt;&gt;();</span>
-<span class="fc" id="L29">    private final EventProcessor eventProcessor = new EventProcessor();</span>
-<span class="fc" id="L30">    private final SerDes serDes = new JacksonSerDes();</span>
-<span class="fc" id="L31">    private final AtomicReference&lt;String&gt; checkpointToken =</span>
-<span class="fc" id="L32">            new AtomicReference&lt;&gt;(UUID.randomUUID().toString());</span>
-<span class="fc" id="L33">    private final List&lt;OperationUpdate&gt; operationUpdates = new CopyOnWriteArrayList&lt;&gt;();</span>
+<span class="fc" id="L25">public class LocalMemoryExecutionClient implements DurableExecutionClient {</span>
+<span class="fc" id="L26">    private final Map&lt;String, Operation&gt; operations = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L27">    private final List&lt;Event&gt; allEvents = new CopyOnWriteArrayList&lt;&gt;();</span>
+<span class="fc" id="L28">    private final EventProcessor eventProcessor = new EventProcessor();</span>
+<span class="fc" id="L29">    private final List&lt;OperationUpdate&gt; operationUpdates = new CopyOnWriteArrayList&lt;&gt;();</span>
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List&lt;OperationUpdate&gt; updates) {
-<span class="fc" id="L37">        operationUpdates.addAll(updates);</span>
-<span class="fc" id="L38">        updates.forEach(this::applyUpdate);</span>
+<span class="fc" id="L33">        operationUpdates.addAll(updates);</span>
+<span class="fc" id="L34">        updates.forEach(this::applyUpdate);</span>
 
-<span class="fc" id="L40">        var newToken = UUID.randomUUID().toString();</span>
-<span class="fc" id="L41">        checkpointToken.set(newToken);</span>
+<span class="fc" id="L36">        var newToken = UUID.randomUUID().toString();</span>
 
-<span class="fc" id="L43">        return CheckpointDurableExecutionResponse.builder()</span>
-<span class="fc" id="L44">                .checkpointToken(newToken)</span>
-<span class="fc" id="L45">                .newExecutionState(CheckpointUpdatedExecutionState.builder()</span>
-<span class="fc" id="L46">                        .operations(operations.values())</span>
-<span class="fc" id="L47">                        .build())</span>
-<span class="fc" id="L48">                .build();</span>
+<span class="fc" id="L38">        return CheckpointDurableExecutionResponse.builder()</span>
+<span class="fc" id="L39">                .checkpointToken(newToken)</span>
+<span class="fc" id="L40">                .newExecutionState(CheckpointUpdatedExecutionState.builder()</span>
+<span class="fc" id="L41">                        .operations(operations.values())</span>
+<span class="fc" id="L42">                        .build())</span>
+<span class="fc" id="L43">                .build();</span>
     }
 
     @Override
     public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
-<span class="fc" id="L53">        return GetDurableExecutionStateResponse.builder()</span>
-<span class="fc" id="L54">                .operations(operations.values())</span>
-<span class="fc" id="L55">                .build();</span>
+<span class="fc" id="L48">        return GetDurableExecutionStateResponse.builder()</span>
+<span class="fc" id="L49">                .operations(operations.values())</span>
+<span class="fc" id="L50">                .build();</span>
     }
 
     /** Get all operation updates that have been sent to this client. Useful for testing and verification. */
     public List&lt;OperationUpdate&gt; getOperationUpdates() {
-<span class="fc" id="L60">        return List.copyOf(operationUpdates);</span>
+<span class="fc" id="L55">        return List.copyOf(operationUpdates);</span>
     }
 
     /** Get all events in order. */
     public List&lt;Event&gt; getAllEvents() {
-<span class="nc" id="L65">        return List.copyOf(allEvents);</span>
+<span class="nc" id="L60">        return List.copyOf(allEvents);</span>
     }
 
     /** Get events for a specific operation. */
     public List&lt;Event&gt; getEventsForOperation(String operationId) {
-<span class="fc" id="L70">        return allEvents.stream().filter(e -&gt; operationId.equals(e.id())).toList();</span>
+<span class="fc" id="L65">        return allEvents.stream().filter(e -&gt; operationId.equals(e.id())).toList();</span>
     }
 
     /**
@@ -75,279 +70,267 @@ import software.amazon.lambda.durable.testing.TestResult;
      *
      * @return true if any operations were advanced, false otherwise
      */
-    public boolean advanceReadyOperations() {
-<span class="fc" id="L79">        var replaced = new AtomicBoolean(false);</span>
-<span class="fc" id="L80">        operations.replaceAll((key, op) -&gt; {</span>
-<span class="fc bfc" id="L81" title="All 2 branches covered.">            if (op.status() == OperationStatus.PENDING) {</span>
-<span class="fc" id="L82">                replaced.set(true);</span>
-<span class="fc" id="L83">                return op.toBuilder().status(OperationStatus.READY).build();</span>
+    public boolean advanceTime() {
+<span class="fc" id="L74">        var replaced = new AtomicBoolean(false);</span>
+<span class="fc" id="L75">        operations.replaceAll((key, op) -&gt; {</span>
+            // advance pending retries
+<span class="fc bfc" id="L77" title="All 2 branches covered.">            if (op.status() == OperationStatus.PENDING) {</span>
+<span class="fc" id="L78">                replaced.set(true);</span>
+<span class="fc" id="L79">                return op.toBuilder().status(OperationStatus.READY).build();</span>
             }
-<span class="fc bfc" id="L85" title="All 4 branches covered.">            if (op.status() == OperationStatus.STARTED &amp;&amp; op.type() == OperationType.WAIT) {</span>
-<span class="fc" id="L86">                var succeededOp =</span>
-<span class="fc" id="L87">                        op.toBuilder().status(OperationStatus.SUCCEEDED).build();</span>
+            // advance waits
+<span class="fc bfc" id="L82" title="All 4 branches covered.">            if (op.status() == OperationStatus.STARTED &amp;&amp; op.type() == OperationType.WAIT) {</span>
+<span class="fc" id="L83">                var succeededOp =</span>
+<span class="fc" id="L84">                        op.toBuilder().status(OperationStatus.SUCCEEDED).build();</span>
                 // Generate WaitSucceeded event
-<span class="fc" id="L89">                var update = OperationUpdate.builder()</span>
-<span class="fc" id="L90">                        .id(op.id())</span>
-<span class="fc" id="L91">                        .name(op.name())</span>
-<span class="fc" id="L92">                        .type(OperationType.WAIT)</span>
-<span class="fc" id="L93">                        .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L94">                        .build();</span>
-<span class="fc" id="L95">                var event = eventProcessor.processUpdate(update, succeededOp);</span>
-<span class="fc" id="L96">                allEvents.add(event);</span>
-<span class="fc" id="L97">                replaced.set(true);</span>
-<span class="fc" id="L98">                return succeededOp;</span>
+<span class="fc" id="L86">                var update = OperationUpdate.builder()</span>
+<span class="fc" id="L87">                        .id(op.id())</span>
+<span class="fc" id="L88">                        .name(op.name())</span>
+<span class="fc" id="L89">                        .type(OperationType.WAIT)</span>
+<span class="fc" id="L90">                        .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L91">                        .build();</span>
+<span class="fc" id="L92">                var event = eventProcessor.processUpdate(update, succeededOp);</span>
+<span class="fc" id="L93">                allEvents.add(event);</span>
+<span class="fc" id="L94">                replaced.set(true);</span>
+<span class="fc" id="L95">                return succeededOp;</span>
             }
-<span class="fc" id="L100">            return op;</span>
+<span class="fc" id="L97">            return op;</span>
         });
-<span class="fc" id="L102">        return replaced.get();</span>
+<span class="fc" id="L99">        return replaced.get();</span>
     }
 
     /** Completes a chained invoke operation with the given result, simulating a child Lambda response. */
     public void completeChainedInvoke(String name, OperationResult result) {
-<span class="fc" id="L107">        var op = getOperationByName(name);</span>
-<span class="fc bfc" id="L108" title="All 2 branches covered.">        if (op == null) {</span>
-<span class="fc" id="L109">            throw new IllegalStateException(&quot;Operation not found: &quot; + name);</span>
+<span class="fc" id="L104">        var op = getOperationByName(name);</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        if (op == null) {</span>
+<span class="fc" id="L106">            throw new IllegalStateException(&quot;Operation not found: &quot; + name);</span>
         }
-<span class="pc bpc" id="L111" title="1 of 2 branches missed.">        if (op.type() == OperationType.CHAINED_INVOKE</span>
-<span class="pc bpc" id="L112" title="1 of 2 branches missed.">                &amp;&amp; op.status() == OperationStatus.STARTED</span>
-<span class="pc bpc" id="L113" title="1 of 2 branches missed.">                &amp;&amp; op.name().equals(name)) {</span>
-<span class="fc" id="L114">            var newOp = op.toBuilder()</span>
-<span class="fc" id="L115">                    .status(result.operationStatus())</span>
-<span class="fc" id="L116">                    .chainedInvokeDetails(ChainedInvokeDetails.builder()</span>
-<span class="fc" id="L117">                            .result(result.result())</span>
-<span class="fc" id="L118">                            .error(result.error())</span>
-<span class="fc" id="L119">                            .build())</span>
-<span class="fc" id="L120">                    .build();</span>
-<span class="fc" id="L121">            var update = OperationUpdate.builder()</span>
-<span class="fc" id="L122">                    .id(op.id())</span>
-<span class="fc" id="L123">                    .name(op.name())</span>
-<span class="fc" id="L124">                    .type(OperationType.CHAINED_INVOKE)</span>
-<span class="fc" id="L125">                    .action(</span>
-<span class="fc bfc" id="L126" title="All 2 branches covered.">                            result.operationStatus() == OperationStatus.SUCCEEDED</span>
-<span class="fc" id="L127">                                    ? OperationAction.SUCCEED</span>
-<span class="fc" id="L128">                                    : OperationAction.FAIL)</span>
-<span class="fc" id="L129">                    .build();</span>
-<span class="fc" id="L130">            var event = eventProcessor.processUpdate(update, newOp);</span>
-<span class="fc" id="L131">            allEvents.add(event);</span>
-<span class="fc" id="L132">            operations.put(compositeKey(op.parentId(), op.id()), newOp);</span>
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">        if (op.type() == OperationType.CHAINED_INVOKE</span>
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">                &amp;&amp; op.status() == OperationStatus.STARTED</span>
+<span class="pc bpc" id="L110" title="1 of 2 branches missed.">                &amp;&amp; op.name().equals(name)) {</span>
+<span class="fc" id="L111">            var newOp = op.toBuilder()</span>
+<span class="fc" id="L112">                    .status(result.operationStatus())</span>
+<span class="fc" id="L113">                    .chainedInvokeDetails(ChainedInvokeDetails.builder()</span>
+<span class="fc" id="L114">                            .result(result.result())</span>
+<span class="fc" id="L115">                            .error(result.error())</span>
+<span class="fc" id="L116">                            .build())</span>
+<span class="fc" id="L117">                    .build();</span>
+<span class="fc" id="L118">            var update = OperationUpdate.builder()</span>
+<span class="fc" id="L119">                    .id(op.id())</span>
+<span class="fc" id="L120">                    .name(op.name())</span>
+<span class="fc" id="L121">                    .type(OperationType.CHAINED_INVOKE)</span>
+<span class="fc" id="L122">                    .action(</span>
+<span class="fc bfc" id="L123" title="All 2 branches covered.">                            result.operationStatus() == OperationStatus.SUCCEEDED</span>
+<span class="fc" id="L124">                                    ? OperationAction.SUCCEED</span>
+<span class="fc" id="L125">                                    : OperationAction.FAIL)</span>
+<span class="fc" id="L126">                    .build();</span>
+<span class="fc" id="L127">            var event = eventProcessor.processUpdate(update, newOp);</span>
+<span class="fc" id="L128">            allEvents.add(event);</span>
+<span class="fc" id="L129">            operations.put(compositeKey(op.parentId(), op.id()), newOp);</span>
         }
-<span class="fc" id="L134">    }</span>
+<span class="fc" id="L131">    }</span>
 
     /** Returns the operation with the given name, or null if not found. */
     public Operation getOperationByName(String name) {
-<span class="fc" id="L138">        return operations.values().stream()</span>
-<span class="fc" id="L139">                .filter(op -&gt; name.equals(op.name()))</span>
-<span class="fc" id="L140">                .findFirst()</span>
-<span class="fc" id="L141">                .orElse(null);</span>
+<span class="fc" id="L135">        return operations.values().stream()</span>
+<span class="fc" id="L136">                .filter(op -&gt; name.equals(op.name()))</span>
+<span class="fc" id="L137">                .findFirst()</span>
+<span class="fc" id="L138">                .orElse(null);</span>
     }
 
     /** Returns all operations currently stored. */
     public List&lt;Operation&gt; getAllOperations() {
-<span class="fc" id="L146">        return operations.values().stream().toList();</span>
+<span class="fc" id="L143">        return operations.values().stream().toList();</span>
     }
 
     /** Clears all operations and events, resetting the client to its initial state. */
     public void reset() {
-<span class="nc" id="L151">        operations.clear();</span>
-<span class="nc" id="L152">        allEvents.clear();</span>
-<span class="nc" id="L153">    }</span>
+<span class="nc" id="L148">        operations.clear();</span>
+<span class="nc" id="L149">        allEvents.clear();</span>
+<span class="nc" id="L150">    }</span>
 
     /** Build TestResult from current state. */
-    public &lt;O&gt; TestResult&lt;O&gt; toTestResult(DurableExecutionOutput output) {
-<span class="fc" id="L157">        var testOperations = operations.values().stream()</span>
-<span class="fc bfc" id="L158" title="All 2 branches covered.">                .filter(op -&gt; op.type() != OperationType.EXECUTION)</span>
-<span class="fc" id="L159">                .map(op -&gt; new TestOperation(op, getEventsForOperation(op.id()), serDes))</span>
-<span class="fc" id="L160">                .toList();</span>
-<span class="fc" id="L161">        return new TestResult&lt;&gt;(</span>
-<span class="fc" id="L162">                output.status(), output.result(), output.error(), testOperations, new ArrayList&lt;&gt;(allEvents), serDes);</span>
+    public &lt;O&gt; TestResult&lt;O&gt; toTestResult(DurableExecutionOutput output, TypeToken&lt;O&gt; resultType, SerDes serDes) {
+<span class="fc" id="L154">        var testOperations = operations.values().stream()</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">                .filter(op -&gt; op.type() != OperationType.EXECUTION)</span>
+<span class="fc" id="L156">                .map(op -&gt; new TestOperation(op, getEventsForOperation(op.id()), serDes))</span>
+<span class="fc" id="L157">                .toList();</span>
+<span class="fc" id="L158">        return new TestResult&lt;&gt;(</span>
+<span class="fc" id="L159">                output.status(),</span>
+<span class="fc" id="L160">                output.result(),</span>
+<span class="fc" id="L161">                output.error(),</span>
+                testOperations,
+                new ArrayList&lt;&gt;(allEvents),
+                resultType,
+                serDes);
     }
 
     /** Simulate checkpoint failure by forcing an operation into STARTED state */
     public void resetCheckpointToStarted(String stepName) {
-<span class="fc" id="L167">        var op = getOperationByName(stepName);</span>
-<span class="fc bfc" id="L168" title="All 2 branches covered.">        if (op == null) {</span>
-<span class="fc" id="L169">            throw new IllegalStateException(&quot;Operation not found: &quot; + stepName);</span>
+<span class="fc" id="L170">        var op = getOperationByName(stepName);</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">        if (op == null) {</span>
+<span class="fc" id="L172">            throw new IllegalStateException(&quot;Operation not found: &quot; + stepName);</span>
         }
-<span class="fc" id="L171">        var startedOp = op.toBuilder().status(OperationStatus.STARTED).build();</span>
-<span class="fc" id="L172">        operations.put(compositeKey(op.parentId(), op.id()), startedOp);</span>
-<span class="fc" id="L173">    }</span>
+<span class="fc" id="L174">        var startedOp = op.toBuilder().status(OperationStatus.STARTED).build();</span>
+<span class="fc" id="L175">        operations.put(compositeKey(op.parentId(), op.id()), startedOp);</span>
+<span class="fc" id="L176">    }</span>
 
     /** Simulate fire-and-forget checkpoint loss by removing the operation entirely */
     public void simulateFireAndForgetCheckpointLoss(String stepName) {
-<span class="fc" id="L177">        var op = getOperationByName(stepName);</span>
-<span class="fc bfc" id="L178" title="All 2 branches covered.">        if (op == null) {</span>
-<span class="fc" id="L179">            throw new IllegalStateException(&quot;Operation not found: &quot; + stepName);</span>
+<span class="fc" id="L180">        var op = getOperationByName(stepName);</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        if (op == null) {</span>
+<span class="fc" id="L182">            throw new IllegalStateException(&quot;Operation not found: &quot; + stepName);</span>
         }
-<span class="fc" id="L181">        operations.remove(compositeKey(op.parentId(), op.id()));</span>
-<span class="fc" id="L182">    }</span>
+<span class="fc" id="L184">        operations.remove(compositeKey(op.parentId(), op.id()));</span>
+<span class="fc" id="L185">    }</span>
 
     private void applyUpdate(OperationUpdate update) {
-<span class="fc" id="L185">        var operation = toOperation(update);</span>
-<span class="fc" id="L186">        var key = compositeKey(update.parentId(), update.id());</span>
-<span class="fc" id="L187">        operations.put(key, operation);</span>
+<span class="fc" id="L188">        var operation = toOperation(update);</span>
+<span class="fc" id="L189">        var key = compositeKey(update.parentId(), update.id());</span>
+<span class="fc" id="L190">        operations.put(key, operation);</span>
 
-<span class="fc" id="L189">        var event = eventProcessor.processUpdate(update, operation);</span>
-<span class="fc" id="L190">        allEvents.add(event);</span>
-<span class="fc" id="L191">    }</span>
+<span class="fc" id="L192">        var event = eventProcessor.processUpdate(update, operation);</span>
+<span class="fc" id="L193">        allEvents.add(event);</span>
+<span class="fc" id="L194">    }</span>
 
     private static String compositeKey(String parentId, String operationId) {
-<span class="fc bfc" id="L194" title="All 2 branches covered.">        return (parentId != null ? parentId : &quot;&quot;) + &quot;:&quot; + operationId;</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        return (parentId != null ? parentId : &quot;&quot;) + &quot;:&quot; + operationId;</span>
     }
 
     private Operation toOperation(OperationUpdate update) {
-<span class="fc" id="L198">        var builder = Operation.builder()</span>
-<span class="fc" id="L199">                .id(update.id())</span>
-<span class="fc" id="L200">                .name(update.name())</span>
-<span class="fc" id="L201">                .type(update.type())</span>
-<span class="fc" id="L202">                .subType(update.subType())</span>
-<span class="fc" id="L203">                .parentId(update.parentId())</span>
-<span class="fc" id="L204">                .status(deriveStatus(update.action()));</span>
+<span class="fc" id="L201">        var builder = Operation.builder()</span>
+<span class="fc" id="L202">                .id(update.id())</span>
+<span class="fc" id="L203">                .name(update.name())</span>
+<span class="fc" id="L204">                .type(update.type())</span>
+<span class="fc" id="L205">                .subType(update.subType())</span>
+<span class="fc" id="L206">                .parentId(update.parentId())</span>
+<span class="fc" id="L207">                .status(deriveStatus(update.action()));</span>
 
-<span class="pc bpc" id="L206" title="2 of 8 branches missed.">        switch (update.type()) {</span>
-<span class="fc" id="L207">            case WAIT -&gt; builder.waitDetails(buildWaitDetails(update));</span>
-<span class="fc" id="L208">            case STEP -&gt; builder.stepDetails(buildStepDetails(update));</span>
-<span class="fc" id="L209">            case CALLBACK -&gt; builder.callbackDetails(buildCallbackDetails(update));</span>
-<span class="fc" id="L210">            case EXECUTION -&gt; {} // No details needed for EXECUTION operations</span>
-<span class="fc" id="L211">            case CHAINED_INVOKE -&gt; builder.chainedInvokeDetails(buildChainedInvokeDetails(update));</span>
-<span class="fc" id="L212">            case CONTEXT -&gt; builder.contextDetails(buildContextDetails(update));</span>
+<span class="pc bpc" id="L209" title="2 of 8 branches missed.">        switch (update.type()) {</span>
+<span class="fc" id="L210">            case WAIT -&gt; builder.waitDetails(buildWaitDetails(update));</span>
+<span class="fc" id="L211">            case STEP -&gt; builder.stepDetails(buildStepDetails(update));</span>
+<span class="fc" id="L212">            case CALLBACK -&gt; builder.callbackDetails(buildCallbackDetails(update));</span>
+<span class="fc" id="L213">            case EXECUTION -&gt; {} // No details needed for EXECUTION operations</span>
+<span class="fc" id="L214">            case CHAINED_INVOKE -&gt; builder.chainedInvokeDetails(buildChainedInvokeDetails(update));</span>
+<span class="fc" id="L215">            case CONTEXT -&gt; builder.contextDetails(buildContextDetails(update));</span>
             case UNKNOWN_TO_SDK_VERSION -&gt;
-<span class="nc" id="L214">                throw new UnsupportedOperationException(&quot;UNKNOWN_TO_SDK_VERSION not supported&quot;);</span>
+<span class="nc" id="L217">                throw new UnsupportedOperationException(&quot;UNKNOWN_TO_SDK_VERSION not supported&quot;);</span>
         }
 
-<span class="fc" id="L217">        return builder.build();</span>
+<span class="fc" id="L220">        return builder.build();</span>
     }
 
     private ChainedInvokeDetails buildChainedInvokeDetails(OperationUpdate update) {
-<span class="pc bpc" id="L221" title="1 of 2 branches missed.">        if (update.chainedInvokeOptions() == null) {</span>
-<span class="nc" id="L222">            return null;</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">        if (update.chainedInvokeOptions() == null) {</span>
+<span class="nc" id="L225">            return null;</span>
         }
-<span class="fc" id="L224">        return ChainedInvokeDetails.builder()</span>
-<span class="fc" id="L225">                .result(update.payload())</span>
-<span class="fc" id="L226">                .error(update.error())</span>
-<span class="fc" id="L227">                .build();</span>
+<span class="fc" id="L227">        return ChainedInvokeDetails.builder()</span>
+<span class="fc" id="L228">                .result(update.payload())</span>
+<span class="fc" id="L229">                .error(update.error())</span>
+<span class="fc" id="L230">                .build();</span>
     }
 
     private ContextDetails buildContextDetails(OperationUpdate update) {
-<span class="fc" id="L231">        var detailsBuilder = ContextDetails.builder().result(update.payload()).error(update.error());</span>
+<span class="fc" id="L234">        var detailsBuilder = ContextDetails.builder().result(update.payload()).error(update.error());</span>
 
-<span class="fc bfc" id="L233" title="All 2 branches covered.">        if (update.contextOptions() != null</span>
-<span class="pc bpc" id="L234" title="1 of 2 branches missed.">                &amp;&amp; Boolean.TRUE.equals(update.contextOptions().replayChildren())) {</span>
-<span class="fc" id="L235">            detailsBuilder.replayChildren(true);</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">        if (update.contextOptions() != null</span>
+<span class="pc bpc" id="L237" title="1 of 2 branches missed.">                &amp;&amp; Boolean.TRUE.equals(update.contextOptions().replayChildren())) {</span>
+<span class="fc" id="L238">            detailsBuilder.replayChildren(true);</span>
         }
 
-<span class="fc" id="L238">        return detailsBuilder.build();</span>
+<span class="fc" id="L241">        return detailsBuilder.build();</span>
     }
 
     private WaitDetails buildWaitDetails(OperationUpdate update) {
-<span class="pc bpc" id="L242" title="1 of 2 branches missed.">        if (update.waitOptions() == null) return null;</span>
+<span class="pc bpc" id="L245" title="1 of 2 branches missed.">        if (update.waitOptions() == null) return null;</span>
 
-<span class="fc" id="L244">        var scheduledEnd = Instant.now().plusSeconds(update.waitOptions().waitSeconds());</span>
-<span class="fc" id="L245">        return WaitDetails.builder().scheduledEndTimestamp(scheduledEnd).build();</span>
+<span class="fc" id="L247">        var scheduledEnd = Instant.now().plusSeconds(update.waitOptions().waitSeconds());</span>
+<span class="fc" id="L248">        return WaitDetails.builder().scheduledEndTimestamp(scheduledEnd).build();</span>
     }
 
     private StepDetails buildStepDetails(OperationUpdate update) {
-<span class="fc" id="L249">        var key = compositeKey(update.parentId(), update.id());</span>
-<span class="fc" id="L250">        var existingOp = operations.get(key);</span>
-<span class="fc bfc" id="L251" title="All 2 branches covered.">        var existing = existingOp != null ? existingOp.stepDetails() : null;</span>
+<span class="fc" id="L252">        var key = compositeKey(update.parentId(), update.id());</span>
+<span class="fc" id="L253">        var existingOp = operations.get(key);</span>
+<span class="fc bfc" id="L254" title="All 2 branches covered.">        var existing = existingOp != null ? existingOp.stepDetails() : null;</span>
 
-<span class="fc bfc" id="L253" title="All 2 branches covered.">        var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();</span>
-<span class="fc bfc" id="L254" title="All 4 branches covered.">        var attempt = existing != null &amp;&amp; existing.attempt() != null ? existing.attempt() + 1 : 1;</span>
+<span class="fc bfc" id="L256" title="All 2 branches covered.">        var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();</span>
+<span class="fc bfc" id="L257" title="All 4 branches covered.">        var attempt = existing != null &amp;&amp; existing.attempt() != null ? existing.attempt() + 1 : 1;</span>
 
-<span class="fc bfc" id="L256" title="All 2 branches covered.">        if (update.action() == OperationAction.FAIL) {</span>
-<span class="fc" id="L257">            detailsBuilder.attempt(attempt).error(update.error());</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">        if (update.action() == OperationAction.FAIL) {</span>
+<span class="fc" id="L260">            detailsBuilder.attempt(attempt).error(update.error());</span>
         }
 
-<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (update.action() == OperationAction.RETRY) {</span>
-<span class="fc" id="L261">            detailsBuilder</span>
-<span class="fc" id="L262">                    .attempt(attempt)</span>
-<span class="fc" id="L263">                    .error(update.error())</span>
-<span class="fc" id="L264">                    .nextAttemptTimestamp(</span>
-<span class="fc" id="L265">                            Instant.now().plusSeconds(update.stepOptions().nextAttemptDelaySeconds()));</span>
+<span class="fc bfc" id="L263" title="All 2 branches covered.">        if (update.action() == OperationAction.RETRY) {</span>
+<span class="fc" id="L264">            detailsBuilder</span>
+<span class="fc" id="L265">                    .attempt(attempt)</span>
+<span class="fc" id="L266">                    .error(update.error())</span>
+<span class="fc" id="L267">                    .nextAttemptTimestamp(</span>
+<span class="fc" id="L268">                            Instant.now().plusSeconds(update.stepOptions().nextAttemptDelaySeconds()));</span>
         }
 
-<span class="fc bfc" id="L268" title="All 2 branches covered.">        if (update.payload() != null) {</span>
-<span class="fc" id="L269">            detailsBuilder.result(update.payload());</span>
+<span class="fc bfc" id="L271" title="All 2 branches covered.">        if (update.payload() != null) {</span>
+<span class="fc" id="L272">            detailsBuilder.result(update.payload());</span>
         }
 
-<span class="fc" id="L272">        return detailsBuilder.build();</span>
+<span class="fc" id="L275">        return detailsBuilder.build();</span>
     }
 
     private CallbackDetails buildCallbackDetails(OperationUpdate update) {
-<span class="fc" id="L276">        var key = compositeKey(update.parentId(), update.id());</span>
-<span class="fc" id="L277">        var existingOp = operations.get(key);</span>
-<span class="pc bpc" id="L278" title="1 of 2 branches missed.">        var existing = existingOp != null ? existingOp.callbackDetails() : null;</span>
+<span class="fc" id="L279">        var key = compositeKey(update.parentId(), update.id());</span>
+<span class="fc" id="L280">        var existingOp = operations.get(key);</span>
+<span class="pc bpc" id="L281" title="1 of 2 branches missed.">        var existing = existingOp != null ? existingOp.callbackDetails() : null;</span>
 
         // Preserve existing callbackId, or generate new one on START
         var callbackId =
-<span class="pc bpc" id="L282" title="1 of 2 branches missed.">                existing != null ? existing.callbackId() : UUID.randomUUID().toString();</span>
+<span class="pc bpc" id="L285" title="1 of 2 branches missed.">                existing != null ? existing.callbackId() : UUID.randomUUID().toString();</span>
 
-<span class="fc" id="L284">        return CallbackDetails.builder()</span>
-<span class="fc" id="L285">                .callbackId(callbackId)</span>
-<span class="pc bpc" id="L286" title="1 of 2 branches missed.">                .result(existing != null ? existing.result() : null)</span>
-<span class="fc" id="L287">                .build();</span>
+<span class="fc" id="L287">        return CallbackDetails.builder()</span>
+<span class="fc" id="L288">                .callbackId(callbackId)</span>
+<span class="pc bpc" id="L289" title="1 of 2 branches missed.">                .result(existing != null ? existing.result() : null)</span>
+<span class="fc" id="L290">                .build();</span>
     }
 
     /** Get callback ID for a named callback operation. */
     public String getCallbackId(String operationName) {
-<span class="fc" id="L292">        var op = getOperationByName(operationName);</span>
-<span class="pc bpc" id="L293" title="2 of 4 branches missed.">        if (op == null || op.callbackDetails() == null) {</span>
-<span class="nc" id="L294">            return null;</span>
+<span class="fc" id="L295">        var op = getOperationByName(operationName);</span>
+<span class="pc bpc" id="L296" title="2 of 4 branches missed.">        if (op == null || op.callbackDetails() == null) {</span>
+<span class="nc" id="L297">            return null;</span>
         }
-<span class="fc" id="L296">        return op.callbackDetails().callbackId();</span>
+<span class="fc" id="L299">        return op.callbackDetails().callbackId();</span>
     }
 
-    /** Simulate external system completing callback successfully. */
-    public void completeCallback(String callbackId, String result) {
-<span class="fc" id="L301">        var op = findOperationByCallbackId(callbackId);</span>
-<span class="pc bpc" id="L302" title="1 of 2 branches missed.">        if (op == null) {</span>
-<span class="nc" id="L303">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
+    /** Simulate external system completing callback. */
+    public void completeCallback(String callbackId, OperationResult result) {
+<span class="fc" id="L304">        var op = findOperationByCallbackId(callbackId);</span>
+<span class="pc bpc" id="L305" title="1 of 2 branches missed.">        if (op == null) {</span>
+<span class="nc" id="L306">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
         }
-<span class="fc" id="L305">        var updated = op.toBuilder()</span>
-<span class="fc" id="L306">                .status(OperationStatus.SUCCEEDED)</span>
-<span class="fc" id="L307">                .callbackDetails(op.callbackDetails().toBuilder().result(result).build())</span>
-<span class="fc" id="L308">                .build();</span>
-<span class="fc" id="L309">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
-<span class="fc" id="L310">    }</span>
-
-    /** Simulate external system failing callback. */
-    public void failCallback(String callbackId, ErrorObject error) {
-<span class="fc" id="L314">        var op = findOperationByCallbackId(callbackId);</span>
-<span class="pc bpc" id="L315" title="1 of 2 branches missed.">        if (op == null) {</span>
-<span class="nc" id="L316">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
-        }
-<span class="fc" id="L318">        var updated = op.toBuilder()</span>
-<span class="fc" id="L319">                .status(OperationStatus.FAILED)</span>
-<span class="fc" id="L320">                .callbackDetails(op.callbackDetails().toBuilder().error(error).build())</span>
-<span class="fc" id="L321">                .build();</span>
-<span class="fc" id="L322">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
-<span class="fc" id="L323">    }</span>
-
-    /** Simulate callback timeout. */
-    public void timeoutCallback(String callbackId) {
-<span class="fc" id="L327">        var op = findOperationByCallbackId(callbackId);</span>
-<span class="pc bpc" id="L328" title="1 of 2 branches missed.">        if (op == null) {</span>
-<span class="nc" id="L329">            throw new IllegalStateException(&quot;Callback not found: &quot; + callbackId);</span>
-        }
-<span class="fc" id="L331">        var updated = op.toBuilder().status(OperationStatus.TIMED_OUT).build();</span>
-<span class="fc" id="L332">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
-<span class="fc" id="L333">    }</span>
+<span class="fc" id="L308">        var updated = op.toBuilder()</span>
+<span class="fc" id="L309">                .status(result.operationStatus())</span>
+<span class="fc" id="L310">                .callbackDetails(op.callbackDetails().toBuilder()</span>
+<span class="fc" id="L311">                        .result(result.result())</span>
+<span class="fc" id="L312">                        .error(result.error())</span>
+<span class="fc" id="L313">                        .build())</span>
+<span class="fc" id="L314">                .build();</span>
+<span class="fc" id="L315">        operations.put(compositeKey(op.parentId(), op.id()), updated);</span>
+<span class="fc" id="L316">    }</span>
 
     private Operation findOperationByCallbackId(String callbackId) {
-<span class="fc" id="L336">        return operations.values().stream()</span>
-<span class="fc bfc" id="L337" title="All 2 branches covered.">                .filter(op -&gt; op.callbackDetails() != null</span>
-<span class="fc bfc" id="L338" title="All 2 branches covered.">                        &amp;&amp; callbackId.equals(op.callbackDetails().callbackId()))</span>
-<span class="fc" id="L339">                .findFirst()</span>
-<span class="fc" id="L340">                .orElse(null);</span>
+<span class="fc" id="L319">        return operations.values().stream()</span>
+<span class="fc bfc" id="L320" title="All 2 branches covered.">                .filter(op -&gt; op.callbackDetails() != null</span>
+<span class="fc bfc" id="L321" title="All 2 branches covered.">                        &amp;&amp; callbackId.equals(op.callbackDetails().callbackId()))</span>
+<span class="fc" id="L322">                .findFirst()</span>
+<span class="fc" id="L323">                .orElse(null);</span>
     }
 
     private OperationStatus deriveStatus(OperationAction action) {
-<span class="pc bpc" id="L344" title="2 of 6 branches missed.">        return switch (action) {</span>
-<span class="fc" id="L345">            case START -&gt; OperationStatus.STARTED;</span>
-<span class="fc" id="L346">            case SUCCEED -&gt; OperationStatus.SUCCEEDED;</span>
-<span class="fc" id="L347">            case FAIL -&gt; OperationStatus.FAILED;</span>
-<span class="fc" id="L348">            case RETRY -&gt; OperationStatus.PENDING;</span>
-<span class="nc" id="L349">            case CANCEL -&gt; OperationStatus.CANCELLED;</span>
-<span class="nc" id="L350">            case UNKNOWN_TO_SDK_VERSION -&gt; null; // Todo: Check this</span>
+<span class="pc bpc" id="L327" title="2 of 6 branches missed.">        return switch (action) {</span>
+<span class="fc" id="L328">            case START -&gt; OperationStatus.STARTED;</span>
+<span class="fc" id="L329">            case SUCCEED -&gt; OperationStatus.SUCCEEDED;</span>
+<span class="fc" id="L330">            case FAIL -&gt; OperationStatus.FAILED;</span>
+<span class="fc" id="L331">            case RETRY -&gt; OperationStatus.PENDING;</span>
+<span class="nc" id="L332">            case CANCEL -&gt; OperationStatus.CANCELLED;</span>
+<span class="nc" id="L333">            case UNKNOWN_TO_SDK_VERSION -&gt; OperationStatus.UNKNOWN_TO_SDK_VERSION; // Todo: Check this</span>
         };
     }
 }
