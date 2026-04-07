@@ -580,7 +580,7 @@ class ParallelIntegrationTest {
                     .completionConfig(CompletionConfig.minSuccessful(2))
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("min-successful", config);
+            ParallelDurableFuture parallel = context.parallel("min-successful", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b", "c", "d", "e")) {
