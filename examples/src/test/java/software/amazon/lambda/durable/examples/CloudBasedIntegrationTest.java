@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -28,6 +29,8 @@ import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.examples.wait.ConcurrentWaitForConditionExample;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 
 @EnabledIf("isEnabled")
@@ -80,6 +83,33 @@ class CloudBasedIntegrationTest {
                 + ":$LATEST";
     }
 
+    /** Custom SerDes that tracks serialization calls. */
+    static class TrackingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final AtomicInteger serializeCount = new AtomicInteger(0);
+        private final AtomicInteger deserializeCount = new AtomicInteger(0);
+
+        @Override
+        public String serialize(Object value) {
+            serializeCount.incrementAndGet();
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializeCount.incrementAndGet();
+            return delegate.deserialize(data, typeToken);
+        }
+
+        public int getSerializeCount() {
+            return serializeCount.get();
+        }
+
+        public int getDeserializeCount() {
+            return deserializeCount.get();
+        }
+    }
+
     @Test
     void testSimpleStepExample() {
         var runner = CloudDurableTestRunner.create(
@@ -87,7 +117,7 @@ class CloudBasedIntegrationTest {
         var result = runner.run(Map.of("message", "test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertNotNull(result.getResult(String.class));
+        assertNotNull(result.getResult());
 
         var createGreetingOp = runner.getOperation("create-greeting");
         assertNotNull(createGreetingOp);
@@ -103,7 +133,7 @@ class CloudBasedIntegrationTest {
         var result = runner.run(Map.of("name", largeInput));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("HELLO, " + largeInput + "!", result.getResult(String.class));
+        assertEquals("HELLO, " + largeInput + "!", result.getResult());
     }
 
     @Test
@@ -113,7 +143,7 @@ class CloudBasedIntegrationTest {
         var result = runner.run(Map.of("name", functionNameSuffix));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertNotNull(result.getResult(String.class));
+        assertNotNull(result.getResult());
 
         var createGreetingOp = runner.getOperation("call-greeting1");
         assertNotNull(createGreetingOp);
@@ -131,7 +161,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("Retry example completed"));
         assertTrue(finalResult.contains("Flaky API succeeded"));
@@ -152,7 +182,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("Retry in-process completed"));
         assertTrue(finalResult.contains("Long operation completed"));
@@ -175,7 +205,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("Started processing for TestUser"));
         assertFalse(finalResult.contains("continued after 10s"));
@@ -195,7 +225,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("Processed: TestUser"));
 
@@ -212,7 +242,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("Processed: TestUser"));
 
@@ -232,7 +262,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        GenericTypesExample.Output output = result.getResult(GenericTypesExample.Output.class);
+        GenericTypesExample.Output output = result.getResult();
         assertNotNull(output);
 
         // Verify items list
@@ -265,14 +295,16 @@ class CloudBasedIntegrationTest {
     void testGenericInputOutputExample() {
         final TypeToken<Map<String, Map<String, List<String>>>> resultType = new TypeToken<>() {};
         final TypeToken<Map<String, String>> inputType = new TypeToken<>() {};
+        final TrackingSerDes customSerDes = new TrackingSerDes();
 
-        var runner =
-                CloudDurableTestRunner.create(arn("generic-input-output-example"), inputType, resultType, lambdaClient);
+        var runner = CloudDurableTestRunner.create(arn("generic-input-output-example"), inputType, resultType)
+                .withLambdaClient(lambdaClient)
+                .withSerDes(customSerDes);
         var result = runner.run(new HashMap<>(Map.of("userId", "user123")));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var output = result.getResult(resultType);
+        var output = result.getResult();
         assertNotNull(output);
 
         // Verify categories nested map
@@ -285,6 +317,10 @@ class CloudBasedIntegrationTest {
 
         // Verify operations were executed
         assertNotNull(runner.getOperation("fetch-categories"));
+
+        // verify custom SerDes was called
+        assertEquals(1, customSerDes.getDeserializeCount());
+        assertEquals(1, customSerDes.getSerializeCount());
     }
 
     @Test
@@ -295,7 +331,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("Created custom object"));
         assertTrue(finalResult.contains("user123"));
@@ -325,7 +361,7 @@ class CloudBasedIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.startsWith("Completed: "));
         assertTrue(finalResult.contains("fallback-result"));
@@ -360,7 +396,7 @@ class CloudBasedIntegrationTest {
         var result = execution.pollUntilComplete();
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var finalResult = result.getResult(String.class);
+        var finalResult = result.getResult();
         assertNotNull(finalResult);
         assertTrue(finalResult.contains("preapproved"));
         assertTrue(finalResult.contains("Approval request for: Purchase order"));
@@ -484,7 +520,7 @@ class CloudBasedIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(
                 "Order for Alice [validated] | Stock available for Alice [confirmed] | Base rate for Alice + regional adjustment [shipping ready]",
-                result.getResult(String.class));
+                result.getResult());
 
         // Verify child context operations were tracked
         assertNotNull(runner.getOperation("order-validation"));
@@ -507,7 +543,7 @@ class CloudBasedIntegrationTest {
 
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-            var finalResult = result.getResult(ManyAsyncStepsExample.Output.class);
+            var finalResult = result.getResult();
             System.out.printf("ManyAsyncStepsExample result (%d steps): %s\n", steps, finalResult);
             assertNotNull(finalResult);
             assertEquals((long) steps * (steps - 1), finalResult.result()); // Sum of 0..steps * 2
@@ -545,7 +581,7 @@ class CloudBasedIntegrationTest {
 
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-            var finalResult = result.getResult(ManyAsyncChildContextExample.Output.class);
+            var finalResult = result.getResult();
             System.out.printf("ManyAsyncChildContextExample result (%d child contexts): %s\n", steps, finalResult);
             assertNotNull(finalResult);
             assertEquals((long) steps * (steps - 1), finalResult.result()); // Sum of 0..steps * 2
@@ -576,7 +612,7 @@ class CloudBasedIntegrationTest {
         var result = runner.run(new GreetingRequest("Alice"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("Hello, Alice! | Hello, ALICE! | Hello, alice!", result.getResult(String.class));
+        assertEquals("Hello, Alice! | Hello, ALICE! | Hello, alice!", result.getResult());
     }
 
     @Test
@@ -585,7 +621,7 @@ class CloudBasedIntegrationTest {
         var result = runner.run(100);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        var output = result.getResult(String.class);
+        var output = result.getResult();
         assertNotNull(output);
 
         // Part 1: Concurrent order processing with step + wait + step
@@ -605,7 +641,7 @@ class CloudBasedIntegrationTest {
         var result = runner.run(3);
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(3, result.getResult(Integer.class));
+        assertEquals(3, result.getResult());
     }
 
     @Test
@@ -620,7 +656,7 @@ class CloudBasedIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
         // Verify each operation finished with 3 attempts
-        var allOperationsOutput = result.getResult(String.class);
+        var allOperationsOutput = result.getResult();
         var operationOutputs = allOperationsOutput.split(" \\| ");
         assertEquals(100, operationOutputs.length);
         for (var operationOutput : operationOutputs) {

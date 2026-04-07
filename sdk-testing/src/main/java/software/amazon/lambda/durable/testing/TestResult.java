@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.testing;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -31,6 +32,7 @@ public class TestResult<O> {
     private final Map<String, TestOperation> operationsByName;
     private final List<Event> allEvents;
     private final SerDes serDes;
+    private final TypeToken<O> resultType;
 
     public TestResult(
             ExecutionStatus status,
@@ -38,6 +40,7 @@ public class TestResult<O> {
             ErrorObject error,
             List<TestOperation> operations,
             List<Event> allEvents,
+            TypeToken<O> resultType,
             SerDes serDes) {
         this.status = status;
         this.resultPayload = resultPayload;
@@ -47,6 +50,7 @@ public class TestResult<O> {
                 operations.stream().collect(Collectors.toMap(TestOperation::getName, op -> op, (a, b) -> b));
         this.allEvents = List.copyOf(allEvents);
         this.serDes = serDes;
+        this.resultType = resultType;
     }
 
     /** Returns the execution status (SUCCEEDED, FAILED, or PENDING). */
@@ -77,6 +81,12 @@ public class TestResult<O> {
             return null;
         }
         return serDes.deserialize(resultPayload, resultType);
+    }
+
+    /** Deserializes and returns the execution output if the result type is known. */
+    public O getResult() {
+        Objects.requireNonNull(resultType, "ResultType cannot be null");
+        return getResult(resultType);
     }
 
     /** Returns the execution error, if present. */

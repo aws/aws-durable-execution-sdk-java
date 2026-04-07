@@ -59,8 +59,23 @@ public abstract class TypeToken<T> {
         return new TypeToken<>(clazz) {};
     }
 
-    static <U> TypeToken<U> get(Type clazz) {
-        return new TypeToken<>(clazz) {};
+    /**
+     * Creates a TypeToken by extracting a type parameter from a generic superclass.
+     *
+     * @param clazz the subclass to extract the type from
+     * @param typeParameterPosition the position of the type parameter in the superclass declaration (0-based)
+     * @param <U> the type to extract
+     * @param <V> the superclass type
+     * @return a TypeToken representing the extracted type
+     */
+    static <U, V> TypeToken<U> fromGenericSuperClass(Class<V> clazz, int typeParameterPosition) {
+        // Extract input type from generic superclass
+        var superClass = clazz.getGenericSuperclass();
+        if (superClass instanceof ParameterizedType paramType) {
+            return new TypeToken<>(paramType.getActualTypeArguments()[typeParameterPosition]) {};
+        } else {
+            throw new IllegalArgumentException("Cannot determine type from base class: " + clazz);
+        }
     }
 
     /**

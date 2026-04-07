@@ -17,7 +17,7 @@ import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.AsyncExecution;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestOperation;
@@ -28,8 +28,6 @@ import software.amazon.lambda.durable.testing.TestResult;
  * {@link CloudDurableTestRunner} and {@link AsyncExecution} to convert cloud execution history into testable results.
  */
 public class HistoryEventProcessor {
-    private final JacksonSerDes serDes = new JacksonSerDes();
-
     /**
      * Processes a list of execution history events into a structured {@link TestResult}.
      *
@@ -38,7 +36,7 @@ public class HistoryEventProcessor {
      * @param <O> the handler output type
      * @return a TestResult containing the execution status, output, and operation details
      */
-    public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType) {
+    public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType, SerDes serDes) {
         var operations = new HashMap<String, Operation>();
         var operationEvents = new HashMap<String, List<Event>>();
         var status = ExecutionStatus.PENDING;
@@ -241,7 +239,7 @@ public class HistoryEventProcessor {
             testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));
         }
 
-        return new TestResult<>(status, result, error, testOperations, events, serDes);
+        return new TestResult<>(status, result, error, testOperations, events, outputType, serDes);
     }
 
     private Operation createStepOperation(
