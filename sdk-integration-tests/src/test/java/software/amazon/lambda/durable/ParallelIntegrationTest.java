@@ -76,7 +76,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("partial-fail", config);
+            ParallelDurableFuture parallel = context.parallel("partial-fail", config);
 
             try (parallel) {
                 futures.add(parallel.branch("branch-a", String.class, ctx -> "A"));
@@ -322,7 +322,7 @@ class ParallelIntegrationTest {
     void testSequentialParallelBlocks() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var futures1 = new ArrayList<DurableFuture<String>>();
-            var parallel1 =
+            ParallelDurableFuture parallel1 =
                     context.parallel("parallel-1", ParallelConfig.builder().build());
             try (parallel1) {
                 futures1.add(parallel1.branch("branch-a", String.class, ctx -> "A"));
@@ -330,7 +330,7 @@ class ParallelIntegrationTest {
             }
 
             var futures2 = new ArrayList<DurableFuture<String>>();
-            var parallel2 =
+            ParallelDurableFuture parallel2 =
                     context.parallel("parallel-2", ParallelConfig.builder().build());
             try (parallel2) {
                 futures2.add(parallel2.branch("branch-x", String.class, ctx -> "x!"));
@@ -354,7 +354,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("replay-fail-parallel", config);
+            ParallelDurableFuture parallel = context.parallel("replay-fail-parallel", config);
 
             try (parallel) {
                 futures.add(parallel.branch("branch-ok", String.class, ctx -> {
@@ -371,7 +371,7 @@ class ParallelIntegrationTest {
                 }));
             }
 
-            var result = parallel.get();
+            parallel.get();
             assertEquals("OK", futures.get(0).get());
             assertEquals("OK2", futures.get(2).get());
             return "done";
@@ -392,7 +392,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("single-branch", config);
+            ParallelDurableFuture parallel = context.parallel("single-branch", config);
 
             try (parallel) {
                 futures.add(parallel.branch(
@@ -418,7 +418,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("wait-replay-parallel", config);
+            ParallelDurableFuture parallel = context.parallel("wait-replay-parallel", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b")) {
@@ -546,7 +546,7 @@ class ParallelIntegrationTest {
                     .completionConfig(CompletionConfig.toleratedFailureCount(1))
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("tolerated-fail", config);
+            ParallelDurableFuture parallel = context.parallel("tolerated-fail", config);
 
             try (parallel) {
                 futures.add(parallel.branch("branch-ok", String.class, ctx -> "OK"));
@@ -617,7 +617,7 @@ class ParallelIntegrationTest {
                     .completionConfig(CompletionConfig.allSuccessful())
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("all-successful", config);
+            ParallelDurableFuture parallel = context.parallel("all-successful", config);
 
             try (parallel) {
                 futures.add(parallel.branch("branch-ok1", String.class, ctx -> "OK1"));

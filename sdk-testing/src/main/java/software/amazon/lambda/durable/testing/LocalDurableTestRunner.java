@@ -340,8 +340,7 @@ public class LocalDurableTestRunner<I, O> {
                 .build();
 
         // Load previous operations and include them in InitialExecutionState
-        var existingOps =
-                storage.getExecutionState(executionArn, "test-token", null).operations();
+        var existingOps = storage.getAllOperations();
         var allOps = new ArrayList<>(List.of(executionOp));
         allOps.addAll(existingOps);
 

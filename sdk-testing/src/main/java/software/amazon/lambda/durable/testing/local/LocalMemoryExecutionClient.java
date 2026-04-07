@@ -3,7 +3,8 @@
 package software.amazon.lambda.durable.testing.local;
 
 import java.time.Instant;
-import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -23,10 +24,11 @@ import software.amazon.lambda.durable.testing.TestResult;
  * in memory, simulating the durable execution backend without AWS infrastructure.
  */
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
-    private final Map<String, Operation> operations = new ConcurrentHashMap<>();
-    private final List<Event> allEvents = new CopyOnWriteArrayList<>();
+    // use LinkedHashMap to keep insertion order
+    private final Map<String, Operation> existingOperations = Collections.synchronizedMap(new LinkedHashMap<>());
     private final EventProcessor eventProcessor = new EventProcessor();
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
+    private final Map<String, Operation> updatedOperations = new ConcurrentHashMap<>();
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
@@ -34,35 +36,27 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         updates.forEach(this::applyUpdate);
 
         var newToken = UUID.randomUUID().toString();
-
-        return CheckpointDurableExecutionResponse.builder()
+        var response = CheckpointDurableExecutionResponse.builder()
                 .checkpointToken(newToken)
                 .newExecutionState(CheckpointUpdatedExecutionState.builder()
-                        .operations(operations.values())
+                        .operations(updatedOperations.values())
                         .build())
                 .build();
+
+        // updatedOperations was copied into response, so clearing it is safe here
+        updatedOperations.clear();
+        return response;
     }
 
     @Override
     public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
-        return GetDurableExecutionStateResponse.builder()
-                .operations(operations.values())
-                .build();
+        // local runner doesn't use this API at all
+        throw new UnsupportedOperationException("getExecutionState is not supported");
     }
 
     /** Get all operation updates that have been sent to this client. Useful for testing and verification. */
     public List<OperationUpdate> getOperationUpdates() {
         return List.copyOf(operationUpdates);
-    }
-
-    /** Get all events in order. */
-    public List<Event> getAllEvents() {
-        return List.copyOf(allEvents);
-    }
-
-    /** Get events for a specific operation. */
-    public List<Event> getEventsForOperation(String operationId) {
-        return allEvents.stream().filter(e -> operationId.equals(e.id())).toList();
     }
 
     /**
@@ -72,12 +66,15 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
      */
     public boolean advanceTime() {
         var replaced = new AtomicBoolean(false);
-        operations.replaceAll((key, op) -> {
+        existingOperations.replaceAll((key, op) -> {
             // advance pending retries
             if (op.status() == OperationStatus.PENDING) {
                 replaced.set(true);
-                return op.toBuilder().status(OperationStatus.READY).build();
+                var readyOp = op.toBuilder().status(OperationStatus.READY).build();
+                updatedOperations.put(op.id(), readyOp);
+                return readyOp;
             }
+
             // advance waits
             if (op.status() == OperationStatus.STARTED && op.type() == OperationType.WAIT) {
                 var succeededOp =
@@ -89,9 +86,9 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                         .type(OperationType.WAIT)
                         .action(OperationAction.SUCCEED)
                         .build();
-                var event = eventProcessor.processUpdate(update, succeededOp);
-                allEvents.add(event);
+                eventProcessor.processUpdate(update, succeededOp);
                 replaced.set(true);
+                updatedOperations.put(op.id(), succeededOp);
                 return succeededOp;
             }
             return op;
@@ -124,15 +121,14 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                                     ? OperationAction.SUCCEED
                                     : OperationAction.FAIL)
                     .build();
-            var event = eventProcessor.processUpdate(update, newOp);
-            allEvents.add(event);
-            operations.put(compositeKey(op.parentId(), op.id()), newOp);
+            eventProcessor.processUpdate(update, newOp);
+            updateOperation(newOp);
         }
     }
 
     /** Returns the operation with the given name, or null if not found. */
     public Operation getOperationByName(String name) {
-        return operations.values().stream()
+        return existingOperations.values().stream()
                 .filter(op -> name.equals(op.name()))
                 .findFirst()
                 .orElse(null);
@@ -140,27 +136,21 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Returns all operations currently stored. */
     public List<Operation> getAllOperations() {
-        return operations.values().stream().toList();
-    }
-
-    /** Clears all operations and events, resetting the client to its initial state. */
-    public void reset() {
-        operations.clear();
-        allEvents.clear();
+        return existingOperations.values().stream().toList();
     }
 
     /** Build TestResult from current state. */
     public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
-        var testOperations = operations.values().stream()
+        var testOperations = existingOperations.values().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
-                .map(op -> new TestOperation(op, getEventsForOperation(op.id()), serDes))
+                .map(op -> new TestOperation(op, eventProcessor.getEventsForOperation(op.id()), serDes))
                 .toList();
         return new TestResult<>(
                 output.status(),
                 output.result(),
                 output.error(),
                 testOperations,
-                new ArrayList<>(allEvents),
+                eventProcessor.getAllEvents(),
                 resultType,
                 serDes);
     }
@@ -172,7 +162,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
         var startedOp = op.toBuilder().status(OperationStatus.STARTED).build();
-        operations.put(compositeKey(op.parentId(), op.id()), startedOp);
+        updateOperation(startedOp);
     }
 
     /** Simulate fire-and-forget checkpoint loss by removing the operation entirely */
@@ -181,20 +171,15 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         if (op == null) {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
-        operations.remove(compositeKey(op.parentId(), op.id()));
+        existingOperations.remove(op.id());
+        updatedOperations.remove(op.id());
     }
 
     private void applyUpdate(OperationUpdate update) {
         var operation = toOperation(update);
-        var key = compositeKey(update.parentId(), update.id());
-        operations.put(key, operation);
+        updateOperation(operation);
 
-        var event = eventProcessor.processUpdate(update, operation);
-        allEvents.add(event);
-    }
-
-    private static String compositeKey(String parentId, String operationId) {
-        return (parentId != null ? parentId : "") + ":" + operationId;
+        eventProcessor.processUpdate(update, operation);
     }
 
     private Operation toOperation(OperationUpdate update) {
@@ -249,8 +234,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     private StepDetails buildStepDetails(OperationUpdate update) {
-        var key = compositeKey(update.parentId(), update.id());
-        var existingOp = operations.get(key);
+        var existingOp = existingOperations.get(update.id());
         var existing = existingOp != null ? existingOp.stepDetails() : null;
 
         var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();
@@ -276,8 +260,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     private CallbackDetails buildCallbackDetails(OperationUpdate update) {
-        var key = compositeKey(update.parentId(), update.id());
-        var existingOp = operations.get(key);
+        var existingOp = existingOperations.get(update.id());
         var existing = existingOp != null ? existingOp.callbackDetails() : null;
 
         // Preserve existing callbackId, or generate new one on START
@@ -312,11 +295,11 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                         .error(result.error())
                         .build())
                 .build();
-        operations.put(compositeKey(op.parentId(), op.id()), updated);
+        updateOperation(updated);
     }
 
     private Operation findOperationByCallbackId(String callbackId) {
-        return operations.values().stream()
+        return existingOperations.values().stream()
                 .filter(op -> op.callbackDetails() != null
                         && callbackId.equals(op.callbackDetails().callbackId()))
                 .findFirst()
@@ -332,5 +315,10 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             case CANCEL -> OperationStatus.CANCELLED;
             case UNKNOWN_TO_SDK_VERSION -> OperationStatus.UNKNOWN_TO_SDK_VERSION; // Todo: Check this
         };
+    }
+
+    private void updateOperation(Operation op) {
+        existingOperations.put(op.id(), op);
+        updatedOperations.put(op.id(), op);
     }
 }

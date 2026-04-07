@@ -5,29 +5,43 @@ package software.amazon.lambda.durable.testing.local;
 import static software.amazon.awssdk.services.lambda.model.EventType.*;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import software.amazon.awssdk.services.lambda.model.*;
 
 /** Generates Event objects from OperationUpdate for local testing. */
 class EventProcessor {
     private final AtomicInteger eventId = new AtomicInteger(1);
+    private final List<Event> allEvents = new CopyOnWriteArrayList<>();
 
-    Event processUpdate(OperationUpdate update, Operation operation) {
+    void processUpdate(OperationUpdate update, Operation operation) {
         var builder = Event.builder()
                 .eventId(eventId.getAndIncrement())
                 .eventTimestamp(Instant.now())
                 .id(update.id())
                 .name(update.name());
 
-        return switch (update.type()) {
-            case STEP -> buildStepEvent(builder, update, operation);
-            case WAIT -> buildWaitEvent(builder, update, operation);
-            case CHAINED_INVOKE -> buildInvokeEvent(builder, update, operation);
-            case EXECUTION -> buildExecutionEvent(builder, update);
-            case CALLBACK -> buildCallbackEvent(builder, update);
-            case CONTEXT -> buildContextEvent(builder, update);
-            default -> throw new IllegalArgumentException("Unsupported operation type: " + update.type());
-        };
+        Event event =
+                switch (update.type()) {
+                    case STEP -> buildStepEvent(builder, update, operation);
+                    case WAIT -> buildWaitEvent(builder, update, operation);
+                    case CHAINED_INVOKE -> buildInvokeEvent(builder, update, operation);
+                    case EXECUTION -> buildExecutionEvent(builder, update);
+                    case CALLBACK -> buildCallbackEvent(builder, update);
+                    case CONTEXT -> buildContextEvent(builder, update);
+                    default -> throw new IllegalArgumentException("Unsupported operation type: " + update.type());
+                };
+
+        allEvents.add(event);
+    }
+
+    List<Event> getAllEvents() {
+        return List.copyOf(allEvents);
+    }
+
+    public List<Event> getEventsForOperation(String operationId) {
+        return allEvents.stream().filter(e -> e.id().equals(operationId)).toList();
     }
 
     private Event buildStepEvent(Event.Builder builder, OperationUpdate update, Operation operation) {
