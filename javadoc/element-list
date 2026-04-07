@@ -19,4 +19,6 @@ software.amazon.lambda.durable.operation
 software.amazon.lambda.durable.retry
 software.amazon.lambda.durable.serde
 software.amazon.lambda.durable.testing
+software.amazon.lambda.durable.testing.cloud
+software.amazon.lambda.durable.testing.local
 software.amazon.lambda.durable.util
