@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.testing;
 
 import java.time.Duration;
+import java.util.Objects;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
@@ -10,6 +11,7 @@ import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 import software.amazon.lambda.durable.testing.cloud.HistoryPoller;
 
@@ -28,6 +30,7 @@ public class CloudDurableTestRunner<I, O> {
     private final Duration pollInterval;
     private final Duration timeout;
     private final InvocationType invocationType;
+    private final SerDes serDes;
     // Store last execution result for operation inspection
     private TestResult<O> lastResult;
 
@@ -38,14 +41,23 @@ public class CloudDurableTestRunner<I, O> {
             LambdaClient lambdaClient,
             Duration pollInterval,
             Duration timeout,
-            InvocationType invocationType) {
+            InvocationType invocationType,
+            SerDes serDes) {
         this.functionArn = functionArn;
         this.inputType = inputType;
         this.outputType = outputType;
-        this.lambdaClient = lambdaClient;
+        this.lambdaClient =
+                Objects.requireNonNullElseGet(lambdaClient, CloudDurableTestRunner::createDefaultLambdaClient);
         this.pollInterval = pollInterval;
         this.timeout = timeout;
         this.invocationType = invocationType;
+        this.serDes = Objects.requireNonNullElseGet(serDes, JacksonSerDes::new);
+    }
+
+    private static LambdaClient createDefaultLambdaClient() {
+        return LambdaClient.builder()
+                .credentialsProvider(DefaultCredentialsProvider.builder().build())
+                .build();
     }
 
     /** Creates a runner for the given function ARN with Class-based input/output types. */
@@ -61,13 +73,11 @@ public class CloudDurableTestRunner<I, O> {
                 functionArn,
                 inputType,
                 outputType,
-                LambdaClient.builder()
-                        .credentialsProvider(
-                                DefaultCredentialsProvider.builder().build())
-                        .build(),
+                null,
                 Duration.ofSeconds(2),
                 Duration.ofSeconds(300),
-                InvocationType.REQUEST_RESPONSE);
+                InvocationType.REQUEST_RESPONSE,
+                null);
     }
 
     /** Creates a runner with a custom {@link LambdaClient} and Class-based input/output types. */
@@ -86,32 +96,48 @@ public class CloudDurableTestRunner<I, O> {
                 lambdaClient,
                 Duration.ofSeconds(2),
                 Duration.ofSeconds(300),
-                InvocationType.REQUEST_RESPONSE);
+                InvocationType.REQUEST_RESPONSE,
+                null);
+    }
+
+    /** Returns a new runner with the specified lambda client. */
+    public CloudDurableTestRunner<I, O> withLambdaClient(LambdaClient lambdaClient) {
+        return new CloudDurableTestRunner<>(
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, serDes);
     }
 
     /** Returns a new runner with the specified poll interval between history checks. */
     public CloudDurableTestRunner<I, O> withPollInterval(Duration interval) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, interval, timeout, invocationType);
+                functionArn, inputType, outputType, lambdaClient, interval, timeout, invocationType, serDes);
     }
 
     /** Returns a new runner with the specified maximum wait time for execution completion. */
     public CloudDurableTestRunner<I, O> withTimeout(Duration timeout) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType);
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, serDes);
     }
 
     /** Returns a new runner with the specified Lambda invocation type. */
     public CloudDurableTestRunner<I, O> withInvocationType(InvocationType type) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type);
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type, serDes);
+    }
+
+    public CloudDurableTestRunner<I, O> withSerDes(SerDes serDes) {
+        return new CloudDurableTestRunner<>(
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, serDes);
+    }
+
+    /** Invokes the Lambda function, polls execution history until completion, and returns the result. */
+    public TestResult<O> runUntilComplete(I input) {
+        return run(input);
     }
 
     /** Invokes the Lambda function, polls execution history until completion, and returns the result. */
     public TestResult<O> run(I input) {
         try {
             // Serialize input
-            var serDes = new JacksonSerDes();
             var inputJson = serDes.serialize(input);
 
             // Invoke function
@@ -135,7 +161,7 @@ public class CloudDurableTestRunner<I, O> {
 
             // Process events into TestResult
             var processor = new HistoryEventProcessor();
-            var result = processor.processEvents(events, outputType);
+            var result = processor.processEvents(events, outputType, serDes);
             this.lastResult = result;
             return result;
         } catch (Exception e) {
@@ -153,7 +179,6 @@ public class CloudDurableTestRunner<I, O> {
     public AsyncExecution<O> startAsync(I input) {
         try {
             // Serialize input
-            var serDes = new JacksonSerDes();
             var inputJson = serDes.serialize(input);
 
             // Invoke function with EVENT type (async)
@@ -175,7 +200,7 @@ public class CloudDurableTestRunner<I, O> {
             // This prevents immediate polling from failing with "execution does not exist"
             Thread.sleep(100);
 
-            return new AsyncExecution<>(executionArn, lambdaClient, outputType, pollInterval, timeout);
+            return new AsyncExecution<>(executionArn, lambdaClient, outputType, serDes, pollInterval, timeout);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Interrupted while starting async execution", e);

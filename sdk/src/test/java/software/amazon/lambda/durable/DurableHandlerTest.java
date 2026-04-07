@@ -5,25 +5,9 @@ package software.amazon.lambda.durable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import com.amazonaws.services.lambda.runtime.Context;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import software.amazon.lambda.durable.client.DurableExecutionClient;
 
 class DurableHandlerTest {
-
-    @Mock
-    private Context lambdaContext;
-
-    @Mock
-    private DurableExecutionClient mockClient;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
 
     @Test
     void testHandlerExtractsInputTypeFromGenerics() {
@@ -57,7 +41,9 @@ class DurableHandlerTest {
             // Should not reach here
             throw new AssertionError("Expected IllegalArgumentException to be thrown");
         } catch (IllegalArgumentException e) {
-            assertEquals("Cannot determine input type parameter", e.getMessage());
+            assertEquals(
+                    "Cannot determine type from base class: class software.amazon.lambda.durable.DurableHandlerTest$1InvalidHandler",
+                    e.getMessage());
         }
     }
 

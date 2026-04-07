@@ -20,7 +20,6 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
@@ -36,26 +35,39 @@ public class LocalDurableTestRunner<I, O> {
     private static final int MAX_INVOCATIONS = 100;
 
     private final TypeToken<I> inputType;
+    private final TypeToken<O> outputType;
     private final BiFunction<I, DurableContext, O> handler;
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
 
-    private LocalDurableTestRunner(TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
-        this.inputType = inputType;
-        this.handler = handlerFn;
-        this.storage = new LocalMemoryExecutionClient();
-        this.serDes = new JacksonSerDes();
-        this.customerConfig = null;
-    }
-
     private LocalDurableTestRunner(
-            TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig customerConfig) {
+            TypeToken<I> inputType,
+            TypeToken<O> outputType,
+            BiFunction<I, DurableContext, O> handlerFn,
+            DurableConfig customerConfig) {
         this.inputType = inputType;
+        this.outputType = outputType;
         this.handler = handlerFn;
         this.storage = new LocalMemoryExecutionClient();
-        this.serDes = customerConfig.getSerDes();
-        this.customerConfig = customerConfig;
+
+        // Create config that uses customer's configuration but overrides the client with in-memory storage
+        if (customerConfig != null) {
+            // Use customer's config but override the client with our in-memory implementation
+            this.customerConfig = DurableConfig.builder()
+                    .withDurableExecutionClient(storage)
+                    .withSerDes(customerConfig.getSerDes())
+                    .withExecutorService(customerConfig.getExecutorService())
+                    .withPollingStrategy(customerConfig.getPollingStrategy())
+                    .withCheckpointDelay(customerConfig.getCheckpointDelay())
+                    .withLoggerConfig(customerConfig.getLoggerConfig())
+                    .build();
+        } else {
+            // Fallback to default config with in-memory client
+            this.customerConfig =
+                    DurableConfig.builder().withDurableExecutionClient(storage).build();
+        }
+        this.serDes = this.customerConfig.getSerDes();
     }
 
     /**
@@ -70,7 +82,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
-        return new LocalDurableTestRunner<>(TypeToken.get(inputType), handlerFn);
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, null);
     }
 
     /**
@@ -91,7 +103,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
-        return new LocalDurableTestRunner<>(inputType, handlerFn);
+        return new LocalDurableTestRunner<>(inputType, null, handlerFn, null);
     }
 
     /**
@@ -107,7 +119,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
-        return new LocalDurableTestRunner<>(TypeToken.get(inputType), handlerFn, config);
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, config);
     }
     /**
      * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
@@ -145,7 +157,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
-        return new LocalDurableTestRunner<>(inputType, handlerFn, config);
+        return new LocalDurableTestRunner<>(inputType, null, handlerFn, config);
     }
 
     /**
@@ -161,7 +173,25 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, DurableHandler<I, O> handler) {
         return new LocalDurableTestRunner<>(
-                TypeToken.get(inputType), handler::handleRequest, handler.getConfiguration());
+                TypeToken.get(inputType), null, handler::handleRequest, handler.getConfiguration());
+    }
+
+    /**
+     * Overrides the DurableConfig for this test runner. Use this to test with different configurations without creating
+     * a new runner instance.
+     */
+    public LocalDurableTestRunner<I, O> withDurableConfig(DurableConfig config) {
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, config);
+    }
+
+    /** Overrides the output type for this test runner. */
+    public LocalDurableTestRunner<I, O> withOutputType(TypeToken<O> outputType) {
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, customerConfig);
+    }
+
+    /** Overrides the output type for this test runner. */
+    public LocalDurableTestRunner<I, O> withOutputType(Class<O> outputType) {
+        return new LocalDurableTestRunner<>(inputType, TypeToken.get(outputType), handler, customerConfig);
     }
 
     /**
@@ -197,33 +227,16 @@ public class LocalDurableTestRunner<I, O> {
      * @return LocalDurableTestRunner configured with the handler's settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(TypeToken<I> inputType, DurableHandler<I, O> handler) {
-        return new LocalDurableTestRunner<>(inputType, handler::handleRequest, handler.getConfiguration());
+        return new LocalDurableTestRunner<>(inputType, null, handler::handleRequest, handler.getConfiguration());
     }
 
     /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
         var durableInput = createDurableInput(input);
 
-        // Create config that uses customer's configuration but overrides the client with in-memory storage
-        DurableConfig config;
-        if (customerConfig != null) {
-            // Use customer's config but override the client with our in-memory implementation
-            config = DurableConfig.builder()
-                    .withDurableExecutionClient(storage)
-                    .withSerDes(customerConfig.getSerDes())
-                    .withExecutorService(customerConfig.getExecutorService())
-                    .withPollingStrategy(customerConfig.getPollingStrategy())
-                    .withCheckpointDelay(customerConfig.getCheckpointDelay())
-                    .withLoggerConfig(customerConfig.getLoggerConfig())
-                    .build();
-        } else {
-            // Fallback to default config with in-memory client
-            config = DurableConfig.builder().withDurableExecutionClient(storage).build();
-        }
+        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
 
-        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, config);
-
-        return storage.toTestResult(output);
+        return storage.toTestResult(output, outputType, serDes);
     }
 
     /**
@@ -239,7 +252,7 @@ public class LocalDurableTestRunner<I, O> {
         for (int i = 0; i < MAX_INVOCATIONS; i++) {
             result = run(input);
 
-            if (result.getStatus() != ExecutionStatus.PENDING || !storage.advanceReadyOperations()) {
+            if (result.getStatus() != ExecutionStatus.PENDING || !storage.advanceTime()) {
                 // break the loop if
                 // - Return SUCCEEDED or FAILED - we're done
                 // - Return PENDING and let test manually advance operations if no operations can be auto advanced
@@ -272,42 +285,42 @@ public class LocalDurableTestRunner<I, O> {
 
     /** Complete a callback with success result. */
     public void completeCallback(String callbackId, String result) {
-        storage.completeCallback(callbackId, result);
+        storage.completeCallback(callbackId, OperationResult.succeeded(result));
     }
 
     /** Fail a callback with error. */
     public void failCallback(String callbackId, ErrorObject error) {
-        storage.failCallback(callbackId, error);
+        storage.completeCallback(callbackId, OperationResult.failed(error));
     }
 
     /** Timeout a callback. */
     public void timeoutCallback(String callbackId) {
-        storage.timeoutCallback(callbackId);
+        storage.completeCallback(callbackId, OperationResult.timedout());
     }
 
     /** Advances all pending operations, simulating time passing for retries and waits. */
     public void advanceTime() {
-        storage.advanceReadyOperations();
+        storage.advanceTime();
     }
 
     /** Completes a chained invoke operation with a successful result. */
     public void completeChainedInvoke(String name, String result) {
-        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.SUCCEEDED, result, null));
+        storage.completeChainedInvoke(name, OperationResult.succeeded(result));
     }
 
     /** Marks a chained invoke operation as timed out. */
     public void timeoutChainedInvoke(String name) {
-        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.TIMED_OUT, null, null));
+        storage.completeChainedInvoke(name, OperationResult.timedout());
     }
 
     /** Fails a chained invoke operation with the given error. */
     public void failChainedInvoke(String name, ErrorObject error) {
-        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.FAILED, null, error));
+        storage.completeChainedInvoke(name, OperationResult.failed(error));
     }
 
     /** Stops a chained invoke operation with the given error. */
     public void stopChainedInvoke(String name, ErrorObject error) {
-        storage.completeChainedInvoke(name, new OperationResult(OperationStatus.STOPPED, null, error));
+        storage.completeChainedInvoke(name, OperationResult.stopped(error));
     }
 
     private DurableExecutionInput createDurableInput(I input) {
@@ -334,7 +347,7 @@ public class LocalDurableTestRunner<I, O> {
 
         return new DurableExecutionInput(
                 executionArn,
-                "test-token",
+                UUID.randomUUID().toString(),
                 CheckpointUpdatedExecutionState.builder().operations(allOps).build());
     }
 

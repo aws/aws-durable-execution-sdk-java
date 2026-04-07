@@ -96,15 +96,14 @@ public final class DurableConfig {
     private final Duration checkpointDelay;
 
     private DurableConfig(Builder builder) {
-        this.durableExecutionClient = builder.durableExecutionClient != null
-                ? builder.durableExecutionClient
-                : createDefaultDurableExecutionClient();
-        this.serDes = builder.serDes != null ? builder.serDes : new JacksonSerDes();
-        this.executorService = builder.executorService != null ? builder.executorService : createDefaultExecutor();
-        this.loggerConfig = builder.loggerConfig != null ? builder.loggerConfig : LoggerConfig.defaults();
-        this.pollingStrategy =
-                builder.pollingStrategy != null ? builder.pollingStrategy : PollingStrategies.Presets.DEFAULT;
-        this.checkpointDelay = builder.checkpointDelay != null ? builder.checkpointDelay : Duration.ofSeconds(0);
+        this.durableExecutionClient = Objects.requireNonNullElseGet(
+                builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
+        this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
+        this.executorService =
+                Objects.requireNonNullElseGet(builder.executorService, DurableConfig::createDefaultExecutor);
+        this.loggerConfig = Objects.requireNonNullElseGet(builder.loggerConfig, LoggerConfig::defaults);
+        this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
+        this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
 
         validateConfiguration();
     }

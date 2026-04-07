@@ -30,16 +30,17 @@ class LocalDurableTestRunnerTest {
     @Test
     void testMultipleSteps() {
         var runner = LocalDurableTestRunner.create(Integer.class, (input, ctx) -> {
-            var step1 = ctx.step("add", Integer.class, stepCtx -> input + 10);
-            var step2 = ctx.step("multiply", Integer.class, stepCtx -> step1 * 2);
-            var step3 = ctx.step("subtract", Integer.class, stepCtx -> step2 - 5);
-            return step3;
-        });
+                    var step1 = ctx.step("add", Integer.class, stepCtx -> input + 10);
+                    var step2 = ctx.step("multiply", Integer.class, stepCtx -> step1 * 2);
+                    var step3 = ctx.step("subtract", Integer.class, stepCtx -> step2 - 5);
+                    return step3;
+                })
+                .withOutputType(Integer.class);
 
         var testResult = runner.run(5);
 
         assertEquals(ExecutionStatus.SUCCEEDED, testResult.getStatus());
-        assertEquals(25, testResult.getResult(Integer.class)); // (5 + 10) * 2 - 5 = 25
+        assertEquals(25, testResult.getResult()); // (5 + 10) * 2 - 5 = 25
     }
 
     @Test

@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRe
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 
 /**
@@ -25,6 +26,7 @@ public class AsyncExecution<O> {
     private final String executionArn;
     private final LambdaClient lambdaClient;
     private final TypeToken<O> outputType;
+    private final SerDes serDes;
     private final Duration pollInterval;
     private final Duration timeout;
     private final HistoryEventProcessor processor;
@@ -35,6 +37,7 @@ public class AsyncExecution<O> {
             String executionArn,
             LambdaClient lambdaClient,
             TypeToken<O> outputType,
+            SerDes serDes,
             Duration pollInterval,
             Duration timeout) {
         this.executionArn = executionArn;
@@ -42,6 +45,7 @@ public class AsyncExecution<O> {
         this.outputType = outputType;
         this.pollInterval = pollInterval;
         this.timeout = timeout;
+        this.serDes = serDes;
         this.processor = new HistoryEventProcessor();
     }
 
@@ -191,7 +195,7 @@ public class AsyncExecution<O> {
                     .build();
             var response = lambdaClient.getDurableExecutionHistory(request);
             this.currentHistory = response.events();
-            this.currentResult = processor.processEvents(currentHistory, outputType);
+            this.currentResult = processor.processEvents(currentHistory, outputType, serDes);
         } catch (ResourceNotFoundException e) {
             // Execution doesn't exist yet - this can happen immediately after async invoke
             // Leave currentHistory as null, pollUntil will retry

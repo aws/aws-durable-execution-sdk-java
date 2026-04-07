@@ -7,7 +7,6 @@ import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.ParameterizedType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.DurableExecutor;
@@ -32,13 +31,7 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     private static final Logger logger = LoggerFactory.getLogger(DurableHandler.class);
 
     protected DurableHandler() {
-        // Extract input type from generic superclass
-        var superClass = getClass().getGenericSuperclass();
-        if (superClass instanceof ParameterizedType paramType) {
-            this.inputType = TypeToken.get(paramType.getActualTypeArguments()[0]);
-        } else {
-            throw new IllegalArgumentException("Cannot determine input type parameter");
-        }
+        this.inputType = TypeToken.fromGenericSuperClass(getClass(), 0);
         this.config = createConfiguration();
     }
 

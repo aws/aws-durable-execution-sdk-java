@@ -10,11 +10,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.TestOperation;
 import software.amazon.lambda.durable.testing.TestResult;
@@ -27,9 +26,6 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, Operation> operations = new ConcurrentHashMap<>();
     private final List<Event> allEvents = new CopyOnWriteArrayList<>();
     private final EventProcessor eventProcessor = new EventProcessor();
-    private final SerDes serDes = new JacksonSerDes();
-    private final AtomicReference<String> checkpointToken =
-            new AtomicReference<>(UUID.randomUUID().toString());
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
 
     @Override
@@ -38,7 +34,6 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         updates.forEach(this::applyUpdate);
 
         var newToken = UUID.randomUUID().toString();
-        checkpointToken.set(newToken);
 
         return CheckpointDurableExecutionResponse.builder()
                 .checkpointToken(newToken)
@@ -75,13 +70,15 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
      *
      * @return true if any operations were advanced, false otherwise
      */
-    public boolean advanceReadyOperations() {
+    public boolean advanceTime() {
         var replaced = new AtomicBoolean(false);
         operations.replaceAll((key, op) -> {
+            // advance pending retries
             if (op.status() == OperationStatus.PENDING) {
                 replaced.set(true);
                 return op.toBuilder().status(OperationStatus.READY).build();
             }
+            // advance waits
             if (op.status() == OperationStatus.STARTED && op.type() == OperationType.WAIT) {
                 var succeededOp =
                         op.toBuilder().status(OperationStatus.SUCCEEDED).build();
@@ -153,13 +150,19 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     /** Build TestResult from current state. */
-    public <O> TestResult<O> toTestResult(DurableExecutionOutput output) {
+    public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
         var testOperations = operations.values().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
                 .map(op -> new TestOperation(op, getEventsForOperation(op.id()), serDes))
                 .toList();
         return new TestResult<>(
-                output.status(), output.result(), output.error(), testOperations, new ArrayList<>(allEvents), serDes);
+                output.status(),
+                output.result(),
+                output.error(),
+                testOperations,
+                new ArrayList<>(allEvents),
+                resultType,
+                serDes);
     }
 
     /** Simulate checkpoint failure by forcing an operation into STARTED state */
@@ -296,39 +299,19 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         return op.callbackDetails().callbackId();
     }
 
-    /** Simulate external system completing callback successfully. */
-    public void completeCallback(String callbackId, String result) {
+    /** Simulate external system completing callback. */
+    public void completeCallback(String callbackId, OperationResult result) {
         var op = findOperationByCallbackId(callbackId);
         if (op == null) {
             throw new IllegalStateException("Callback not found: " + callbackId);
         }
         var updated = op.toBuilder()
-                .status(OperationStatus.SUCCEEDED)
-                .callbackDetails(op.callbackDetails().toBuilder().result(result).build())
+                .status(result.operationStatus())
+                .callbackDetails(op.callbackDetails().toBuilder()
+                        .result(result.result())
+                        .error(result.error())
+                        .build())
                 .build();
-        operations.put(compositeKey(op.parentId(), op.id()), updated);
-    }
-
-    /** Simulate external system failing callback. */
-    public void failCallback(String callbackId, ErrorObject error) {
-        var op = findOperationByCallbackId(callbackId);
-        if (op == null) {
-            throw new IllegalStateException("Callback not found: " + callbackId);
-        }
-        var updated = op.toBuilder()
-                .status(OperationStatus.FAILED)
-                .callbackDetails(op.callbackDetails().toBuilder().error(error).build())
-                .build();
-        operations.put(compositeKey(op.parentId(), op.id()), updated);
-    }
-
-    /** Simulate callback timeout. */
-    public void timeoutCallback(String callbackId) {
-        var op = findOperationByCallbackId(callbackId);
-        if (op == null) {
-            throw new IllegalStateException("Callback not found: " + callbackId);
-        }
-        var updated = op.toBuilder().status(OperationStatus.TIMED_OUT).build();
         operations.put(compositeKey(op.parentId(), op.id()), updated);
     }
 
@@ -347,7 +330,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             case FAIL -> OperationStatus.FAILED;
             case RETRY -> OperationStatus.PENDING;
             case CANCEL -> OperationStatus.CANCELLED;
-            case UNKNOWN_TO_SDK_VERSION -> null; // Todo: Check this
+            case UNKNOWN_TO_SDK_VERSION -> OperationStatus.UNKNOWN_TO_SDK_VERSION; // Todo: Check this
         };
     }
 }
