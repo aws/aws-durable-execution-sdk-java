@@ -66,7 +66,7 @@ jobs:
         working-directory: ./examples
       - name: sam deploy
         run: | 
-          sam deploy --stack-name Java${{ matrix.java }}SDKCloudBasedIntegrationTestStack \
+          sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack-Java${{ matrix.java }}Runtime \
             --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides \
             'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }}'
         working-directory: ./examples
