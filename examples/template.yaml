@@ -19,9 +19,6 @@ Conditions:
   IsJava21OrLater:
     !Or
       - !Equals [!Ref JavaVersion, 'java21']
-      - !Equals [!Ref JavaVersion, 'java22']
-      - !Equals [!Ref JavaVersion, 'java23']
-      - !Equals [!Ref JavaVersion, 'java24']
       - !Equals [!Ref JavaVersion, 'java25']
 
 Globals:
