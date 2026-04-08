@@ -15,6 +15,15 @@ Parameters:
     Default: 'java17'
     Description: Java runtime version
 
+Conditions:
+  IsJava21OrLater:
+    !Or
+      - !Equals [!Ref JavaVersion, 'java21']
+      - !Equals [!Ref JavaVersion, 'java22']
+      - !Equals [!Ref JavaVersion, 'java23']
+      - !Equals [!Ref JavaVersion, 'java24']
+      - !Equals [!Ref JavaVersion, 'java25']
+
 Globals:
   Function:
     Timeout: 900
@@ -392,6 +401,24 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:concurrent-wait-for-condition-example-${JavaVersion}-runtime"
 
+  ManyAsyncStepsVirtualThreadPoolExampleFunction:
+    Type: AWS::Serverless::Function
+    Condition: IsJava21OrLater
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'many-async-steps-virtual-thread-pool-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.vt.ManyAsyncStepsVirtualThreadPoolExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-virtual-thread-pool-example-${JavaVersion}-runtime"
+
 Outputs:
   NoopExampleFunction:
     Description: Noop Example Function ARN
@@ -480,3 +507,8 @@ Outputs:
   ConcurrentWaitForConditionExampleFunction:
     Description: Concurrent Wait For Condition Example Function ARN
     Value: !GetAtt ConcurrentWaitForConditionExampleFunction.Arn
+
+  ManyAsyncStepsVirtualThreadPoolExampleFunction:
+    Condition: IsJava21OrLater
+    Description: Many Async Steps Virtual Thread Pool Example Function ARN
+    Value: !GetAtt ManyAsyncStepsVirtualThreadPoolExampleFunction.Arn
