@@ -57,16 +57,18 @@ jobs:
           role-to-assume: "${{ secrets.ACTIONS_INTEGRATION_ROLE_NAME }}"
           role-session-name: java-language-sdk-test
           aws-region: ${{ env.AWS_REGION }}
+      - name: Build locally
+        run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: sam build
         run: | # add --no-cached  if debugging sam build
           sam build --parameter-overrides \
-            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=DockerFile,ParameterValue=examples/Dockerfile-java${{ matrix.java }} ParameterKey=FunctionNameSuffix,ParameterValue=-java${{ matrix.java }}'
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }}'
         working-directory: ./examples
       - name: sam deploy
         run: | 
-          sam deploy --stack-name Java${{ matrix.java }}SDKCloudBasedIntegrationTestStack \
+          sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack-Java${{ matrix.java }}Runtime \
             --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides \
-            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=DockerFile,ParameterValue=examples/Dockerfile-java${{ matrix.java }} ParameterKey=FunctionNameSuffix,ParameterValue=-java${{ matrix.java }}'
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }}'
         working-directory: ./examples
       - name: Setup Java ${{ matrix.java }}
         uses: actions/setup-java@v5
@@ -77,5 +79,5 @@ jobs:
       - name: Build locally
         run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: Cloud Based Integration Tests
-        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest -Dtest.function.name.suffix='-java${{ matrix.java }}'
+        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest -Dtest.function.name.suffix='-java${{ matrix.java }}-runtime'
         working-directory: ./examples
