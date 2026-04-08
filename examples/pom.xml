@@ -96,7 +96,7 @@
                         <configuration>
                             <excludes>
                                 <!-- Path is relative to src/main/java -->
-                                <exclude>software/amazon/lambda/durable/examples/vt</exclude>
+                                <exclude>software/amazon/lambda/durable/examples/vt/*.java</exclude>
                             </excludes>
                         </configuration>
                     </plugin>
