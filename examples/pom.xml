@@ -156,6 +156,9 @@
                             <excludes>
                                 <exclude>**/vt/ManyAsyncStepsVirtualThreadPoolExample.java</exclude>
                             </excludes>
+                            <testExcludes>
+                                <testExclude>**/vt/ManyAsyncStepsVirtualThreadPoolExampleTest.java</testExclude>
+                            </testExcludes>
                         </configuration>
                     </plugin>
                     <plugin>
