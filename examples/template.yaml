@@ -34,6 +34,7 @@ Resources:
         - '-'
         - - noop-example
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.general.NoopExample"
 
   SimpleStepExampleFunction:
@@ -43,6 +44,7 @@ Resources:
         - '-'
         - - simple-step-example
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.step.SimpleStepExample"
 
   SimpleInvokeExampleFunction:
@@ -52,6 +54,7 @@ Resources:
         - '-'
         - - 'simple-invoke-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.invoke.SimpleInvokeExample"
       Policies:
         - Statement:
@@ -60,7 +63,7 @@ Resources:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
                 - lambda:InvokeFunction
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-invoke-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-invoke-example-${JavaVersion}-runtime"
             - Effect: Allow
               Action:
                 - lambda:InvokeFunction
@@ -73,6 +76,7 @@ Resources:
         - '-'
         - - 'wait-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.wait.WaitExample"
       Policies:
         - Statement:
@@ -80,7 +84,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-example-${JavaVersion}-runtime"
 
   RetryExampleFunction:
     Type: AWS::Serverless::Function
@@ -89,6 +93,7 @@ Resources:
         - '-'
         - - 'retry-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.step.RetryExample"
       Policies:
         - Statement:
@@ -96,7 +101,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-example-${JavaVersion}-runtime"
 
   WaitAtLeastExampleFunction:
     Type: AWS::Serverless::Function
@@ -105,6 +110,7 @@ Resources:
         - '-'
         - - 'wait-at-least-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.wait.WaitAtLeastExample"
       Policies:
         - Statement:
@@ -112,7 +118,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-example-${JavaVersion}-runtime"
 
   WaitAtLeastInProcessExampleFunction:
     Type: AWS::Serverless::Function
@@ -121,6 +127,7 @@ Resources:
         - '-'
         - - 'wait-at-least-in-process-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.wait.WaitAtLeastInProcessExample"
       Policies:
         - Statement:
@@ -128,7 +135,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-at-least-in-process-example-${JavaVersion}-runtime"
 
   RetryInProcessExampleFunction:
     Type: AWS::Serverless::Function
@@ -137,6 +144,7 @@ Resources:
         - '-'
         - - 'retry-in-process-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.step.RetryInProcessExample"
       Policies:
         - Statement:
@@ -144,7 +152,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-in-process-example-${JavaVersion}-runtime"
 
   GenericTypesExampleFunction:
     Type: AWS::Serverless::Function
@@ -153,6 +161,7 @@ Resources:
         - '-'
         - - 'generic-types-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.general.GenericTypesExample"
       Policies:
         - Statement:
@@ -160,7 +169,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-types-example-${JavaVersion}-runtime"
 
   GenericInputOutputExampleFunction:
     Type: AWS::Serverless::Function
@@ -169,6 +178,7 @@ Resources:
         - '-'
         - - 'generic-input-output-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.general.GenericInputOutputExample"
       Policies:
         - Statement:
@@ -176,7 +186,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-input-output-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:generic-input-output-example-${JavaVersion}-runtime"
 
   CustomConfigExampleFunction:
     Type: AWS::Serverless::Function
@@ -185,6 +195,7 @@ Resources:
         - '-'
         - - 'custom-config-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.general.CustomConfigExample"
       Policies:
         - Statement:
@@ -192,7 +203,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-config-example-${JavaVersion}-runtime"
 
   LoggingExampleFunction:
     Type: AWS::Serverless::Function
@@ -201,6 +212,7 @@ Resources:
         - '-'
         - - 'logging-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.general.LoggingExample"
       Policies:
         - Statement:
@@ -208,7 +220,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:logging-example-${JavaVersion}-runtime"
 
   ErrorHandlingExampleFunction:
     Type: AWS::Serverless::Function
@@ -217,6 +229,7 @@ Resources:
         - '-'
         - - 'error-handling-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.general.ErrorHandlingExample"
       Policies:
         - Statement:
@@ -224,7 +237,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:error-handling-example-${JavaVersion}-runtime"
 
   CallbackExampleFunction:
     Type: AWS::Serverless::Function
@@ -233,6 +246,7 @@ Resources:
         - '-'
         - - 'callback-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.callback.CallbackExample"
       Policies:
         - Statement:
@@ -240,7 +254,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:callback-example-${JavaVersion}-runtime"
 
   ManyAsyncStepsExampleFunction:
     Type: AWS::Serverless::Function
@@ -249,6 +263,7 @@ Resources:
         - '-'
         - - 'many-async-steps-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.step.ManyAsyncStepsExample"
       Policies:
         - Statement:
@@ -256,7 +271,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-steps-example-${JavaVersion}-runtime"
 
   ChildContextExampleFunction:
     Type: AWS::Serverless::Function
@@ -265,6 +280,7 @@ Resources:
         - '-'
         - - 'child-context-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.child.ChildContextExample"
       Policies:
         - Statement:
@@ -272,7 +288,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:child-context-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:child-context-example-${JavaVersion}-runtime"
 
   WaitAsyncExampleFunction:
     Type: AWS::Serverless::Function
@@ -281,6 +297,7 @@ Resources:
         - '-'
         - - 'wait-async-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.wait.WaitAsyncExample"
       Policies:
         - Statement:
@@ -288,7 +305,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-async-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-async-example-${JavaVersion}-runtime"
 
   ManyAsyncChildContextExampleFunction:
     Type: AWS::Serverless::Function
@@ -297,6 +314,7 @@ Resources:
         - '-'
         - - 'many-async-child-context-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.child.ManyAsyncChildContextExample"
       Policies:
         - Statement:
@@ -304,7 +322,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-child-context-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:many-async-child-context-example-${JavaVersion}-runtime"
 
   SimpleMapExampleFunction:
     Type: AWS::Serverless::Function
@@ -313,6 +331,7 @@ Resources:
         - '-'
         - - 'simple-map-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.map.SimpleMapExample"
       Policies:
         - Statement:
@@ -320,7 +339,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-map-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:simple-map-example-${JavaVersion}-runtime"
 
   ComplexMapExampleFunction:
     Type: AWS::Serverless::Function
@@ -329,6 +348,7 @@ Resources:
         - '-'
         - - 'complex-map-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.map.ComplexMapExample"
       Policies:
         - Statement:
@@ -336,7 +356,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:complex-map-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:complex-map-example-${JavaVersion}-runtime"
 
   WaitForConditionExampleFunction:
     Type: AWS::Serverless::Function
@@ -345,6 +365,7 @@ Resources:
         - '-'
         - - 'wait-for-condition-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.wait.WaitForConditionExample"
       Policies:
         - Statement:
@@ -352,7 +373,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-for-condition-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-for-condition-example-${JavaVersion}-runtime"
 
   ConcurrentWaitForConditionExampleFunction:
     Type: AWS::Serverless::Function
@@ -361,6 +382,7 @@ Resources:
         - '-'
         - - 'concurrent-wait-for-condition-example'
           - !Ref JavaVersion
+          - runtime
       Handler: "software.amazon.lambda.durable.examples.wait.ConcurrentWaitForConditionExample"
       Policies:
         - Statement:
@@ -368,7 +390,7 @@ Resources:
               Action:
                 - lambda:CheckpointDurableExecutions
                 - lambda:GetDurableExecutionState
-              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:concurrent-wait-for-condition-example-${JavaVersion}"
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:concurrent-wait-for-condition-example-${JavaVersion}-runtime"
 
 Outputs:
   NoopExampleFunction:
