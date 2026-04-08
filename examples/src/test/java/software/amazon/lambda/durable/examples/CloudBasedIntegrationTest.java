@@ -529,13 +529,20 @@ class CloudBasedIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"100, 1000, 20", "500, 2000, 30", "1000, 3000, 50"})
-    void testManyAsyncStepsExample(int steps, long maxExecutionTime, long maxReplayTime) {
+    @CsvSource({
+        "many-async-steps-example, 100, 1000, 20",
+        "many-async-steps-example, 500, 2000, 30",
+        "many-async-steps-example, 1000, 3000, 50",
+        "many-async-steps-virtual-thread-pool-example, 100, 1000, 20",
+        "many-async-steps-virtual-thread-pool-example, 500, 2000, 30",
+        "many-async-steps-virtual-thread-pool-example, 1000, 3000, 50",
+    })
+    void testManyAsyncStepsExample(String functionName, int steps, long maxExecutionTime, long maxReplayTime) {
         long minimalExecutionTimeMs = Long.MAX_VALUE;
         long minimalReplayTimeMs = Long.MAX_VALUE;
         for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
             var runner = CloudDurableTestRunner.create(
-                    arn("many-async-steps-example"),
+                    arn(functionName),
                     ManyAsyncStepsExample.Input.class,
                     ManyAsyncStepsExample.Output.class,
                     lambdaClient);
@@ -544,7 +551,7 @@ class CloudBasedIntegrationTest {
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
             var finalResult = result.getResult();
-            System.out.printf("ManyAsyncStepsVirtualThreadPoolExample result (%d steps): %s\n", steps, finalResult);
+            System.out.printf("%s result (%d steps): %s\n", functionName, steps, finalResult);
             assertNotNull(finalResult);
             assertEquals((long) steps * (steps - 1), finalResult.result()); // Sum of 0..steps * 2
 
