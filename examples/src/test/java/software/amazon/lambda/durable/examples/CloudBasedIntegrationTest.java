@@ -60,7 +60,7 @@ class CloudBasedIntegrationTest {
 
         account = System.getProperty("test.aws.account");
         region = System.getProperty("test.aws.region");
-        functionNameSuffix = System.getProperty("test.function.name.suffix", "-java17");
+        functionNameSuffix = System.getProperty("test.function.name.suffix", "-java17-runtime");
 
         if (account == null || region == null) {
             try (var sts = StsClient.create()) {
