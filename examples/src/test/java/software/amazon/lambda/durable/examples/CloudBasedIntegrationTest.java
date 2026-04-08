@@ -24,12 +24,11 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.examples.child.ManyAsyncChildContextExample;
 import software.amazon.lambda.durable.examples.general.GenericTypesExample;
-import software.amazon.lambda.durable.examples.step.ManyAsyncStepsExample;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.examples.vt.ManyAsyncStepsVirtualThreadPoolExample;
+import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
+import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
 import software.amazon.lambda.durable.examples.wait.ConcurrentWaitForConditionExample;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -539,10 +538,10 @@ class CloudBasedIntegrationTest {
         for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
             var runner = CloudDurableTestRunner.create(
                     arn("many-async-steps-example"),
-                    ManyAsyncStepsExample.Input.class,
-                    ManyAsyncStepsExample.Output.class,
+                    ManyAsyncStepsInput.class,
+                    ManyAsyncStepsOutput.class,
                     lambdaClient);
-            var result = runner.run(new ManyAsyncStepsExample.Input(2, steps));
+            var result = runner.run(new ManyAsyncStepsInput(2, steps));
 
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
@@ -577,10 +576,10 @@ class CloudBasedIntegrationTest {
         for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
             var runner = CloudDurableTestRunner.create(
                     arn("many-async-steps-virtual-thread-pool-example"),
-                    ManyAsyncStepsVirtualThreadPoolExample.Input.class,
-                    ManyAsyncStepsVirtualThreadPoolExample.Output.class,
+                    ManyAsyncStepsInput.class,
+                    ManyAsyncStepsOutput.class,
                     lambdaClient);
-            var result = runner.run(new ManyAsyncStepsVirtualThreadPoolExample.Input(2, steps));
+            var result = runner.run(new ManyAsyncStepsInput(2, steps));
 
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
@@ -615,10 +614,10 @@ class CloudBasedIntegrationTest {
         for (var i = 0; i < PERFORMANCE_TEST_REPEAT; i++) {
             var runner = CloudDurableTestRunner.create(
                     arn("many-async-child-context-example"),
-                    ManyAsyncChildContextExample.Input.class,
-                    ManyAsyncChildContextExample.Output.class,
+                    ManyAsyncStepsInput.class,
+                    ManyAsyncStepsOutput.class,
                     lambdaClient);
-            var result = runner.run(new ManyAsyncChildContextExample.Input(2, steps));
+            var result = runner.run(new ManyAsyncStepsInput(2, steps));
 
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 

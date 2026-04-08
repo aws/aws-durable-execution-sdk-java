@@ -10,6 +10,8 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
+import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
 
 /**
  * Performance test example demonstrating concurrent async steps.
@@ -22,16 +24,10 @@ import software.amazon.lambda.durable.DurableHandler;
  *   <li>All results are collected using {@link DurableFuture#allOf}
  * </ul>
  */
-public class ManyAsyncStepsVirtualThreadPoolExample
-        extends DurableHandler<
-                ManyAsyncStepsVirtualThreadPoolExample.Input, ManyAsyncStepsVirtualThreadPoolExample.Output> {
-
-    public record Input(int multiplier, int steps) {}
-
-    public record Output(long result, long executionTimeMs, long replayTimeMs) {}
+public class ManyAsyncStepsVirtualThreadPoolExample extends DurableHandler<ManyAsyncStepsInput, ManyAsyncStepsOutput> {
 
     @Override
-    public Output handleRequest(Input input, DurableContext context) {
+    public ManyAsyncStepsOutput handleRequest(ManyAsyncStepsInput input, DurableContext context) {
         var startTime = System.nanoTime();
         var multiplier = input.multiplier();
         var steps = input.steps();
@@ -63,7 +59,7 @@ public class ManyAsyncStepsVirtualThreadPoolExample
 
         var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
 
-        return new Output(totalSum, executionTimeMs, replayTimeMs);
+        return new ManyAsyncStepsOutput(totalSum, executionTimeMs, replayTimeMs);
     }
 
     @Override
