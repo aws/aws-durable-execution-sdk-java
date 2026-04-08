@@ -1,5 +1,5 @@
 GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable,DurableFuture,24,12,0,0,6,2,4,2,4,2
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable,DurableFuture,0,36,0,0,0,8,0,6,0,6
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable,DurableConfig,11,222,4,8,4,61,3,20,0,17
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable,TypeToken.new TypeToken() {...},0,4,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable,TypeToken.new TypeToken() {...},0,4,0,0,0,1,0,1,0,1
@@ -23,9 +23,9 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,ConcurrencyOperation,56,436,9,37,14,100,8,31,0,16
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,WaitOperation,0,75,2,6,0,27,2,8,0,6
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,WaitForConditionOperation,25,296,8,26,5,79,8,23,0,13
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,StepOperation,28,313,7,36,8,79,7,29,0,13
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,StepOperation,32,309,7,36,8,79,8,28,1,12
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,CallbackOperation,14,116,3,10,4,29,3,11,0,6
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,MapOperation,32,307,8,31,7,80,8,20,0,8
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,MapOperation,35,324,9,36,9,86,9,22,0,8
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,ChildContextOperation,43,353,12,50,8,95,12,35,0,13
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,BaseDurableOperation,71,471,5,39,10,106,6,46,1,29
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,MapOperation.new TypeToken() {...},0,3,0,0,0,1,0,1,0,1
@@ -43,7 +43,7 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,RetryStrategies,3,88,0,10,1,22,1,9,1,4
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,RetryStrategies.Presets,3,14,0,0,1,4,1,2,1,2
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,RetryDecision,0,46,0,4,0,9,0,8,0,6
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,CompletedDurableFuture,0,9,0,0,0,4,0,2,0,2
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,CompletedDurableFuture,9,0,0,0,4,0,2,0,2,0
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,ParameterValidator,0,170,0,40,0,39,0,29,0,9
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,ExceptionHelper,3,94,0,2,1,22,1,9,1,8
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.exception,StepException,0,6,0,0,0,2,0,1,0,1
@@ -82,15 +82,15 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.logging,LoggerConfig,5,11,0,0,1,2,1,2,1,2
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.context,StepContextImpl,0,46,2,4,0,13,2,5,0,4
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.context,BaseContextImpl,0,52,0,0,0,18,0,9,0,9
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.context,DurableContextImpl,0,493,4,20,0,126,4,28,0,20
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.context,DurableContextImpl,0,485,4,18,0,124,4,27,0,20
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,WaitForCallbackConfig,0,43,0,4,0,9,0,7,0,5
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,RunInChildContextConfig.Builder,0,16,0,0,0,6,0,3,0,3
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,RunInChildContextConfig,0,21,0,0,0,6,0,4,0,4
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,WaitForConditionConfig.Builder,0,20,0,0,0,7,0,4,0,4
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,StepConfig,0,51,0,4,0,10,0,8,0,6
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,WaitForConditionConfig,0,51,0,2,0,14,0,7,0,6
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,StepConfig.Builder,0,32,0,0,0,12,0,5,0,5
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,InvokeConfig.Builder,5,27,0,0,2,10,1,4,1,4
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,StepConfig.Builder,0,32,0,0,0,12,0,5,0,5
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,MapConfig.Builder,0,44,0,4,0,14,0,7,0,5
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,CallbackConfig,0,41,0,0,0,10,0,6,0,6
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.config,MapConfig,0,53,0,4,0,11,0,8,0,6
@@ -155,8 +155,8 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.child,ChildContextExample,0,184,0,0,0,23,0,13,0,13
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.child,ManyAsyncChildContextExample.Output,0,12,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.child,ManyAsyncChildContextExample,0,151,0,2,0,25,0,7,0,6
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.parallel,ParallelExample,0,121,0,2,0,21,0,5,0,4
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.parallel,ParallelWithWaitExample.Output,0,12,0,0,0,1,0,1,0,1
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.parallel,ParallelExample,0,121,0,2,0,21,0,5,0,4
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.parallel,DeserializationFailedParallelExample.FailedSerDes,2,17,1,1,1,3,1,1,0,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.parallel,ParallelExample.Output,0,9,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java-examples,software.amazon.lambda.durable.examples.parallel,DeserializationFailedParallelExample,20,56,2,0,5,13,2,3,1,3

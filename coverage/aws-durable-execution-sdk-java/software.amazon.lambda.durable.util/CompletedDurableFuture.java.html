@@ -14,13 +14,13 @@ import software.amazon.lambda.durable.DurableFuture;
 public class CompletedDurableFuture&lt;T&gt; implements DurableFuture&lt;T&gt; {
     private final T value;
 
-<span class="fc" id="L17">    public CompletedDurableFuture(T value) {</span>
-<span class="fc" id="L18">        this.value = value;</span>
-<span class="fc" id="L19">    }</span>
+<span class="nc" id="L17">    public CompletedDurableFuture(T value) {</span>
+<span class="nc" id="L18">        this.value = value;</span>
+<span class="nc" id="L19">    }</span>
 
     @Override
     public T get() {
-<span class="fc" id="L23">        return value;</span>
+<span class="nc" id="L23">        return value;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -62,12 +62,12 @@ public interface DurableFuture&lt;T&gt; {
      * @return the result of the first future to complete
      */
     static Object anyOf(DurableFuture&lt;?&gt;... futures) {
-<span class="nc" id="L65">        return CompletableFuture.anyOf(Arrays.stream(futures)</span>
-<span class="nc" id="L66">                        .map(f -&gt; ((BaseDurableOperation) f).getCompletionFuture())</span>
-<span class="nc" id="L67">                        .toArray(CompletableFuture[]::new))</span>
-<span class="nc" id="L68">                .thenApply(o -&gt; (DurableFuture) o)</span>
-<span class="nc" id="L69">                .join()</span>
-<span class="nc" id="L70">                .get();</span>
+<span class="fc" id="L65">        return CompletableFuture.anyOf(Arrays.stream(futures)</span>
+<span class="fc" id="L66">                        .map(f -&gt; ((BaseDurableOperation) f).getCompletionFuture())</span>
+<span class="fc" id="L67">                        .toArray(CompletableFuture[]::new))</span>
+<span class="fc" id="L68">                .thenApply(o -&gt; (DurableFuture) o)</span>
+<span class="fc" id="L69">                .join()</span>
+<span class="fc" id="L70">                .get();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
