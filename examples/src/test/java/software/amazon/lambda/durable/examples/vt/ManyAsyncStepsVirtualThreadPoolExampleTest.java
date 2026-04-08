@@ -12,7 +12,7 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 @EnabledForJreRange(min = JRE.JAVA_21)
-class ManyAsyncStepsVirtualTheadPoolExampleTest {
+class ManyAsyncStepsVirtualThreadPoolExampleTest {
 
     @Test
     void testManyAsyncSteps() {
