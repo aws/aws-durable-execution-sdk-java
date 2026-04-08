@@ -79,6 +79,32 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>exclude-java21-code-on-lower-jdk</id>
+            <activation>
+                <!-- Activates if JDK is strictly lower than 21 -->
+                <jdk>(,21)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <!-- Version 3.11.0+ recommended for best support -->
+                        <version>3.13.0</version>
+                        <configuration>
+                            <excludes>
+                                <!-- Path is relative to src/main/java -->
+                                <exclude>software/amazon/lambda/durable/examples/vt</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>
