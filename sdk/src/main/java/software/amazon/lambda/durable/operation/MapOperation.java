@@ -111,6 +111,10 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     @Override
     protected void start() {
+        if (items.isEmpty()) {
+            markAlreadyCompleted();
+            return;
+        }
         sendOperationUpdateAsync(OperationUpdate.builder()
                 .action(OperationAction.START)
                 .subType(getSubType().getValue()));
@@ -120,6 +124,10 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     @Override
     protected void replay(Operation existing) {
+        if (items.isEmpty()) {
+            markAlreadyCompleted();
+            return;
+        }
         switch (existing.status()) {
             case SUCCEEDED -> {
                 if (existing.contextDetails() != null
@@ -194,6 +202,9 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     @Override
     public MapResult<O> get() {
+        if (items.isEmpty()) {
+            return MapResult.empty();
+        }
         if (replayFromPayload) {
             // Small result replay: deserialize MapResult directly from checkpoint payload
             var op = waitForOperationCompletion();

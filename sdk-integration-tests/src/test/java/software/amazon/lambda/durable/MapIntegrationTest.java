@@ -928,4 +928,35 @@ class MapIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("2,4,6|A,B|olleh,dlrow,oof,rab", result.getResult(String.class));
     }
+
+    @Test
+    void testMapWithEmptyItems() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            List<String> items = List.of();
+            var result = context.map("empty-map", items, String.class, (item, index, ctx) -> item);
+
+            assertTrue(result.allSucceeded());
+            assertEquals(0, result.size());
+            assertTrue(result.results().isEmpty());
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+    }
+
+    @Test
+    void testAnyOfMapWithEmptyItems() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            List<String> items = List.of();
+            var result = context.mapAsync("empty-map", items, String.class, (item, index, ctx) -> item);
+
+            DurableFuture.anyOf(result);
+
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+    }
 }

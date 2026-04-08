@@ -43,7 +43,6 @@ import software.amazon.lambda.durable.operation.ParallelOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitForConditionOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
-import software.amazon.lambda.durable.util.CompletedDurableFuture;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
@@ -254,11 +253,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
-        }
-
-        // Short-circuit for empty collections — no checkpoint overhead
-        if (items.isEmpty()) {
-            return new CompletedDurableFuture<>(MapResult.empty());
         }
 
         // Convert to List for deterministic index-based access
