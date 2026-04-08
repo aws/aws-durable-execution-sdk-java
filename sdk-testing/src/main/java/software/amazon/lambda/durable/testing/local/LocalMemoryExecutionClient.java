@@ -4,11 +4,11 @@ package software.amazon.lambda.durable.testing.local;
 
 import java.time.Instant;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -28,7 +28,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final Map<String, Operation> existingOperations = Collections.synchronizedMap(new LinkedHashMap<>());
     private final EventProcessor eventProcessor = new EventProcessor();
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
-    private final Map<String, Operation> updatedOperations = new ConcurrentHashMap<>();
+    private final Map<String, Operation> updatedOperations = new HashMap<>();
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
@@ -36,15 +36,19 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         updates.forEach(this::applyUpdate);
 
         var newToken = UUID.randomUUID().toString();
-        var response = CheckpointDurableExecutionResponse.builder()
-                .checkpointToken(newToken)
-                .newExecutionState(CheckpointUpdatedExecutionState.builder()
-                        .operations(updatedOperations.values())
-                        .build())
-                .build();
 
-        // updatedOperations was copied into response, so clearing it is safe here
-        updatedOperations.clear();
+        CheckpointDurableExecutionResponse response;
+        synchronized (updatedOperations) {
+            response = CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken(newToken)
+                    .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                            .operations(updatedOperations.values())
+                            .build())
+                    .build();
+
+            // updatedOperations was copied into response, so clearing it is safe here
+            updatedOperations.clear();
+        }
         return response;
     }
 
@@ -65,14 +69,14 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
      * @return true if any operations were advanced, false otherwise
      */
     public boolean advanceTime() {
-        var replaced = new AtomicBoolean(false);
-        existingOperations.replaceAll((key, op) -> {
+        var hasOperationsAdvanced = new AtomicBoolean(false);
+        // forEach is safe as we're not adding or removing keys here
+        existingOperations.forEach((key, op) -> {
             // advance pending retries
             if (op.status() == OperationStatus.PENDING) {
-                replaced.set(true);
+                hasOperationsAdvanced.set(true);
                 var readyOp = op.toBuilder().status(OperationStatus.READY).build();
-                updatedOperations.put(op.id(), readyOp);
-                return readyOp;
+                updateOperation(readyOp);
             }
 
             // advance waits
@@ -87,13 +91,11 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                         .action(OperationAction.SUCCEED)
                         .build();
                 eventProcessor.processUpdate(update, succeededOp);
-                replaced.set(true);
-                updatedOperations.put(op.id(), succeededOp);
-                return succeededOp;
+                hasOperationsAdvanced.set(true);
+                updateOperation(succeededOp);
             }
-            return op;
         });
-        return replaced.get();
+        return hasOperationsAdvanced.get();
     }
 
     /** Completes a chained invoke operation with the given result, simulating a child Lambda response. */
@@ -172,7 +174,9 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
         existingOperations.remove(op.id());
-        updatedOperations.remove(op.id());
+        synchronized (updatedOperations) {
+            updatedOperations.remove(op.id());
+        }
     }
 
     private void applyUpdate(OperationUpdate update) {
@@ -319,6 +323,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     private void updateOperation(Operation op) {
         existingOperations.put(op.id(), op);
-        updatedOperations.put(op.id(), op);
+        synchronized (updatedOperations) {
+            updatedOperations.put(op.id(), op);
+        }
     }
 }
