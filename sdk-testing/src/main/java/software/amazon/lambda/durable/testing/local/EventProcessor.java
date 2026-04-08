@@ -36,6 +36,49 @@ class EventProcessor {
         allEvents.add(event);
     }
 
+    // process new status of an operation without an OperationUpdate
+    void processUpdate(Operation updatedOperation) {
+        var builder = Event.builder()
+                .eventId(eventId.getAndIncrement())
+                .eventTimestamp(Instant.now())
+                .id(updatedOperation.id())
+                .name(updatedOperation.name());
+        // support the statuses that don't have a corresponding OperationAction
+        switch (updatedOperation.status()) {
+            case STARTED -> {
+                // used by resetCheckpointToStarted
+                return;
+            }
+            case READY -> {
+                if (updatedOperation.type() == OperationType.STEP) {
+                    // no event type for this case
+                    return;
+                } else {
+                    throw new IllegalArgumentException("Unsupported operation type: " + updatedOperation.type());
+                }
+            }
+            case TIMED_OUT -> {
+                switch (updatedOperation.type()) {
+                    case EXECUTION -> builder.eventType(EXECUTION_TIMED_OUT);
+                    case CHAINED_INVOKE -> builder.eventType(CHAINED_INVOKE_TIMED_OUT);
+                    case CALLBACK -> builder.eventType(CALLBACK_TIMED_OUT);
+                    default ->
+                        throw new IllegalArgumentException("Unsupported operation type: " + updatedOperation.type());
+                }
+            }
+            case STOPPED -> {
+                switch (updatedOperation.type()) {
+                    case EXECUTION -> builder.eventType(EXECUTION_STOPPED);
+                    case CHAINED_INVOKE -> builder.eventType(CHAINED_INVOKE_STOPPED);
+                    default ->
+                        throw new IllegalArgumentException("Unsupported operation type: " + updatedOperation.type());
+                }
+            }
+            default -> throw new IllegalArgumentException("Unsupported operation status: " + updatedOperation.status());
+        }
+        allEvents.add(builder.build());
+    }
+
     List<Event> getAllEvents() {
         return List.copyOf(allEvents);
     }
