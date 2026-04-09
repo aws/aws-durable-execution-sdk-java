@@ -1,9 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.examples.step;
+package software.amazon.lambda.durable.examples.vt;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -23,7 +24,7 @@ import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
  *   <li>All results are collected using {@link DurableFuture#allOf}
  * </ul>
  */
-public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsInput, ManyAsyncStepsOutput> {
+public class ManyAsyncStepsVirtualThreadPoolExample extends DurableHandler<ManyAsyncStepsInput, ManyAsyncStepsOutput> {
 
     @Override
     public ManyAsyncStepsOutput handleRequest(ManyAsyncStepsInput input, DurableContext context) {
@@ -67,6 +68,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsInput, M
         // when the function has many concurrent operations
         return DurableConfig.builder()
                 .withCheckpointDelay(Duration.ofMillis(10))
+                .withExecutorService(Executors.newVirtualThreadPerTaskExecutor())
                 .build();
     }
 }
