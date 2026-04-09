@@ -10,6 +10,7 @@ software.amazon.lambda.durable.examples.map
 software.amazon.lambda.durable.examples.parallel
 software.amazon.lambda.durable.examples.step
 software.amazon.lambda.durable.examples.types
+software.amazon.lambda.durable.examples.vt
 software.amazon.lambda.durable.examples.wait
 software.amazon.lambda.durable.exception
 software.amazon.lambda.durable.execution
