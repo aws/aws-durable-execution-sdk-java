@@ -93,9 +93,9 @@ public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt
 
     private void pollReadyAndExecuteStepLogic(Instant nextAttemptInstant, int attempt) {
 <span class="fc" id="L95">        pollForOperationUpdates(nextAttemptInstant)</span>
-<span class="pc bpc" id="L96" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
+<span class="pc bnc" id="L96" title="All 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="nc" id="L97">                        ? CompletableFuture.completedFuture(op)</span>
-<span class="fc" id="L98">                        : pollForOperationUpdates(nextAttemptInstant))</span>
+<span class="nc" id="L98">                        : pollForOperationUpdates(nextAttemptInstant))</span>
 <span class="pc" id="L99">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
 <span class="fc" id="L100">    }</span>
 

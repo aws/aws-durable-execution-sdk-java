@@ -259,7 +259,7 @@ public abstract class BaseDurableOperation {
 <span class="fc" id="L259">        };</span>
 
         // runUserHandler is used to ensure that only one user handler is running at a time
-<span class="pc bpc" id="L262" title="1 of 4 branches missed.">        if (runningUserHandler.get() != null &amp;&amp; !runningUserHandler.get().isDone()) {</span>
+<span class="pc bpc" id="L262" title="3 of 4 branches missed.">        if (runningUserHandler.get() != null &amp;&amp; !runningUserHandler.get().isDone()) {</span>
 <span class="nc" id="L263">            logger.error(&quot;User handler already running for operation {} ({})&quot;, getOperationId(), threadType);</span>
 <span class="nc" id="L264">            throw terminateExecutionWithIllegalDurableOperationException(</span>
 <span class="nc" id="L265">                    &quot;User handler already running: &quot; + getOperationId());</span>

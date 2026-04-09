@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>OperationProcessor.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-testing</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.testing.local</a> &gt; <span class="el_source">OperationProcessor.java</span></div><h1>OperationProcessor.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.testing.local;
+
+import java.time.Instant;
+import java.util.UUID;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.awssdk.services.lambda.model.WaitDetails;
+
+<span class="nc" id="L17">public class OperationProcessor {</span>
+    /** Applies the update to the existing operation, returning a new operation. */
+    static Operation applyUpdate(OperationUpdate update, Operation existingOp) {
+<span class="fc" id="L20">        var builder = Operation.builder()</span>
+<span class="fc" id="L21">                .id(update.id())</span>
+<span class="fc" id="L22">                .name(update.name())</span>
+<span class="fc" id="L23">                .type(update.type())</span>
+<span class="fc" id="L24">                .subType(update.subType())</span>
+<span class="fc" id="L25">                .parentId(update.parentId())</span>
+<span class="fc" id="L26">                .status(deriveStatus(update.action()));</span>
+
+<span class="pc bpc" id="L28" title="2 of 8 branches missed.">        switch (update.type()) {</span>
+<span class="fc" id="L29">            case WAIT -&gt; builder.waitDetails(buildWaitDetails(update));</span>
+<span class="fc" id="L30">            case STEP -&gt; builder.stepDetails(buildStepDetails(update, existingOp));</span>
+<span class="fc" id="L31">            case CALLBACK -&gt; builder.callbackDetails(buildCallbackDetails(update, existingOp));</span>
+<span class="fc" id="L32">            case EXECUTION -&gt; {} // No details needed for EXECUTION operations</span>
+<span class="fc" id="L33">            case CHAINED_INVOKE -&gt; builder.chainedInvokeDetails(buildChainedInvokeDetails(update));</span>
+<span class="fc" id="L34">            case CONTEXT -&gt; builder.contextDetails(buildContextDetails(update));</span>
+            case UNKNOWN_TO_SDK_VERSION -&gt;
+<span class="nc" id="L36">                throw new UnsupportedOperationException(&quot;UNKNOWN_TO_SDK_VERSION not supported&quot;);</span>
+        }
+
+<span class="fc" id="L39">        return builder.build();</span>
+    }
+
+    /** Applies the result of an operation to the existing operation, returning a new operation. */
+    public static Operation applyResult(Operation op, OperationResult result) {
+<span class="fc" id="L44">        var builder = Operation.builder()</span>
+<span class="fc" id="L45">                .id(op.id())</span>
+<span class="fc" id="L46">                .name(op.name())</span>
+<span class="fc" id="L47">                .type(op.type())</span>
+<span class="fc" id="L48">                .subType(op.subType())</span>
+<span class="fc" id="L49">                .parentId(op.parentId())</span>
+<span class="fc" id="L50">                .status(result.operationStatus());</span>
+
+<span class="pc bpc" id="L52" title="5 of 8 branches missed.">        switch (op.type()) {</span>
+<span class="nc" id="L53">            case WAIT -&gt; builder.waitDetails(buildWaitDetails(result, op));</span>
+<span class="fc" id="L54">            case STEP -&gt; builder.stepDetails(buildStepDetails(result, op));</span>
+<span class="fc" id="L55">            case CALLBACK -&gt; builder.callbackDetails(buildCallbackDetails(result, op));</span>
+<span class="nc" id="L56">            case EXECUTION -&gt; {} // No details needed for EXECUTION operations</span>
+<span class="fc" id="L57">            case CHAINED_INVOKE -&gt; builder.chainedInvokeDetails(buildChainedInvokeDetails(result, op));</span>
+<span class="nc" id="L58">            case CONTEXT -&gt; builder.contextDetails(buildContextDetails(result, op));</span>
+            case UNKNOWN_TO_SDK_VERSION -&gt;
+<span class="nc" id="L60">                throw new UnsupportedOperationException(&quot;UNKNOWN_TO_SDK_VERSION not supported&quot;);</span>
+        }
+<span class="fc" id="L62">        return builder.build();</span>
+    }
+
+    private static ContextDetails buildContextDetails(OperationResult result, Operation op) {
+<span class="nc" id="L66">        throw new IllegalArgumentException(&quot;Context operation type is not supported&quot;);</span>
+    }
+
+    private static ChainedInvokeDetails buildChainedInvokeDetails(OperationResult result, Operation op) {
+<span class="fc bfc" id="L70" title="All 2 branches covered.">        if (result.operationStatus() == OperationStatus.STOPPED</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">                || result.operationStatus() == OperationStatus.TIMED_OUT) {</span>
+<span class="fc" id="L72">            return op.chainedInvokeDetails().toBuilder().error(result.error()).build();</span>
+        }
+<span class="nc" id="L74">        throw new IllegalArgumentException(&quot;Operation status not supported: &quot; + result.operationStatus());</span>
+    }
+
+    private static ChainedInvokeDetails buildChainedInvokeDetails(OperationUpdate update) {
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (update.action() == OperationAction.START) {</span>
+<span class="fc" id="L79">            return ChainedInvokeDetails.builder().build();</span>
+        } else {
+<span class="fc" id="L81">            return ChainedInvokeDetails.builder()</span>
+<span class="fc" id="L82">                    .result(update.payload())</span>
+<span class="fc" id="L83">                    .error(update.error())</span>
+<span class="fc" id="L84">                    .build();</span>
+        }
+    }
+
+    private static ContextDetails buildContextDetails(OperationUpdate update) {
+<span class="fc" id="L89">        var detailsBuilder = ContextDetails.builder().result(update.payload()).error(update.error());</span>
+
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (update.contextOptions() != null</span>
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">                &amp;&amp; Boolean.TRUE.equals(update.contextOptions().replayChildren())) {</span>
+<span class="fc" id="L93">            detailsBuilder.replayChildren(true);</span>
+        }
+
+<span class="fc" id="L96">        return detailsBuilder.build();</span>
+    }
+
+    private static WaitDetails buildWaitDetails(OperationResult result, Operation op) {
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (result.operationStatus() != OperationStatus.SUCCEEDED) {</span>
+<span class="nc" id="L101">            throw new IllegalArgumentException(&quot;Operation status is not SUCCEEDED&quot;);</span>
+        }
+<span class="nc" id="L103">        return op.waitDetails().toBuilder().build();</span>
+    }
+
+    private static WaitDetails buildWaitDetails(OperationUpdate update) {
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (update.waitOptions() == null) return null;</span>
+
+<span class="fc" id="L109">        var scheduledEnd = Instant.now().plusSeconds(update.waitOptions().waitSeconds());</span>
+<span class="fc" id="L110">        return WaitDetails.builder().scheduledEndTimestamp(scheduledEnd).build();</span>
+    }
+
+    private static StepDetails buildStepDetails(OperationUpdate update, Operation existingOp) {
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        var existing = existingOp != null ? existingOp.stepDetails() : null;</span>
+
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();</span>
+<span class="fc bfc" id="L117" title="All 4 branches covered.">        var attempt = existing != null &amp;&amp; existing.attempt() != null ? existing.attempt() + 1 : 1;</span>
+
+<span class="fc bfc" id="L119" title="All 2 branches covered.">        if (update.action() == OperationAction.FAIL) {</span>
+<span class="fc" id="L120">            detailsBuilder.attempt(attempt).error(update.error());</span>
+        }
+
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (update.action() == OperationAction.RETRY) {</span>
+<span class="fc" id="L124">            detailsBuilder</span>
+<span class="fc" id="L125">                    .attempt(attempt)</span>
+<span class="fc" id="L126">                    .error(update.error())</span>
+<span class="fc" id="L127">                    .nextAttemptTimestamp(</span>
+<span class="fc" id="L128">                            Instant.now().plusSeconds(update.stepOptions().nextAttemptDelaySeconds()));</span>
+        }
+
+<span class="fc bfc" id="L131" title="All 2 branches covered.">        if (update.payload() != null) {</span>
+<span class="fc" id="L132">            detailsBuilder.result(update.payload());</span>
+        }
+
+<span class="fc" id="L135">        return detailsBuilder.build();</span>
+    }
+
+    private static StepDetails buildStepDetails(OperationResult result, Operation op) {
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">        if (result.operationStatus() == OperationStatus.READY) {</span>
+<span class="fc" id="L140">            return op.stepDetails().toBuilder().build();</span>
+        }
+<span class="nc" id="L142">        throw new IllegalArgumentException(&quot;Operation status is not READY&quot;);</span>
+    }
+
+    private static CallbackDetails buildCallbackDetails(OperationResult result, Operation op) {
+<span class="pc bpc" id="L146" title="1 of 2 branches missed.">        if (result.operationStatus() == OperationStatus.TIMED_OUT) {</span>
+<span class="fc" id="L147">            return op.callbackDetails().toBuilder().error(result.error()).build();</span>
+        }
+<span class="nc" id="L149">        return null;</span>
+    }
+
+    private static CallbackDetails buildCallbackDetails(OperationUpdate update, Operation existingOp) {
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        var existing = existingOp != null ? existingOp.callbackDetails() : null;</span>
+
+        // Preserve existing callbackId, or generate new one on START
+        var callbackId =
+<span class="fc bfc" id="L157" title="All 2 branches covered.">                existing != null ? existing.callbackId() : UUID.randomUUID().toString();</span>
+
+<span class="fc" id="L159">        return CallbackDetails.builder()</span>
+<span class="fc" id="L160">                .callbackId(callbackId)</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">                .result(existing != null ? update.payload() : null)</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">                .error(existing != null ? update.error() : null)</span>
+<span class="fc" id="L163">                .build();</span>
+    }
+
+    private static OperationStatus deriveStatus(OperationAction action) {
+<span class="pc bpc" id="L167" title="2 of 6 branches missed.">        return switch (action) {</span>
+<span class="fc" id="L168">            case START -&gt; OperationStatus.STARTED;</span>
+<span class="fc" id="L169">            case SUCCEED -&gt; OperationStatus.SUCCEEDED;</span>
+<span class="fc" id="L170">            case FAIL -&gt; OperationStatus.FAILED;</span>
+<span class="fc" id="L171">            case RETRY -&gt; OperationStatus.PENDING;</span>
+<span class="nc" id="L172">            case CANCEL -&gt; OperationStatus.CANCELLED;</span>
+<span class="nc" id="L173">            case UNKNOWN_TO_SDK_VERSION -&gt; OperationStatus.UNKNOWN_TO_SDK_VERSION; // Todo: Check this</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

@@ -340,19 +340,18 @@ public class LocalDurableTestRunner&lt;I, O&gt; {
 <span class="fc" id="L340">                .build();</span>
 
         // Load previous operations and include them in InitialExecutionState
-<span class="fc" id="L343">        var existingOps =</span>
-<span class="fc" id="L344">                storage.getExecutionState(executionArn, &quot;test-token&quot;, null).operations();</span>
-<span class="fc" id="L345">        var allOps = new ArrayList&lt;&gt;(List.of(executionOp));</span>
-<span class="fc" id="L346">        allOps.addAll(existingOps);</span>
+<span class="fc" id="L343">        var existingOps = storage.getAllOperations();</span>
+<span class="fc" id="L344">        var allOps = new ArrayList&lt;&gt;(List.of(executionOp));</span>
+<span class="fc" id="L345">        allOps.addAll(existingOps);</span>
 
-<span class="fc" id="L348">        return new DurableExecutionInput(</span>
+<span class="fc" id="L347">        return new DurableExecutionInput(</span>
                 executionArn,
-<span class="fc" id="L350">                UUID.randomUUID().toString(),</span>
-<span class="fc" id="L351">                CheckpointUpdatedExecutionState.builder().operations(allOps).build());</span>
+<span class="fc" id="L349">                UUID.randomUUID().toString(),</span>
+<span class="fc" id="L350">                CheckpointUpdatedExecutionState.builder().operations(allOps).build());</span>
     }
 
     private Context mockLambdaContext() {
-<span class="fc" id="L355">        return null; // Minimal - tests don't need real Lambda context</span>
+<span class="fc" id="L354">        return null; // Minimal - tests don't need real Lambda context</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
