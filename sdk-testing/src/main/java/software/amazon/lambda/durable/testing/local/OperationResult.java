@@ -22,4 +22,8 @@ public record OperationResult(OperationStatus operationStatus, String result, Er
     public static OperationResult timedout() {
         return new OperationResult(OperationStatus.TIMED_OUT, null, null);
     }
+
+    public static OperationResult ready() {
+        return new OperationResult(OperationStatus.READY, null, null);
+    }
 }

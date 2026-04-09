@@ -2,15 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.testing.local;
 
-import java.time.Instant;
-import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
-import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
@@ -23,10 +30,11 @@ import software.amazon.lambda.durable.testing.TestResult;
  * in memory, simulating the durable execution backend without AWS infrastructure.
  */
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
-    private final Map<String, Operation> operations = new ConcurrentHashMap<>();
-    private final List<Event> allEvents = new CopyOnWriteArrayList<>();
+    // use LinkedHashMap to keep insertion order
+    private final Map<String, Operation> existingOperations = Collections.synchronizedMap(new LinkedHashMap<>());
     private final EventProcessor eventProcessor = new EventProcessor();
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
+    private final Map<String, Operation> updatedOperations = new HashMap<>();
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
@@ -35,34 +43,30 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
         var newToken = UUID.randomUUID().toString();
 
-        return CheckpointDurableExecutionResponse.builder()
-                .checkpointToken(newToken)
-                .newExecutionState(CheckpointUpdatedExecutionState.builder()
-                        .operations(operations.values())
-                        .build())
-                .build();
+        CheckpointDurableExecutionResponse response;
+        synchronized (updatedOperations) {
+            response = CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken(newToken)
+                    .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                            .operations(updatedOperations.values())
+                            .build())
+                    .build();
+
+            // updatedOperations was copied into response, so clearing it is safe here
+            updatedOperations.clear();
+        }
+        return response;
     }
 
     @Override
     public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
-        return GetDurableExecutionStateResponse.builder()
-                .operations(operations.values())
-                .build();
+        // local runner doesn't use this API at all
+        throw new UnsupportedOperationException("getExecutionState is not supported");
     }
 
     /** Get all operation updates that have been sent to this client. Useful for testing and verification. */
     public List<OperationUpdate> getOperationUpdates() {
         return List.copyOf(operationUpdates);
-    }
-
-    /** Get all events in order. */
-    public List<Event> getAllEvents() {
-        return List.copyOf(allEvents);
-    }
-
-    /** Get events for a specific operation. */
-    public List<Event> getEventsForOperation(String operationId) {
-        return allEvents.stream().filter(e -> operationId.equals(e.id())).toList();
     }
 
     /**
@@ -71,32 +75,20 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
      * @return true if any operations were advanced, false otherwise
      */
     public boolean advanceTime() {
-        var replaced = new AtomicBoolean(false);
-        operations.replaceAll((key, op) -> {
-            // advance pending retries
-            if (op.status() == OperationStatus.PENDING) {
-                replaced.set(true);
-                return op.toBuilder().status(OperationStatus.READY).build();
+        var hasOperationsAdvanced = new AtomicBoolean(false);
+        // forEach is safe as we're not adding or removing keys here
+        existingOperations.forEach((key, op) -> {
+            if (op.type() == OperationType.STEP && op.status() == OperationStatus.PENDING) {
+                applyResult(op, OperationResult.ready());
+                hasOperationsAdvanced.set(true);
             }
-            // advance waits
-            if (op.status() == OperationStatus.STARTED && op.type() == OperationType.WAIT) {
-                var succeededOp =
-                        op.toBuilder().status(OperationStatus.SUCCEEDED).build();
-                // Generate WaitSucceeded event
-                var update = OperationUpdate.builder()
-                        .id(op.id())
-                        .name(op.name())
-                        .type(OperationType.WAIT)
-                        .action(OperationAction.SUCCEED)
-                        .build();
-                var event = eventProcessor.processUpdate(update, succeededOp);
-                allEvents.add(event);
-                replaced.set(true);
-                return succeededOp;
+
+            if (op.type() == OperationType.WAIT && op.status() == OperationStatus.STARTED) {
+                applyResult(op, OperationResult.succeeded(null));
+                hasOperationsAdvanced.set(true);
             }
-            return op;
         });
-        return replaced.get();
+        return hasOperationsAdvanced.get();
     }
 
     /** Completes a chained invoke operation with the given result, simulating a child Lambda response. */
@@ -105,34 +97,15 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         if (op == null) {
             throw new IllegalStateException("Operation not found: " + name);
         }
-        if (op.type() == OperationType.CHAINED_INVOKE
-                && op.status() == OperationStatus.STARTED
-                && op.name().equals(name)) {
-            var newOp = op.toBuilder()
-                    .status(result.operationStatus())
-                    .chainedInvokeDetails(ChainedInvokeDetails.builder()
-                            .result(result.result())
-                            .error(result.error())
-                            .build())
-                    .build();
-            var update = OperationUpdate.builder()
-                    .id(op.id())
-                    .name(op.name())
-                    .type(OperationType.CHAINED_INVOKE)
-                    .action(
-                            result.operationStatus() == OperationStatus.SUCCEEDED
-                                    ? OperationAction.SUCCEED
-                                    : OperationAction.FAIL)
-                    .build();
-            var event = eventProcessor.processUpdate(update, newOp);
-            allEvents.add(event);
-            operations.put(compositeKey(op.parentId(), op.id()), newOp);
+        if (op.type() != OperationType.CHAINED_INVOKE || op.status() != OperationStatus.STARTED) {
+            throw new IllegalStateException("Operation is not a CHAINED_INVOKE or not in STARTED state");
         }
+        applyResult(op, result);
     }
 
     /** Returns the operation with the given name, or null if not found. */
     public Operation getOperationByName(String name) {
-        return operations.values().stream()
+        return existingOperations.values().stream()
                 .filter(op -> name.equals(op.name()))
                 .findFirst()
                 .orElse(null);
@@ -140,27 +113,21 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Returns all operations currently stored. */
     public List<Operation> getAllOperations() {
-        return operations.values().stream().toList();
-    }
-
-    /** Clears all operations and events, resetting the client to its initial state. */
-    public void reset() {
-        operations.clear();
-        allEvents.clear();
+        return existingOperations.values().stream().toList();
     }
 
     /** Build TestResult from current state. */
     public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
-        var testOperations = operations.values().stream()
+        var testOperations = existingOperations.values().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
-                .map(op -> new TestOperation(op, getEventsForOperation(op.id()), serDes))
+                .map(op -> new TestOperation(op, eventProcessor.getEventsForOperation(op.id()), serDes))
                 .toList();
         return new TestResult<>(
                 output.status(),
                 output.result(),
                 output.error(),
                 testOperations,
-                new ArrayList<>(allEvents),
+                eventProcessor.getAllEvents(),
                 resultType,
                 serDes);
     }
@@ -172,7 +139,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
         var startedOp = op.toBuilder().status(OperationStatus.STARTED).build();
-        operations.put(compositeKey(op.parentId(), op.id()), startedOp);
+        updateOperation(null, startedOp);
     }
 
     /** Simulate fire-and-forget checkpoint loss by removing the operation entirely */
@@ -181,113 +148,16 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         if (op == null) {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
-        operations.remove(compositeKey(op.parentId(), op.id()));
+        existingOperations.remove(op.id());
+        synchronized (updatedOperations) {
+            updatedOperations.remove(op.id());
+        }
     }
 
     private void applyUpdate(OperationUpdate update) {
-        var operation = toOperation(update);
-        var key = compositeKey(update.parentId(), update.id());
-        operations.put(key, operation);
-
-        var event = eventProcessor.processUpdate(update, operation);
-        allEvents.add(event);
-    }
-
-    private static String compositeKey(String parentId, String operationId) {
-        return (parentId != null ? parentId : "") + ":" + operationId;
-    }
-
-    private Operation toOperation(OperationUpdate update) {
-        var builder = Operation.builder()
-                .id(update.id())
-                .name(update.name())
-                .type(update.type())
-                .subType(update.subType())
-                .parentId(update.parentId())
-                .status(deriveStatus(update.action()));
-
-        switch (update.type()) {
-            case WAIT -> builder.waitDetails(buildWaitDetails(update));
-            case STEP -> builder.stepDetails(buildStepDetails(update));
-            case CALLBACK -> builder.callbackDetails(buildCallbackDetails(update));
-            case EXECUTION -> {} // No details needed for EXECUTION operations
-            case CHAINED_INVOKE -> builder.chainedInvokeDetails(buildChainedInvokeDetails(update));
-            case CONTEXT -> builder.contextDetails(buildContextDetails(update));
-            case UNKNOWN_TO_SDK_VERSION ->
-                throw new UnsupportedOperationException("UNKNOWN_TO_SDK_VERSION not supported");
-        }
-
-        return builder.build();
-    }
-
-    private ChainedInvokeDetails buildChainedInvokeDetails(OperationUpdate update) {
-        if (update.chainedInvokeOptions() == null) {
-            return null;
-        }
-        return ChainedInvokeDetails.builder()
-                .result(update.payload())
-                .error(update.error())
-                .build();
-    }
-
-    private ContextDetails buildContextDetails(OperationUpdate update) {
-        var detailsBuilder = ContextDetails.builder().result(update.payload()).error(update.error());
-
-        if (update.contextOptions() != null
-                && Boolean.TRUE.equals(update.contextOptions().replayChildren())) {
-            detailsBuilder.replayChildren(true);
-        }
-
-        return detailsBuilder.build();
-    }
-
-    private WaitDetails buildWaitDetails(OperationUpdate update) {
-        if (update.waitOptions() == null) return null;
-
-        var scheduledEnd = Instant.now().plusSeconds(update.waitOptions().waitSeconds());
-        return WaitDetails.builder().scheduledEndTimestamp(scheduledEnd).build();
-    }
-
-    private StepDetails buildStepDetails(OperationUpdate update) {
-        var key = compositeKey(update.parentId(), update.id());
-        var existingOp = operations.get(key);
-        var existing = existingOp != null ? existingOp.stepDetails() : null;
-
-        var detailsBuilder = existing != null ? existing.toBuilder() : StepDetails.builder();
-        var attempt = existing != null && existing.attempt() != null ? existing.attempt() + 1 : 1;
-
-        if (update.action() == OperationAction.FAIL) {
-            detailsBuilder.attempt(attempt).error(update.error());
-        }
-
-        if (update.action() == OperationAction.RETRY) {
-            detailsBuilder
-                    .attempt(attempt)
-                    .error(update.error())
-                    .nextAttemptTimestamp(
-                            Instant.now().plusSeconds(update.stepOptions().nextAttemptDelaySeconds()));
-        }
-
-        if (update.payload() != null) {
-            detailsBuilder.result(update.payload());
-        }
-
-        return detailsBuilder.build();
-    }
-
-    private CallbackDetails buildCallbackDetails(OperationUpdate update) {
-        var key = compositeKey(update.parentId(), update.id());
-        var existingOp = operations.get(key);
-        var existing = existingOp != null ? existingOp.callbackDetails() : null;
-
-        // Preserve existing callbackId, or generate new one on START
-        var callbackId =
-                existing != null ? existing.callbackId() : UUID.randomUUID().toString();
-
-        return CallbackDetails.builder()
-                .callbackId(callbackId)
-                .result(existing != null ? existing.result() : null)
-                .build();
+        var existingOp = existingOperations.get(update.id());
+        var updatedOp = OperationProcessor.applyUpdate(update, existingOp);
+        updateOperation(update, updatedOp);
     }
 
     /** Get callback ID for a named callback operation. */
@@ -305,32 +175,67 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         if (op == null) {
             throw new IllegalStateException("Callback not found: " + callbackId);
         }
-        var updated = op.toBuilder()
-                .status(result.operationStatus())
-                .callbackDetails(op.callbackDetails().toBuilder()
-                        .result(result.result())
-                        .error(result.error())
-                        .build())
-                .build();
-        operations.put(compositeKey(op.parentId(), op.id()), updated);
+        if (op.type() != OperationType.CALLBACK || op.status() != OperationStatus.STARTED) {
+            throw new IllegalStateException("Operation is not a CALLBACK or not in STARTED state");
+        }
+
+        applyResult(op, result);
+    }
+
+    private void applyResult(Operation op, OperationResult result) {
+        // derive a possible action from the target status
+        OperationAction action = deriveAction(result.operationStatus());
+        if (action != null) {
+            var update = OperationUpdate.builder()
+                    .id(op.id())
+                    .name(op.name())
+                    .type(op.type())
+                    .action(action)
+                    .parentId(op.parentId())
+                    .payload(result.result())
+                    .error(result.error())
+                    .build();
+            applyUpdate(update);
+        } else if (result.operationStatus() == OperationStatus.TIMED_OUT
+                || result.operationStatus() == OperationStatus.STOPPED
+                || result.operationStatus() == OperationStatus.READY) {
+            var newOp = OperationProcessor.applyResult(op, result);
+            updateOperation(null, newOp);
+        } else {
+            throw new IllegalStateException("Unsupported OperationStatus in result: " + result.operationStatus());
+        }
+    }
+
+    private static OperationAction deriveAction(OperationStatus status) {
+        return switch (status) {
+            case STARTED -> OperationAction.START;
+            case SUCCEEDED -> OperationAction.SUCCEED;
+            case FAILED -> OperationAction.FAIL;
+            case PENDING -> OperationAction.RETRY;
+            case CANCELLED -> OperationAction.CANCEL;
+            case READY, TIMED_OUT, STOPPED -> null; // no action for these operation statuses
+            case UNKNOWN_TO_SDK_VERSION -> OperationAction.UNKNOWN_TO_SDK_VERSION; // Todo: Check this
+        };
     }
 
     private Operation findOperationByCallbackId(String callbackId) {
-        return operations.values().stream()
+        return existingOperations.values().stream()
                 .filter(op -> op.callbackDetails() != null
                         && callbackId.equals(op.callbackDetails().callbackId()))
                 .findFirst()
                 .orElse(null);
     }
 
-    private OperationStatus deriveStatus(OperationAction action) {
-        return switch (action) {
-            case START -> OperationStatus.STARTED;
-            case SUCCEED -> OperationStatus.SUCCEEDED;
-            case FAIL -> OperationStatus.FAILED;
-            case RETRY -> OperationStatus.PENDING;
-            case CANCEL -> OperationStatus.CANCELLED;
-            case UNKNOWN_TO_SDK_VERSION -> OperationStatus.UNKNOWN_TO_SDK_VERSION; // Todo: Check this
-        };
+    private void updateOperation(OperationUpdate update, Operation op) {
+        // update can be null when an operation is updated without an OperationUpdate
+        if (update == null) {
+            eventProcessor.processUpdate(op);
+        } else {
+            eventProcessor.processUpdate(update, op);
+        }
+        existingOperations.put(op.id(), op);
+        synchronized (updatedOperations) {
+            updatedOperations.put(op.id(), op);
+        }
     }
 }
