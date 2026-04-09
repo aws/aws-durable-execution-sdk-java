@@ -9,6 +9,8 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
+import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
 
 /**
  * Performance test example demonstrating concurrent async child contexts.
@@ -21,60 +23,55 @@ import software.amazon.lambda.durable.DurableHandler;
  *   &lt;li&gt;All results are collected using {@link DurableFuture#allOf}
  * &lt;/ul&gt;
  */
-<span class="fc" id="L24">public class ManyAsyncChildContextExample</span>
-        extends DurableHandler&lt;ManyAsyncChildContextExample.Input, ManyAsyncChildContextExample.Output&gt; {
-
-<span class="fc" id="L27">    public record Input(int multiplier, int steps) {}</span>
-
-<span class="fc" id="L29">    public record Output(long result, long executionTimeMs, long replayTimeMs) {}</span>
+<span class="fc" id="L26">public class ManyAsyncChildContextExample extends DurableHandler&lt;ManyAsyncStepsInput, ManyAsyncStepsOutput&gt; {</span>
 
     @Override
-    public Output handleRequest(Input input, DurableContext context) {
-<span class="fc" id="L33">        var startTime = System.nanoTime();</span>
-<span class="fc" id="L34">        var multiplier = input.multiplier();</span>
-<span class="fc" id="L35">        var steps = input.steps();</span>
-<span class="fc" id="L36">        var logger = context.getLogger();</span>
+    public ManyAsyncStepsOutput handleRequest(ManyAsyncStepsInput input, DurableContext context) {
+<span class="fc" id="L30">        var startTime = System.nanoTime();</span>
+<span class="fc" id="L31">        var multiplier = input.multiplier();</span>
+<span class="fc" id="L32">        var steps = input.steps();</span>
+<span class="fc" id="L33">        var logger = context.getLogger();</span>
 
-<span class="fc" id="L38">        logger.info(&quot;Starting {} async child context with multiplier {}&quot;, steps, multiplier);</span>
+<span class="fc" id="L35">        logger.info(&quot;Starting {} async child context with multiplier {}&quot;, steps, multiplier);</span>
 
         // Create async steps
-<span class="fc" id="L41">        var futures = new ArrayList&lt;DurableFuture&lt;Integer&gt;&gt;(steps);</span>
-<span class="fc bfc" id="L42" title="All 2 branches covered.">        for (var i = 0; i &lt; steps; i++) {</span>
-<span class="fc" id="L43">            var index = i;</span>
-<span class="fc" id="L44">            var future = context.runInChildContextAsync(&quot;child-&quot; + i, Integer.class, childCtx -&gt; {</span>
+<span class="fc" id="L38">        var futures = new ArrayList&lt;DurableFuture&lt;Integer&gt;&gt;(steps);</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        for (var i = 0; i &lt; steps; i++) {</span>
+<span class="fc" id="L40">            var index = i;</span>
+<span class="fc" id="L41">            var future = context.runInChildContextAsync(&quot;child-&quot; + i, Integer.class, childCtx -&gt; {</span>
                 // create a step inside the child context, which doubles the number of threads
-<span class="fc" id="L46">                return childCtx.step(&quot;compute-&quot; + index, Integer.class, stepCtx -&gt; index * multiplier);</span>
+<span class="fc" id="L43">                return childCtx.step(&quot;compute-&quot; + index, Integer.class, stepCtx -&gt; index * multiplier);</span>
             });
-<span class="fc" id="L48">            futures.add(future);</span>
+<span class="fc" id="L45">            futures.add(future);</span>
         }
 
-<span class="fc" id="L51">        logger.info(&quot;All {} async child context created, collecting results&quot;, steps);</span>
+<span class="fc" id="L48">        logger.info(&quot;All {} async child context created, collecting results&quot;, steps);</span>
 
         // Collect all results using allOf
-<span class="fc" id="L54">        var results = DurableFuture.allOf(futures);</span>
-<span class="fc" id="L55">        var totalSum = results.stream().mapToInt(Integer::intValue).sum();</span>
+<span class="fc" id="L51">        var results = DurableFuture.allOf(futures);</span>
+<span class="fc" id="L52">        var totalSum = results.stream().mapToInt(Integer::intValue).sum();</span>
 
         // checkpoint the executionTime so that we can have the same value when replay
-<span class="fc" id="L58">        var executionTimeMs = context.step(</span>
-<span class="fc" id="L59">                &quot;execution-time&quot;, Long.class, stepCtx -&gt; TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));</span>
-<span class="fc" id="L60">        logger.info(</span>
-<span class="fc" id="L61">                &quot;Completed {} child context, total sum: {}, execution time: {}ms&quot;, steps, totalSum, executionTimeMs);</span>
+<span class="fc" id="L55">        var executionTimeMs = context.step(</span>
+<span class="fc" id="L56">                &quot;execution-time&quot;, Long.class, stepCtx -&gt; TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));</span>
+<span class="fc" id="L57">        logger.info(</span>
+<span class="fc" id="L58">                &quot;Completed {} child context, total sum: {}, execution time: {}ms&quot;, steps, totalSum, executionTimeMs);</span>
 
         // Wait 2 seconds to test replay
-<span class="fc" id="L64">        context.wait(&quot;post-compute-wait&quot;, Duration.ofSeconds(2));</span>
+<span class="fc" id="L61">        context.wait(&quot;post-compute-wait&quot;, Duration.ofSeconds(2));</span>
 
-<span class="fc" id="L66">        var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);</span>
+<span class="fc" id="L63">        var replayTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);</span>
 
-<span class="fc" id="L68">        return new Output(totalSum, executionTimeMs, replayTimeMs);</span>
+<span class="fc" id="L65">        return new ManyAsyncStepsOutput(totalSum, executionTimeMs, replayTimeMs);</span>
     }
 
     @Override
     protected DurableConfig createConfiguration() {
         // Add a small checkpoint delay to help batch the checkpoint requests and reduce the overall latencies
         // when the function has many concurrent operations
-<span class="fc" id="L75">        return DurableConfig.builder()</span>
-<span class="fc" id="L76">                .withCheckpointDelay(Duration.ofMillis(10))</span>
-<span class="fc" id="L77">                .build();</span>
+<span class="fc" id="L72">        return DurableConfig.builder()</span>
+<span class="fc" id="L73">                .withCheckpointDelay(Duration.ofMillis(10))</span>
+<span class="fc" id="L74">                .build();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
