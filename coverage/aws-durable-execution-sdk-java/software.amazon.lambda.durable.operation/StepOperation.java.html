@@ -96,7 +96,7 @@ public class StepOperation&lt;T&gt; extends SerializableDurableOperation&lt;T&gt
 <span class="pc bpc" id="L96" title="1 of 2 branches missed.">                .thenCompose(op -&gt; op.status() == OperationStatus.READY</span>
 <span class="nc" id="L97">                        ? CompletableFuture.completedFuture(op)</span>
 <span class="fc" id="L98">                        : pollForOperationUpdates(nextAttemptInstant))</span>
-<span class="pc" id="L99">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
+<span class="fc" id="L99">                .thenRun(() -&gt; executeStepLogic(attempt));</span>
 <span class="fc" id="L100">    }</span>
 
     private void executeStepLogic(int attempt) {
