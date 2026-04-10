@@ -1,6 +1,6 @@
 # ADR-003: CompletableFuture-Based Operation Coordination
 
-**Status:** Review
+**Status:** Accepted
 **Date:** 2026-02-18
 
 ## Context

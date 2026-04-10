@@ -4,6 +4,10 @@
 
 ```java
 // Poll an order status until it ships
+var config = WaitForConditionConfig.<String>builder()
+    .initialState("PENDING")
+    .build();
+
 var status = ctx.waitForCondition(
     "wait-for-shipment",
     String.class,
@@ -13,14 +17,14 @@ var status = ctx.waitForCondition(
             ? WaitForConditionResult.stopPolling(latest)
             : WaitForConditionResult.continuePolling(latest);
     },
-    "PENDING");
+    config);
 ```
 
 The check function receives the current state and a `StepContext`, and returns a `WaitForConditionResult`:
 - `WaitForConditionResult.stopPolling(value)` — condition met, return `value` as the final result
 - `WaitForConditionResult.continuePolling(value)` — keep polling, pass `value` to the next check
 
-The `initialState` parameter (`"PENDING"` above) is passed to the first check invocation.
+The `initialState` is configured via `WaitForConditionConfig` (`"PENDING"` above) and is passed to the first check invocation.
 
 ## waitForConditionAsync() – Non-Blocking Polling
 
@@ -36,7 +40,9 @@ DurableFuture<String> shipmentFuture = ctx.waitForConditionAsync(
             ? WaitForConditionResult.stopPolling(latest)
             : WaitForConditionResult.continuePolling(latest);
     },
-    "PENDING");
+    WaitForConditionConfig.<String>builder()
+        .initialState("PENDING")
+        .build());
 
 // Do other work while polling runs
 var invoice = ctx.step("generate-invoice", String.class, stepCtx -> generateInvoice(orderId));
@@ -55,9 +61,10 @@ Use `WaitStrategies` to configure a different strategy:
 // Fixed 30-second delay, up to 10 attempts
 var config = WaitForConditionConfig.<String>builder()
     .waitStrategy(WaitStrategies.fixedDelay(10, Duration.ofSeconds(30)))
+    .initialState("PENDING")
     .build();
 
-var result = ctx.waitForCondition("poll-status", String.class, checkFunc, "PENDING", config);
+var result = ctx.waitForCondition("poll-status", String.class, checkFunc, config);
 ```
 
 ```java
@@ -94,22 +101,21 @@ var config = WaitForConditionConfig.<String>builder()
 |--------|---------|-------------|
 | `waitStrategy()` | Exponential backoff (see above) | Controls delay between polls and max attempts |
 | `serDes()` | Handler default | Custom serialization for checkpointing state |
+| `initialState()` | `null` | Initial state passed to the first check invocation |
 
 ## Error Handling
 
 | Exception | When Thrown |
 |-----------|-------------|
-| `WaitForConditionException` | Max attempts exceeded (thrown by the wait strategy) |
+| `WaitForConditionFailedException` | Max attempts exceeded (thrown by the wait strategy) |
 | `SerDesException` | Checkpointed state fails to deserialize on replay |
 | User's exception | Check function throws — propagated through `get()` |
 
 ```java
 try {
-    var result = ctx.waitForCondition("poll", String.class, checkFunc, "initial");
-} catch (WaitForConditionException e) {
+    var result = ctx.waitForCondition("poll", String.class, checkFunc);
+} catch (WaitForConditionFailedException e) {
     // Max attempts exceeded — condition was never met
-} catch (IllegalStateException e) {
-    // Check function threw this — handle accordingly
 }
 ```
 
@@ -127,4 +133,4 @@ WaitForConditionWaitStrategy<String> customStrategy = (state, attempt) -> {
 };
 ```
 
-The strategy receives the current state and attempt number, and returns a `Duration`. Throw `WaitForConditionException` to stop polling with an error.
+The strategy receives the current state and attempt number, and returns a `Duration`. Throw `WaitForConditionFailedException` to stop polling with an error.

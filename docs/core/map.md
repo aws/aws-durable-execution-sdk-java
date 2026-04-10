@@ -57,9 +57,9 @@ Each `MapResultItem<T>` contains:
 
 | Field | Description |
 |-------|-------------|
-| `status()` | `SUCCEEDED`, `FAILED`, or `NOT_STARTED` |
-| `result()` | The result value, or `null` if failed/not started |
-| `error()` | The error details as `MapError`, or `null` if succeeded/not started |
+| `status()` | `SUCCEEDED`, `FAILED`, or `SKIPPED` |
+| `result()` | The result value, or `null` if failed/skipped |
+| `error()` | The error details as `MapError`, or `null` if succeeded/skipped |
 
 ### MapError
 
@@ -135,10 +135,10 @@ var config = MapConfig.builder()
     .build();
 
 var result = ctx.map("find-two", items, String.class, fn, config);
-assertEquals(CompletionReason.MIN_SUCCESSFUL_REACHED, result.completionReason());
+assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionReason());
 ```
 
-When early termination triggers, items that were never started have `NOT_STARTED` status with `null` for both result and error in the `MapResult`.
+When early termination triggers, items that were never started have `SKIPPED` status with `null` for both result and error in the `MapResult`.
 
 ### Checkpoint-and-Replay
 

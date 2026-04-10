@@ -30,20 +30,20 @@ aws-durable-execution-sdk-java/
 ### User-Facing (DurableContext)
 
 ```java
-// Synchronous step
-T step(String name, Class<T> type, Supplier<T> func)
-T step(String name, Class<T> type, Supplier<T> func, StepConfig config)
-T step(String name, TypeToken<T> type, Supplier<T> func)
-T step(String name, TypeToken<T> type, Supplier<T> func, StepConfig config)
+// Synchronous step (func receives a StepContext)
+T step(String name, Class<T> type, Function<StepContext, T> func)
+T step(String name, Class<T> type, Function<StepContext, T> func, StepConfig config)
+T step(String name, TypeToken<T> type, Function<StepContext, T> func)
+T step(String name, TypeToken<T> type, Function<StepContext, T> func, StepConfig config)
 
 // Asynchronous step
-DurableFuture<T> stepAsync(String name, Class<T> type, Supplier<T> func)
-DurableFuture<T> stepAsync(String name, Class<T> type, Supplier<T> func, StepConfig config)
-DurableFuture<T> stepAsync(String name, TypeToken<T> type, Supplier<T> func)
-DurableFuture<T> stepAsync(String name, TypeToken<T> type, Supplier<T> func, StepConfig config)
+DurableFuture<T> stepAsync(String name, Class<T> type, Function<StepContext, T> func)
+DurableFuture<T> stepAsync(String name, Class<T> type, Function<StepContext, T> func, StepConfig config)
+DurableFuture<T> stepAsync(String name, TypeToken<T> type, Function<StepContext, T> func)
+DurableFuture<T> stepAsync(String name, TypeToken<T> type, Function<StepContext, T> func, StepConfig config)
 
 // Wait
-void wait(String name, Duration duration)
+Void wait(String name, Duration duration)
 
 // Asynchronous wait
 DurableFuture<Void> waitAsync(String name, Duration duration)
@@ -59,6 +59,34 @@ DurableFuture<T> invokeAsync(String name, String functionName, U payload, Class<
 DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType)
 DurableFuture<T> invokeAsync(String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config)
 
+// Callback
+DurableCallbackFuture<T> createCallback(String name, Class<T> resultType)
+DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config)
+DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType)
+DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType, CallbackConfig config)
+
+// Wait for callback (combines callback creation + submitter step)
+T waitForCallback(String name, Class<T> resultType, BiConsumer<String, StepContext> func)
+T waitForCallback(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func)
+T waitForCallback(String name, Class<T> resultType, BiConsumer<String, StepContext> func, WaitForCallbackConfig config)
+T waitForCallback(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func, WaitForCallbackConfig config)
+
+DurableFuture<T> waitForCallbackAsync(String name, Class<T> resultType, BiConsumer<String, StepContext> func)
+DurableFuture<T> waitForCallbackAsync(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func)
+DurableFuture<T> waitForCallbackAsync(String name, Class<T> resultType, BiConsumer<String, StepContext> func, WaitForCallbackConfig config)
+DurableFuture<T> waitForCallbackAsync(String name, TypeToken<T> resultType, BiConsumer<String, StepContext> func, WaitForCallbackConfig config)
+
+// Child context
+T runInChildContext(String name, Class<T> resultType, Function<DurableContext, T> func)
+T runInChildContext(String name, TypeToken<T> resultType, Function<DurableContext, T> func)
+T runInChildContext(String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config)
+T runInChildContext(String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config)
+
+DurableFuture<T> runInChildContextAsync(String name, Class<T> resultType, Function<DurableContext, T> func)
+DurableFuture<T> runInChildContextAsync(String name, TypeToken<T> resultType, Function<DurableContext, T> func)
+DurableFuture<T> runInChildContextAsync(String name, Class<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config)
+DurableFuture<T> runInChildContextAsync(String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config)
+
 // Map
 MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function)
 MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config)
@@ -70,6 +98,21 @@ DurableFuture<MapResult<O>> mapAsync(String name, Collection<I> items, Class<O> 
 DurableFuture<MapResult<O>> mapAsync(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function)
 DurableFuture<MapResult<O>> mapAsync(String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config)
 
+// Parallel
+ParallelDurableFuture parallel(String name)
+ParallelDurableFuture parallel(String name, ParallelConfig config)
+
+// Wait for condition
+T waitForCondition(String name, Class<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc)
+T waitForCondition(String name, Class<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc, WaitForConditionConfig<T> config)
+T waitForCondition(String name, TypeToken<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc)
+T waitForCondition(String name, TypeToken<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc, WaitForConditionConfig<T> config)
+
+DurableFuture<T> waitForConditionAsync(String name, Class<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc)
+DurableFuture<T> waitForConditionAsync(String name, Class<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc, WaitForConditionConfig<T> config)
+DurableFuture<T> waitForConditionAsync(String name, TypeToken<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc)
+DurableFuture<T> waitForConditionAsync(String name, TypeToken<T> resultType, BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc, WaitForConditionConfig<T> config)
+
 // Lambda context access
 Context getLambdaContext()
 ```
@@ -77,7 +120,9 @@ Context getLambdaContext()
 ### DurableFuture
 
 ```java
-T get()  // Blocks until complete, may suspend
+T get()                                      // Blocks until complete, may suspend
+static <T> List<T> allOf(DurableFuture<T>... futures)  // Collect all results in order
+static Object anyOf(DurableFuture<?>... futures)       // Return first completed result
 ```
 
 ### Handler Configuration
@@ -95,12 +140,14 @@ public class MyHandler extends DurableHandler<Input, Output> {
 }
 ```
 
-| Option                | Default                                                                                                                                                                   |
-|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `lambdaClientBuilder` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/com/amazonaws/lambda/durable/DurableConfig.java)) |
-| `serDes`              | `JacksonSerDes`                                                                                                                                                           |
-| `executorService`     | `Executors.newCachedThreadPool()` (for user-defined operations only)                                                                                                      |
-| `loggerConfig`        | `LoggerConfig.defaults()` (suppress replay logs)                                                                                                                          |
+| Option                | Default                                                                                                                                                                           |
+|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lambdaClientBuilder` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/software/amazon/lambda/durable/DurableConfig.java))       |
+| `serDes`              | `JacksonSerDes`                                                                                                                                                                   |
+| `executorService`     | `Executors.newCachedThreadPool()` (for user-defined operations only)                                                                                                              |
+| `loggerConfig`        | `LoggerConfig.defaults()` (suppress replay logs)                                                                                                                                  |
+| `pollingStrategy`     | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max                                                                                                                      |
+| `checkpointDelay`     | `Duration.ofSeconds(0)` (checkpoint as soon as possible)                                                                                                                          |
 
 ### Thread Pool Architecture
 
@@ -148,7 +195,7 @@ protected DurableConfig createConfiguration() {
 ### Step Configuration
 
 ```java
-context.step("name", Type.class, supplier,
+context.step("name", Type.class, stepCtx -> doWork(),
     StepConfig.builder()
         .serDes(stepSpecificSerDes)
         .retryStrategy(RetryStrategies.exponentialBackoff(3, Duration.ofSeconds(1)))
@@ -187,20 +234,28 @@ context.step("name", Type.class, supplier,
 ┌──────────────────────────────┐    ┌─────────────────────────────────┐
 │  DurableContext              │    │  ExecutionManager               │
 │  - User-facing API           │    │  - State (ops, token)           │
-│  - step(), stepAsync(), etc  │    │  - Thread coordination          │
+│  - step(), stepAsync()       │    │  - Thread coordination          │
 │  - wait(), waitAsync()       │    │  - Checkpoint batching          │
-│  - waitForCondition()        │    │  - Checkpoint response handling │
-│  - Operation ID counter      │    │  - Polling                      │
-└──────────────────────────────┘    └─────────────────────────────────┘
+│  - invoke(), invokeAsync()   │    │  - Checkpoint response handling │
+│  - createCallback()          │    │  - Polling                      │
+│  - waitForCallback()         │    └─────────────────────────────────┘
+│  - runInChildContext()       │
+│  - map(), mapAsync()         │
+│  - parallel()                │
+│  - waitForCondition()        │
+│  - Operation ID counter      │
+└──────────────────────────────┘
             │                                       │
             ▼                                       ▼
 ┌──────────────────────────────┐    ┌──────────────────────────────┐
 │  Operations                  │    │  CheckpointBatcher           │
 │  - StepOperation<T>          │    │  - Queues requests           │
 │  - WaitOperation             │    │  - Batches API calls (750KB) │
-│  - WaitForConditionOperation │    │                              │
-│  - ConcurrencyOperation<T>   │    │  - Notifies via callback     │
-│  - MapOperation<I,O>         │    └──────────────────────────────┘
+│  - InvokeOperation<T>        │    │                              │
+│  - CallbackOperation<T>      │    │  - Notifies via callback     │
+│  - WaitForConditionOperation │    └──────────────────────────────┘
+│  - ConcurrencyOperation<T>   │
+│  - MapOperation<I,O>         │
 │  - ParallelOperation         │
 │  - ChildContextOperation<T>  │
 │  - execute() / get()         │
@@ -220,10 +275,27 @@ context.step("name", Type.class, supplier,
 software.amazon.lambda.durable
 ├── DurableHandler<I,O>      # Entry point
 ├── DurableExecutor          # Lifecycle orchestration
-├── DurableContext           # User API
+├── DurableContext           # User API (interface)
 ├── DurableFuture<T>         # Async handle
-├── StepConfig               # Step configuration
+├── DurableCallbackFuture<T> # Callback future with callbackId
+├── ParallelDurableFuture    # Parallel branch registration + AutoCloseable
+├── StepContext              # Context passed to step functions
 ├── TypeToken<T>             # Generic type capture
+│
+├── config/
+│   ├── StepConfig           # Step configuration (retry, semantics, serDes)
+│   ├── InvokeConfig         # Invoke configuration (payload/result serDes, tenantId)
+│   ├── CallbackConfig       # Callback configuration (timeout, heartbeat, serDes)
+│   ├── WaitForCallbackConfig # Composite callback + step config
+│   ├── MapConfig            # Map configuration (concurrency, completion, serDes)
+│   ├── ParallelConfig       # Parallel configuration (concurrency, completion)
+│   ├── ParallelBranchConfig # Per-branch configuration
+│   ├── RunInChildContextConfig # Child context configuration
+│   ├── WaitForConditionConfig<T> # Polling configuration (wait strategy, serDes, initialState)
+│   └── CompletionConfig     # Completion criteria for map/parallel
+│
+├── context/
+│   └── BaseContext           # Base interface for DurableContext
 │
 ├── execution/
 │   ├── ExecutionManager     # Central coordinator
@@ -254,6 +326,8 @@ software.amazon.lambda.durable
 │   ├── RetryStrategies      # Presets
 │   ├── RetryDecision        # shouldRetry + delay
 │   ├── JitterStrategy       # Jitter options
+│   ├── PollingStrategy      # Backend polling interface
+│   ├── PollingStrategies    # Backend polling presets
 │   ├── WaitForConditionWaitStrategy  # Polling delay interface
 │   └── WaitStrategies       # Polling strategy factory + Presets
 │
@@ -262,9 +336,15 @@ software.amazon.lambda.durable
 │   └── LambdaDurableFunctionsClient  # AWS SDK impl
 │
 ├── model/
-│   ├── DurableExecutionInput   # Lambda input
-│   ├── DurableExecutionOutput  # Lambda output
-│   └── ExecutionStatus         # SUCCEEDED/PENDING/FAILED
+│   ├── DurableExecutionInput    # Lambda input
+│   ├── DurableExecutionOutput   # Lambda output
+│   ├── ExecutionStatus          # SUCCEEDED/PENDING/FAILED
+│   ├── MapResult<T>             # Map operation result container
+│   ├── MapResult.MapResultItem<T>  # Per-item result (status, result, error)
+│   ├── MapResult.MapError       # Serializable error details
+│   ├── ParallelResult           # Parallel operation summary
+│   ├── ConcurrencyCompletionStatus  # ALL_COMPLETED/MIN_SUCCESSFUL_REACHED/FAILURE_TOLERANCE_EXCEEDED
+│   └── WaitForConditionResult<T>    # Check function return type (value + isDone)
 │
 ├── serde/
 │   ├── SerDes              # Interface
@@ -273,10 +353,25 @@ software.amazon.lambda.durable
 │
 └── exception/
     ├── DurableExecutionException
+    ├── UnrecoverableDurableExecutionException
     ├── NonDeterministicExecutionException
+    ├── IllegalDurableOperationException
+    ├── DurableOperationException
+    ├── StepException
     ├── StepFailedException
     ├── StepInterruptedException
-    ├── WaitForConditionException
+    ├── InvokeException
+    ├── InvokeFailedException
+    ├── InvokeTimedOutException
+    ├── InvokeStoppedException
+    ├── CallbackException
+    ├── CallbackFailedException
+    ├── CallbackTimeoutException
+    ├── CallbackSubmitterException
+    ├── WaitForConditionFailedException
+    ├── ChildContextFailedException
+    ├── MapIterationFailedException
+    ├── ParallelBranchFailedException
     └── SerDesException
 ```
 
@@ -294,13 +389,13 @@ sequenceDiagram
     participant EM as ExecutionManager
     participant Backend
 
-    UC->>DC: step("name", Type.class, func)
+    UC->>DC: step("name", Type.class, stepCtx -> doWork())
     DC->>SO: new StepOperation(...)
     DC->>SO: execute()
     SO->>EM: sendOperationUpdate(START)
     EM->>Backend: checkpoint(START)
     
-    SO->>SO: func.get() [execute user code]
+    SO->>SO: func.apply(stepContext) [execute user code]
     
     SO->>EM: sendOperationUpdate(SUCCEED)
     EM->>Backend: checkpoint(SUCCEED)
@@ -367,21 +462,46 @@ sequenceDiagram
 
 ```
 DurableExecutionException (base)
-├── StepFailedException          # Step failed after all retries
-├── StepInterruptedException     # Step interrupted (AT_MOST_ONCE)
-├── WaitForConditionException    # Polling exceeded max attempts
-├── NonDeterministicExecutionException  # Replay mismatch
-└── SerDesException              # Serialization error
+├── SerDesException                        # Serialization error
+├── UnrecoverableDurableExecutionException # Execution cannot be recovered
+│   ├── NonDeterministicExecutionException # Replay mismatch
+│   └── IllegalDurableOperationException   # Illegal operation detected
+└── DurableOperationException              # Operation-specific error
+    ├── StepException                      # Step operation base
+    │   ├── StepFailedException            # Step failed after all retries
+    │   └── StepInterruptedException       # Step interrupted (AT_MOST_ONCE)
+    ├── InvokeException                    # Invoke operation base
+    │   ├── InvokeFailedException          # Invoked function returned error
+    │   ├── InvokeTimedOutException        # Invoke exceeded timeout
+    │   └── InvokeStoppedException         # Invoke stopped before completion
+    ├── CallbackException                  # Callback operation base
+    │   ├── CallbackFailedException        # External system sent error
+    │   ├── CallbackTimeoutException       # Callback exceeded timeout
+    │   └── CallbackSubmitterException     # Submitter step failed
+    ├── WaitForConditionFailedException    # Polling exceeded max attempts or failed
+    ├── ChildContextFailedException        # Child context failed (original exception not reconstructable)
+    ├── MapIterationFailedException        # Map iteration failed (original exception not reconstructable)
+    └── ParallelBranchFailedException      # Parallel branch failed (original exception not reconstructable)
 
-SuspendExecutionException        # Internal: triggers suspension (not user-facing)
+SuspendExecutionException                  # Internal: triggers suspension (not user-facing)
 ```
 
 | Exception | Trigger | Recovery |
 |-----------|---------|----------|
 | `StepFailedException` | Step throws after exhausting retries | Catch in handler or let fail |
 | `StepInterruptedException` | AT_MOST_ONCE step interrupted mid-execution | Treat as failure |
-| `WaitForConditionException` | waitForCondition exceeded max polling attempts | Catch in handler or let fail |
+| `InvokeFailedException` | Invoked function returned an error | Catch in handler or let fail |
+| `InvokeTimedOutException` | Invoke exceeded its timeout | Catch in handler or let fail |
+| `InvokeStoppedException` | Invoke stopped before completion | Catch in handler or let fail |
+| `CallbackFailedException` | External system sent an error response | Catch in handler or let fail |
+| `CallbackTimeoutException` | Callback exceeded its timeout | Catch in handler or let fail |
+| `CallbackSubmitterException` | Submitter step failed to submit callback | Catch in handler or let fail |
+| `WaitForConditionFailedException` | waitForCondition exceeded max polling attempts or check function threw | Catch in handler or let fail |
+| `ChildContextFailedException` | Child context failed and original exception not reconstructable | Catch in handler or let fail |
+| `MapIterationFailedException` | Map iteration failed and original exception not reconstructable | Catch in handler or let fail |
+| `ParallelBranchFailedException` | Parallel branch failed and original exception not reconstructable | Catch in handler or let fail |
 | `NonDeterministicExecutionException` | Replay finds different operation than expected | Bug in handler (non-deterministic code) |
+| `IllegalDurableOperationException` | Illegal operation detected | Bug in handler |
 | `SerDesException` | Jackson fails to serialize/deserialize | Fix data model or custom SerDes |
 
 ---
@@ -446,7 +566,7 @@ If result > 6MB Lambda limit:
 
 Multiple concurrent operations may checkpoint simultaneously. `CheckpointBatcher` batches these into single API calls to reduce latency and stay within the 750KB request limit.
 
-Currently uses micro-batching: batches only what accumulates during the polling thread scheduling overhead. Early tests suggest this window may be too short for effective batching—an artificial delay might need to be introduced.
+The `checkpointDelay` configuration option (default: 0) controls how long the batcher waits before flushing, allowing more operations to accumulate in a single batch. For functions with many concurrent operations, setting a small delay (e.g., 10ms) can significantly reduce the number of API calls.
 
 ```
 StepOperation 1 ──┐
