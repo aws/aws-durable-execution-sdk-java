@@ -45,7 +45,7 @@ var waitForCallbackConfig = WaitForCallbackConfig.builder()
     .callbackConfig(config)
     .stepConfig(StepConfig.builder().retryStrategy(...).build())
     .build();
-ctx.waitForCallback("approval", String.class, callbackId -> sendApprovalRequest(callbackId), waitForCallbackConfig);
+ctx.waitForCallback("approval", String.class, (callbackId, stepCtx) -> sendApprovalRequest(callbackId), waitForCallbackConfig);
 ```
 
 | Option | Description |

@@ -9,8 +9,7 @@ var result = ctx.invoke("invoke-function",
 				Result.class, 
 				InvokeConfig.builder()
 						.payloadSerDes(...)  // payload serializer
-						.resultSerDes(...)   // result deserializer
-						.timeout(Duration.of(...))  // wait timeout
+						.serDes(...)         // result deserializer
 						.tenantId(...)       // Lambda tenantId
 						.build()
 		);

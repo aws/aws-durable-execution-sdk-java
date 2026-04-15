@@ -119,4 +119,4 @@ var orderMap = ctx.step("fetch-orders", new TypeToken<Map<String, Order>>() {},
 	stepCtx -> orderService.getOrdersByCustomer());
 ```
 
-This is needed for the SDK to deserialize a checkpointed result and get the exact type to reconstruct. See [TypeToken and Type Erasure](docs/internal-design.md#typetoken-and-type-erasure) for technical details. 
+This is needed for the SDK to deserialize a checkpointed result and get the exact type to reconstruct. See [TypeToken and Type Erasure](../design.md#custom-serdes-and-typetoken) for technical details. 
