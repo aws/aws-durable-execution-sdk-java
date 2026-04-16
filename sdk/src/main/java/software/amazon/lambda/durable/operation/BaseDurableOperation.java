@@ -204,7 +204,7 @@ public abstract class BaseDurableOperation {
                 // strictly before the execution thread (Step or child context) is deregistered.
                 // chain them together
                 future = completionFuture.thenRun(() -> {
-                    logger.warn(
+                    logger.trace(
                             "registering thread {} when operation {} ({}) completed ({})",
                             threadContext.threadId(),
                             getOperation(),
