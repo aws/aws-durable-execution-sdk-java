@@ -1044,7 +1044,7 @@ class ParallelIntegrationTest {
             var config = ParallelConfig.builder()
                     .completionConfig(CompletionConfig.firstSuccessful())
                     .build();
-            var parallel = context.parallel("first-successful", config);
+            ParallelDurableFuture parallel = context.parallel("first-successful", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b", "c")) {
