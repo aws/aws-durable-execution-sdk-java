@@ -67,7 +67,7 @@ jobs:
         run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: sam build
         run: | # add --no-cached  if debugging sam build
-          sam build --parameter-overrides \
+          sam build --debug --parameter-overrides \
             'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }}'
         working-directory: ./examples
       - name: sam deploy
