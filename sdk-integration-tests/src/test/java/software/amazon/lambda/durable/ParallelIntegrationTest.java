@@ -1057,7 +1057,8 @@ class ParallelIntegrationTest {
             assertTrue(result.completionStatus().isSucceeded());
             // todo: the result is constructed when handling parallel completion,
             // which might be earlier than the last branch is added.
-            assertTrue(3 >= result.size());
+            assertTrue(result.size() <= 3);
+            assertTrue(result.succeeded() <= result.size());
             assertTrue(1 <= result.succeeded());
 
             return "done";
