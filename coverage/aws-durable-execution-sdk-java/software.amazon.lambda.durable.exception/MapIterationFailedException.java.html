@@ -16,8 +16,8 @@ public class MapIterationFailedException extends DurableOperationException {
     }
 
     private static String formatMessage(ErrorObject errorObject) {
-<span class="pc bpc" id="L19" title="1 of 2 branches missed.">        if (errorObject == null) {</span>
-<span class="nc" id="L20">            return &quot;Map iteration failed without an error&quot;;</span>
+<span class="fc bfc" id="L19" title="All 2 branches covered.">        if (errorObject == null) {</span>
+<span class="fc" id="L20">            return &quot;Map iteration failed without an error&quot;;</span>
         }
 <span class="fc" id="L22">        return String.format(</span>
                 &quot;Map iteration failed with error of type %s. Message: %s&quot;,
