@@ -255,7 +255,10 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             future = CompletableFuture.anyOf(futures.toArray(CompletableFuture[]::new));
             // skip deregistering the current thread if there is more completed future to process
             if (!future.isDone()) {
-                future.thenRun(() -> registerActiveThread(threadContext.threadId()));
+                future = future.thenApply(o -> {
+                    registerActiveThread(threadContext.threadId());
+                    return o;
+                });
                 // Deregister the current thread to allow suspension
                 executionManager.deregisterActiveThread(threadContext.threadId());
             }

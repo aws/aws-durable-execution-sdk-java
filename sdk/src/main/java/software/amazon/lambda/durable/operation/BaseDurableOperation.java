@@ -182,6 +182,7 @@ public abstract class BaseDurableOperation {
         validateCurrentThreadType();
 
         var threadContext = getCurrentThreadContext();
+        CompletableFuture<?> future = completionFuture;
 
         // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
         // completionFuture is completed by a user thread (a step or child context thread) when the execution here
@@ -201,7 +202,17 @@ public abstract class BaseDurableOperation {
                 // Add a completion stage to completionFuture so that when the completionFuture is completed,
                 // it will register the current Context thread synchronously to make sure it is always registered
                 // strictly before the execution thread (Step or child context) is deregistered.
-                completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
+                // chain them together
+                future = completionFuture.thenRun(() -> {
+                    logger.warn(
+                            "registering thread {} when operation {} ({}) completed ({})",
+                            threadContext.threadId(),
+                            getOperation(),
+                            getType(),
+                            completionFuture);
+
+                    registerActiveThread(threadContext.threadId());
+                });
 
                 // Deregister the current thread to allow suspension
                 executionManager.deregisterActiveThread(threadContext.threadId());
@@ -210,7 +221,7 @@ public abstract class BaseDurableOperation {
 
         // Block until operation completes. No-op if the future is already completed.
         try {
-            completionFuture.join();
+            future.join();
         } catch (Throwable throwable) {
             ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
         }
@@ -243,6 +254,7 @@ public abstract class BaseDurableOperation {
             } finally {
                 if (operationId != null) {
                     try {
+                        logger.trace("deregistering thread {} after running user handler {}", operationId, getName());
                         // if this is a child context or a step context, we need to
                         // deregister the context's thread from the execution manager
                         executionManager.deregisterActiveThread(operationId);
@@ -271,6 +283,7 @@ public abstract class BaseDurableOperation {
         // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
         //    the child context know which context they belong to.
         // registerActiveThread is idempotent (no-op if already registered).
+        logger.trace("registering thread {} before running user handler {}", operationId, getName());
         registerActiveThread(operationId);
 
         runningUserHandler.set(CompletableFuture.runAsync(
