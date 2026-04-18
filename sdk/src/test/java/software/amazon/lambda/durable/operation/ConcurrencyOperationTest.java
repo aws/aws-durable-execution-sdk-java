@@ -22,6 +22,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
@@ -63,7 +64,8 @@ class ConcurrencyOperationTest {
                 .thenReturn(DurableConfig.builder()
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
-        when(durableContext.createChildContext(anyString(), anyString())).thenReturn(childContext);
+        when(durableContext.createChildContext(anyString(), anyString(), anyBoolean()))
+                .thenReturn(childContext);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         // All child operations are NOT in replay
         when(executionManager.getOperationAndUpdateReplayState(anyString())).thenReturn(null);
@@ -214,7 +216,8 @@ class ConcurrencyOperationTest {
                     durableContext,
                     maxConcurrency,
                     completionConfig.minSuccessful(),
-                    completionConfig.toleratedFailureCount());
+                    completionConfig.toleratedFailureCount(),
+                    NestingType.NESTED);
         }
 
         @Override

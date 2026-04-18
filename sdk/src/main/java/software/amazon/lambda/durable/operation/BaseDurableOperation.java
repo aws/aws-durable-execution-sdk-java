@@ -49,8 +49,16 @@ public abstract class BaseDurableOperation {
     protected final ExecutionManager executionManager;
     protected final CompletableFuture<BaseDurableOperation> completionFuture;
     protected final BaseDurableOperation parentOperation;
+    protected final boolean isVirtual;
     private final DurableContextImpl durableContext;
     private final AtomicReference<CompletableFuture<Void>> runningUserHandler = new AtomicReference<>(null);
+
+    protected BaseDurableOperation(
+            OperationIdentifier operationIdentifier,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation) {
+        this(operationIdentifier, durableContext, parentOperation, false);
+    }
 
     /**
      * Constructs a new durable operation.
@@ -62,11 +70,13 @@ public abstract class BaseDurableOperation {
     protected BaseDurableOperation(
             OperationIdentifier operationIdentifier,
             DurableContextImpl durableContext,
-            BaseDurableOperation parentOperation) {
+            BaseDurableOperation parentOperation,
+            boolean isVirtual) {
         this.operationIdentifier = operationIdentifier;
         this.parentOperation = parentOperation;
         this.durableContext = durableContext;
         this.executionManager = durableContext.getExecutionManager();
+        this.isVirtual = isVirtual;
 
         this.completionFuture = new CompletableFuture<>();
 
@@ -108,16 +118,21 @@ public abstract class BaseDurableOperation {
      * otherwise starts fresh execution.
      */
     public void execute() {
-        var existing = getOperation();
-
-        if (existing != null) {
-            validateReplay(existing);
-            replay(existing);
-        } else {
-            if (durableContext.isReplaying()) {
-                this.durableContext.setExecutionMode();
-            }
+        if (isVirtual) {
+            // We never persist virtual operations, so always call start
             start();
+        } else {
+            var existing = getOperation();
+
+            if (existing != null) {
+                validateReplay(existing);
+                replay(existing);
+            } else {
+                if (durableContext.isReplaying()) {
+                    this.durableContext.setExecutionMode();
+                }
+                start();
+            }
         }
     }
 
@@ -191,31 +206,14 @@ public abstract class BaseDurableOperation {
         // must be completed sequentially to avoid race conditions.
         synchronized (parentOperation == null ? completionFuture : parentOperation.completionFuture) {
             if (!isOperationCompleted()) {
-                // Operation not done yet
-                logger.trace(
-                        "deregistering thread {} when waiting for operation {} ({}) to complete ({})",
-                        threadContext.threadId(),
-                        getOperation(),
-                        getType(),
-                        completionFuture);
-
                 // Add a completion stage to completionFuture so that when the completionFuture is completed,
                 // it will register the current Context thread synchronously to make sure it is always registered
                 // strictly before the execution thread (Step or child context) is deregistered.
                 // chain them together
-                future = completionFuture.thenRun(() -> {
-                    logger.trace(
-                            "registering thread {} when operation {} ({}) completed ({})",
-                            threadContext.threadId(),
-                            getOperation(),
-                            getType(),
-                            completionFuture);
-
-                    registerActiveThread(threadContext.threadId());
-                });
+                future = completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
 
                 // Deregister the current thread to allow suspension
-                executionManager.deregisterActiveThread(threadContext.threadId());
+                deregisterActiveThread(threadContext.threadId());
             }
         }
 
@@ -226,13 +224,18 @@ public abstract class BaseDurableOperation {
             ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
         }
 
-        // Get result based on status
-        var op = getOperation();
-        if (op == null) {
-            throw terminateExecutionWithIllegalDurableOperationException(
-                    String.format("%s operation not found: %s", getType(), getOperationId()));
+        if (isVirtual) {
+            // We don't  store virtual operations so they don't corresponding Operation in storage
+            return null;
+        } else {
+            // Get result based on status
+            var op = getOperation();
+            if (op == null) {
+                throw terminateExecutionWithIllegalDurableOperationException(
+                        String.format("%s operation not found: %s", getType(), getOperationId()));
+            }
+            return op;
         }
-        return op;
     }
 
     protected void runUserHandler(Runnable runnable, ThreadType threadType) {
@@ -257,7 +260,7 @@ public abstract class BaseDurableOperation {
                         logger.trace("deregistering thread {} after running user handler {}", operationId, getName());
                         // if this is a child context or a step context, we need to
                         // deregister the context's thread from the execution manager
-                        executionManager.deregisterActiveThread(operationId);
+                        deregisterActiveThread(operationId);
                     } catch (SuspendExecutionException e) {
                         // Expected when this is the last active thread. Must catch here because:
                         // 1/ This runs in a worker thread detached from handlerFuture
@@ -283,7 +286,6 @@ public abstract class BaseDurableOperation {
         // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
         //    the child context know which context they belong to.
         // registerActiveThread is idempotent (no-op if already registered).
-        logger.trace("registering thread {} before running user handler {}", operationId, getName());
         registerActiveThread(operationId);
 
         runningUserHandler.set(CompletableFuture.runAsync(
@@ -354,7 +356,25 @@ public abstract class BaseDurableOperation {
      * @param threadId the thread identifier to register
      */
     protected void registerActiveThread(String threadId) {
+        logger.trace(
+                "registering thread {} when operation {} ({}) completed ({})",
+                threadId,
+                getOperation(),
+                getType(),
+                completionFuture);
         executionManager.registerActiveThread(threadId);
+    }
+
+    protected void deregisterActiveThread(String threadId) {
+        // Operation not done yet
+        logger.trace(
+                "deregistering thread {} when waiting for operation {} ({}) to complete ({})",
+                getCurrentThreadContext().threadId(),
+                getOperation(),
+                getType(),
+                completionFuture);
+
+        executionManager.deregisterActiveThread(threadId);
     }
 
     /** Returns the current thread's context from the execution manager. */
@@ -385,7 +405,7 @@ public abstract class BaseDurableOperation {
     /** Sends an operation update asynchronously. */
     protected CompletableFuture<Void> sendOperationUpdateAsync(OperationUpdate.Builder builder) {
         var updateBuilder =
-                builder.id(getOperationId()).name(getName()).type(getType()).parentId(durableContext.getContextId());
+                builder.id(getOperationId()).name(getName()).type(getType()).parentId(durableContext.getParentId());
         if (getSubType() != null) {
             updateBuilder.subType(getSubType().getValue());
         }

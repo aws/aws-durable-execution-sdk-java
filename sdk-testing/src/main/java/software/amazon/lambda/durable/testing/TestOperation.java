@@ -41,6 +41,11 @@ public class TestOperation {
         return List.copyOf(events);
     }
 
+    /** Returns the operation ID. */
+    public String getId() {
+        return operation.id();
+    }
+
     /** Returns the operation name. */
     public String getName() {
         return operation.name();

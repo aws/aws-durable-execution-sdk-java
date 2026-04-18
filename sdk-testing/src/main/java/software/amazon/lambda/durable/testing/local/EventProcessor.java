@@ -20,7 +20,8 @@ class EventProcessor {
                 .eventId(eventId.getAndIncrement())
                 .eventTimestamp(Instant.now())
                 .id(update.id())
-                .name(update.name());
+                .name(update.name())
+                .parentId(operation.parentId());
 
         Event event =
                 switch (update.type()) {

@@ -57,6 +57,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     private static final int MAX_WAIT_FOR_CALLBACK_NAME_LENGTH = ParameterValidator.MAX_OPERATION_NAME_LENGTH
             - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());
     private final OperationIdGenerator operationIdGenerator;
+    private final DurableContextImpl parentContext;
+    private final boolean isVirtual;
     private volatile DurableLogger logger;
 
     /** Shared initialization — sets all fields. */
@@ -65,9 +67,13 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             DurableConfig durableConfig,
             Context lambdaContext,
             String contextId,
-            String contextName) {
+            String contextName,
+            boolean isVirtual,
+            DurableContextImpl parentContext) {
         super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);
         operationIdGenerator = new OperationIdGenerator(contextId);
+        this.parentContext = parentContext;
+        this.isVirtual = isVirtual;
     }
 
     /**
@@ -82,7 +88,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      */
     public static DurableContextImpl createRootContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
-        return new DurableContextImpl(executionManager, durableConfig, lambdaContext, null, null);
+        return new DurableContextImpl(executionManager, durableConfig, lambdaContext, null, null, false, null);
     }
 
     /**
@@ -90,11 +96,18 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      *
      * @param childContextId the child context's ID (the CONTEXT operation's operation ID)
      * @param childContextName the name of the child context
+     * @param isVirtual whether the context is virtual
      * @return a new DurableContext for the child context
      */
-    public DurableContextImpl createChildContext(String childContextId, String childContextName) {
+    public DurableContextImpl createChildContext(String childContextId, String childContextName, boolean isVirtual) {
         return new DurableContextImpl(
-                getExecutionManager(), getDurableConfig(), getLambdaContext(), childContextId, childContextName);
+                getExecutionManager(),
+                getDurableConfig(),
+                getLambdaContext(),
+                childContextId,
+                childContextName,
+                isVirtual,
+                this);
     }
 
     /**
@@ -386,5 +399,14 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      */
     private String nextOperationId() {
         return operationIdGenerator.nextOperationId();
+    }
+
+    /**
+     * Get the parent context ID for its child operations, which always points to a non-virtual context
+     *
+     * @return the parent of this context if virtual, otherwise this context id
+     */
+    public String getParentId() {
+        return isVirtual ? parentContext.getContextId() : getContextId();
     }
 }

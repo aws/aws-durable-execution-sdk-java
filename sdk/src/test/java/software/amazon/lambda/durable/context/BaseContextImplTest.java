@@ -68,6 +68,6 @@ class BaseContextImplTest {
                 executionManager, DurableConfig.builder().build(), null);
 
         // createChildContext (setCurrentThreadContext=true) should overwrite with child's context
-        rootContext.createChildContext("child-id", "child-name");
+        rootContext.createChildContext("child-id", "child-name", false);
     }
 }

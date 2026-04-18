@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -58,6 +59,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     private final Integer toleratedFailureCount;
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
+    private final NestingType nestingType;
 
     // access by context thread only
     private final List<ChildContextOperation<?>> branches = Collections.synchronizedList(new ArrayList<>());
@@ -78,14 +80,17 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             DurableContextImpl durableContext,
             int maxConcurrency,
             Integer minSuccessful,
-            Integer toleratedFailureCount) {
+            Integer toleratedFailureCount,
+            NestingType nestingType) {
         super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.maxConcurrency = maxConcurrency;
         this.minSuccessful = minSuccessful;
         this.toleratedFailureCount = toleratedFailureCount;
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
-        this.rootContext = durableContext.createChildContext(getOperationId(), getName());
+        // root context of the concurrency operation is always non-virtual
+        this.rootContext = durableContext.createChildContext(getOperationId(), getName(), false);
         this.consumerThreadListener = new AtomicReference<>(new CompletableFuture<>());
+        this.nestingType = nestingType;
     }
 
     // ========== Template methods for subclasses ==========
@@ -98,7 +103,6 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
      * @param function the user function to execute
      * @param resultType the result type token
      * @param branchSubType the sub-type of the branch operation
-     * @param parentContext the parent durable context
      * @param <R> the result type of the child operation
      * @return a new ChildContextOperation
      */
@@ -108,14 +112,14 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             Function<DurableContext, R> function,
             TypeToken<R> resultType,
             SerDes serDes,
-            OperationSubType branchSubType,
-            DurableContextImpl parentContext) {
+            OperationSubType branchSubType) {
         return new ChildContextOperation<>(
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, branchSubType),
                 function,
                 resultType,
                 RunInChildContextConfig.builder().serDes(serDes).build(),
-                parentContext,
+                rootContext,
+                nestingType == NestingType.FLAT,
                 this);
     }
 
@@ -136,7 +140,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             SerDes serDes,
             OperationSubType branchSubType) {
         var operationId = this.operationIdGenerator.nextOperationId();
-        var childOp = createItem(operationId, name, function, resultType, serDes, branchSubType, this.rootContext);
+        var childOp = createItem(operationId, name, function, resultType, serDes, branchSubType);
         branches.add(childOp);
         pendingQueue.add(childOp);
         logger.debug("Item enqueued {}", name);
@@ -260,7 +264,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                     return o;
                 });
                 // Deregister the current thread to allow suspension
-                executionManager.deregisterActiveThread(threadContext.threadId());
+                deregisterActiveThread(threadContext.threadId());
             }
         }
         try {

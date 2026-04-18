@@ -6,7 +6,9 @@ import static software.amazon.lambda.durable.execution.ExecutionManager.isTermin
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -30,6 +32,7 @@ import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.DeserializedOperationResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -49,7 +52,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     private final Function<DurableContext, T> function;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
-    private T reconstructedResult;
+    private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
 
     public ChildContextOperation(
             OperationIdentifier operationIdentifier,
@@ -57,7 +60,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             RunInChildContextConfig config,
             DurableContextImpl durableContext) {
-        this(operationIdentifier, function, resultTypeToken, config, durableContext, null);
+        this(operationIdentifier, function, resultTypeToken, config, durableContext, false, null);
     }
 
     public ChildContextOperation(
@@ -66,8 +69,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             RunInChildContextConfig config,
             DurableContextImpl durableContext,
+            boolean isVirtual,
             ConcurrencyOperation<?> parentOperation) {
-        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext, parentOperation);
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext, parentOperation, isVirtual);
         this.function = function;
     }
 
@@ -75,7 +79,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     @Override
     protected void start() {
         // First execution: fire-and-forget START checkpoint, then run
-        sendOperationUpdateAsync(OperationUpdate.builder().action(OperationAction.START));
+        if (!isVirtual) {
+            sendOperationUpdateAsync(OperationUpdate.builder().action(OperationAction.START));
+        }
         executeChildContext();
     }
 
@@ -117,7 +123,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // When this child is part of a ConcurrencyOperation (parentOperation != null),
             // we notify the parent BEFORE closing the child context. This ensures the parent
             // can trigger the next queued branch while the current child context is still valid.
-            try (var childContext = getContext().createChildContext(contextId, getName())) {
+            try (var childContext = getContext().createChildContext(contextId, getName(), isVirtual)) {
                 try {
                     T result = function.apply(childContext);
 
@@ -133,10 +139,14 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextSuccess(T result) {
-        if (replayChildren.get()) {
-            // Replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
+        if (replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted()) {
+            // Skip checkpointing if
+            // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes
+            // after the parent has already completed.
+            // - replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
+            // - nestingType is FLAT
             // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
-            this.reconstructedResult = result;
+            cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
             markAlreadyCompleted();
         } else {
             checkpointSuccess(result);
@@ -144,12 +154,6 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void checkpointSuccess(T result) {
-        // Skip checkpointing if parent ConcurrencyOperation has already completed —
-        // prevents race conditions where a child finishes after the parent has already completed.
-        if (parentOperation != null && parentOperation.isOperationCompleted()) {
-            return;
-        }
-
         var serialized = serializeResult(result);
 
         if (serialized == null || serialized.getBytes(StandardCharsets.UTF_8).length < LARGE_RESULT_THRESHOLD) {
@@ -158,7 +162,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         } else {
             // Large result: checkpoint with empty payload + ReplayChildren flag.
             // Store the result so get() can return it directly without deserializing the empty payload.
-            this.reconstructedResult = result;
+            cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .payload("")
@@ -178,17 +182,23 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             throw terminateExecution(unrecoverableDurableExecutionException);
         }
 
-        // Skip checkpointing if parent ConcurrencyOperation has already completed —
-        // prevents race conditions where a child finishes after the parent has already succeeded.
-        if (parentOperation != null && parentOperation.isOperationCompleted()) {
-            return;
-        }
-
         final ErrorObject errorObject;
         if (exception instanceof DurableOperationException opEx) {
             errorObject = opEx.getErrorObject();
         } else {
             errorObject = serializeException(exception);
+        }
+
+        var op = createVirtualOperation(errorObject);
+        cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
+
+        // Skip checkpointing if
+        // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes after
+        // the parent has already succeeded.
+        // - this child is not a direct child of a parent context (i.e. nestingType == FLAT), such as a parallel branch.
+        if ((parentOperation != null && parentOperation.isOperationCompleted()) || isVirtual) {
+            markAlreadyCompleted();
+            return;
         }
 
         sendOperationUpdate(
@@ -198,11 +208,12 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     @Override
     public T get() {
         var op = waitForOperationCompletion();
+        if (cachedOperationResult.get() != null) {
+            // we have a result, just return it directly
+            return cachedOperationResult.get().get();
+        }
 
         if (op.status() == OperationStatus.SUCCEEDED) {
-            if (reconstructedResult != null) {
-                return reconstructedResult;
-            }
             var contextDetails = op.contextDetails();
             var result = (contextDetails != null) ? contextDetails.result() : null;
             return deserializeResult(result);
@@ -210,27 +221,41 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             var contextDetails = op.contextDetails();
             var errorObject = (contextDetails != null) ? contextDetails.error() : null;
 
-            // Attempt to reconstruct and throw the original exception
-            Throwable original = deserializeException(errorObject);
-            if (original != null) {
-                ExceptionHelper.sneakyThrow(original);
-            }
-
-            // throw a general failed exception if a user exception is not reconstructed
-            return switch (getSubType()) {
-                case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure();
-                case MAP_ITERATION -> throw new MapIterationFailedException(op);
-                case PARALLEL_BRANCH -> throw new ParallelBranchFailedException(op);
-                case RUN_IN_CHILD_CONTEXT -> throw new ChildContextFailedException(op);
-
-                // the following subtypes should not be able to reach here
-                case PARALLEL, MAP, WAIT_FOR_CONDITION ->
-                    throw new IllegalStateException("Unexpected sub-type: " + getSubType());
-            };
+            ExceptionHelper.sneakyThrow(translateException(op, errorObject));
+            return null;
         }
     }
 
-    private T handleWaitForCallbackFailure() {
+    private Throwable translateException(Operation op, ErrorObject errorObject) {
+        // Attempt to reconstruct and throw the original exception
+        Throwable original = deserializeException(errorObject);
+        if (original != null) {
+            return original;
+        }
+
+        // throw a general failed exception if a user exception is not reconstructed
+        return switch (getSubType()) {
+            case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure();
+            case MAP_ITERATION -> new MapIterationFailedException(op);
+            case PARALLEL_BRANCH -> new ParallelBranchFailedException(op);
+            case RUN_IN_CHILD_CONTEXT -> new ChildContextFailedException(op);
+
+            // the following subtypes should not be able to reach here
+            case PARALLEL, MAP, WAIT_FOR_CONDITION -> new IllegalStateException("Unexpected sub-type: " + getSubType());
+        };
+    }
+
+    private Operation createVirtualOperation(ErrorObject errorObject) {
+        return Operation.builder()
+                .id(getOperationId())
+                .name(getName())
+                .type(OperationType.CONTEXT)
+                .status(OperationStatus.FAILED)
+                .contextDetails(ContextDetails.builder().error(errorObject).build())
+                .build();
+    }
+
+    private Throwable handleWaitForCallbackFailure() {
         var childrenOps = getChildOperations();
         var callbackOp = childrenOps.stream()
                 .filter(o -> o.type() == OperationType.CALLBACK)
@@ -244,8 +269,12 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // if callback failed
             if (isTerminalStatus(callbackOp.status())) {
                 switch (callbackOp.status()) {
-                    case FAILED -> throw new CallbackFailedException(callbackOp);
-                    case TIMED_OUT -> throw new CallbackTimeoutException(callbackOp);
+                    case FAILED -> {
+                        return new CallbackFailedException(callbackOp);
+                    }
+                    case TIMED_OUT -> {
+                        return new CallbackTimeoutException(callbackOp);
+                    }
                 }
             }
 
@@ -255,13 +284,13 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                     && submitterOp.status() != OperationStatus.SUCCEEDED) {
                 var stepError = submitterOp.stepDetails().error();
                 if (StepInterruptedException.isStepInterruptedException(stepError)) {
-                    throw new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));
+                    return new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));
                 } else {
-                    throw new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));
+                    return new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));
                 }
             }
         }
 
-        throw new IllegalStateException("Unknown waitForCallback status");
+        return new IllegalStateException("Unknown waitForCallback status");
     }
 }

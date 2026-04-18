@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import java.util.Objects;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -13,11 +14,12 @@ public class MapConfig {
     private final Integer maxConcurrency;
     private final CompletionConfig completionConfig;
     private final SerDes serDes;
+    private final NestingType nestingType;
 
     private MapConfig(Builder builder) {
-        this.maxConcurrency = builder.maxConcurrency == null ? Integer.MAX_VALUE : builder.maxConcurrency;
-        this.completionConfig =
-                builder.completionConfig == null ? CompletionConfig.allCompleted() : builder.completionConfig;
+        this.maxConcurrency = Objects.requireNonNullElse(builder.maxConcurrency, Integer.MAX_VALUE);
+        this.completionConfig = Objects.requireNonNullElse(builder.completionConfig, CompletionConfig.allCompleted());
+        this.nestingType = Objects.requireNonNullElse(builder.nestingType, NestingType.NESTED);
         this.serDes = builder.serDes;
     }
 
@@ -36,25 +38,31 @@ public class MapConfig {
         return serDes;
     }
 
+    /** @return nesting type, defaults to {@link NestingType#NESTED} */
+    public NestingType nestingType() {
+        return nestingType;
+    }
+
     public static Builder builder() {
-        return new Builder(null, null, null);
+        return new Builder();
     }
 
     public Builder toBuilder() {
-        return new Builder(maxConcurrency, completionConfig, serDes);
+        return new Builder()
+                .maxConcurrency(maxConcurrency)
+                .completionConfig(completionConfig)
+                .serDes(serDes)
+                .nestingType(nestingType);
     }
 
     /** Builder for creating MapConfig instances. */
     public static class Builder {
+        public NestingType nestingType;
         private Integer maxConcurrency;
         private CompletionConfig completionConfig;
         private SerDes serDes;
 
-        private Builder(Integer maxConcurrency, CompletionConfig completionConfig, SerDes serDes) {
-            this.maxConcurrency = maxConcurrency;
-            this.completionConfig = completionConfig;
-            this.serDes = serDes;
-        }
+        private Builder() {}
 
         public Builder maxConcurrency(Integer maxConcurrency) {
             if (maxConcurrency != null && maxConcurrency < 1) {
@@ -83,6 +91,17 @@ public class MapConfig {
          */
         public Builder serDes(SerDes serDes) {
             this.serDes = serDes;
+            return this;
+        }
+
+        /**
+         * Sets the nesting type for the map operation.
+         *
+         * @param nestingType the nesting type (default: {@link NestingType#NESTED})
+         * @return this builder for method chaining
+         */
+        public Builder nestingType(NestingType nestingType) {
+            this.nestingType = nestingType;
             return this;
         }
 

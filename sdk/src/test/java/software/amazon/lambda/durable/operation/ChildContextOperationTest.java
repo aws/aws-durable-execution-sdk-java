@@ -74,6 +74,7 @@ class ChildContextOperationTest {
                 TypeToken.get(String.class),
                 RunInChildContextConfig.builder().serDes(SERDES).build(),
                 durableContext,
+                false,
                 parent);
     }
 

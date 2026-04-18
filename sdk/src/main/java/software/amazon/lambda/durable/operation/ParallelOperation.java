@@ -61,7 +61,8 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 durableContext,
                 config.maxConcurrency(),
                 config.completionConfig().minSuccessful(),
-                config.completionConfig().toleratedFailureCount());
+                config.completionConfig().toleratedFailureCount(),
+                config.nestingType());
     }
 
     @Override
