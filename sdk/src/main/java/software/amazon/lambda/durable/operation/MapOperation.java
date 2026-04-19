@@ -185,6 +185,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
 
         this.cachedResult = new MapResult<>(resultItems, concurrencyCompletionStatus);
+        // avoid checkpointing because the operation has succeeded and the children are replayed for large result
         if (replayForLargeResult.get()) {
             markAlreadyCompleted();
             return;
