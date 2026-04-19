@@ -862,12 +862,14 @@ class MapIntegrationTest {
 
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        assertEquals(202, result1.getHistoryEvents().size());
         var firstRunCount = executionCount.get();
         assertTrue(firstRunCount >= 100);
 
         // Replay — large result path: replayChildren=true, children replay from cache
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals(202, result2.getHistoryEvents().size());
         assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
     }
 

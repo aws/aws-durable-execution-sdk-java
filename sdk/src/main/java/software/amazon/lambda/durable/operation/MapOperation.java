@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -42,7 +43,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
-    private boolean replayFromPayload;
+    private final AtomicBoolean replayFromPayload = new AtomicBoolean(false);
+    private final AtomicBoolean replayForLargeResult = new AtomicBoolean(false);
     private volatile MapResult<O> cachedResult;
 
     public MapOperation(
@@ -133,10 +135,11 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 if (existing.contextDetails() != null
                         && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute children to reconstruct MapResult
+                    replayForLargeResult.set(true);
                     executeItems();
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
-                    replayFromPayload = true;
+                    replayFromPayload.set(true);
                     markAlreadyCompleted();
                 }
             }
@@ -181,6 +184,10 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
 
         this.cachedResult = new MapResult<>(resultItems, concurrencyCompletionStatus);
+        if (replayForLargeResult.get()) {
+            markAlreadyCompleted();
+            return;
+        }
         var serialized = serializeResult(cachedResult);
         var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
@@ -205,7 +212,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         if (items.isEmpty()) {
             return MapResult.empty();
         }
-        if (replayFromPayload) {
+        if (replayFromPayload.get()) {
             // Small result replay: deserialize MapResult directly from checkpoint payload
             var op = waitForOperationCompletion();
             var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;
