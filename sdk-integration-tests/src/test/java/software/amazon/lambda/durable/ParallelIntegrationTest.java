@@ -150,7 +150,10 @@ class ParallelIntegrationTest {
         var currentConcurrency = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().maxConcurrency(1).nestingType(nestingType).build();
+            var config = ParallelConfig.builder()
+                    .maxConcurrency(1)
+                    .nestingType(nestingType)
+                    .build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("sequential-parallel", config);
 
@@ -186,7 +189,10 @@ class ParallelIntegrationTest {
         var currentConcurrency = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().maxConcurrency(2).nestingType(nestingType).build();
+            var config = ParallelConfig.builder()
+                    .maxConcurrency(2)
+                    .nestingType(nestingType)
+                    .build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("limited-parallel", config);
 
@@ -342,16 +348,18 @@ class ParallelIntegrationTest {
     void testSequentialParallelBlocks(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var futures1 = new ArrayList<DurableFuture<String>>();
-            ParallelDurableFuture parallel1 =
-                    context.parallel("parallel-1", ParallelConfig.builder().nestingType(nestingType).build());
+            ParallelDurableFuture parallel1 = context.parallel(
+                    "parallel-1",
+                    ParallelConfig.builder().nestingType(nestingType).build());
             try (parallel1) {
                 futures1.add(parallel1.branch("branch-a", String.class, ctx -> "A"));
                 futures1.add(parallel1.branch("branch-b", String.class, ctx -> "B"));
             }
 
             var futures2 = new ArrayList<DurableFuture<String>>();
-            ParallelDurableFuture parallel2 =
-                    context.parallel("parallel-2", ParallelConfig.builder().nestingType(nestingType).build());
+            ParallelDurableFuture parallel2 = context.parallel(
+                    "parallel-2",
+                    ParallelConfig.builder().nestingType(nestingType).build());
             try (parallel2) {
                 futures2.add(parallel2.branch("branch-x", String.class, ctx -> "x!"));
                 futures2.add(parallel2.branch("branch-y", String.class, ctx -> "y!"));
@@ -643,7 +651,10 @@ class ParallelIntegrationTest {
         var branchCount = 50;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().maxConcurrency(5).nestingType(nestingType).build();
+            var config = ParallelConfig.builder()
+                    .maxConcurrency(5)
+                    .nestingType(nestingType)
+                    .build();
             var parallel = context.parallel("50-callbacks-limited", config);
 
             try (parallel) {

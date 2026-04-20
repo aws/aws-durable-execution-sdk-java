@@ -364,6 +364,23 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:complex-map-example-${JavaVersion}-runtime"
 
+  ComplexFlatMapExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'complex-flat-map-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.map.ComplexFlatMapExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:complex-flat-map-example-${JavaVersion}-runtime"
+
   WaitForConditionExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -496,6 +513,10 @@ Outputs:
   ComplexMapExampleFunction:
     Description: Complex Map Example Function ARN
     Value: !GetAtt ComplexMapExampleFunction.Arn
+
+  ComplexFlatMapExampleFunction:
+    Description: Complex Flat Map Example Function ARN
+    Value: !GetAtt ComplexFlatMapExampleFunction.Arn
 
   WaitForConditionExampleFunction:
     Description: Wait For Condition Example Function ARN

@@ -6,7 +6,6 @@ import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
@@ -68,8 +67,10 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     @Override
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         var items = getBranches();
-        int succeededCount = Math.toIntExact(items.stream().filter(this::isOperationCompletedSuccessfully).count());
-        int failedCount = Math.toIntExact(items.stream().filter(this::isOperationCompletedExceptionally).count());
+        int succeededCount = Math.toIntExact(
+                items.stream().filter(this::isOperationCompletedSuccessfully).count());
+        int failedCount = Math.toIntExact(
+                items.stream().filter(this::isOperationCompletedExceptionally).count());
         this.cachedResult = new ParallelResult(items.size(), succeededCount, failedCount, concurrencyCompletionStatus);
         if (skipCheckpoint) {
             // Do not send checkpoint during replay
@@ -83,7 +84,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     }
 
     private boolean isOperationCompletedSuccessfully(ChildContextOperation<?> childContextOperation) {
-        if(!childContextOperation.isOperationCompleted()) {
+        if (!childContextOperation.isOperationCompleted()) {
             return false;
         }
         try {
@@ -95,7 +96,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     }
 
     private boolean isOperationCompletedExceptionally(ChildContextOperation<?> childContextOperation) {
-        if(!childContextOperation.isOperationCompleted()) {
+        if (!childContextOperation.isOperationCompleted()) {
             return false;
         }
         try {

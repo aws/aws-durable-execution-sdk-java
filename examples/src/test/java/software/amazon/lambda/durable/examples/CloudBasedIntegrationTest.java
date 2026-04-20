@@ -675,6 +675,25 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
+    void testComplexFlatMapExample() {
+        var runner = CloudDurableTestRunner.create(arn("complex-flat-map-example"), Integer.class, String.class);
+        var result = runner.run(100);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var output = result.getResult();
+        assertNotNull(output);
+
+        // Part 1: Concurrent order processing with step + wait + step
+        assertTrue(output.contains("done:validated:order-1"));
+        assertTrue(output.contains("done:validated:order-2"));
+        assertTrue(output.contains("done:validated:order-100"));
+
+        // Part 2: Early termination — find 2 healthy servers then stop
+        assertTrue(output.contains("healthy"));
+        assertTrue(output.contains("reason=MIN_SUCCESSFUL_REACHED"));
+    }
+
+    @Test
     void testWaitForConditionExample() {
         var runner = CloudDurableTestRunner.create(
                 arn("wait-for-condition-example"), Integer.class, Integer.class, lambdaClient);
