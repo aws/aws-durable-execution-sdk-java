@@ -1151,6 +1151,12 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(events, result.getHistoryEvents().size());
+        if (nestingType == NestingType.FLAT) {
+            assertEquals(2, result.getHistoryEvents().size());
+        } else {
+            // might 4 if only 1 branch completed and at most 8 if all branches completed
+            assertTrue(4 <= result.getHistoryEvents().size());
+            assertTrue(result.getHistoryEvents().size() <= events);
+        }
     }
 }
