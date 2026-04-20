@@ -8,8 +8,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -21,10 +23,11 @@ import software.amazon.lambda.durable.testing.TestOperation;
 
 class ParallelIntegrationTest {
 
-    @Test
-    void testSimpleParallel() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 8"})
+    void testSimpleParallel(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("process-items", config);
 
@@ -46,12 +49,14 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("A,B,C", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithStepsInsideBranches() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 6", "NESTED, 10"})
+    void testParallelWithStepsInsideBranches(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("parallel-with-steps", config);
 
@@ -72,12 +77,14 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("HELLO WORLD", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelPartialFailure_failedBranchDoesNotPreventOthers() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 8"})
+    void testParallelPartialFailure_failedBranchDoesNotPreventOthers(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("partial-fail", config);
 
@@ -103,12 +110,14 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelAllBranchesFail() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testParallelAllBranchesFail(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var parallel = context.parallel("all-fail", config);
 
             try (parallel) {
@@ -131,15 +140,17 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithMaxConcurrency1_sequentialExecution() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 10", "NESTED, 18"})
+    void testParallelWithMaxConcurrency1_sequentialExecution(NestingType nestingType, int events) {
         var peakConcurrency = new AtomicInteger(0);
         var currentConcurrency = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().maxConcurrency(1).build();
+            var config = ParallelConfig.builder().maxConcurrency(1).nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("sequential-parallel", config);
 
@@ -165,15 +176,17 @@ class ParallelIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("A,B,C,D", result.getResult(String.class));
         assertTrue(peakConcurrency.get() <= 1, "Expected peak concurrency <= 1 but was " + peakConcurrency.get());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithMaxConcurrency2_limitedConcurrency() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 12", "NESTED, 22"})
+    void testParallelWithMaxConcurrency2_limitedConcurrency(NestingType nestingType, int events) {
         var peakConcurrency = new AtomicInteger(0);
         var currentConcurrency = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().maxConcurrency(2).build();
+            var config = ParallelConfig.builder().maxConcurrency(2).nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("limited-parallel", config);
 
@@ -199,14 +212,16 @@ class ParallelIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("A,B,C,D,E", result.getResult(String.class));
         assertTrue(peakConcurrency.get() <= 2, "Expected peak concurrency <= 2 but was " + peakConcurrency.get());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelReplayAfterInterruption_cachedResultsUsed() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 8"})
+    void testParallelReplayAfterInterruption_cachedResultsUsed(NestingType nestingType, int events) {
         var executionCounts = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("replay-parallel", config);
 
@@ -227,16 +242,18 @@ class ParallelIntegrationTest {
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
         assertEquals("A,B,C", result1.getResult(String.class));
+        assertEquals(events, result1.getHistoryEvents().size());
         var firstRunCount = executionCounts.get();
         assertTrue(firstRunCount >= 3, "Expected at least 3 executions on first run but got " + firstRunCount);
     }
 
-    @Test
-    void testParallelWithWaitInsideBranches() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 10", "NESTED, 14"})
+    void testParallelWithWaitInsideBranches(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("parallel-with-wait", config);
+            ParallelDurableFuture parallel = context.parallel("parallel-with-wait", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b")) {
@@ -258,12 +275,14 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("A-done,B-done", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelAsyncWithInterleavedWork() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 8", "NESTED, 12"})
+    void testParallelAsyncWithInterleavedWork(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("async-parallel", config);
 
@@ -288,14 +307,16 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("OTHER:X,Y", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testStepBeforeAndAfterParallel() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 6", "NESTED, 10"})
+    void testStepBeforeAndAfterParallel(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var before = context.step("before", String.class, stepCtx -> "BEFORE");
 
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("middle-parallel", config);
 
@@ -313,14 +334,16 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("BEFORE:A,B:AFTER", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testSequentialParallelBlocks() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 4", "NESTED, 12"})
+    void testSequentialParallelBlocks(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var futures1 = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel1 =
-                    context.parallel("parallel-1", ParallelConfig.builder().build());
+                    context.parallel("parallel-1", ParallelConfig.builder().nestingType(nestingType).build());
             try (parallel1) {
                 futures1.add(parallel1.branch("branch-a", String.class, ctx -> "A"));
                 futures1.add(parallel1.branch("branch-b", String.class, ctx -> "B"));
@@ -328,7 +351,7 @@ class ParallelIntegrationTest {
 
             var futures2 = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel2 =
-                    context.parallel("parallel-2", ParallelConfig.builder().build());
+                    context.parallel("parallel-2", ParallelConfig.builder().nestingType(nestingType).build());
             try (parallel2) {
                 futures2.add(parallel2.branch("branch-x", String.class, ctx -> "x!"));
                 futures2.add(parallel2.branch("branch-y", String.class, ctx -> "y!"));
@@ -342,14 +365,16 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("A,B|x!,y!", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelReplayWithFailedBranches() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 8"})
+    void testParallelReplayWithFailedBranches(NestingType nestingType, int events) {
         var executionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("replay-fail-parallel", config);
 
@@ -376,18 +401,25 @@ class ParallelIntegrationTest {
 
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        assertEquals(events, result1.getHistoryEvents().size());
         var firstRunCount = executionCount.get();
 
         // Replay — branch functions should not re-execute
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
-        assertEquals(firstRunCount, executionCount.get(), "Branch functions should not re-execute on replay");
+        assertEquals(events, result2.getHistoryEvents().size());
+        if (nestingType == NestingType.FLAT) {
+            assertEquals(firstRunCount * 2, executionCount.get(), "Branch functions should re-execute on replay");
+        } else {
+            assertEquals(firstRunCount, executionCount.get(), "Branch functions should not re-execute on replay");
+        }
     }
 
-    @Test
-    void testParallelWithSingleBranch() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 4", "NESTED, 6"})
+    void testParallelWithSingleBranch(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("single-branch", config);
 
@@ -406,14 +438,16 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("ONLY", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithWaitInsideBranches_replay() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 10", "NESTED, 14"})
+    void testParallelWithWaitInsideBranches_replay(NestingType nestingType, int events) {
         var executionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("wait-replay-parallel", config);
 
@@ -436,19 +470,28 @@ class ParallelIntegrationTest {
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
         assertEquals("A-done,B-done", result1.getResult(String.class));
+        assertEquals(events, result1.getHistoryEvents().size());
         var firstRunCount = executionCount.get();
+        assertEquals(4, firstRunCount);
 
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals("A-done,B-done", result2.getResult(String.class));
-        assertEquals(firstRunCount, executionCount.get(), "Branch functions should not re-execute on replay");
+        if (nestingType == NestingType.FLAT) {
+            assertEquals(6, executionCount.get(), "Branch functions should re-execute on replay");
+        } else {
+            assertEquals(firstRunCount, executionCount.get(), "Branch functions should not re-execute on replay");
+        }
+        assertEquals(events, result2.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelUnlimitedConcurrencyWithToleratedFailureCount() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 12"})
+    void testParallelUnlimitedConcurrencyWithToleratedFailureCount(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder()
                     .completionConfig(CompletionConfig.toleratedFailureCount(1))
+                    .nestingType(nestingType)
                     .build();
             ParallelDurableFuture parallel = context.parallel("unlimited-tolerated", config);
 
@@ -472,12 +515,14 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelBranchesReturnDifferentTypes() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testParallelBranchesReturnDifferentTypes(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var parallel = context.parallel("mixed-types", config);
 
             DurableFuture<String> strFuture;
@@ -500,12 +545,14 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("hello:42", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelResultSummary_succeededAndFailedCounts() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 12"})
+    void testParallelResultSummary_succeededAndFailedCounts(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             ParallelDurableFuture parallel = context.parallel("count-check", config);
 
             try (parallel) {
@@ -532,16 +579,18 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("3/2", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
     // ---- 50-branch parallel tests with waitForCallback ----
 
-    @Test
-    void testParallel50BranchesWithWaitForCallback() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 302", "NESTED, 402"})
+    void testParallel50BranchesWithWaitForCallback(NestingType nestingType, int events) {
         var branchCount = 50;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
             var parallel = context.parallel("50-callbacks", config);
 
@@ -585,14 +634,16 @@ class ParallelIntegrationTest {
         for (int i = 0; i < branchCount; i++) {
             assertTrue(output.contains("result-" + i), "Output should contain result-" + i);
         }
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallel50BranchesWithWaitForCallback_maxConcurrency5() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 302", "NESTED, 402"})
+    void testParallel50BranchesWithWaitForCallback_maxConcurrency5(NestingType nestingType, int events) {
         var branchCount = 50;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().maxConcurrency(5).build();
+            var config = ParallelConfig.builder().maxConcurrency(5).nestingType(nestingType).build();
             var parallel = context.parallel("50-callbacks-limited", config);
 
             try (parallel) {
@@ -633,14 +684,16 @@ class ParallelIntegrationTest {
         result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("50", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallel50BranchesWithWaitForCallback_partialFailure() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 302", "NESTED, 402"})
+    void testParallel50BranchesWithWaitForCallback_partialFailure(NestingType nestingType, int events) {
         var branchCount = 50;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var parallel = context.parallel("50-callbacks-partial-fail", config);
 
             try (parallel) {
@@ -685,14 +738,16 @@ class ParallelIntegrationTest {
         result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("25/25", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallel50BranchesWithWaitForCallback_stepsBeforeAndAfterCallback() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 502", "NESTED, 602"})
+    void testParallel50BranchesWithWaitForCallback_stepsBeforeAndAfterCallback(NestingType nestingType, int events) {
         var branchCount = 50;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             ParallelDurableFuture parallel = context.parallel("50-callbacks-with-steps", config);
 
             try (parallel) {
@@ -727,19 +782,21 @@ class ParallelIntegrationTest {
         result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("50", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
     // ---- 50-branch parallel tests with waitForCondition ----
 
-    @Test
-    void testParallel50BranchesWithWaitForCondition() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 200", "NESTED, 300"})
+    void testParallel50BranchesWithWaitForCondition(NestingType nestingType, int events) {
         var branchCount = 50;
         var checkCounts = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<Integer>>();
-            var parallel = context.parallel("50-conditions", config);
+            ParallelDurableFuture parallel = context.parallel("50-conditions", config);
 
             try (parallel) {
                 for (int i = 0; i < branchCount; i++) {
@@ -781,14 +838,16 @@ class ParallelIntegrationTest {
         // Sum of results: 17*1 + 17*2 + 16*3 = 17 + 34 + 48 = 99
         assertEquals("99", result.getResult(String.class));
         assertTrue(checkCounts.get() >= branchCount, "Should have at least " + branchCount + " checks");
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallel50BranchesWithWaitForCondition_someExceedMaxAttempts() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 152", "NESTED, 252"})
+    void testParallel50BranchesWithWaitForCondition_someExceedMaxAttempts(NestingType nestingType, int events) {
         var branchCount = 50;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var parallel = context.parallel("50-conditions-some-fail", config);
 
             try (parallel) {
@@ -829,15 +888,17 @@ class ParallelIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("25/25", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallel50BranchesWithWaitForCondition_replay() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 102", "NESTED, 202"})
+    void testParallel50BranchesWithWaitForCondition_replay(NestingType nestingType, int events) {
         var branchCount = 50;
         var checkCounts = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var parallel = context.parallel("50-conditions-replay", config);
 
             try (parallel) {
@@ -868,6 +929,7 @@ class ParallelIntegrationTest {
 
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        assertEquals(events, result1.getHistoryEvents().size());
         var firstRunChecks = checkCounts.get();
         assertEquals(branchCount, firstRunChecks);
 
@@ -875,16 +937,18 @@ class ParallelIntegrationTest {
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals(firstRunChecks, checkCounts.get(), "Check functions should not re-execute on replay");
+        assertEquals(events, result2.getHistoryEvents().size());
     }
 
     // ---- 50-branch parallel tests mixing waitForCallback and waitForCondition ----
 
-    @Test
-    void testParallel50BranchesMixed_callbackAndCondition() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 202", "NESTED, 302"})
+    void testParallel50BranchesMixed_callbackAndCondition(NestingType nestingType, int events) {
         var branchCount = 50;
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var config = ParallelConfig.builder().build();
+            var config = ParallelConfig.builder().nestingType(nestingType).build();
             var parallel = context.parallel("50-mixed", config);
 
             try (parallel) {
@@ -934,14 +998,17 @@ class ParallelIntegrationTest {
         result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("50", result.getResult(String.class));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithToleratedFailureCount_earlyTermination() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 8"})
+    void testParallelWithToleratedFailureCount_earlyTermination(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder()
                     .maxConcurrency(1)
                     .completionConfig(CompletionConfig.toleratedFailureCount(1))
+                    .nestingType(nestingType)
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("tolerated-fail", config);
@@ -968,14 +1035,17 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithMinSuccessful_earlyTermination() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testParallelWithMinSuccessful_earlyTermination(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder()
                     .maxConcurrency(1)
                     .completionConfig(CompletionConfig.minSuccessful(2))
+                    .nestingType(nestingType)
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("min-successful", config);
@@ -1005,14 +1075,17 @@ class ParallelIntegrationTest {
                         result.getOperations().stream()
                                 .map(TestOperation::toString)
                                 .toList()));
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithAllSuccessful_stopsOnFirstFailure() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testParallelWithAllSuccessful_stopsOnFirstFailure(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder()
                     .maxConcurrency(1)
                     .completionConfig(CompletionConfig.allSuccessful())
+                    .nestingType(nestingType)
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
             ParallelDurableFuture parallel = context.parallel("all-successful", config);
@@ -1034,15 +1107,18 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 
-    @Test
-    void testParallelWithFirstSuccessful_earlyTermination() {
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 8"})
+    void testParallelWithFirstSuccessful_earlyTermination(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             // Use unlimited concurrency so all branches start before early termination fires,
             // avoiding mid-execution suspension that would leave the runner PENDING
             var config = ParallelConfig.builder()
                     .completionConfig(CompletionConfig.firstSuccessful())
+                    .nestingType(nestingType)
                     .build();
             ParallelDurableFuture parallel = context.parallel("first-successful", config);
 
@@ -1066,5 +1142,6 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
     }
 }
