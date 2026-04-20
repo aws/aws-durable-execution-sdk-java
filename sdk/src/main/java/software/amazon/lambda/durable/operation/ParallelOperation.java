@@ -127,7 +127,11 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     @Override
     public ParallelResult get() {
         join();
-        return cachedResult;
+        return new ParallelResult(
+                getBranches().size(), // size might be updated after cached result is built
+                cachedResult.succeeded(),
+                cachedResult.failed(),
+                cachedResult.completionStatus());
     }
 
     /** Calls {@link #get()} if not already called. Guarantees that the context is closed. */
