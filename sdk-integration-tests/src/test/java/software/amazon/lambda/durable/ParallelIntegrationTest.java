@@ -1142,10 +1142,8 @@ class ParallelIntegrationTest {
             var result = parallel.get();
             assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
             assertTrue(result.completionStatus().isSucceeded());
-            // todo: the result is constructed when handling parallel completion,
-            // which might be earlier than the last branch is added.
-            assertTrue(result.size() <= 3);
-            assertTrue(result.succeeded() <= result.size());
+            assertEquals(3, result.size());
+            assertTrue(result.succeeded() <= 3);
             assertTrue(1 <= result.succeeded());
 
             return "done";
@@ -1153,6 +1151,12 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(events, result.getHistoryEvents().size());
+        if (nestingType == NestingType.FLAT) {
+            assertEquals(2, result.getHistoryEvents().size());
+        } else {
+            // might 4 if only 1 branch completed and at most 8 if all branches completed
+            assertTrue(4 <= result.getHistoryEvents().size());
+            assertTrue(result.getHistoryEvents().size() <= events);
+        }
     }
 }
