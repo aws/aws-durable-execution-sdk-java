@@ -61,166 +61,168 @@ public class MapOperation&lt;I, O&gt; extends ConcurrencyOperation&lt;MapResult&
                 durableContext,
 <span class="fc" id="L62">                config.maxConcurrency(),</span>
 <span class="fc" id="L63">                config.completionConfig().minSuccessful(),</span>
-<span class="fc" id="L64">                getToleratedFailureCount(config.completionConfig(), items.size()));</span>
-<span class="fc bfc" id="L65" title="All 2 branches covered.">        if (config.completionConfig().minSuccessful() != null</span>
-<span class="pc bpc" id="L66" title="1 of 2 branches missed.">                &amp;&amp; config.completionConfig().minSuccessful() &gt; items.size()) {</span>
-<span class="nc" id="L67">            throw new IllegalArgumentException(&quot;minSuccessful cannot be greater than total items: &quot;</span>
-<span class="nc" id="L68">                    + config.completionConfig().minSuccessful() + &quot; &gt; &quot; + items.size());</span>
+<span class="fc" id="L64">                getToleratedFailureCount(config.completionConfig(), items.size()),</span>
+<span class="fc" id="L65">                config.nestingType());</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (config.completionConfig().minSuccessful() != null</span>
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">                &amp;&amp; config.completionConfig().minSuccessful() &gt; items.size()) {</span>
+<span class="nc" id="L68">            throw new IllegalArgumentException(&quot;minSuccessful cannot be greater than total items: &quot;</span>
+<span class="nc" id="L69">                    + config.completionConfig().minSuccessful() + &quot; &gt; &quot; + items.size());</span>
         }
-<span class="fc" id="L70">        this.items = List.copyOf(items);</span>
-<span class="fc" id="L71">        this.function = function;</span>
-<span class="fc" id="L72">        this.itemResultType = itemResultType;</span>
-<span class="fc" id="L73">        this.serDes = config.serDes();</span>
+<span class="fc" id="L71">        this.items = List.copyOf(items);</span>
+<span class="fc" id="L72">        this.function = function;</span>
+<span class="fc" id="L73">        this.itemResultType = itemResultType;</span>
+<span class="fc" id="L74">        this.serDes = config.serDes();</span>
 
-<span class="fc" id="L75">        addAllItems();</span>
-<span class="fc" id="L76">    }</span>
+<span class="fc" id="L76">        addAllItems();</span>
+<span class="fc" id="L77">    }</span>
 
     private void addAllItems() {
         // Enqueue all items first, then start execution. This prevents early termination
         // criteria (e.g., minSuccessful) from completing the operation mid-loop on replay,
         // which would cause subsequent enqueue calls to fail with &quot;completed operation&quot;.
-<span class="pc bpc" id="L82" title="1 of 2 branches missed.">        var branchPrefix = getName() == null ? &quot;map-iteration-&quot; : getName() + &quot;-iteration-&quot;;</span>
-<span class="fc bfc" id="L83" title="All 2 branches covered.">        for (int i = 0; i &lt; items.size(); i++) {</span>
-<span class="fc" id="L84">            var index = i;</span>
-<span class="fc" id="L85">            var item = items.get(i);</span>
-<span class="fc" id="L86">            enqueueItem(</span>
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">        var branchPrefix = getName() == null ? &quot;map-iteration-&quot; : getName() + &quot;-iteration-&quot;;</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        for (int i = 0; i &lt; items.size(); i++) {</span>
+<span class="fc" id="L85">            var index = i;</span>
+<span class="fc" id="L86">            var item = items.get(i);</span>
+<span class="fc" id="L87">            enqueueItem(</span>
                     branchPrefix + i,
-<span class="fc" id="L88">                    childCtx -&gt; function.apply(item, index, childCtx),</span>
+<span class="fc" id="L89">                    childCtx -&gt; function.apply(item, index, childCtx),</span>
                     itemResultType,
                     serDes,
                     OperationSubType.MAP_ITERATION);
         }
-<span class="fc" id="L93">    }</span>
+<span class="fc" id="L94">    }</span>
 
     private static Integer getToleratedFailureCount(CompletionConfig completionConfig, int totalItems) {
-<span class="pc bpc" id="L96" title="1 of 2 branches missed.">        if (completionConfig == null</span>
-<span class="fc bfc" id="L97" title="All 2 branches covered.">                || (completionConfig.toleratedFailureCount() == null</span>
-<span class="fc bfc" id="L98" title="All 2 branches covered.">                        &amp;&amp; completionConfig.toleratedFailurePercentage() == null)) {</span>
+<span class="pc bpc" id="L97" title="1 of 2 branches missed.">        if (completionConfig == null</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">                || (completionConfig.toleratedFailureCount() == null</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">                        &amp;&amp; completionConfig.toleratedFailurePercentage() == null)) {</span>
             // neither toleratedFailureCount nor toleratedFailurePercentage is specified.
-<span class="fc" id="L100">            return null;</span>
+<span class="fc" id="L101">            return null;</span>
         }
-<span class="fc bfc" id="L102" title="All 2 branches covered.">        int toleratedFailureCount = completionConfig.toleratedFailureCount() != null</span>
-<span class="fc" id="L103">                ? completionConfig.toleratedFailureCount()</span>
-<span class="fc" id="L104">                : Integer.MAX_VALUE;</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        int toleratedFailureCount = completionConfig.toleratedFailureCount() != null</span>
+<span class="fc" id="L104">                ? completionConfig.toleratedFailureCount()</span>
+<span class="fc" id="L105">                : Integer.MAX_VALUE;</span>
 
         // convert percentage to count
-<span class="fc bfc" id="L107" title="All 2 branches covered.">        int toleratedFailureCountFromPercentage = completionConfig.toleratedFailurePercentage() != null</span>
-<span class="fc" id="L108">                ? (int) Math.floor(totalItems * completionConfig.toleratedFailurePercentage())</span>
-<span class="fc" id="L109">                : Integer.MAX_VALUE;</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">        int toleratedFailureCountFromPercentage = completionConfig.toleratedFailurePercentage() != null</span>
+<span class="fc" id="L109">                ? (int) Math.floor(totalItems * completionConfig.toleratedFailurePercentage())</span>
+<span class="fc" id="L110">                : Integer.MAX_VALUE;</span>
         // minimum of two if both count and percentage is specified
-<span class="fc" id="L111">        return Math.min(toleratedFailureCount, toleratedFailureCountFromPercentage);</span>
+<span class="fc" id="L112">        return Math.min(toleratedFailureCount, toleratedFailureCountFromPercentage);</span>
     }
 
     @Override
     protected void start() {
-<span class="fc bfc" id="L116" title="All 2 branches covered.">        if (items.isEmpty()) {</span>
-<span class="fc" id="L117">            markAlreadyCompleted();</span>
-<span class="fc" id="L118">            return;</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        if (items.isEmpty()) {</span>
+<span class="fc" id="L118">            markAlreadyCompleted();</span>
+<span class="fc" id="L119">            return;</span>
         }
-<span class="fc" id="L120">        sendOperationUpdateAsync(OperationUpdate.builder()</span>
-<span class="fc" id="L121">                .action(OperationAction.START)</span>
-<span class="fc" id="L122">                .subType(getSubType().getValue()));</span>
+<span class="fc" id="L121">        sendOperationUpdateAsync(OperationUpdate.builder()</span>
+<span class="fc" id="L122">                .action(OperationAction.START)</span>
+<span class="fc" id="L123">                .subType(getSubType().getValue()));</span>
 
-<span class="fc" id="L124">        executeItems();</span>
-<span class="fc" id="L125">    }</span>
+<span class="fc" id="L125">        executeItems();</span>
+<span class="fc" id="L126">    }</span>
 
     @Override
     protected void replay(Operation existing) {
-<span class="pc bpc" id="L129" title="1 of 2 branches missed.">        if (items.isEmpty()) {</span>
-<span class="nc" id="L130">            markAlreadyCompleted();</span>
-<span class="nc" id="L131">            return;</span>
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">        if (items.isEmpty()) {</span>
+<span class="nc" id="L131">            markAlreadyCompleted();</span>
+<span class="nc" id="L132">            return;</span>
         }
-<span class="pc bpc" id="L133" title="1 of 3 branches missed.">        switch (existing.status()) {</span>
+<span class="pc bpc" id="L134" title="1 of 3 branches missed.">        switch (existing.status()) {</span>
             case SUCCEEDED -&gt; {
-<span class="pc bpc" id="L135" title="1 of 2 branches missed.">                if (existing.contextDetails() != null</span>
-<span class="fc bfc" id="L136" title="All 2 branches covered.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">                if (existing.contextDetails() != null</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">                        &amp;&amp; Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {</span>
                     // Large result: re-execute children to reconstruct MapResult
-<span class="fc" id="L138">                    replayForLargeResult.set(true);</span>
-<span class="fc" id="L139">                    executeItems();</span>
+<span class="fc" id="L139">                    replayForLargeResult.set(true);</span>
+<span class="fc" id="L140">                    executeItems();</span>
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
-<span class="fc" id="L142">                    replayFromPayload.set(true);</span>
-<span class="fc" id="L143">                    markAlreadyCompleted();</span>
+<span class="fc" id="L143">                    replayFromPayload.set(true);</span>
+<span class="fc" id="L144">                    markAlreadyCompleted();</span>
                 }
-<span class="fc" id="L145">            }</span>
+<span class="fc" id="L146">            }</span>
             case STARTED -&gt; {
                 // Map was in progress when interrupted — re-create children without sending
                 // another START (the backend rejects duplicate START for existing operations)
-<span class="fc" id="L149">                executeItems();</span>
-<span class="fc" id="L150">            }</span>
+<span class="fc" id="L150">                executeItems();</span>
+<span class="fc" id="L151">            }</span>
             default -&gt;
-<span class="nc" id="L152">                throw terminateExecutionWithIllegalDurableOperationException(</span>
-<span class="nc" id="L153">                        &quot;Unexpected map operation status: &quot; + existing.status());</span>
+<span class="nc" id="L153">                throw terminateExecutionWithIllegalDurableOperationException(</span>
+<span class="nc" id="L154">                        &quot;Unexpected map operation status: &quot; + existing.status());</span>
         }
-<span class="fc" id="L155">    }</span>
+<span class="fc" id="L156">    }</span>
 
     @SuppressWarnings(&quot;unchecked&quot;)
     @Override
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-<span class="fc" id="L160">        var children = getBranches();</span>
-<span class="fc" id="L161">        var resultItems = new ArrayList&lt;MapResult.MapResultItem&lt;O&gt;&gt;(Collections.nCopies(items.size(), null));</span>
+<span class="fc" id="L161">        var children = getBranches();</span>
+<span class="fc" id="L162">        var resultItems = new ArrayList&lt;MapResult.MapResultItem&lt;O&gt;&gt;(Collections.nCopies(items.size(), null));</span>
 
-<span class="fc bfc" id="L163" title="All 2 branches covered.">        for (int i = 0; i &lt; children.size(); i++) {</span>
-<span class="fc" id="L164">            var branch = (ChildContextOperation&lt;O&gt;) children.get(i);</span>
-<span class="fc bfc" id="L165" title="All 2 branches covered.">            if (!branch.isOperationCompleted()) {</span>
-<span class="fc" id="L166">                resultItems.set(i, MapResult.MapResultItem.skipped());</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        for (int i = 0; i &lt; children.size(); i++) {</span>
+<span class="fc" id="L165">            var branch = (ChildContextOperation&lt;O&gt;) children.get(i);</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">            if (!branch.isOperationCompleted()) {</span>
+<span class="fc" id="L167">                resultItems.set(i, MapResult.MapResultItem.skipped());</span>
             } else {
                 try {
-<span class="fc" id="L169">                    resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));</span>
-<span class="fc" id="L170">                } catch (Throwable exception) {</span>
-<span class="fc" id="L171">                    Throwable throwable = ExceptionHelper.unwrapCompletableFuture(exception);</span>
-<span class="pc bpc" id="L172" title="1 of 2 branches missed.">                    if (throwable instanceof SuspendExecutionException suspendExecutionException) {</span>
+<span class="fc" id="L170">                    resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));</span>
+<span class="fc" id="L171">                } catch (Throwable exception) {</span>
+<span class="fc" id="L172">                    Throwable throwable = ExceptionHelper.unwrapCompletableFuture(exception);</span>
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">                    if (throwable instanceof SuspendExecutionException suspendExecutionException) {</span>
                         // Rethrow Error immediately — do not checkpoint
-<span class="nc" id="L174">                        throw suspendExecutionException;</span>
+<span class="nc" id="L175">                        throw suspendExecutionException;</span>
                     }
-<span class="pc bpc" id="L176" title="1 of 2 branches missed.">                    if (throwable</span>
-<span class="nc" id="L177">                            instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {</span>
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">                    if (throwable</span>
+<span class="nc" id="L178">                            instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {</span>
                         // terminate the execution and throw the exception if it's not recoverable
-<span class="nc" id="L179">                        throw terminateExecution(unrecoverableDurableExecutionException);</span>
+<span class="nc" id="L180">                        throw terminateExecution(unrecoverableDurableExecutionException);</span>
                     }
-<span class="fc" id="L181">                    resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(throwable)));</span>
-<span class="fc" id="L182">                }</span>
+<span class="fc" id="L182">                    resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(throwable)));</span>
+<span class="fc" id="L183">                }</span>
             }
         }
 
-<span class="fc" id="L186">        this.cachedResult = new MapResult&lt;&gt;(resultItems, concurrencyCompletionStatus);</span>
-<span class="fc bfc" id="L187" title="All 2 branches covered.">        if (replayForLargeResult.get()) {</span>
-<span class="fc" id="L188">            markAlreadyCompleted();</span>
-<span class="fc" id="L189">            return;</span>
+<span class="fc" id="L187">        this.cachedResult = new MapResult&lt;&gt;(resultItems, concurrencyCompletionStatus);</span>
+        // avoid checkpointing because the operation has succeeded and the children are replayed for large result
+<span class="fc bfc" id="L189" title="All 2 branches covered.">        if (replayForLargeResult.get()) {</span>
+<span class="fc" id="L190">            markAlreadyCompleted();</span>
+<span class="fc" id="L191">            return;</span>
         }
-<span class="fc" id="L191">        var serialized = serializeResult(cachedResult);</span>
-<span class="fc" id="L192">        var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);</span>
+<span class="fc" id="L193">        var serialized = serializeResult(cachedResult);</span>
+<span class="fc" id="L194">        var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);</span>
 
-<span class="fc bfc" id="L194" title="All 2 branches covered.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
-<span class="fc" id="L195">            sendOperationUpdate(OperationUpdate.builder()</span>
-<span class="fc" id="L196">                    .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L197">                    .subType(getSubType().getValue())</span>
-<span class="fc" id="L198">                    .payload(serialized));</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">        if (serializedBytes.length &lt; LARGE_RESULT_THRESHOLD) {</span>
+<span class="fc" id="L197">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L198">                    .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L199">                    .subType(getSubType().getValue())</span>
+<span class="fc" id="L200">                    .payload(serialized));</span>
         } else {
             // Large result: checkpoint with empty payload + replayChildren flag
-<span class="fc" id="L201">            sendOperationUpdate(OperationUpdate.builder()</span>
-<span class="fc" id="L202">                    .action(OperationAction.SUCCEED)</span>
-<span class="fc" id="L203">                    .subType(getSubType().getValue())</span>
-<span class="fc" id="L204">                    .payload(&quot;&quot;)</span>
-<span class="fc" id="L205">                    .contextOptions(</span>
-<span class="fc" id="L206">                            ContextOptions.builder().replayChildren(true).build()));</span>
+<span class="fc" id="L203">            sendOperationUpdate(OperationUpdate.builder()</span>
+<span class="fc" id="L204">                    .action(OperationAction.SUCCEED)</span>
+<span class="fc" id="L205">                    .subType(getSubType().getValue())</span>
+<span class="fc" id="L206">                    .payload(&quot;&quot;)</span>
+<span class="fc" id="L207">                    .contextOptions(</span>
+<span class="fc" id="L208">                            ContextOptions.builder().replayChildren(true).build()));</span>
         }
-<span class="fc" id="L208">    }</span>
+<span class="fc" id="L210">    }</span>
 
     @Override
     public MapResult&lt;O&gt; get() {
-<span class="fc bfc" id="L212" title="All 2 branches covered.">        if (items.isEmpty()) {</span>
-<span class="fc" id="L213">            return MapResult.empty();</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">        if (items.isEmpty()) {</span>
+<span class="fc" id="L215">            return MapResult.empty();</span>
         }
-<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (replayFromPayload.get()) {</span>
+<span class="fc bfc" id="L217" title="All 2 branches covered.">        if (replayFromPayload.get()) {</span>
             // Small result replay: deserialize MapResult directly from checkpoint payload
-<span class="fc" id="L217">            var op = waitForOperationCompletion();</span>
-<span class="pc bpc" id="L218" title="1 of 2 branches missed.">            var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;</span>
-<span class="fc" id="L219">            return deserializeResult(result);</span>
+<span class="fc" id="L219">            var op = waitForOperationCompletion();</span>
+<span class="pc bpc" id="L220" title="1 of 2 branches missed.">            var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;</span>
+<span class="fc" id="L221">            return deserializeResult(result);</span>
         }
         // First execution or large result replay: wait for children, then aggregate
-<span class="fc" id="L222">        join();</span>
-<span class="fc" id="L223">        return cachedResult;</span>
+<span class="fc" id="L224">        join();</span>
+<span class="fc" id="L225">        return cachedResult;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

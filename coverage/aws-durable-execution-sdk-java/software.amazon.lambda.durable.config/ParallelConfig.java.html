@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import java.util.Objects;
+
 /**
  * Configuration options for parallel operations in durable executions.
  *
@@ -11,20 +13,27 @@ package software.amazon.lambda.durable.config;
 public class ParallelConfig {
     private final int maxConcurrency;
     private final CompletionConfig completionConfig;
+    private final NestingType nestingType;
 
-<span class="fc" id="L15">    private ParallelConfig(Builder builder) {</span>
-<span class="fc bfc" id="L16" title="All 2 branches covered.">        this.maxConcurrency = builder.maxConcurrency == null ? Integer.MAX_VALUE : builder.maxConcurrency;</span>
-<span class="fc" id="L17">        this.completionConfig =</span>
-<span class="fc bfc" id="L18" title="All 2 branches covered.">                builder.completionConfig == null ? CompletionConfig.allCompleted() : builder.completionConfig;</span>
-<span class="fc" id="L19">    }</span>
+<span class="fc" id="L18">    private ParallelConfig(Builder builder) {</span>
+<span class="fc" id="L19">        this.maxConcurrency = Objects.requireNonNullElse(builder.maxConcurrency, Integer.MAX_VALUE);</span>
+<span class="fc" id="L20">        this.completionConfig = Objects.requireNonNullElseGet(builder.completionConfig, CompletionConfig::allCompleted);</span>
+<span class="fc" id="L21">        this.nestingType = Objects.requireNonNullElse(builder.nestingType, NestingType.NESTED);</span>
+<span class="fc" id="L22">    }</span>
 
     /** @return the maximum number of branches running simultaneously, or -1 for unlimited */
     public int maxConcurrency() {
-<span class="fc" id="L23">        return maxConcurrency;</span>
+<span class="fc" id="L26">        return maxConcurrency;</span>
     }
 
+    /** @return the completion configuration for the parallel operation */
     public CompletionConfig completionConfig() {
-<span class="fc" id="L27">        return completionConfig;</span>
+<span class="fc" id="L31">        return completionConfig;</span>
+    }
+
+    /** @return the nesting type for the parallel operation */
+    public NestingType nestingType() {
+<span class="fc" id="L36">        return nestingType;</span>
     }
 
     /**
@@ -33,13 +42,21 @@ public class ParallelConfig {
      * @return a new Builder instance
      */
     public static Builder builder() {
-<span class="fc" id="L36">        return new Builder();</span>
+<span class="fc" id="L45">        return new Builder();</span>
+    }
+
+    public Builder toBuilder() {
+<span class="nc" id="L49">        return new Builder()</span>
+<span class="nc" id="L50">                .maxConcurrency(maxConcurrency)</span>
+<span class="nc" id="L51">                .completionConfig(completionConfig)</span>
+<span class="nc" id="L52">                .nestingType(nestingType);</span>
     }
 
     /** Builder for creating ParallelConfig instances. */
     public static class Builder {
         private Integer maxConcurrency;
         private CompletionConfig completionConfig;
+        private NestingType nestingType;
 
         private Builder() {}
 
@@ -50,11 +67,11 @@ public class ParallelConfig {
          * @return this builder for method chaining
          */
         public Builder maxConcurrency(Integer maxConcurrency) {
-<span class="pc bpc" id="L53" title="1 of 4 branches missed.">            if (maxConcurrency != null &amp;&amp; maxConcurrency &lt; 1) {</span>
-<span class="fc" id="L54">                throw new IllegalArgumentException(&quot;maxConcurrency must be at least 1, got: &quot; + maxConcurrency);</span>
+<span class="pc bpc" id="L70" title="1 of 4 branches missed.">            if (maxConcurrency != null &amp;&amp; maxConcurrency &lt; 1) {</span>
+<span class="fc" id="L71">                throw new IllegalArgumentException(&quot;maxConcurrency must be at least 1, got: &quot; + maxConcurrency);</span>
             }
-<span class="fc" id="L56">            this.maxConcurrency = maxConcurrency;</span>
-<span class="fc" id="L57">            return this;</span>
+<span class="fc" id="L73">            this.maxConcurrency = maxConcurrency;</span>
+<span class="fc" id="L74">            return this;</span>
         }
 
         /**
@@ -64,11 +81,22 @@ public class ParallelConfig {
          * @return this builder for method chaining
          */
         public Builder completionConfig(CompletionConfig completionConfig) {
-<span class="pc bpc" id="L67" title="2 of 4 branches missed.">            if (completionConfig != null &amp;&amp; completionConfig.toleratedFailurePercentage() != null) {</span>
-<span class="nc" id="L68">                throw new IllegalArgumentException(&quot;ParallelConfig does not support toleratedFailurePercentage&quot;);</span>
+<span class="pc bpc" id="L84" title="2 of 4 branches missed.">            if (completionConfig != null &amp;&amp; completionConfig.toleratedFailurePercentage() != null) {</span>
+<span class="nc" id="L85">                throw new IllegalArgumentException(&quot;ParallelConfig does not support toleratedFailurePercentage&quot;);</span>
             }
-<span class="fc" id="L70">            this.completionConfig = completionConfig;</span>
-<span class="fc" id="L71">            return this;</span>
+<span class="fc" id="L87">            this.completionConfig = completionConfig;</span>
+<span class="fc" id="L88">            return this;</span>
+        }
+
+        /**
+         * Sets the nesting type for the parallel operation.
+         *
+         * @param nestingType the nesting type (default: {@link NestingType#NESTED})
+         * @return this builder for method chaining
+         */
+        public Builder nestingType(NestingType nestingType) {
+<span class="fc" id="L98">            this.nestingType = nestingType;</span>
+<span class="fc" id="L99">            return this;</span>
         }
 
         /**
@@ -78,7 +106,7 @@ public class ParallelConfig {
          * @throws IllegalArgumentException if any configuration values are invalid
          */
         public ParallelConfig build() {
-<span class="fc" id="L81">            return new ParallelConfig(this);</span>
+<span class="fc" id="L109">            return new ParallelConfig(this);</span>
         }
     }
 }

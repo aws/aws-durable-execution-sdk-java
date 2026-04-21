@@ -486,28 +486,28 @@ public interface DurableContext extends BaseContext {
 
     default &lt;I, O&gt; MapResult&lt;O&gt; map(
             String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="fc" id="L489">        return mapAsync(name, items, resultType, function, MapConfig.builder().build())</span>
-<span class="fc" id="L490">                .get();</span>
+<span class="nc" id="L489">        return mapAsync(name, items, resultType, function, MapConfig.builder().build())</span>
+<span class="nc" id="L490">                .get();</span>
     }
 
     default &lt;I, O&gt; MapResult&lt;O&gt; map(
             String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="nc" id="L495">        return mapAsync(name, items, resultType, function, config).get();</span>
+<span class="fc" id="L495">        return mapAsync(name, items, resultType, function, config).get();</span>
     }
 
     default &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
             String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="fc" id="L500">        return mapAsync(</span>
+<span class="nc" id="L500">        return mapAsync(</span>
                 name,
                 items,
-<span class="fc" id="L503">                TypeToken.get(resultType),</span>
+<span class="nc" id="L503">                TypeToken.get(resultType),</span>
                 function,
-<span class="fc" id="L505">                MapConfig.builder().build());</span>
+<span class="nc" id="L505">                MapConfig.builder().build());</span>
     }
 
     default &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
             String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="nc" id="L510">        return mapAsync(name, items, TypeToken.get(resultType), function, config);</span>
+<span class="fc" id="L510">        return mapAsync(name, items, TypeToken.get(resultType), function, config);</span>
     }
 
     default &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(

@@ -38,95 +38,100 @@ public class TestOperation {
 
     /** Returns the raw history events associated with this operation. */
     public List&lt;Event&gt; getEvents() {
-<span class="nc" id="L41">        return List.copyOf(events);</span>
+<span class="fc" id="L41">        return List.copyOf(events);</span>
+    }
+
+    /** Returns the operation ID. */
+    public String getId() {
+<span class="fc" id="L46">        return operation.id();</span>
     }
 
     /** Returns the operation name. */
     public String getName() {
-<span class="fc" id="L46">        return operation.name();</span>
+<span class="fc" id="L51">        return operation.name();</span>
     }
 
     /** Returns the current status of this operation (e.g. STARTED, SUCCEEDED, FAILED). */
     public OperationStatus getStatus() {
-<span class="fc" id="L51">        return operation.status();</span>
+<span class="fc" id="L56">        return operation.status();</span>
     }
 
     /** Returns the operation type (STEP, WAIT, CALLBACK, etc.). */
     public OperationType getType() {
-<span class="fc" id="L56">        return operation.type();</span>
+<span class="fc" id="L61">        return operation.type();</span>
     }
 
     /** Returns the operation's subtype */
     public String getSubtype() {
-<span class="nc" id="L61">        return operation.subType();</span>
+<span class="nc" id="L66">        return operation.subType();</span>
     }
 
     /** Returns true if the operation has completed (either succeeded or failed). */
     public boolean isCompleted() {
-<span class="nc" id="L66">        return ExecutionManager.isTerminalStatus(operation.status());</span>
+<span class="nc" id="L71">        return ExecutionManager.isTerminalStatus(operation.status());</span>
     }
 
     /** Returns the duration of the operation */
     public Duration getDuration() {
-<span class="nc" id="L71">        return Duration.between(</span>
-<span class="nc" id="L72">                operation.startTimestamp(),</span>
-<span class="nc bnc" id="L73" title="All 2 branches missed.">                operation.endTimestamp() != null ? operation.endTimestamp() : Instant.now());</span>
+<span class="nc" id="L76">        return Duration.between(</span>
+<span class="nc" id="L77">                operation.startTimestamp(),</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">                operation.endTimestamp() != null ? operation.endTimestamp() : Instant.now());</span>
     }
 
     /** Returns the step details, or null if this is not a step operation. */
     public StepDetails getStepDetails() {
-<span class="fc" id="L78">        return operation.stepDetails();</span>
+<span class="fc" id="L83">        return operation.stepDetails();</span>
     }
 
     /** Returns the wait details, or null if this is not a wait operation. */
     public WaitDetails getWaitDetails() {
-<span class="nc" id="L83">        return operation.waitDetails();</span>
+<span class="nc" id="L88">        return operation.waitDetails();</span>
     }
 
     /** Returns the callback details, or null if this is not a callback operation. */
     public CallbackDetails getCallbackDetails() {
-<span class="nc" id="L88">        return operation.callbackDetails();</span>
+<span class="nc" id="L93">        return operation.callbackDetails();</span>
     }
 
     /** Returns the chained invoke details, or null if this is not a chained invoke operation. */
     public ChainedInvokeDetails getChainedInvokeDetails() {
-<span class="nc" id="L93">        return operation.chainedInvokeDetails();</span>
+<span class="nc" id="L98">        return operation.chainedInvokeDetails();</span>
     }
 
     /** Returns the context details, or null if this operation is not a context. */
     public ContextDetails getContextDetails() {
-<span class="nc" id="L98">        return operation.contextDetails();</span>
+<span class="nc" id="L103">        return operation.contextDetails();</span>
     }
 
     /** Returns the execution details, or null if this operation is not an EXECUTION operation. */
     public ExecutionDetails getExecutionDetails() {
-<span class="nc" id="L103">        return operation.executionDetails();</span>
+<span class="nc" id="L108">        return operation.executionDetails();</span>
     }
 
     /** Deserializes and returns the step result as the given type. */
     public &lt;T&gt; T getStepResult(Class&lt;T&gt; type) {
-<span class="fc" id="L108">        return getStepResult(TypeToken.get(type));</span>
+<span class="fc" id="L113">        return getStepResult(TypeToken.get(type));</span>
     }
 
     /** Deserializes and returns the step result using a TypeToken for generic types. */
     public &lt;T&gt; T getStepResult(TypeToken&lt;T&gt; type) {
-<span class="fc" id="L113">        var details = operation.stepDetails();</span>
-<span class="pc bpc" id="L114" title="2 of 4 branches missed.">        if (details == null || details.result() == null) {</span>
-<span class="nc" id="L115">            return null;</span>
+<span class="fc" id="L118">        var details = operation.stepDetails();</span>
+<span class="pc bpc" id="L119" title="2 of 4 branches missed.">        if (details == null || details.result() == null) {</span>
+<span class="nc" id="L120">            return null;</span>
         }
-<span class="fc" id="L117">        return serDes.deserialize(details.result(), type);</span>
+<span class="fc" id="L122">        return serDes.deserialize(details.result(), type);</span>
     }
 
     /** Returns the step error, or null if the step succeeded or this is not a step operation. */
     public ErrorObject getError() {
-<span class="fc" id="L122">        var details = operation.stepDetails();</span>
-<span class="pc bpc" id="L123" title="1 of 2 branches missed.">        return details != null ? details.error() : null;</span>
+<span class="fc" id="L127">        var details = operation.stepDetails();</span>
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">        return details != null ? details.error() : null;</span>
     }
 
     /** Returns the current retry attempt number (0-based), defaulting to 0 if not available. */
     public int getAttempt() {
-<span class="nc" id="L128">        var details = operation.stepDetails();</span>
-<span class="nc bnc" id="L129" title="All 4 branches missed.">        return details != null &amp;&amp; details.attempt() != null ? details.attempt() : 1;</span>
+<span class="nc" id="L133">        var details = operation.stepDetails();</span>
+<span class="nc bnc" id="L134" title="All 4 branches missed.">        return details != null &amp;&amp; details.attempt() != null ? details.attempt() : 1;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
