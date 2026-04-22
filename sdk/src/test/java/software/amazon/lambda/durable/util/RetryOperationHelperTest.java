@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.RetryOperationConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
@@ -415,6 +417,46 @@ class RetryOperationHelperTest {
 
             // The last attempt's exception is rethrown
             assertEquals("attempt-3", thrown.getMessage());
+        }
+
+        @Test
+        void propagatesSuspendExecutionExceptionWithoutRetrying() {
+            var config = RetryOperationConfig.builder()
+                    .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)))
+                    .build();
+
+            assertThrows(
+                    SuspendExecutionException.class,
+                    () -> RetryOperationHelper.retryOperation(
+                            context,
+                            (ctx, attempt) -> {
+                                throw new SuspendExecutionException();
+                            },
+                            config));
+
+            // Should never reach the wait — SuspendExecutionException propagates immediately
+            verify(context, never()).wait(anyString(), any(Duration.class));
+        }
+
+        @Test
+        void propagatesUnrecoverableDurableExecutionExceptionWithoutRetrying() {
+            var config = RetryOperationConfig.builder()
+                    .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)))
+                    .build();
+
+            assertThrows(
+                    UnrecoverableDurableExecutionException.class,
+                    () -> RetryOperationHelper.retryOperation(
+                            context,
+                            (ctx, attempt) -> {
+                                throw new UnrecoverableDurableExecutionException(
+                                        software.amazon.awssdk.services.lambda.model.ErrorObject.builder()
+                                                .errorMessage("unrecoverable")
+                                                .build());
+                            },
+                            config));
+
+            verify(context, never()).wait(anyString(), any(Duration.class));
         }
     }
 }

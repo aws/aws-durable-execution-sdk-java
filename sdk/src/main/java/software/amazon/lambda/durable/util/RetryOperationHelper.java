@@ -7,6 +7,8 @@ import java.util.Objects;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.RetryOperationConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.retry.RetryDecision;
 
 /**
@@ -112,6 +114,9 @@ public final class RetryOperationHelper {
     /**
      * Core retry loop. Replay-safe because every side-effect is a durable operation: the user's operation calls durable
      * primitives, and backoff uses {@code context.wait()}.
+     *
+     * <p>{@link SuspendExecutionException} and {@link UnrecoverableDurableExecutionException} are never retried — they
+     * are internal SDK control flow signals that must propagate immediately.
      */
     private static <T> T executeRetryLoop(
             DurableContext context, String name, RetryableOperation<T> operation, RetryOperationConfig config) {
@@ -119,6 +124,9 @@ public final class RetryOperationHelper {
         while (true) {
             try {
                 return operation.execute(context, attempt);
+            } catch (SuspendExecutionException | UnrecoverableDurableExecutionException e) {
+                // Internal SDK control flow — never retry, always propagate
+                throw e;
             } catch (Exception e) {
                 RetryDecision decision = config.retryStrategy().makeRetryDecision(e, attempt);
                 if (!decision.shouldRetry()) {
