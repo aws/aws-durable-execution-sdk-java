@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -21,6 +22,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 
@@ -132,6 +134,42 @@ class DurableExecutionTest {
         assertNotNull(output.error());
         assertEquals("java.lang.RuntimeException", output.error().errorType());
         assertEquals("Test error", output.error().errorMessage());
+    }
+
+    @Test
+    void testRetryableExceptions() {
+        var executionOp = Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .executionDetails(ExecutionDetails.builder()
+                        .inputPayload("\"test-input\"")
+                        .build())
+                .build();
+
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
+
+        UnrecoverableDurableExecutionException ex = assertThrows(
+                UnrecoverableDurableExecutionException.class,
+                () -> DurableExecutor.execute(
+                        input,
+                        null,
+                        get(String.class),
+                        (userInput, ctx) -> {
+                            throw new UnrecoverableDurableExecutionException(
+                                    ErrorObject.builder()
+                                            .errorMessage("Test error")
+                                            .build(),
+                                    true);
+                        },
+                        configWithMockClient()));
+
+        assertTrue(ex.isRetryable());
     }
 
     @Test
