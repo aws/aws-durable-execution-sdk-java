@@ -138,12 +138,15 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             Function<DurableContext, R> function,
             TypeToken<R> resultType,
             SerDes serDes,
-            OperationSubType branchSubType) {
+            OperationSubType branchSubType,
+            boolean skipped) {
         var operationId = this.operationIdGenerator.nextOperationId();
         var childOp = createItem(operationId, name, function, resultType, serDes, branchSubType);
         branches.add(childOp);
-        pendingQueue.add(childOp);
-        logger.debug("Item enqueued {}", name);
+        if (!skipped) {
+            logger.debug("Item enqueued {}", name);
+            pendingQueue.add(childOp);
+        }
         // notify the consumer thread a new item is available
         notifyConsumerThread();
         return childOp;

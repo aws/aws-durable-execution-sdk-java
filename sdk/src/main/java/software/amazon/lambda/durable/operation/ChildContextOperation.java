@@ -54,6 +54,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
     private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
 
+    // child context for RunInChildContext
     public ChildContextOperation(
             OperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,
@@ -63,6 +64,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         this(operationIdentifier, function, resultTypeToken, config, durableContext, false, null);
     }
 
+    // child context for a ConcurrencyOperation branch
     public ChildContextOperation(
             OperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,

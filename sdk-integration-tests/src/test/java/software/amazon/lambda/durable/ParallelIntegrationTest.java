@@ -29,7 +29,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("process-items", config);
+            ParallelDurableFuture parallel = context.parallel("process-items", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b", "c")) {
@@ -58,7 +58,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("parallel-with-steps", config);
+            ParallelDurableFuture parallel = context.parallel("parallel-with-steps", config);
 
             try (parallel) {
                 for (var item : List.of("hello", "world")) {
@@ -600,7 +600,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("50-callbacks", config);
+            ParallelDurableFuture parallel = context.parallel("50-callbacks", config);
 
             try (parallel) {
                 for (int i = 0; i < branchCount; i++) {
