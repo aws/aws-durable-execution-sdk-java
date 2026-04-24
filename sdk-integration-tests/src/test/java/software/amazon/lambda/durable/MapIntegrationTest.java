@@ -1098,8 +1098,7 @@ class MapIntegrationTest {
             if (initialResult.get() == null) {
                 initialResult.set(result);
             } else {
-                // todo: this test would fail because 5th branch is skipped when replay
-                // assertEquals(initialResult.get(), result);
+                assertEquals(initialResult.get(), result);
             }
 
             return "done";

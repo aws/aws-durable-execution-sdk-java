@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.config.CompletionConfig;
@@ -121,7 +120,7 @@ class ParallelIntegrationTest {
     void testParallelAllBranchesFail(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
-            var parallel = context.parallel("all-fail", config);
+            ParallelDurableFuture parallel = context.parallel("all-fail", config);
 
             try (parallel) {
                 parallel.branch("branch-x", String.class, ctx -> {
@@ -158,7 +157,7 @@ class ParallelIntegrationTest {
                     .nestingType(nestingType)
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("sequential-parallel", config);
+            ParallelDurableFuture parallel = context.parallel("sequential-parallel", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b", "c", "d")) {
@@ -197,7 +196,7 @@ class ParallelIntegrationTest {
                     .nestingType(nestingType)
                     .build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("limited-parallel", config);
+            ParallelDurableFuture parallel = context.parallel("limited-parallel", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b", "c", "d", "e")) {
@@ -232,7 +231,7 @@ class ParallelIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
             var futures = new ArrayList<DurableFuture<String>>();
-            var parallel = context.parallel("replay-parallel", config);
+            ParallelDurableFuture parallel = context.parallel("replay-parallel", config);
 
             try (parallel) {
                 for (var item : List.of("a", "b", "c")) {
@@ -534,7 +533,7 @@ class ParallelIntegrationTest {
     void testParallelBranchesReturnDifferentTypes(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
-            var parallel = context.parallel("mixed-types", config);
+            ParallelDurableFuture parallel = context.parallel("mixed-types", config);
 
             DurableFuture<String> strFuture;
             DurableFuture<Integer> intFuture;
@@ -658,7 +657,7 @@ class ParallelIntegrationTest {
                     .maxConcurrency(5)
                     .nestingType(nestingType)
                     .build();
-            var parallel = context.parallel("50-callbacks-limited", config);
+            ParallelDurableFuture parallel = context.parallel("50-callbacks-limited", config);
 
             try (parallel) {
                 for (int i = 0; i < branchCount; i++) {
@@ -708,7 +707,7 @@ class ParallelIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
-            var parallel = context.parallel("50-callbacks-partial-fail", config);
+            ParallelDurableFuture parallel = context.parallel("50-callbacks-partial-fail", config);
 
             try (parallel) {
                 for (int i = 0; i < branchCount; i++) {
@@ -862,7 +861,7 @@ class ParallelIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
-            var parallel = context.parallel("50-conditions-some-fail", config);
+            ParallelDurableFuture parallel = context.parallel("50-conditions-some-fail", config);
 
             try (parallel) {
                 for (int i = 0; i < branchCount; i++) {
@@ -913,7 +912,7 @@ class ParallelIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
-            var parallel = context.parallel("50-conditions-replay", config);
+            ParallelDurableFuture parallel = context.parallel("50-conditions-replay", config);
 
             try (parallel) {
                 for (int i = 0; i < branchCount; i++) {
@@ -963,7 +962,7 @@ class ParallelIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder().nestingType(nestingType).build();
-            var parallel = context.parallel("50-mixed", config);
+            ParallelDurableFuture parallel = context.parallel("50-mixed", config);
 
             try (parallel) {
                 for (int i = 0; i < branchCount; i++) {
@@ -1128,8 +1127,7 @@ class ParallelIntegrationTest {
             if (initialResult.get() == null) {
                 initialResult.set(result);
             } else {
-                //todo: fix this
-                // assertEquals(initialResult.get(), result);
+                assertEquals(initialResult.get(), result);
             }
             assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
             assertTrue(result.completionStatus().isSucceeded());

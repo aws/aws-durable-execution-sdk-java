@@ -51,9 +51,9 @@ public abstract class BaseDurableOperation {
     protected final CompletableFuture<BaseDurableOperation> completionFuture;
     protected final BaseDurableOperation parentOperation;
     protected final boolean isVirtual;
+    protected final AtomicBoolean replayCompletedOperation = new AtomicBoolean(false);
     private final DurableContextImpl durableContext;
     private final AtomicReference<CompletableFuture<Void>> runningUserHandler = new AtomicReference<>(null);
-    private final AtomicBoolean replayCompletedOperation = new AtomicBoolean(false);
 
     protected BaseDurableOperation(
             OperationIdentifier operationIdentifier,

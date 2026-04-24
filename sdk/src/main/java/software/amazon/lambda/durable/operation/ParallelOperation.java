@@ -126,6 +126,12 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
             partialResult = existing.contextDetails() != null
                     ? deserializeResult(existing.contextDetails().result())
                     : null;
+            if (partialResult != null) {
+                var expected = new ExpectedCompletionStatus(
+                        partialResult.succeeded() + partialResult.failed(), partialResult.completionStatus());
+                executeItems(expected);
+                return;
+            }
         }
         executeItems();
     }

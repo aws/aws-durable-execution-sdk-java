@@ -152,7 +152,11 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 }
                 if (Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute children to reconstruct MapResult
-                    executeItems();
+                    var expected = new ExpectedCompletionStatus(
+                            deserializedResult.succeeded().size()
+                                    + deserializedResult.failed().size(),
+                            deserializedResult.completionReason());
+                    executeItems(expected);
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
                     cachedResult = deserializedResult;
@@ -173,7 +177,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     @Override
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        this.cachedResult = constructMapResult(concurrencyCompletionStatus, false);
+        this.cachedResult = constructMapResult(concurrencyCompletionStatus);
         var serialized = serializeResult(cachedResult);
         var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
 
@@ -184,7 +188,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                     .payload(serialized));
         } else {
             // Large result: checkpoint with stripped payload + replayChildren flag
-            var strippedResult = serializeResult(constructMapResult(concurrencyCompletionStatus, true));
+            var strippedResult = serializeResult(stripMapResult(cachedResult));
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .subType(getSubType().getValue())
@@ -194,9 +198,16 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
     }
 
+    private MapResult<O> stripMapResult(MapResult<O> result) {
+        return new MapResult<>(
+                result.items().stream()
+                        .map(item -> new MapResult.MapResultItem<O>(item.status(), null, null))
+                        .toList(),
+                result.completionReason());
+    }
+
     @SuppressWarnings("unchecked")
-    private MapResult<O> constructMapResult(
-            ConcurrencyCompletionStatus concurrencyCompletionStatus, boolean stripResult) {
+    private MapResult<O> constructMapResult(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         var children = getBranches();
         var resultItems = new ArrayList<MapResult.MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
@@ -206,7 +217,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 resultItems.set(i, MapResult.MapResultItem.skipped());
             } else {
                 try {
-                    resultItems.set(i, MapResult.MapResultItem.succeeded(stripResult ? null : branch.get()));
+                    resultItems.set(i, MapResult.MapResultItem.succeeded(branch.get()));
                 } catch (Throwable exception) {
                     Throwable throwable = ExceptionHelper.unwrapCompletableFuture(exception);
                     if (throwable instanceof SuspendExecutionException suspendExecutionException) {
@@ -218,8 +229,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                         // terminate the execution and throw the exception if it's not recoverable
                         throw terminateExecution(unrecoverableDurableExecutionException);
                     }
-                    resultItems.set(
-                            i, MapResult.MapResultItem.failed(stripResult ? null : MapResult.MapError.of(throwable)));
+                    resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(throwable)));
                 }
             }
         }
