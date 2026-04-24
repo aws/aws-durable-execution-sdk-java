@@ -14,10 +14,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.exception.DurableApiErrorClassifier;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
 
@@ -163,14 +165,18 @@ class CheckpointManager {
         var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
             var startTime = System.nanoTime();
-            var response = config.getDurableExecutionClient()
-                    .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
-            logger.debug(
-                    "Durable getExecutionState API called (latency={}ns): {}.",
-                    System.nanoTime() - startTime,
-                    response);
-            operations.addAll(response.operations());
-            nextMarker = response.nextMarker();
+            try {
+                var response = config.getDurableExecutionClient()
+                        .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
+                logger.debug(
+                        "Durable getExecutionState API called (latency={}ns): {}.",
+                        System.nanoTime() - startTime,
+                        response);
+                operations.addAll(response.operations());
+                nextMarker = response.nextMarker();
+            } catch (AwsServiceException e) {
+                throw DurableApiErrorClassifier.classifyException(e);
+            }
         }
         return operations;
     }
@@ -187,35 +193,41 @@ class CheckpointManager {
 
             var startTime = System.nanoTime();
             logger.debug("Calling durable checkpoint API with {} updates: {}", updates.size(), request);
-            var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
-            logger.debug("Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
-
-            // Notify callback of completion
-            checkpointToken = response.checkpointToken();
-            if (response.newExecutionState() != null) {
-                // fetch all pages of operations
-                var operations = fetchAllPages(response.newExecutionState());
-
-                var processStartTime = System.nanoTime();
-                int completedFutures = 0;
+            try {
+                var response =
+                        config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
                 logger.debug(
-                        "Processing {} operations. ({} pending pollers)", operations.size(), pollingFutures.size());
-                // call the callback
-                callback.accept(operations);
+                        "Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
-                // complete the registered pollingFutures
-                for (var operation : operations) {
-                    var pollers = pollingFutures.remove(operation.id());
-                    if (pollers != null) {
-                        completedFutures += pollers.size();
-                        pollers.forEach(poller -> poller.complete(operation));
+                // Notify callback of completion
+                checkpointToken = response.checkpointToken();
+                if (response.newExecutionState() != null) {
+                    // fetch all pages of operations
+                    var operations = fetchAllPages(response.newExecutionState());
+
+                    var processStartTime = System.nanoTime();
+                    int completedFutures = 0;
+                    logger.debug(
+                            "Processing {} operations. ({} pending pollers)", operations.size(), pollingFutures.size());
+                    // call the callback
+                    callback.accept(operations);
+
+                    // complete the registered pollingFutures
+                    for (var operation : operations) {
+                        var pollers = pollingFutures.remove(operation.id());
+                        if (pollers != null) {
+                            completedFutures += pollers.size();
+                            pollers.forEach(poller -> poller.complete(operation));
+                        }
                     }
+                    logger.debug(
+                            "{} operations processed and {} pollers completed (latency={}ns). ",
+                            operations.size(),
+                            completedFutures,
+                            System.nanoTime() - processStartTime);
                 }
-                logger.debug(
-                        "{} operations processed and {} pollers completed (latency={}ns). ",
-                        operations.size(),
-                        completedFutures,
-                        System.nanoTime() - processStartTime);
+            } catch (AwsServiceException e) {
+                throw DurableApiErrorClassifier.classifyException(e);
             }
         }
     }

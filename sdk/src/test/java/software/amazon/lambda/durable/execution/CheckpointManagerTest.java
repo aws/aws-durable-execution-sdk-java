@@ -15,6 +15,9 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.http.SdkHttpResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
@@ -25,6 +28,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 
@@ -612,5 +616,55 @@ class CheckpointManagerTest {
                     "Fixed delay intervals should be roughly consistent. min=" + minInterval + "ms, max=" + maxInterval
                             + "ms, intervals=" + intervals);
         }
+    }
+
+    // --- Checkpoint error classification wiring tests ---
+
+    @Test
+    void checkpointBatch_nonRetryableError_throwsUnrecoverable() {
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenThrow(AwsServiceException.builder()
+                        .message("KMSAccessDeniedException: Lambda was unable to decrypt the environment variables")
+                        .awsErrorDetails(AwsErrorDetails.builder()
+                                .errorCode("KMSAccessDeniedException")
+                                .errorMessage("Lambda was unable to decrypt the environment variables")
+                                .sdkHttpResponse(SdkHttpResponse.builder()
+                                        .statusCode(502)
+                                        .build())
+                                .build())
+                        .statusCode(502)
+                        .build());
+
+        var future = batcher.checkpoint(OperationUpdate.builder()
+                .id("op-1")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build());
+
+        var ex = assertThrows(Exception.class, () -> future.get(200, TimeUnit.MILLISECONDS));
+        assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
+    }
+
+    @Test
+    void fetchAllPages_nonRetryableError_throwsUnrecoverable() {
+        when(client.getExecutionState(eq("arn:test"), eq("token-1"), eq("marker-1")))
+                .thenThrow(AwsServiceException.builder()
+                        .message("KMSAccessDeniedException: Lambda was unable to decrypt the environment variables")
+                        .awsErrorDetails(AwsErrorDetails.builder()
+                                .errorCode("KMSAccessDeniedException")
+                                .errorMessage("Lambda was unable to decrypt the environment variables")
+                                .sdkHttpResponse(SdkHttpResponse.builder()
+                                        .statusCode(502)
+                                        .build())
+                                .build())
+                        .statusCode(502)
+                        .build());
+
+        var state = CheckpointUpdatedExecutionState.builder()
+                .operations(List.of(Operation.builder().id("op-1").build()))
+                .nextMarker("marker-1")
+                .build();
+
+        assertThrows(UnrecoverableDurableExecutionException.class, () -> batcher.fetchAllPages(state));
     }
 }
