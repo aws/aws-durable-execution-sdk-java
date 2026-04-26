@@ -7,15 +7,26 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 /** Exception thrown when the execution is not recoverable. The durable execution will be immediately terminated. */
 public class UnrecoverableDurableExecutionException extends DurableExecutionException {
     private final ErrorObject errorObject;
+    private final boolean retryable;
+
+    public UnrecoverableDurableExecutionException(ErrorObject errorObject, boolean retryable) {
+<span class="fc" id="L13">        super(errorObject.errorMessage());</span>
+<span class="fc" id="L14">        this.errorObject = errorObject;</span>
+<span class="fc" id="L15">        this.retryable = retryable;</span>
+<span class="fc" id="L16">    }</span>
 
     public UnrecoverableDurableExecutionException(ErrorObject errorObject) {
-<span class="fc" id="L12">        super(errorObject.errorMessage());</span>
-<span class="fc" id="L13">        this.errorObject = errorObject;</span>
-<span class="fc" id="L14">    }</span>
+<span class="fc" id="L19">        this(errorObject, false);</span>
+<span class="fc" id="L20">    }</span>
 
     /** Returns the error details for this unrecoverable exception. */
     public ErrorObject getErrorObject() {
-<span class="fc" id="L18">        return errorObject;</span>
+<span class="fc" id="L24">        return errorObject;</span>
+    }
+
+    /** Returns true if the execution can be retried. */
+    public boolean isRetryable() {
+<span class="fc" id="L29">        return retryable;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
