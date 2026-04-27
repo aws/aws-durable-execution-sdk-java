@@ -79,7 +79,7 @@ public final class RetryOperationHelper {
      */
     @SuppressWarnings("unchecked")
     public static <T> T retryOperation(
-            DurableContext context, String name, RetryableOperation<T> operation, RetryOperationConfig config) {
+            DurableContext context, String name, WithRetry<T> operation, RetryOperationConfig config) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(name, "name cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
@@ -102,8 +102,7 @@ public final class RetryOperationHelper {
      * @param config retry configuration including the retry strategy
      * @return the operation result
      */
-    public static <T> T retryOperation(
-            DurableContext context, RetryableOperation<T> operation, RetryOperationConfig config) {
+    public static <T> T retryOperation(DurableContext context, WithRetry<T> operation, RetryOperationConfig config) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
@@ -119,7 +118,7 @@ public final class RetryOperationHelper {
      * are internal SDK control flow signals that must propagate immediately.
      */
     private static <T> T executeRetryLoop(
-            DurableContext context, String name, RetryableOperation<T> operation, RetryOperationConfig config) {
+            DurableContext context, String name, WithRetry<T> operation, RetryOperationConfig config) {
         var attempt = 1;
         while (true) {
             try {

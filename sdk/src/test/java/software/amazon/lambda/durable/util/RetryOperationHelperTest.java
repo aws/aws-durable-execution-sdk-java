@@ -272,7 +272,7 @@ class RetryOperationHelperTest {
 
             assertThrows(
                     NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(context, (RetryableOperation<String>) null, config));
+                    () -> RetryOperationHelper.retryOperation(context, (WithRetry<String>) null, config));
         }
 
         @Test

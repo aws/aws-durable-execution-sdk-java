@@ -8,11 +8,11 @@ import static org.mockito.Mockito.*;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableContext;
 
-class RetryableOperationTest {
+class WithRetryTest {
 
     @Test
     void canBeImplementedAsLambda() {
-        RetryableOperation<String> operation = (ctx, attempt) -> "result-" + attempt;
+        WithRetry<String> operation = (ctx, attempt) -> "result-" + attempt;
         var context = mock(DurableContext.class);
 
         assertEquals("result-1", operation.execute(context, 1));
@@ -22,7 +22,7 @@ class RetryableOperationTest {
     @Test
     void receivesContextAndAttempt() {
         var context = mock(DurableContext.class);
-        RetryableOperation<String> operation = (ctx, attempt) -> {
+        WithRetry<String> operation = (ctx, attempt) -> {
             assertSame(context, ctx);
             return "attempt-" + attempt;
         };
@@ -33,7 +33,7 @@ class RetryableOperationTest {
 
     @Test
     void canThrowExceptions() {
-        RetryableOperation<String> operation = (ctx, attempt) -> {
+        WithRetry<String> operation = (ctx, attempt) -> {
             throw new RuntimeException("failed on attempt " + attempt);
         };
         var context = mock(DurableContext.class);
@@ -44,7 +44,7 @@ class RetryableOperationTest {
 
     @Test
     void canReturnNull() {
-        RetryableOperation<String> operation = (ctx, attempt) -> null;
+        WithRetry<String> operation = (ctx, attempt) -> null;
         var context = mock(DurableContext.class);
 
         assertNull(operation.execute(context, 1));

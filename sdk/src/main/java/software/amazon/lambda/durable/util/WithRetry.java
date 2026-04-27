@@ -13,7 +13,7 @@ import software.amazon.lambda.durable.DurableContext;
  * @param <T> the result type
  */
 @FunctionalInterface
-public interface RetryableOperation<T> {
+public interface WithRetry<T> {
 
     /**
      * Executes the durable operation.
