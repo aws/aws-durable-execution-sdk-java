@@ -5,13 +5,13 @@ package software.amazon.lambda.durable.examples.callback;
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.config.RetryOperationConfig;
+import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.retry.RetryDecision;
-import software.amazon.lambda.durable.util.RetryOperationHelper;
+import software.amazon.lambda.durable.util.WithRetryHelper;
 
 /**
- * Example demonstrating {@link RetryOperationHelper} with {@code context.waitForCallback}.
+ * Example demonstrating {@link WithRetryHelper} with {@code context.waitForCallback}.
  *
  * <p>Submits an approval request to an external system via a callback. If the callback fails (e.g., the external system
  * rejects the request), the helper retries the entire waitForCallback cycle — creating a fresh callback with a new ID
@@ -33,12 +33,12 @@ public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest,
                 stepCtx -> "Approval for: " + input.description() + " ($" + input.amount() + ")");
 
         // Step 2: waitForCallback with retry — if the external system fails, try again with a fresh callback
-        var approvalResult = RetryOperationHelper.retryOperation(
+        var approvalResult = WithRetryHelper.retryOperation(
                 context,
                 (ctx, attempt) -> ctx.waitForCallback(
                         "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
                                 .info("Attempt {}: sending callback {} to approval system", attempt, callbackId)),
-                RetryOperationConfig.builder()
+                WithRetryConfig.builder()
                         .retryStrategy((error, attempt) -> attempt < MAX_ATTEMPTS
                                 ? RetryDecision.retry(Duration.ofSeconds(2))
                                 : RetryDecision.fail())

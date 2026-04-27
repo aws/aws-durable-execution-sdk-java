@@ -7,13 +7,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.lambda.durable.config.RetryOperationConfig;
+import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
-import software.amazon.lambda.durable.util.RetryOperationHelper;
+import software.amazon.lambda.durable.util.WithRetryHelper;
 
 class RetryInvokeIntegrationTest {
 
@@ -21,10 +21,10 @@ class RetryInvokeIntegrationTest {
     void invokeSucceedsOnFirstAttempt() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> RetryOperationHelper.retryOperation(
+                (input, context) -> WithRetryHelper.retryOperation(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
-                        RetryOperationConfig.builder()
+                        WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
                                 .build()));
 
@@ -42,10 +42,10 @@ class RetryInvokeIntegrationTest {
     void invokeRetriesAfterFailure() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> RetryOperationHelper.retryOperation(
+                (input, context) -> WithRetryHelper.retryOperation(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
-                        RetryOperationConfig.builder()
+                        WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
                                 .build()));
 
@@ -80,10 +80,10 @@ class RetryInvokeIntegrationTest {
     void invokeFailsAfterAllRetriesExhausted() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> RetryOperationHelper.retryOperation(
+                (input, context) -> WithRetryHelper.retryOperation(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
-                        RetryOperationConfig.builder()
+                        WithRetryConfig.builder()
                                 .retryStrategy((error, attempt) ->
                                         attempt < 2 ? RetryDecision.retry(Duration.ofSeconds(1)) : RetryDecision.fail())
                                 .build()));
@@ -114,10 +114,10 @@ class RetryInvokeIntegrationTest {
     void invokeRetryWithCustomBackoffDelay() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> RetryOperationHelper.retryOperation(
+                (input, context) -> WithRetryHelper.retryOperation(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
-                        RetryOperationConfig.builder()
+                        WithRetryConfig.builder()
                                 .retryStrategy((error, attempt) -> attempt < 3
                                         ? RetryDecision.retry(Duration.ofSeconds(attempt * 5L))
                                         : RetryDecision.fail())
@@ -148,10 +148,10 @@ class RetryInvokeIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var prefix = context.step("prepare", String.class, stepCtx -> "prepared");
 
-            var invokeResult = RetryOperationHelper.retryOperation(
+            var invokeResult = WithRetryHelper.retryOperation(
                     context,
                     (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
-                    RetryOperationConfig.builder()
+                    WithRetryConfig.builder()
                             .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)))
                             .build());
 
@@ -174,10 +174,10 @@ class RetryInvokeIntegrationTest {
     void invokeRetryPreservesOriginalExceptionType() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             try {
-                return RetryOperationHelper.retryOperation(
+                return WithRetryHelper.retryOperation(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
-                        RetryOperationConfig.builder()
+                        WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                                 .build());
             } catch (InvokeFailedException e) {

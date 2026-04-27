@@ -14,13 +14,13 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.RetryOperationConfig;
+import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
-class RetryOperationHelperTest {
+class WithRetryHelperTest {
 
     private DurableContext context;
 
@@ -43,11 +43,11 @@ class RetryOperationHelperTest {
                         return func.apply(context);
                     });
 
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = RetryOperationHelper.retryOperation(context, "my-op", (ctx, attempt) -> "success", config);
+            var result = WithRetryHelper.retryOperation(context, "my-op", (ctx, attempt) -> "success", config);
 
             assertEquals("success", result);
             verify(context).runInChildContext(eq("my-op"), any(TypeToken.class), any());
@@ -55,12 +55,12 @@ class RetryOperationHelperTest {
 
         @Test
         void successOnFirstAttempt_noChildContext_whenDisabled() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .wrapInChildContext(false)
                     .build();
 
-            var result = RetryOperationHelper.retryOperation(context, "my-op", (ctx, attempt) -> "direct", config);
+            var result = WithRetryHelper.retryOperation(context, "my-op", (ctx, attempt) -> "direct", config);
 
             assertEquals("direct", result);
             verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
@@ -70,13 +70,13 @@ class RetryOperationHelperTest {
         void retriesWithBackoffWaits_namedForm() {
             // Disable child context wrapping so we can directly verify wait calls
             var callCount = new int[] {0};
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) ->
                             attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(5)) : RetryDecision.fail())
                     .wrapInChildContext(false)
                     .build();
 
-            var result = RetryOperationHelper.retryOperation(
+            var result = WithRetryHelper.retryOperation(
                     context,
                     "my-op",
                     (ctx, attempt) -> {
@@ -97,14 +97,14 @@ class RetryOperationHelperTest {
 
         @Test
         void rethrowsWhenRetryStrategyReturnsFail() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .wrapInChildContext(false)
                     .build();
 
             var exception = assertThrows(
                     RuntimeException.class,
-                    () -> RetryOperationHelper.retryOperation(
+                    () -> WithRetryHelper.retryOperation(
                             context,
                             "my-op",
                             (ctx, attempt) -> {
@@ -118,14 +118,14 @@ class RetryOperationHelperTest {
 
         @Test
         void usesDefaultDelayWhenRetryDecisionDelayIsZero() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(
                             (error, attempt) -> attempt < 2 ? RetryDecision.retry(Duration.ZERO) : RetryDecision.fail())
                     .wrapInChildContext(false)
                     .build();
 
             var callCount = new int[] {0};
-            var result = RetryOperationHelper.retryOperation(
+            var result = WithRetryHelper.retryOperation(
                     context,
                     "my-op",
                     (ctx, attempt) -> {
@@ -144,42 +144,41 @@ class RetryOperationHelperTest {
 
         @Test
         void nullContext_shouldThrow() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
             assertThrows(
                     NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(null, "name", (ctx, a) -> "x", config));
+                    () -> WithRetryHelper.retryOperation(null, "name", (ctx, a) -> "x", config));
         }
 
         @Test
         void nullName_shouldThrow() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
             assertThrows(
                     NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(context, null, (ctx, a) -> "x", config));
+                    () -> WithRetryHelper.retryOperation(context, null, (ctx, a) -> "x", config));
         }
 
         @Test
         void nullOperation_shouldThrow() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
             assertThrows(
-                    NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(context, "name", null, config));
+                    NullPointerException.class, () -> WithRetryHelper.retryOperation(context, "name", null, config));
         }
 
         @Test
         void nullConfig_shouldThrow() {
             assertThrows(
                     NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(context, "name", (ctx, a) -> "x", null));
+                    () -> WithRetryHelper.retryOperation(context, "name", (ctx, a) -> "x", null));
         }
     }
 
@@ -190,11 +189,11 @@ class RetryOperationHelperTest {
 
         @Test
         void successOnFirstAttempt() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = RetryOperationHelper.retryOperation(context, (ctx, attempt) -> "anonymous-success", config);
+            var result = WithRetryHelper.retryOperation(context, (ctx, attempt) -> "anonymous-success", config);
 
             assertEquals("anonymous-success", result);
             verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
@@ -202,12 +201,12 @@ class RetryOperationHelperTest {
 
         @Test
         void retriesWithAnonymousBackoffNames() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) ->
                             attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(2)) : RetryDecision.fail())
                     .build();
 
-            var result = RetryOperationHelper.retryOperation(
+            var result = WithRetryHelper.retryOperation(
                     context,
                     (ctx, attempt) -> {
                         if (attempt < 3) {
@@ -224,26 +223,26 @@ class RetryOperationHelperTest {
 
         @Test
         void neverWrapsInChildContext_evenWhenConfigSaysTrue() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .wrapInChildContext(true) // should be ignored for anonymous form
                     .build();
 
-            RetryOperationHelper.retryOperation(context, (ctx, attempt) -> "result", config);
+            WithRetryHelper.retryOperation(context, (ctx, attempt) -> "result", config);
 
             verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
         }
 
         @Test
         void rethrowsOriginalException() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
             var original = new IllegalStateException("original error");
             var thrown = assertThrows(
                     IllegalStateException.class,
-                    () -> RetryOperationHelper.retryOperation(
+                    () -> WithRetryHelper.retryOperation(
                             context,
                             (ctx, attempt) -> {
                                 throw original;
@@ -255,31 +254,29 @@ class RetryOperationHelperTest {
 
         @Test
         void nullContext_shouldThrow() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
             assertThrows(
-                    NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(null, (ctx, a) -> "x", config));
+                    NullPointerException.class, () -> WithRetryHelper.retryOperation(null, (ctx, a) -> "x", config));
         }
 
         @Test
         void nullOperation_shouldThrow() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
             assertThrows(
                     NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(context, (WithRetry<String>) null, config));
+                    () -> WithRetryHelper.retryOperation(context, (WithRetry<String>) null, config));
         }
 
         @Test
         void nullConfig_shouldThrow() {
             assertThrows(
-                    NullPointerException.class,
-                    () -> RetryOperationHelper.retryOperation(context, (ctx, a) -> "x", null));
+                    NullPointerException.class, () -> WithRetryHelper.retryOperation(context, (ctx, a) -> "x", null));
         }
     }
 
@@ -291,13 +288,13 @@ class RetryOperationHelperTest {
         @Test
         void passesCorrectAttemptNumberToOperation() {
             var attempts = new ArrayList<Integer>();
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) ->
                             attempt < 4 ? RetryDecision.retry(Duration.ofSeconds(1)) : RetryDecision.fail())
                     .wrapInChildContext(false)
                     .build();
 
-            RetryOperationHelper.retryOperation(
+            WithRetryHelper.retryOperation(
                     context,
                     "track",
                     (ctx, attempt) -> {
@@ -319,7 +316,7 @@ class RetryOperationHelperTest {
         @Test
         void passesErrorToRetryStrategy() {
             var errors = new ArrayList<Throwable>();
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) -> {
                         errors.add(error);
                         return attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(1)) : RetryDecision.fail();
@@ -328,7 +325,7 @@ class RetryOperationHelperTest {
 
             assertThrows(
                     RuntimeException.class,
-                    () -> RetryOperationHelper.retryOperation(
+                    () -> WithRetryHelper.retryOperation(
                             context,
                             (ctx, attempt) -> {
                                 throw new RuntimeException("error-" + attempt);
@@ -343,11 +340,11 @@ class RetryOperationHelperTest {
 
         @Test
         void respectsCustomDelayFromRetryDecision() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(attempt * 10L)))
                     .build();
 
-            RetryOperationHelper.retryOperation(
+            WithRetryHelper.retryOperation(
                     context,
                     (ctx, attempt) -> {
                         if (attempt <= 2) {
@@ -363,11 +360,11 @@ class RetryOperationHelperTest {
 
         @Test
         void passesContextToOperation() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            RetryOperationHelper.retryOperation(
+            WithRetryHelper.retryOperation(
                     context,
                     (ctx, attempt) -> {
                         assertSame(context, ctx);
@@ -385,12 +382,12 @@ class RetryOperationHelperTest {
                         return func.apply(childContext);
                     });
 
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .wrapInChildContext(true)
                     .build();
 
-            RetryOperationHelper.retryOperation(
+            WithRetryHelper.retryOperation(
                     context,
                     "wrapped",
                     (ctx, attempt) -> {
@@ -402,13 +399,13 @@ class RetryOperationHelperTest {
 
         @Test
         void rethrowsLastExceptionWhenAllRetriesExhausted() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)))
                     .build();
 
             var thrown = assertThrows(
                     RuntimeException.class,
-                    () -> RetryOperationHelper.retryOperation(
+                    () -> WithRetryHelper.retryOperation(
                             context,
                             (ctx, attempt) -> {
                                 throw new RuntimeException("attempt-" + attempt);
@@ -421,13 +418,13 @@ class RetryOperationHelperTest {
 
         @Test
         void propagatesSuspendExecutionExceptionWithoutRetrying() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)))
                     .build();
 
             assertThrows(
                     SuspendExecutionException.class,
-                    () -> RetryOperationHelper.retryOperation(
+                    () -> WithRetryHelper.retryOperation(
                             context,
                             (ctx, attempt) -> {
                                 throw new SuspendExecutionException();
@@ -440,13 +437,13 @@ class RetryOperationHelperTest {
 
         @Test
         void propagatesUnrecoverableDurableExecutionExceptionWithoutRetrying() {
-            var config = RetryOperationConfig.builder()
+            var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)))
                     .build();
 
             assertThrows(
                     UnrecoverableDurableExecutionException.class,
-                    () -> RetryOperationHelper.retryOperation(
+                    () -> WithRetryHelper.retryOperation(
                             context,
                             (ctx, attempt) -> {
                                 throw new UnrecoverableDurableExecutionException(

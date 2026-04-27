@@ -5,7 +5,7 @@ package software.amazon.lambda.durable.util;
 import software.amazon.lambda.durable.DurableContext;
 
 /**
- * A durable operation that can be retried end-to-end by {@link RetryOperationHelper}.
+ * A durable operation that can be retried end-to-end by {@link WithRetryHelper}.
  *
  * <p>Receives the durable context and the 1-based attempt number so callers can generate unique operation names per
  * attempt (e.g., {@code "approval-" + attempt}).

@@ -6,7 +6,7 @@ import java.time.Duration;
 import java.util.Objects;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.RetryOperationConfig;
+import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.retry.RetryDecision;
@@ -23,7 +23,7 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * <h2>Usage — callback retry</h2>
  *
  * <pre>{@code
- * var result = RetryOperationHelper.retryOperation(
+ * var result = WithRetryHelper.retryOperation(
  *     context,
  *     "approval",
  *     (ctx, attempt) -> ctx.waitForCallback(
@@ -31,7 +31,7 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  *         String.class,
  *         (callbackId, stepCtx) -> sendApprovalEmail(approverEmail, callbackId)
  *     ),
- *     RetryOperationConfig.builder()
+ *     WithRetryConfig.builder()
  *         .retryStrategy(RetryStrategies.exponentialBackoff(
  *             3, Duration.ofSeconds(2), Duration.ofSeconds(30), 2.0, JitterStrategy.FULL))
  *         .build()
@@ -41,11 +41,11 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * <h2>Usage — invoke retry (anonymous form)</h2>
  *
  * <pre>{@code
- * var result = RetryOperationHelper.retryOperation(
+ * var result = WithRetryHelper.retryOperation(
  *     context,
  *     (ctx, attempt) -> ctx.invoke(
  *         "charge-" + attempt, paymentFnArn, new ChargeRequest(orderId), String.class),
- *     RetryOperationConfig.builder()
+ *     WithRetryConfig.builder()
  *         .retryStrategy((err, att) -> att < 3
  *             ? RetryDecision.retry(Duration.ofSeconds(1))
  *             : RetryDecision.fail())
@@ -53,13 +53,13 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * );
  * }</pre>
  */
-public final class RetryOperationHelper {
+public final class WithRetryHelper {
 
     private static final Duration DEFAULT_BACKOFF_DELAY = Duration.ofSeconds(1);
     private static final String BACKOFF_SUFFIX = "-backoff-";
     private static final String ANONYMOUS_BACKOFF_PREFIX = "retry-backoff-";
 
-    private RetryOperationHelper() {
+    private WithRetryHelper() {
         // utility class
     }
 
@@ -67,8 +67,7 @@ public final class RetryOperationHelper {
      * Named form — wraps the retry loop in {@code runInChildContext} by default so all attempts are grouped under a
      * single named operation in execution history.
      *
-     * <p>The child-context wrapping can be disabled via
-     * {@link RetryOperationConfig.Builder#wrapInChildContext(boolean)}.
+     * <p>The child-context wrapping can be disabled via {@link WithRetryConfig.Builder#wrapInChildContext(boolean)}.
      *
      * @param <T> the result type
      * @param context the durable context
@@ -79,7 +78,7 @@ public final class RetryOperationHelper {
      */
     @SuppressWarnings("unchecked")
     public static <T> T retryOperation(
-            DurableContext context, String name, WithRetry<T> operation, RetryOperationConfig config) {
+            DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(name, "name cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
@@ -102,7 +101,7 @@ public final class RetryOperationHelper {
      * @param config retry configuration including the retry strategy
      * @return the operation result
      */
-    public static <T> T retryOperation(DurableContext context, WithRetry<T> operation, RetryOperationConfig config) {
+    public static <T> T retryOperation(DurableContext context, WithRetry<T> operation, WithRetryConfig config) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
@@ -118,7 +117,7 @@ public final class RetryOperationHelper {
      * are internal SDK control flow signals that must propagate immediately.
      */
     private static <T> T executeRetryLoop(
-            DurableContext context, String name, WithRetry<T> operation, RetryOperationConfig config) {
+            DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
         var attempt = 1;
         while (true) {
             try {

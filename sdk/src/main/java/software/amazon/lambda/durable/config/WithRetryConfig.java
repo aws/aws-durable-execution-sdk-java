@@ -5,16 +5,16 @@ package software.amazon.lambda.durable.config;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
 /**
- * Configuration for {@link software.amazon.lambda.durable.util.RetryOperationHelper#retryOperation}.
+ * Configuration for {@link software.amazon.lambda.durable.util.WithRetryHelper#retryOperation}.
  *
  * <p>Uses the same {@link RetryStrategy} shape that developers already know from {@link StepConfig}, so there are zero
  * new retry concepts to learn.
  */
-public class RetryOperationConfig {
+public class WithRetryConfig {
     private final RetryStrategy retryStrategy;
     private final boolean wrapInChildContext;
 
-    private RetryOperationConfig(Builder builder) {
+    private WithRetryConfig(Builder builder) {
         this.retryStrategy = builder.retryStrategy;
         this.wrapInChildContext = builder.wrapInChildContext;
     }
@@ -40,7 +40,7 @@ public class RetryOperationConfig {
     }
 
     /**
-     * Creates a new builder for {@code RetryOperationConfig}.
+     * Creates a new builder for {@code WithRetryConfig}.
      *
      * @return a new builder instance
      */
@@ -48,7 +48,7 @@ public class RetryOperationConfig {
         return new Builder();
     }
 
-    /** Builder for creating {@link RetryOperationConfig} instances. */
+    /** Builder for creating {@link WithRetryConfig} instances. */
     public static class Builder {
         private RetryStrategy retryStrategy;
         private boolean wrapInChildContext = true;
@@ -88,16 +88,16 @@ public class RetryOperationConfig {
         }
 
         /**
-         * Builds the {@link RetryOperationConfig} instance.
+         * Builds the {@link WithRetryConfig} instance.
          *
          * @return a new config with the configured options
          * @throws IllegalArgumentException if retryStrategy is not set
          */
-        public RetryOperationConfig build() {
+        public WithRetryConfig build() {
             if (retryStrategy == null) {
                 throw new IllegalArgumentException("retryStrategy is required");
             }
-            return new RetryOperationConfig(this);
+            return new WithRetryConfig(this);
         }
     }
 }

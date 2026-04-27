@@ -8,28 +8,28 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
-class RetryOperationConfigTest {
+class WithRetryConfigTest {
 
     @Test
     void builderWithRetryStrategy() {
         var strategy = RetryStrategies.Presets.DEFAULT;
 
-        var config = RetryOperationConfig.builder().retryStrategy(strategy).build();
+        var config = WithRetryConfig.builder().retryStrategy(strategy).build();
 
         assertEquals(strategy, config.retryStrategy());
     }
 
     @Test
     void builderWithoutRetryStrategy_shouldThrow() {
-        var exception = assertThrows(IllegalArgumentException.class, () -> RetryOperationConfig.builder()
-                .build());
+        var exception = assertThrows(
+                IllegalArgumentException.class, () -> WithRetryConfig.builder().build());
 
         assertEquals("retryStrategy is required", exception.getMessage());
     }
 
     @Test
     void wrapInChildContext_defaultsToTrue() {
-        var config = RetryOperationConfig.builder()
+        var config = WithRetryConfig.builder()
                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                 .build();
 
@@ -38,7 +38,7 @@ class RetryOperationConfigTest {
 
     @Test
     void wrapInChildContext_canBeSetToFalse() {
-        var config = RetryOperationConfig.builder()
+        var config = WithRetryConfig.builder()
                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                 .wrapInChildContext(false)
                 .build();
@@ -48,7 +48,7 @@ class RetryOperationConfigTest {
 
     @Test
     void wrapInChildContext_canBeSetToTrue() {
-        var config = RetryOperationConfig.builder()
+        var config = WithRetryConfig.builder()
                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                 .wrapInChildContext(true)
                 .build();
@@ -60,7 +60,7 @@ class RetryOperationConfigTest {
     void builderChaining() {
         var strategy = RetryStrategies.Presets.DEFAULT;
 
-        var config = RetryOperationConfig.builder()
+        var config = WithRetryConfig.builder()
                 .retryStrategy(strategy)
                 .wrapInChildContext(false)
                 .build();
@@ -71,7 +71,7 @@ class RetryOperationConfigTest {
 
     @Test
     void builderWithCustomLambdaRetryStrategy() {
-        var config = RetryOperationConfig.builder()
+        var config = WithRetryConfig.builder()
                 .retryStrategy((error, attempt) -> RetryDecision.fail())
                 .build();
 
