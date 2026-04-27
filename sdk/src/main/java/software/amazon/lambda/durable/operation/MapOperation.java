@@ -73,10 +73,10 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     }
 
     private void addAllItems() {
-        addAllItemsWithStatus(Collections.nCopies(items.size(), null));
+        addUnskippedItems(Collections.nCopies(items.size(), null));
     }
 
-    private void addAllItemsWithStatus(List<MapResult.MapResultItem.Status> resultItems) {
+    private void addUnskippedItems(List<MapResult.MapResultItem.Status> resultItems) {
         // Enqueue all items first.
         // If the map is completed when replaying, mapResult != null and the items that have been skipped
         // will be skipped during replay.
@@ -143,7 +143,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                         : null;
                 var deserializedResult = result != null ? deserializeResult(result) : null;
                 if (deserializedResult != null) {
-                    addAllItemsWithStatus(deserializedResult.items().stream()
+                    addUnskippedItems(deserializedResult.items().stream()
                             .map(MapResult.MapResultItem::status)
                             .toList());
                 } else {
