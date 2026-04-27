@@ -5,7 +5,7 @@ package software.amazon.lambda.durable.config;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
 /**
- * Configuration for {@link software.amazon.lambda.durable.util.WithRetryHelper#retryOperation}.
+ * Configuration for {@link software.amazon.lambda.durable.util.WithRetryHelper#withRetry}.
  *
  * <p>Uses the same {@link RetryStrategy} shape that developers already know from {@link StepConfig}, so there are zero
  * new retry concepts to learn.
@@ -30,7 +30,7 @@ public class WithRetryConfig {
 
     /**
      * Whether to wrap the retry loop in {@code runInChildContext} so all attempts are grouped under a single named
-     * operation in execution history. Only applies when a name is provided to the named form of {@code retryOperation}.
+     * operation in execution history. Only applies when a name is provided to the named form of {@code withRetry}.
      * Defaults to {@code true}.
      *
      * @return true if child-context wrapping is enabled
@@ -73,7 +73,7 @@ public class WithRetryConfig {
 
         /**
          * Controls whether the retry loop is wrapped in a child context. Only meaningful for the named form of
-         * {@code retryOperation}. Defaults to {@code true}.
+         * {@code withRetry}. Defaults to {@code true}.
          *
          * <p>When {@code true}, all attempts and backoff waits are grouped under a single named operation in execution
          * history, providing a cleaner view and isolated operation ID space. Set to {@code false} to flatten attempts

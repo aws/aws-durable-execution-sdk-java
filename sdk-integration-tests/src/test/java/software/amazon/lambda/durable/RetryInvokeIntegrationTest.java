@@ -21,7 +21,7 @@ class RetryInvokeIntegrationTest {
     void invokeSucceedsOnFirstAttempt() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.retryOperation(
+                (input, context) -> WithRetryHelper.withRetry(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
@@ -42,7 +42,7 @@ class RetryInvokeIntegrationTest {
     void invokeRetriesAfterFailure() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.retryOperation(
+                (input, context) -> WithRetryHelper.withRetry(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
@@ -80,7 +80,7 @@ class RetryInvokeIntegrationTest {
     void invokeFailsAfterAllRetriesExhausted() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.retryOperation(
+                (input, context) -> WithRetryHelper.withRetry(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
@@ -114,7 +114,7 @@ class RetryInvokeIntegrationTest {
     void invokeRetryWithCustomBackoffDelay() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.retryOperation(
+                (input, context) -> WithRetryHelper.withRetry(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
@@ -148,7 +148,7 @@ class RetryInvokeIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var prefix = context.step("prepare", String.class, stepCtx -> "prepared");
 
-            var invokeResult = WithRetryHelper.retryOperation(
+            var invokeResult = WithRetryHelper.withRetry(
                     context,
                     (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                     WithRetryConfig.builder()
@@ -174,7 +174,7 @@ class RetryInvokeIntegrationTest {
     void invokeRetryPreservesOriginalExceptionType() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             try {
-                return WithRetryHelper.retryOperation(
+                return WithRetryHelper.withRetry(
                         context,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()

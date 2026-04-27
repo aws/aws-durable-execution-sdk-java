@@ -48,7 +48,7 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = WithRetryHelper.retryOperation(context, "my-op", (ctx, attempt) -> "success", config);
+            var result = WithRetryHelper.withRetry(context, "my-op", (ctx, attempt) -> "success", config);
 
             assertEquals("success", result);
             verify(context).runInChildContext(eq("my-op"), any(TypeToken.class), any());
@@ -61,7 +61,7 @@ class WithRetryHelperTest {
                     .wrapInChildContext(false)
                     .build();
 
-            var result = WithRetryHelper.retryOperation(context, "my-op", (ctx, attempt) -> "direct", config);
+            var result = WithRetryHelper.withRetry(context, "my-op", (ctx, attempt) -> "direct", config);
 
             assertEquals("direct", result);
             verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
@@ -77,7 +77,7 @@ class WithRetryHelperTest {
                     .wrapInChildContext(false)
                     .build();
 
-            var result = WithRetryHelper.retryOperation(
+            var result = WithRetryHelper.withRetry(
                     context,
                     "my-op",
                     (ctx, attempt) -> {
@@ -105,7 +105,7 @@ class WithRetryHelperTest {
 
             var exception = assertThrows(
                     RuntimeException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             "my-op",
                             (ctx, attempt) -> {
@@ -126,7 +126,7 @@ class WithRetryHelperTest {
                     .build();
 
             var callCount = new int[] {0};
-            var result = WithRetryHelper.retryOperation(
+            var result = WithRetryHelper.withRetry(
                     context,
                     "my-op",
                     (ctx, attempt) -> {
@@ -150,8 +150,7 @@ class WithRetryHelperTest {
                     .build();
 
             assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.retryOperation(null, "name", (ctx, a) -> "x", config));
+                    NullPointerException.class, () -> WithRetryHelper.withRetry(null, "name", (ctx, a) -> "x", config));
         }
 
         @Test
@@ -162,7 +161,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     NullPointerException.class,
-                    () -> WithRetryHelper.retryOperation(context, null, (ctx, a) -> "x", config));
+                    () -> WithRetryHelper.withRetry(context, null, (ctx, a) -> "x", config));
         }
 
         @Test
@@ -171,15 +170,14 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(
-                    NullPointerException.class, () -> WithRetryHelper.retryOperation(context, "name", null, config));
+            assertThrows(NullPointerException.class, () -> WithRetryHelper.withRetry(context, "name", null, config));
         }
 
         @Test
         void nullConfig_shouldThrow() {
             assertThrows(
                     NullPointerException.class,
-                    () -> WithRetryHelper.retryOperation(context, "name", (ctx, a) -> "x", null));
+                    () -> WithRetryHelper.withRetry(context, "name", (ctx, a) -> "x", null));
         }
 
         @Test
@@ -189,8 +187,8 @@ class WithRetryHelperTest {
                     .wrapInChildContext(false)
                     .build();
 
-            var result = WithRetryHelper.retryOperation(
-                    context, "my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
+            var result =
+                    WithRetryHelper.withRetry(context, "my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
 
             assertNull(result);
         }
@@ -207,7 +205,7 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = WithRetryHelper.retryOperation(context, (ctx, attempt) -> "anonymous-success", config);
+            var result = WithRetryHelper.withRetry(context, (ctx, attempt) -> "anonymous-success", config);
 
             assertEquals("anonymous-success", result);
             verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
@@ -220,7 +218,7 @@ class WithRetryHelperTest {
                             attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(2)) : RetryDecision.fail())
                     .build();
 
-            var result = WithRetryHelper.retryOperation(
+            var result = WithRetryHelper.withRetry(
                     context,
                     (ctx, attempt) -> {
                         if (attempt < 3) {
@@ -242,7 +240,7 @@ class WithRetryHelperTest {
                     .wrapInChildContext(true) // should be ignored for anonymous form
                     .build();
 
-            WithRetryHelper.retryOperation(context, (ctx, attempt) -> "result", config);
+            WithRetryHelper.withRetry(context, (ctx, attempt) -> "result", config);
 
             verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
         }
@@ -256,7 +254,7 @@ class WithRetryHelperTest {
             var original = new IllegalStateException("original error");
             var thrown = assertThrows(
                     IllegalStateException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 throw original;
@@ -272,8 +270,7 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(
-                    NullPointerException.class, () -> WithRetryHelper.retryOperation(null, (ctx, a) -> "x", config));
+            assertThrows(NullPointerException.class, () -> WithRetryHelper.withRetry(null, (ctx, a) -> "x", config));
         }
 
         @Test
@@ -284,13 +281,12 @@ class WithRetryHelperTest {
 
             assertThrows(
                     NullPointerException.class,
-                    () -> WithRetryHelper.retryOperation(context, (WithRetry<String>) null, config));
+                    () -> WithRetryHelper.withRetry(context, (WithRetry<String>) null, config));
         }
 
         @Test
         void nullConfig_shouldThrow() {
-            assertThrows(
-                    NullPointerException.class, () -> WithRetryHelper.retryOperation(context, (ctx, a) -> "x", null));
+            assertThrows(NullPointerException.class, () -> WithRetryHelper.withRetry(context, (ctx, a) -> "x", null));
         }
 
         @Test
@@ -299,7 +295,7 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = WithRetryHelper.retryOperation(context, (WithRetry<String>) (ctx, attempt) -> null, config);
+            var result = WithRetryHelper.withRetry(context, (WithRetry<String>) (ctx, attempt) -> null, config);
 
             assertNull(result);
         }
@@ -311,7 +307,7 @@ class WithRetryHelperTest {
                             (error, attempt) -> attempt < 2 ? RetryDecision.retry(Duration.ZERO) : RetryDecision.fail())
                     .build();
 
-            var result = WithRetryHelper.retryOperation(
+            var result = WithRetryHelper.withRetry(
                     context,
                     (ctx, attempt) -> {
                         if (attempt == 1) {
@@ -340,7 +336,7 @@ class WithRetryHelperTest {
                     .wrapInChildContext(false)
                     .build();
 
-            WithRetryHelper.retryOperation(
+            WithRetryHelper.withRetry(
                     context,
                     "track",
                     (ctx, attempt) -> {
@@ -371,7 +367,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     RuntimeException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 throw new RuntimeException("error-" + attempt);
@@ -390,7 +386,7 @@ class WithRetryHelperTest {
                     .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(attempt * 10L)))
                     .build();
 
-            WithRetryHelper.retryOperation(
+            WithRetryHelper.withRetry(
                     context,
                     (ctx, attempt) -> {
                         if (attempt <= 2) {
@@ -410,7 +406,7 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            WithRetryHelper.retryOperation(
+            WithRetryHelper.withRetry(
                     context,
                     (ctx, attempt) -> {
                         assertSame(context, ctx);
@@ -433,7 +429,7 @@ class WithRetryHelperTest {
                     .wrapInChildContext(true)
                     .build();
 
-            WithRetryHelper.retryOperation(
+            WithRetryHelper.withRetry(
                     context,
                     "wrapped",
                     (ctx, attempt) -> {
@@ -451,7 +447,7 @@ class WithRetryHelperTest {
 
             var thrown = assertThrows(
                     RuntimeException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 throw new RuntimeException("attempt-" + attempt);
@@ -470,7 +466,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     SuspendExecutionException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 throw new SuspendExecutionException();
@@ -489,7 +485,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     UnrecoverableDurableExecutionException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 throw new UnrecoverableDurableExecutionException(
@@ -510,7 +506,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     SuspendExecutionException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 if (attempt == 1) {
@@ -533,7 +529,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     UnrecoverableDurableExecutionException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 if (attempt == 1) {
@@ -559,7 +555,7 @@ class WithRetryHelperTest {
 
             var thrown = assertThrows(
                     SerDesException.class,
-                    () -> WithRetryHelper.retryOperation(
+                    () -> WithRetryHelper.withRetry(
                             context,
                             (ctx, attempt) -> {
                                 throw original;

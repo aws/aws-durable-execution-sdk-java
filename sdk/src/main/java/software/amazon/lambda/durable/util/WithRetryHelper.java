@@ -23,7 +23,7 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * <h2>Usage — callback retry</h2>
  *
  * <pre>{@code
- * var result = WithRetryHelper.retryOperation(
+ * var result = WithRetryHelper.withRetry(
  *     context,
  *     "approval",
  *     (ctx, attempt) -> ctx.waitForCallback(
@@ -41,7 +41,7 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * <h2>Usage — invoke retry (anonymous form)</h2>
  *
  * <pre>{@code
- * var result = WithRetryHelper.retryOperation(
+ * var result = WithRetryHelper.withRetry(
  *     context,
  *     (ctx, attempt) -> ctx.invoke(
  *         "charge-" + attempt, paymentFnArn, new ChargeRequest(orderId), String.class),
@@ -77,8 +77,7 @@ public final class WithRetryHelper {
      * @return the operation result
      */
     @SuppressWarnings("unchecked")
-    public static <T> T retryOperation(
-            DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
+    public static <T> T withRetry(DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(name, "name cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
@@ -101,7 +100,7 @@ public final class WithRetryHelper {
      * @param config retry configuration including the retry strategy
      * @return the operation result
      */
-    public static <T> T retryOperation(DurableContext context, WithRetry<T> operation, WithRetryConfig config) {
+    public static <T> T withRetry(DurableContext context, WithRetry<T> operation, WithRetryConfig config) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");

@@ -25,7 +25,7 @@ public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> 
 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
-        return WithRetryHelper.retryOperation(
+        return WithRetryHelper.withRetry(
                 context,
                 (ctx, attempt) -> ctx.invoke(
                         "call-greeting-" + attempt,
