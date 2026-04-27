@@ -19,9 +19,9 @@ import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionSt
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.exception.DurableApiErrorClassifier;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
+import software.amazon.lambda.durable.util.DurableApiErrorClassifier;
 
 /**
  * Package-private checkpoint manager for batching and queueing checkpoint API calls.

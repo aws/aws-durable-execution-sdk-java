@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.exception;
+package software.amazon.lambda.durable.util;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -12,18 +12,19 @@ import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.http.SdkHttpResponse;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 
 class DurableApiErrorClassifierTest {
 
     @ParameterizedTest
     @MethodSource("kmsExceptions")
-    void classifyException_kmsError_returnsUnrecoverableDurableExecutionException(String errorCode, String message) {
+    void classifyException_kmsError_returnsNonRetryable(String errorCode, String message) {
         var error = awsError(502, errorCode, message);
         var result = DurableApiErrorClassifier.classifyException(error);
         assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
-        var unrecoverable = (UnrecoverableDurableExecutionException) result;
-        assertEquals(errorCode, unrecoverable.getErrorObject().errorType());
-        assertTrue(unrecoverable.getErrorObject().errorMessage().contains(message));
+        assertFalse(result.isRetryable());
+        assertEquals(errorCode, result.getErrorObject().errorType());
+        assertTrue(result.getErrorObject().errorMessage().contains(message));
     }
 
     static Stream<Arguments> kmsExceptions() {
@@ -48,23 +49,25 @@ class DurableApiErrorClassifierTest {
     }
 
     @Test
-    void classifyException_clientError4xx_returnsUnrecoverableDurableExecutionException() {
+    void classifyException_clientError4xx_returnsNonRetryable() {
         var error = awsError(403, "AccessDeniedException", "User is not authorized");
 
         var result = DurableApiErrorClassifier.classifyException(error);
         assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
+        assertFalse(result.isRetryable());
     }
 
     @Test
-    void classifyException_invalidCheckpointToken_returnsOriginalException() {
+    void classifyException_invalidCheckpointToken_returnsRetryable() {
         var error = awsError(400, "InvalidParameterValueException", "Invalid Checkpoint Token: token expired");
 
         var result = DurableApiErrorClassifier.classifyException(error);
-        assertSame(error, result);
+        assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
+        assertTrue(result.isRetryable());
     }
 
     @Test
-    void classifyException_invalidParameterValueNonToken_returnsUnrecoverableDurableExecutionException() {
+    void classifyException_invalidParameterValueNonToken_returnsNonRetryable() {
         var error = awsError(
                 400,
                 "InvalidParameterValueException",
@@ -72,34 +75,38 @@ class DurableApiErrorClassifierTest {
 
         var result = DurableApiErrorClassifier.classifyException(error);
         assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
+        assertFalse(result.isRetryable());
     }
 
     @Test
-    void classifyException_throttled429_returnsOriginalException() {
+    void classifyException_throttled429_returnsRetryable() {
         var error = awsError(429, "TooManyRequestsException", "Rate exceeded");
 
         var result = DurableApiErrorClassifier.classifyException(error);
-        assertSame(error, result);
+        assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
+        assertTrue(result.isRetryable());
     }
 
     @Test
-    void classifyException_serverError500_returnsOriginalException() {
+    void classifyException_serverError500_returnsRetryable() {
         var error = awsError(500, "ServiceException", "Service encountered an error");
 
         var result = DurableApiErrorClassifier.classifyException(error);
-        assertSame(error, result);
+        assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
+        assertTrue(result.isRetryable());
     }
 
     @Test
-    void classifyException_nonMatchingErrorCode502_returnsOriginalException() {
+    void classifyException_nonMatchingErrorCode502_returnsRetryable() {
         var error = awsError(502, "ServiceException", "Service unavailable");
 
         var result = DurableApiErrorClassifier.classifyException(error);
-        assertSame(error, result);
+        assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
+        assertTrue(result.isRetryable());
     }
 
     @Test
-    void classifyException_errorDetailsPreserved() {
+    void classifyException_nonRetryableError_preservesErrorDetails() {
         var error = awsError(
                 502,
                 "KMSAccessDeniedException",
@@ -109,11 +116,9 @@ class DurableApiErrorClassifierTest {
 
         var result = DurableApiErrorClassifier.classifyException(error);
         assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
-
-        var unrecoverable = (UnrecoverableDurableExecutionException) result;
-        assertEquals("KMSAccessDeniedException", unrecoverable.getErrorObject().errorType());
-        assertTrue(unrecoverable
-                .getErrorObject()
+        assertFalse(result.isRetryable());
+        assertEquals("KMSAccessDeniedException", result.getErrorObject().errorType());
+        assertTrue(result.getErrorObject()
                 .errorMessage()
                 .contains("Lambda was unable to decrypt the environment variables"));
     }

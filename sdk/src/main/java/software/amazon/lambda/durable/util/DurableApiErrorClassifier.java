@@ -1,21 +1,18 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.exception;
+package software.amazon.lambda.durable.util;
 
 import java.util.Set;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 
 /**
- * Classifies AWS service exceptions from Durable Execution API calls as execution-level (non-retryable) or
- * invocation-level (retryable).
+ * Classifies AWS service exceptions from Durable Execution API calls as non-retryable or retryable.
  *
- * <p>Execution-level errors throw {@link UnrecoverableDurableExecutionException} to terminate the execution
- * immediately. These represent permanent customer-side issues (e.g., KMS key misconfiguration) that will not
- * self-resolve on retry.
- *
- * <p>Invocation-level errors are allowed to propagate, crashing the current Lambda invocation so the backend can retry
- * with a fresh invocation.
+ * <p>Returns {@link UnrecoverableDurableExecutionException} with {@code retryable=false} for non-retryable customer
+ * errors (e.g., KMS key misconfiguration), or {@code retryable=true} for retryable errors (throttling, server errors,
+ * stale checkpoint tokens).
  *
  * <p>To add a new non-retryable error, add its error code to {@link #NON_RETRYABLE_ERROR_CODES}.
  */
@@ -58,28 +55,27 @@ public final class DurableApiErrorClassifier {
     /**
      * Classifies the given exception and returns the appropriate exception to throw.
      *
-     * <p>Returns {@link UnrecoverableDurableExecutionException} for non-retryable customer errors, or the original
-     * exception for retryable errors.
+     * <p>Returns {@link UnrecoverableDurableExecutionException} with {@code retryable=false} for non-retryable customer
+     * errors, or {@code retryable=true} for retryable errors.
      *
      * <p>Classification rules:
      *
      * <ul>
-     *   <li>Error code in {@link #NON_RETRYABLE_ERROR_CODES} → execution error (non-retryable)
-     *   <li>4xx + "Invalid Checkpoint Token" → invocation error (retryable, stale token resolves on retry)
-     *   <li>4xx (non-429) → execution error (non-retryable customer error)
-     *   <li>429, 5xx, unknown → invocation error (retryable)
+     *   <li>Error code in {@link #NON_RETRYABLE_ERROR_CODES} → non-retryable ({@code retryable=false})
+     *   <li>4xx + "Invalid Checkpoint Token" → retryable ({@code retryable=true}, stale token resolves on retry)
+     *   <li>4xx (non-429) → non-retryable ({@code retryable=false}, customer error)
+     *   <li>429, 5xx, unknown → retryable ({@code retryable=true})
      * </ul>
      *
      * @param e the AWS service exception from a Durable Execution API call
-     * @return an {@link UnrecoverableDurableExecutionException} if non-retryable, or the original exception if
-     *     retryable
+     * @return an {@link UnrecoverableDurableExecutionException} for all cases, with the retryable flag set accordingly
      */
-    public static RuntimeException classifyException(AwsServiceException e) {
+    public static UnrecoverableDurableExecutionException classifyException(AwsServiceException e) {
         var errorCode = e.awsErrorDetails().errorCode();
 
         // Non-retryable customer errors: execution is terminally broken (e.g., KMS key misconfiguration)
         if (NON_RETRYABLE_ERROR_CODES.contains(errorCode)) {
-            return buildUnrecoverableDurableExecutionException(e);
+            return buildUnrecoverableDurableExecutionException(e, false);
         }
 
         var statusCode = e.awsErrorDetails().sdkHttpResponse().statusCode();
@@ -92,20 +88,22 @@ public final class DurableApiErrorClassifier {
             if (INVALID_CHECKPOINT_TOKEN_ERROR_CODE.equals(errorCode)
                     && message != null
                     && message.startsWith(INVALID_CHECKPOINT_TOKEN_MESSAGE_PREFIX)) {
-                return e;
+                return buildUnrecoverableDurableExecutionException(e, true);
             }
-            return buildUnrecoverableDurableExecutionException(e);
+            return buildUnrecoverableDurableExecutionException(e, false);
         }
 
         // 429 (throttling), 5xx (service errors), unknown — transient, retryable
-        return e;
+        return buildUnrecoverableDurableExecutionException(e, true);
     }
 
     private static UnrecoverableDurableExecutionException buildUnrecoverableDurableExecutionException(
-            AwsServiceException e) {
-        return new UnrecoverableDurableExecutionException(ErrorObject.builder()
-                .errorType(e.awsErrorDetails().errorCode())
-                .errorMessage(e.getMessage())
-                .build());
+            AwsServiceException e, boolean retryable) {
+        return new UnrecoverableDurableExecutionException(
+                ErrorObject.builder()
+                        .errorType(e.awsErrorDetails().errorCode())
+                        .errorMessage(e.getMessage())
+                        .build(),
+                retryable);
     }
 }
