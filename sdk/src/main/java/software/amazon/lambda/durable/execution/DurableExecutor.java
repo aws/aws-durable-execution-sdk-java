@@ -6,6 +6,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.function.BiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,26 +66,43 @@ public class DurableExecutor {
             // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
             // failure.
-            return executionManager
-                    .runUntilCompleteOrSuspend(handlerFuture)
-                    .handle((result, ex) -> {
-                        if (ex != null) {
-                            // an exception thrown from handlerFuture or suspension/termination occurred
-                            Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
-                            if (cause instanceof SuspendExecutionException) {
-                                return DurableExecutionOutput.pending();
+            try {
+                return executionManager
+                        .runUntilCompleteOrSuspend(handlerFuture)
+                        .handle((result, ex) -> {
+                            if (ex != null) {
+                                // an exception thrown from handlerFuture or suspension/termination occurred
+                                Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
+
+                                // return PENDING if it's SuspendExecutionException
+                                if (cause instanceof SuspendExecutionException) {
+                                    return DurableExecutionOutput.pending();
+                                }
+
+                                // let the backend retry the invocation if the exception is retryable
+                                if (cause
+                                                instanceof
+                                                UnrecoverableDurableExecutionException
+                                                        unrecoverableDurableExecutionException
+                                        && unrecoverableDurableExecutionException.isRetryable()) {
+                                    throw unrecoverableDurableExecutionException;
+                                }
+
+                                // fail the execution otherwise
+                                logger.debug("Execution failed: {}", cause.getMessage());
+                                return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
                             }
-
-                            logger.debug("Execution failed: {}", cause.getMessage());
-                            return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
-                        }
-                        // user handler complete successfully
-                        var outputPayload = config.getSerDes().serialize(result);
-
-                        logger.debug("Execution completed");
-                        return DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
-                    })
-                    .join();
+                            // user handler complete successfully
+                            logger.debug("Execution completed");
+                            var outputPayload = config.getSerDes().serialize(result);
+                            return DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
+                        })
+                        .join();
+            } catch (CompletionException e) {
+                // unwrap the CompletionException and rethrow the wrapped exception
+                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
+                return null;
+            }
         }
     }
 
