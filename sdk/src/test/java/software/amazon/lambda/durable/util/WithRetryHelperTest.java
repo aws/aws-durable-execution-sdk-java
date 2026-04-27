@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.retry.RetryDecision;
@@ -180,6 +181,19 @@ class WithRetryHelperTest {
                     NullPointerException.class,
                     () -> WithRetryHelper.retryOperation(context, "name", (ctx, a) -> "x", null));
         }
+
+        @Test
+        void operationReturnsNull() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .wrapInChildContext(false)
+                    .build();
+
+            var result = WithRetryHelper.retryOperation(
+                    context, "my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
+
+            assertNull(result);
+        }
     }
 
     // --- Anonymous form tests ---
@@ -277,6 +291,38 @@ class WithRetryHelperTest {
         void nullConfig_shouldThrow() {
             assertThrows(
                     NullPointerException.class, () -> WithRetryHelper.retryOperation(context, (ctx, a) -> "x", null));
+        }
+
+        @Test
+        void operationReturnsNull() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .build();
+
+            var result = WithRetryHelper.retryOperation(context, (WithRetry<String>) (ctx, attempt) -> null, config);
+
+            assertNull(result);
+        }
+
+        @Test
+        void usesDefaultDelayWhenRetryDecisionDelayIsZero() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(
+                            (error, attempt) -> attempt < 2 ? RetryDecision.retry(Duration.ZERO) : RetryDecision.fail())
+                    .build();
+
+            var result = WithRetryHelper.retryOperation(
+                    context,
+                    (ctx, attempt) -> {
+                        if (attempt == 1) {
+                            throw new RuntimeException("fail");
+                        }
+                        return "ok";
+                    },
+                    config);
+
+            assertEquals("ok", result);
+            verify(context).wait("retry-backoff-1", Duration.ofSeconds(1));
         }
     }
 
@@ -454,6 +500,74 @@ class WithRetryHelperTest {
                             config));
 
             verify(context, never()).wait(anyString(), any(Duration.class));
+        }
+
+        @Test
+        void propagatesSuspendExecutionExceptionOnLaterAttempt() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)))
+                    .build();
+
+            assertThrows(
+                    SuspendExecutionException.class,
+                    () -> WithRetryHelper.retryOperation(
+                            context,
+                            (ctx, attempt) -> {
+                                if (attempt == 1) {
+                                    throw new RuntimeException("transient");
+                                }
+                                // Second attempt triggers suspend — must propagate, not retry
+                                throw new SuspendExecutionException();
+                            },
+                            config));
+
+            // First attempt retried (one backoff wait), second attempt suspended immediately
+            verify(context, times(1)).wait(anyString(), any(Duration.class));
+        }
+
+        @Test
+        void propagatesUnrecoverableDurableExecutionExceptionOnLaterAttempt() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)))
+                    .build();
+
+            assertThrows(
+                    UnrecoverableDurableExecutionException.class,
+                    () -> WithRetryHelper.retryOperation(
+                            context,
+                            (ctx, attempt) -> {
+                                if (attempt == 1) {
+                                    throw new RuntimeException("transient");
+                                }
+                                throw new UnrecoverableDurableExecutionException(
+                                        software.amazon.awssdk.services.lambda.model.ErrorObject.builder()
+                                                .errorMessage("unrecoverable on attempt 2")
+                                                .build());
+                            },
+                            config));
+
+            verify(context, times(1)).wait(anyString(), any(Duration.class));
+        }
+
+        @Test
+        void preservesCheckedExceptionSubclassType() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .build();
+
+            var original = new SerDesException("deserialization failed", new RuntimeException("bad json"));
+
+            var thrown = assertThrows(
+                    SerDesException.class,
+                    () -> WithRetryHelper.retryOperation(
+                            context,
+                            (ctx, attempt) -> {
+                                throw original;
+                            },
+                            config));
+
+            assertSame(original, thrown);
+            assertEquals("deserialization failed", thrown.getMessage());
         }
     }
 }
