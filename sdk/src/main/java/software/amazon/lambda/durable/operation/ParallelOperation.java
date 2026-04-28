@@ -45,8 +45,8 @@ import software.amazon.lambda.durable.serde.SerDes;
 public class ParallelOperation extends ConcurrencyOperation<ParallelResult> implements ParallelDurableFuture {
 
     // this field could be written and read in different threads
-    private volatile boolean skipCheckpoint = false;
     private volatile ParallelResult cachedResult;
+    private volatile ParallelResult partialResult;
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
@@ -67,44 +67,45 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     @Override
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         var items = getBranches();
-        int succeededCount = Math.toIntExact(
-                items.stream().filter(this::isOperationCompletedSuccessfully).count());
+        var statuses = items.stream().map(this::getParallelItemStatus).toList();
+        int succeededCount = Math.toIntExact(statuses.stream()
+                .filter(s -> s == ParallelResult.Status.SUCCEEDED)
+                .count());
         int failedCount = Math.toIntExact(
-                items.stream().filter(this::isOperationCompletedExceptionally).count());
-        this.cachedResult = new ParallelResult(items.size(), succeededCount, failedCount, concurrencyCompletionStatus);
-        if (skipCheckpoint) {
-            // Do not send checkpoint during replay
-            markAlreadyCompleted();
-            return;
-        }
+                statuses.stream().filter(s -> s == ParallelResult.Status.FAILED).count());
+        int skippedCount = items.size() - succeededCount - failedCount;
+        cachedResult = new ParallelResult(
+                items.size(), succeededCount, failedCount, skippedCount, concurrencyCompletionStatus, statuses);
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.SUCCEED)
                 .subType(getSubType().getValue())
+                .payload(serializeResult(cachedResult))
                 .contextOptions(ContextOptions.builder().replayChildren(true).build()));
     }
 
-    private boolean isOperationCompletedSuccessfully(ChildContextOperation<?> childContextOperation) {
+    private ParallelResult.Status getParallelItemStatus(ChildContextOperation<?> childContextOperation) {
         if (!childContextOperation.isOperationCompleted()) {
-            return false;
+            return ParallelResult.Status.SKIPPED;
         }
         try {
             childContextOperation.get();
-            return true;
+            return ParallelResult.Status.SUCCEEDED;
         } catch (Throwable t) {
-            return false;
+            return ParallelResult.Status.FAILED;
         }
     }
 
-    private boolean isOperationCompletedExceptionally(ChildContextOperation<?> childContextOperation) {
-        if (!childContextOperation.isOperationCompleted()) {
-            return false;
+    private ParallelResult rebuildParallelResult() {
+        if (cachedResult != null && cachedResult.size() != getBranches().size()) {
+            return new ParallelResult(
+                    getBranches().size(), // size might be updated after cached result is built
+                    cachedResult.succeeded(),
+                    cachedResult.failed(),
+                    cachedResult.skipped(),
+                    cachedResult.completionStatus(),
+                    cachedResult.statuses());
         }
-        try {
-            childContextOperation.get();
-            return false;
-        } catch (Throwable t) {
-            return true;
-        }
+        return cachedResult;
     }
 
     @Override
@@ -120,18 +121,25 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     protected void replay(Operation existing) {
         // No-op: child branches handle their own replay via ChildContextOperation.replay().
         // Set replaying=true so handleSuccess() skips re-checkpointing the already-completed parallel context.
-        skipCheckpoint = ExecutionManager.isTerminalStatus(existing.status());
+        if (ExecutionManager.isTerminalStatus(existing.status())) {
+            // the operation is already completed, extract the branch completion status from the partialResult
+            partialResult = existing.contextDetails() != null
+                    ? deserializeResult(existing.contextDetails().result())
+                    : null;
+            if (partialResult != null) {
+                var expected = new ExpectedCompletionStatus(
+                        partialResult.succeeded() + partialResult.failed(), partialResult.completionStatus());
+                executeItems(expected);
+                return;
+            }
+        }
         executeItems();
     }
 
     @Override
     public ParallelResult get() {
         join();
-        return new ParallelResult(
-                getBranches().size(), // size might be updated after cached result is built
-                cachedResult.succeeded(),
-                cachedResult.failed(),
-                cachedResult.completionStatus());
+        return rebuildParallelResult();
     }
 
     /** Calls {@link #get()} if not already called. Guarantees that the context is closed. */
@@ -148,7 +156,11 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
         if (isJoined.get()) {
             throw new IllegalStateException("Cannot add branches after join() has been called");
         }
+
+        // ConcurrencyOperation will skip this branch if skip=true
+        var skip = partialResult != null
+                && partialResult.statuses().get(getBranches().size()) == ParallelResult.Status.SKIPPED;
         var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
-        return enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH);
+        return enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH, skip);
     }
 }

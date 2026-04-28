@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -43,8 +43,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
-    private final AtomicBoolean replayFromPayload = new AtomicBoolean(false);
-    private final AtomicBoolean replayForLargeResult = new AtomicBoolean(false);
     private volatile MapResult<O> cachedResult;
 
     public MapOperation(
@@ -72,24 +70,31 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         this.function = function;
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
-
-        addAllItems();
     }
 
     private void addAllItems() {
-        // Enqueue all items first, then start execution. This prevents early termination
-        // criteria (e.g., minSuccessful) from completing the operation mid-loop on replay,
-        // which would cause subsequent enqueue calls to fail with "completed operation".
+        addUnskippedItems(Collections.nCopies(items.size(), null));
+    }
+
+    private void addUnskippedItems(List<MapResult.MapResultItem.Status> resultItems) {
+        // Enqueue all items first.
+        // If the map is completed when replaying, mapResult != null and the items that have been skipped
+        // will be skipped during replay.
         var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
         for (int i = 0; i < items.size(); i++) {
             var index = i;
             var item = items.get(i);
+            var status = resultItems.get(i);
+            // the item will be skipped by ConcurrencyOperation if skip=true
+            var skip = status == MapResult.MapResultItem.Status.SKIPPED;
+
             enqueueItem(
                     branchPrefix + i,
                     childCtx -> function.apply(item, index, childCtx),
                     itemResultType,
                     serDes,
-                    OperationSubType.MAP_ITERATION);
+                    OperationSubType.MAP_ITERATION,
+                    skip);
         }
     }
 
@@ -122,31 +127,46 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 .action(OperationAction.START)
                 .subType(getSubType().getValue()));
 
+        addAllItems();
         executeItems();
     }
 
     @Override
     protected void replay(Operation existing) {
         if (items.isEmpty()) {
-            markAlreadyCompleted();
-            return;
+            throw terminateExecutionWithIllegalDurableOperationException("Empty Map operation is not replayable");
         }
         switch (existing.status()) {
             case SUCCEEDED -> {
-                if (existing.contextDetails() != null
-                        && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
+                var result = existing.contextDetails() != null
+                        ? existing.contextDetails().result()
+                        : null;
+                var deserializedResult = result != null ? deserializeResult(result) : null;
+                if (deserializedResult != null) {
+                    addUnskippedItems(deserializedResult.items().stream()
+                            .map(MapResult.MapResultItem::status)
+                            .toList());
+                } else {
+                    throw terminateExecutionWithIllegalDurableOperationException(
+                            "Missing result in completed Map operation");
+                }
+                if (Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute children to reconstruct MapResult
-                    replayForLargeResult.set(true);
-                    executeItems();
+                    var expected = new ExpectedCompletionStatus(
+                            deserializedResult.succeeded().size()
+                                    + deserializedResult.failed().size(),
+                            deserializedResult.completionReason());
+                    executeItems(expected);
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
-                    replayFromPayload.set(true);
+                    cachedResult = deserializedResult;
                     markAlreadyCompleted();
                 }
             }
             case STARTED -> {
                 // Map was in progress when interrupted — re-create children without sending
                 // another START (the backend rejects duplicate START for existing operations)
+                addAllItems();
                 executeItems();
             }
             default ->
@@ -155,9 +175,39 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+        this.cachedResult = constructMapResult(concurrencyCompletionStatus);
+        var serialized = serializeResult(cachedResult);
+        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
+
+        if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
+            sendOperationUpdate(OperationUpdate.builder()
+                    .action(OperationAction.SUCCEED)
+                    .subType(getSubType().getValue())
+                    .payload(serialized));
+        } else {
+            // Large result: checkpoint with stripped payload + replayChildren flag
+            var strippedResult = serializeResult(stripMapResult(cachedResult));
+            sendOperationUpdate(OperationUpdate.builder()
+                    .action(OperationAction.SUCCEED)
+                    .subType(getSubType().getValue())
+                    .payload(strippedResult)
+                    .contextOptions(
+                            ContextOptions.builder().replayChildren(true).build()));
+        }
+    }
+
+    private MapResult<O> stripMapResult(MapResult<O> result) {
+        return new MapResult<>(
+                result.items().stream()
+                        .map(item -> new MapResult.MapResultItem<O>(item.status(), null, null))
+                        .toList(),
+                result.completionReason());
+    }
+
+    @SuppressWarnings("unchecked")
+    private MapResult<O> constructMapResult(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         var children = getBranches();
         var resultItems = new ArrayList<MapResult.MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
@@ -183,30 +233,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 }
             }
         }
-
-        this.cachedResult = new MapResult<>(resultItems, concurrencyCompletionStatus);
-        // avoid checkpointing because the operation has succeeded and the children are replayed for large result
-        if (replayForLargeResult.get()) {
-            markAlreadyCompleted();
-            return;
-        }
-        var serialized = serializeResult(cachedResult);
-        var serializedBytes = serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-
-        if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
-            sendOperationUpdate(OperationUpdate.builder()
-                    .action(OperationAction.SUCCEED)
-                    .subType(getSubType().getValue())
-                    .payload(serialized));
-        } else {
-            // Large result: checkpoint with empty payload + replayChildren flag
-            sendOperationUpdate(OperationUpdate.builder()
-                    .action(OperationAction.SUCCEED)
-                    .subType(getSubType().getValue())
-                    .payload("")
-                    .contextOptions(
-                            ContextOptions.builder().replayChildren(true).build()));
-        }
+        return new MapResult<>(resultItems, concurrencyCompletionStatus);
     }
 
     @Override
@@ -214,14 +241,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         if (items.isEmpty()) {
             return MapResult.empty();
         }
-        if (replayFromPayload.get()) {
-            // Small result replay: deserialize MapResult directly from checkpoint payload
-            var op = waitForOperationCompletion();
-            var result = (op.contextDetails() != null) ? op.contextDetails().result() : null;
-            return deserializeResult(result);
-        }
-        // First execution or large result replay: wait for children, then aggregate
         join();
+        // cachedResult is always set upon successful completion
         return cachedResult;
     }
 }

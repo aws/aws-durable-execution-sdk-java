@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +51,7 @@ public abstract class BaseDurableOperation {
     protected final CompletableFuture<BaseDurableOperation> completionFuture;
     protected final BaseDurableOperation parentOperation;
     protected final boolean isVirtual;
+    protected final AtomicBoolean replayCompletedOperation = new AtomicBoolean(false);
     private final DurableContextImpl durableContext;
     private final AtomicReference<CompletableFuture<Void>> runningUserHandler = new AtomicReference<>(null);
 
@@ -126,6 +128,9 @@ public abstract class BaseDurableOperation {
 
             if (existing != null) {
                 validateReplay(existing);
+                if (ExecutionManager.isTerminalStatus(existing.status())) {
+                    replayCompletedOperation.set(true);
+                }
                 replay(existing);
             } else {
                 if (durableContext.isReplaying()) {
@@ -409,7 +414,15 @@ public abstract class BaseDurableOperation {
         if (getSubType() != null) {
             updateBuilder.subType(getSubType().getValue());
         }
-        return executionManager.sendOperationUpdate(updateBuilder.build());
+        var update = updateBuilder.build();
+        if (replayCompletedOperation.get()) {
+            // We are replaying a completed operation, so complete the completableFuture without checkpointing
+            logger.debug("Skipping send operation update for replay completed operation: {}", getOperationId());
+            onCheckpointComplete(getOperation());
+            return CompletableFuture.completedFuture(null);
+        } else {
+            return executionManager.sendOperationUpdate(update);
+        }
     }
 
     /** Validates that current operation matches checkpointed operation during replay. */
