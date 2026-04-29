@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.util;
 import java.time.Duration;
 import java.util.Objects;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -52,6 +53,24 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  *         .build()
  * );
  * }</pre>
+ *
+ * <h2>Usage — async form returning DurableFuture</h2>
+ *
+ * <pre>{@code
+ * DurableFuture<String> future = WithRetryHelper.withRetryAsync(
+ *     context,
+ *     "approval",
+ *     (ctx, attempt) -> ctx.waitForCallback(
+ *         "approval-" + attempt, String.class,
+ *         (callbackId, stepCtx) -> sendApprovalEmail(approverEmail, callbackId)
+ *     ),
+ *     WithRetryConfig.builder()
+ *         .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
+ *         .build()
+ * );
+ * // ... do other work ...
+ * var result = future.get();
+ * }</pre>
  */
 public final class WithRetryHelper {
 
@@ -64,10 +83,40 @@ public final class WithRetryHelper {
     }
 
     /**
-     * Named form — wraps the retry loop in {@code runInChildContext} by default so all attempts are grouped under a
-     * single named operation in execution history.
+     * Named async form — wraps the retry loop in {@code runInChildContextAsync} by default so all attempts are grouped
+     * under a single named operation in execution history, and returns a {@link DurableFuture} that can be composed or
+     * blocked on.
      *
      * <p>The child-context wrapping can be disabled via {@link WithRetryConfig.Builder#wrapInChildContext(boolean)}.
+     * When disabled, the retry loop executes immediately and the returned future is already completed.
+     *
+     * @param <T> the result type
+     * @param context the durable context
+     * @param name operation name (used for child context and backoff wait names)
+     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @param config retry configuration including the retry strategy
+     * @return a future representing the operation result
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> DurableFuture<T> withRetryAsync(
+            DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
+        Objects.requireNonNull(context, "context cannot be null");
+        Objects.requireNonNull(name, "name cannot be null");
+        Objects.requireNonNull(operation, "operation cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+
+        if (config.wrapInChildContext()) {
+            return (DurableFuture<T>) context.runInChildContextAsync(
+                    name, new TypeToken<Object>() {}, childCtx -> executeRetryLoop(childCtx, name, operation, config));
+        }
+        return new CompletedDurableFuture<>(executeRetryLoop(context, name, operation, config));
+    }
+
+    /**
+     * Named sync form — wraps the retry loop in {@code runInChildContext} by default so all attempts are grouped under
+     * a single named operation in execution history, and blocks until the result is available.
+     *
+     * <p>Equivalent to {@code withRetryAsync(context, name, operation, config).get()}.
      *
      * @param <T> the result type
      * @param context the durable context
@@ -76,23 +125,37 @@ public final class WithRetryHelper {
      * @param config retry configuration including the retry strategy
      * @return the operation result
      */
-    @SuppressWarnings("unchecked")
     public static <T> T withRetry(DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
-        Objects.requireNonNull(context, "context cannot be null");
-        Objects.requireNonNull(name, "name cannot be null");
-        Objects.requireNonNull(operation, "operation cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-
-        if (config.wrapInChildContext()) {
-            return (T) context.runInChildContext(
-                    name, new TypeToken<Object>() {}, childCtx -> executeRetryLoop(childCtx, name, operation, config));
-        }
-        return executeRetryLoop(context, name, operation, config);
+        return withRetryAsync(context, name, operation, config).get();
     }
 
     /**
-     * Anonymous form — runs the retry loop directly in the caller's context. No child-context wrapping is applied
+     * Anonymous async form — runs the retry loop directly in the caller's context and returns a {@link DurableFuture}.
+     * No child-context wrapping is applied regardless of the {@code wrapInChildContext} config setting.
+     *
+     * <p>Because the anonymous form executes the retry loop inline (no child context), the returned future is always
+     * already completed.
+     *
+     * @param <T> the result type
+     * @param context the durable context
+     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @param config retry configuration including the retry strategy
+     * @return a future representing the operation result
+     */
+    public static <T> DurableFuture<T> withRetryAsync(
+            DurableContext context, WithRetry<T> operation, WithRetryConfig config) {
+        Objects.requireNonNull(context, "context cannot be null");
+        Objects.requireNonNull(operation, "operation cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+
+        return new CompletedDurableFuture<>(executeRetryLoop(context, null, operation, config));
+    }
+
+    /**
+     * Anonymous sync form — runs the retry loop directly in the caller's context. No child-context wrapping is applied
      * regardless of the {@code wrapInChildContext} config setting.
+     *
+     * <p>Equivalent to {@code withRetryAsync(context, operation, config).get()}.
      *
      * @param <T> the result type
      * @param context the durable context
@@ -101,11 +164,7 @@ public final class WithRetryHelper {
      * @return the operation result
      */
     public static <T> T withRetry(DurableContext context, WithRetry<T> operation, WithRetryConfig config) {
-        Objects.requireNonNull(context, "context cannot be null");
-        Objects.requireNonNull(operation, "operation cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-
-        return executeRetryLoop(context, null, operation, config);
+        return withRetryAsync(context, operation, config).get();
     }
 
     /**
