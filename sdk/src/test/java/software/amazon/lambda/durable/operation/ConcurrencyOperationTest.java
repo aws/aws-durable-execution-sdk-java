@@ -137,7 +137,8 @@ class ConcurrencyOperationTest {
                 },
                 TypeToken.get(String.class),
                 SER_DES,
-                OperationSubType.PARALLEL_BRANCH);
+                OperationSubType.PARALLEL_BRANCH,
+                false);
         op.enqueueItem(
                 "branch-2",
                 ctx -> {
@@ -146,7 +147,8 @@ class ConcurrencyOperationTest {
                 },
                 TypeToken.get(String.class),
                 SER_DES,
-                OperationSubType.PARALLEL_BRANCH);
+                OperationSubType.PARALLEL_BRANCH,
+                false);
 
         op.exposedJoin();
 
@@ -155,6 +157,63 @@ class ConcurrencyOperationTest {
         var items = op.getBranches();
         assertEquals(2, items.size());
         assertTrue(items.stream().allMatch(b -> b.getOperation().status().equals(OperationStatus.SUCCEEDED)));
+        assertFalse(functionCalled.get(), "Functions should not be called during SUCCEEDED replay");
+    }
+
+    @Test
+    void someChildrenSkipped_skippedChildrenNotExecuted() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
+                .thenReturn(Operation.builder()
+                        .id(CHILD_OP_1)
+                        .name("branch-1")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.STARTED)
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
+                .thenReturn(Operation.builder()
+                        .id(CHILD_OP_2)
+                        .name("branch-2")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"result-2\"").build())
+                        .build());
+
+        var functionCalled = new AtomicBoolean(false);
+        var op = createOperation(CompletionConfig.minSuccessful(1));
+        op.execute();
+        op.enqueueItem(
+                "branch-1",
+                ctx1 -> {
+                    functionCalled.set(true);
+                    return "result-1";
+                },
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                true);
+        op.enqueueItem(
+                "branch-2",
+                ctx -> {
+                    functionCalled.set(true);
+                    return "result-2";
+                },
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
+
+        op.exposedJoin();
+
+        assertTrue(op.isSuccessHandled());
+        assertFalse(op.isFailureHandled());
+        var items = op.getBranches();
+        assertEquals(2, items.size());
+        assertFalse(items.get(0).isOperationCompleted());
+        assertEquals(OperationStatus.STARTED, items.get(0).getOperation().status());
+        assertEquals(OperationStatus.SUCCEEDED, items.get(1).getOperation().status());
         assertFalse(functionCalled.get(), "Functions should not be called during SUCCEEDED replay");
     }
 
@@ -181,7 +240,8 @@ class ConcurrencyOperationTest {
                 },
                 TypeToken.get(String.class),
                 SER_DES,
-                OperationSubType.PARALLEL_BRANCH);
+                OperationSubType.PARALLEL_BRANCH,
+                false);
 
         op.execute();
         op.exposedJoin();

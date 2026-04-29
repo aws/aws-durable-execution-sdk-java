@@ -52,6 +52,8 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  */
 public abstract class ConcurrencyOperation<T> extends SerializableDurableOperation<T> {
 
+    protected record ExpectedCompletionStatus(int completed, ConcurrencyCompletionStatus completionStatus) {}
+
     private static final Logger logger = LoggerFactory.getLogger(ConcurrencyOperation.class);
 
     private final int maxConcurrency;
@@ -129,21 +131,24 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     // ========== Concurrency control ==========
 
     /**
-     * Creates and enqueues an item without starting execution. Use {@link #executeItems()} to begin execution after all
-     * items have been enqueued. This prevents early termination from blocking item creation when all items are known
-     * upfront (e.g., map operations).
+     * Creates and enqueues an item without starting execution. Use {@link #executeItems(ExpectedCompletionStatus)} to
+     * begin execution after all items have been enqueued. This prevents early termination from blocking item creation
+     * when all items are known upfront (e.g., map operations).
      */
     protected <R> ChildContextOperation<R> enqueueItem(
             String name,
             Function<DurableContext, R> function,
             TypeToken<R> resultType,
             SerDes serDes,
-            OperationSubType branchSubType) {
+            OperationSubType branchSubType,
+            boolean skipped) {
         var operationId = this.operationIdGenerator.nextOperationId();
         var childOp = createItem(operationId, name, function, resultType, serDes, branchSubType);
         branches.add(childOp);
-        pendingQueue.add(childOp);
-        logger.debug("Item enqueued {}", name);
+        if (!skipped) {
+            logger.debug("Item enqueued {}", name);
+            pendingQueue.add(childOp);
+        }
         // notify the consumer thread a new item is available
         notifyConsumerThread();
         return childOp;
@@ -157,6 +162,11 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
 
     /** Starts execution of all enqueued items. */
     protected void executeItems() {
+        executeItems(null);
+    }
+
+    /** Starts execution of all enqueued items until the expectedCompletionStatus is met. */
+    protected void executeItems(ExpectedCompletionStatus expectedCompletionStatus) {
         // variables accessed only by the consumer thread. Put them here to avoid accidentally used by other threads
         Set<BaseDurableOperation> runningChildren = new HashSet<>();
         AtomicInteger succeededCount = new AtomicInteger(0);
@@ -179,7 +189,8 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                     if (isOperationCompleted()) {
                         return;
                     }
-                    var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
+                    var completionStatus =
+                            canComplete(succeededCount, failedCount, runningChildren, expectedCompletionStatus);
                     if (completionStatus != null) {
                         handleCompletion(completionStatus);
                         return;
@@ -195,7 +206,8 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
 
                     // If consumerThreadListener has been completed when processing above, waitForChildCompletion will
                     // immediately return null and repeat the above again
-                    var child = waitForChildCompletion(succeededCount, failedCount, runningChildren);
+                    var child = waitForChildCompletion(
+                            succeededCount, failedCount, runningChildren, expectedCompletionStatus);
 
                     // child may be null if the consumer thread is woken up due to new items added or completion
                     // condition
@@ -232,7 +244,10 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     }
 
     private BaseDurableOperation waitForChildCompletion(
-            AtomicInteger succeededCount, AtomicInteger failedCount, Set<BaseDurableOperation> runningChildren) {
+            AtomicInteger succeededCount,
+            AtomicInteger failedCount,
+            Set<BaseDurableOperation> runningChildren,
+            ExpectedCompletionStatus expectedCompletionStatus) {
         var threadContext = getCurrentThreadContext();
         CompletableFuture<Object> future;
 
@@ -241,7 +256,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             if (isOperationCompleted()) {
                 return null;
             }
-            var completionStatus = canComplete(succeededCount, failedCount, runningChildren);
+            var completionStatus = canComplete(succeededCount, failedCount, runningChildren, expectedCompletionStatus);
             if (completionStatus != null) {
                 return null;
             }
@@ -302,9 +317,21 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
      * @return the completion status if the operation is complete, or null if it should continue
      */
     private ConcurrencyCompletionStatus canComplete(
-            AtomicInteger succeededCount, AtomicInteger failedCount, Set<BaseDurableOperation> runningChildren) {
+            AtomicInteger succeededCount,
+            AtomicInteger failedCount,
+            Set<BaseDurableOperation> runningChildren,
+            ExpectedCompletionStatus expectedCompletionStatus) {
         int succeeded = succeededCount.get();
         int failed = failedCount.get();
+
+        if (expectedCompletionStatus != null) {
+            if (succeeded + failed >= expectedCompletionStatus.completed) {
+                return expectedCompletionStatus.completionStatus;
+            }
+
+            // if expected completion status is not null, we always complete all the children previously completed
+            return null;
+        }
 
         // If we've met the minimum successful count, we're done
         if (minSuccessful != null && succeeded >= minSuccessful) {

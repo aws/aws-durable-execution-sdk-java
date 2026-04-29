@@ -8,7 +8,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -24,10 +23,10 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -125,13 +124,6 @@ class ParallelOperationTest {
         return op;
     }
 
-    private void setOperationIdGenerator(ConcurrencyOperation<?> op, OperationIdGenerator mockGenerator)
-            throws Exception {
-        Field field = ConcurrencyOperation.class.getDeclaredField("operationIdGenerator");
-        field.setAccessible(true);
-        field.set(op, mockGenerator);
-    }
-
     // ===== Branch creation delegates to ConcurrencyOperation =====
 
     @Test
@@ -139,7 +131,12 @@ class ParallelOperationTest {
         var op = createOperation(CompletionConfig.allSuccessful());
 
         var childOp = op.enqueueItem(
-                "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx -> "result",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
 
         assertNotNull(childOp);
         assertEquals(OperationSubType.PARALLEL_BRANCH, childOp.getSubType());
@@ -150,10 +147,21 @@ class ParallelOperationTest {
         var op = createOperation(CompletionConfig.allSuccessful());
 
         op.enqueueItem(
-                "branch-1", ctx2 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx2 -> "r1",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
         op.enqueueItem(
-                "branch-2", ctx1 -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.enqueueItem("branch-3", ctx -> "r3", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-2",
+                ctx1 -> "r2",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
+        op.enqueueItem(
+                "branch-3", ctx -> "r3", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH, false);
 
         assertEquals(3, op.getBranches().size());
     }
@@ -164,7 +172,12 @@ class ParallelOperationTest {
 
         // The child operation should be a ChildContextOperation with this op as parent
         var childOp = op.enqueueItem(
-                "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx -> "result",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
 
         assertNotNull(childOp);
         // Verify it's a ChildContextOperation (the concrete type returned by createItem)
@@ -198,8 +211,14 @@ class ParallelOperationTest {
 
         var op = createOperation(CompletionConfig.allSuccessful());
         op.enqueueItem(
-                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx1 -> "r1",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
+        op.enqueueItem(
+                "branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH, false);
 
         var result = op.get();
 
@@ -227,7 +246,8 @@ class ParallelOperationTest {
                         .build());
 
         var op = createOperation(CompletionConfig.minSuccessful(1));
-        op.enqueueItem("branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+        op.enqueueItem(
+                "branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH, false);
 
         var result = op.get();
 
@@ -235,6 +255,54 @@ class ParallelOperationTest {
         assertEquals(1, result.size());
         assertEquals(1, result.succeeded());
         assertEquals(0, result.failed());
+        assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
+        assertTrue(result.completionStatus().isSucceeded());
+    }
+
+    @Test
+    void minSuccessful_notExecuteSkippedBranchWhenReplay() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .id(OPERATION_ID)
+                        .name("test-parallel")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(ContextDetails.builder()
+                                .result(
+                                        "{\"succeeded\": 1, \"completionStatus\": \"MIN_SUCCESSFUL_REACHED\", \"statuses\":[\"SKIPPED\", \"SUCCEEDED\"]}")
+                                .build())
+                        .build());
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
+                .thenReturn(Operation.builder()
+                        .id(CHILD_OP_2)
+                        .name("branch-2")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r2\"").build())
+                        .build());
+
+        var op = createOperation(CompletionConfig.minSuccessful(1));
+        op.branch(
+                "branch-1",
+                TypeToken.get(String.class),
+                ctx -> "r1",
+                ParallelBranchConfig.builder().serDes(SER_DES).build());
+        op.branch(
+                "branch-2",
+                TypeToken.get(String.class),
+                ctx -> "r2",
+                ParallelBranchConfig.builder().serDes(SER_DES).build());
+
+        var result = op.get();
+
+        verify(executionManager, never()).sendOperationUpdate(any());
+        assertEquals(2, result.size());
+        assertEquals(1, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(1, result.skipped());
         assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
         assertTrue(result.completionStatus().isSucceeded());
     }
@@ -248,7 +316,12 @@ class ParallelOperationTest {
         var op = createOperation(CompletionConfig.allSuccessful());
 
         var childOp = op.enqueueItem(
-                "branch-1", ctx -> "result", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx -> "result",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
 
         // The child operation should be registered in the execution manager
         // (BaseDurableOperation constructor calls executionManager.registerOperation)
@@ -291,8 +364,14 @@ class ParallelOperationTest {
 
         var op = createOperation(CompletionConfig.allSuccessful());
         op.enqueueItem(
-                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx1 -> "r1",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
+        op.enqueueItem(
+                "branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH, false);
 
         var result = op.get();
 
@@ -339,8 +418,14 @@ class ParallelOperationTest {
 
         var op = createOperation(CompletionConfig.allSuccessful());
         op.enqueueItem(
-                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
-        op.enqueueItem("branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx1 -> "r1",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
+        op.enqueueItem(
+                "branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH, false);
 
         var result = op.get();
 
@@ -375,7 +460,8 @@ class ParallelOperationTest {
                 },
                 TypeToken.get(String.class),
                 SER_DES,
-                OperationSubType.PARALLEL_BRANCH);
+                OperationSubType.PARALLEL_BRANCH,
+                false);
 
         var result = assertDoesNotThrow(op::get);
 
@@ -412,7 +498,12 @@ class ParallelOperationTest {
         // toleratedFailureCount=1 so the operation completes after both branches finish
         var op = createOperation(CompletionConfig.toleratedFailureCount(1));
         op.enqueueItem(
-                "branch-1", ctx1 -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH);
+                "branch-1",
+                ctx1 -> "r1",
+                TypeToken.get(String.class),
+                SER_DES,
+                OperationSubType.PARALLEL_BRANCH,
+                false);
         op.enqueueItem(
                 "branch-2",
                 ctx -> {
@@ -420,7 +511,8 @@ class ParallelOperationTest {
                 },
                 TypeToken.get(String.class),
                 SER_DES,
-                OperationSubType.PARALLEL_BRANCH);
+                OperationSubType.PARALLEL_BRANCH,
+                false);
 
         var result = op.get();
 
