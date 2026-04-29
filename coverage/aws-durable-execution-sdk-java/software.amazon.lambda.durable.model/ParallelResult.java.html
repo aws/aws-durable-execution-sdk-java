@@ -2,11 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.model;
 
+import java.util.List;
+
 /**
  * Summary result of a parallel operation.
  *
  * &lt;p&gt;Captures the aggregate outcome of a parallel execution: how many branches were registered, how many succeeded, how
  * many failed, and why the operation completed.
  */
-<span class="fc" id="L11">public record ParallelResult(int size, int succeeded, int failed, ConcurrencyCompletionStatus completionStatus) {}</span>
+<span class="fc" id="L13">public record ParallelResult(</span>
+        int size,
+        int succeeded,
+        int failed,
+        int skipped,
+        ConcurrencyCompletionStatus completionStatus,
+        List&lt;Status&gt; statuses) {
+
+    /** Status of an individual parallel branch. */
+<span class="fc" id="L22">    public enum Status {</span>
+<span class="fc" id="L23">        SUCCEEDED,</span>
+<span class="fc" id="L24">        FAILED,</span>
+<span class="fc" id="L25">        SKIPPED</span>
+    }
+}
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
