@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
 /**
  * Configuration for {@link software.amazon.lambda.durable.util.WithRetryHelper#withRetry}.
  *
  * <p>Uses the same {@link RetryStrategy} shape that developers already know from {@link StepConfig}, so there are zero
- * new retry concepts to learn.
+ * new retry concepts to learn. If no retry strategy is specified, {@link RetryStrategies.Presets#DEFAULT} is used.
  */
 public class WithRetryConfig {
     private final RetryStrategy retryStrategy;
@@ -20,12 +21,13 @@ public class WithRetryConfig {
     }
 
     /**
-     * Returns the retry strategy. Same type as {@link StepConfig#retryStrategy()}.
+     * Returns the retry strategy, or the default strategy if not specified. Same type as
+     * {@link StepConfig#retryStrategy()}.
      *
      * @return the retry strategy, never null
      */
     public RetryStrategy retryStrategy() {
-        return retryStrategy;
+        return retryStrategy != null ? retryStrategy : RetryStrategies.Presets.DEFAULT;
     }
 
     /**
@@ -56,7 +58,7 @@ public class WithRetryConfig {
         private Builder() {}
 
         /**
-         * Sets the retry strategy. Required.
+         * Sets the retry strategy. Optional — defaults to {@link RetryStrategies.Presets#DEFAULT} if not set.
          *
          * <p>Reuses the exact same {@link RetryStrategy} interface from {@link StepConfig}. All existing factory
          * methods ({@link software.amazon.lambda.durable.retry.RetryStrategies#exponentialBackoff},
@@ -91,12 +93,8 @@ public class WithRetryConfig {
          * Builds the {@link WithRetryConfig} instance.
          *
          * @return a new config with the configured options
-         * @throws IllegalArgumentException if retryStrategy is not set
          */
         public WithRetryConfig build() {
-            if (retryStrategy == null) {
-                throw new IllegalArgumentException("retryStrategy is required");
-            }
             return new WithRetryConfig(this);
         }
     }

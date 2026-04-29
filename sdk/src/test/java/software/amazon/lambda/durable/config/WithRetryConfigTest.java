@@ -20,11 +20,10 @@ class WithRetryConfigTest {
     }
 
     @Test
-    void builderWithoutRetryStrategy_shouldThrow() {
-        var exception = assertThrows(
-                IllegalArgumentException.class, () -> WithRetryConfig.builder().build());
+    void builderWithoutRetryStrategy_usesDefault() {
+        var config = WithRetryConfig.builder().build();
 
-        assertEquals("retryStrategy is required", exception.getMessage());
+        assertEquals(RetryStrategies.Presets.DEFAULT, config.retryStrategy());
     }
 
     @Test
