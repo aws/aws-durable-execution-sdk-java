@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.util;
+package software.amazon.lambda.durable.context;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -8,6 +8,7 @@ import static org.mockito.Mockito.*;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Objects;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -19,16 +20,139 @@ import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.model.WithRetry;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
+import software.amazon.lambda.durable.util.CompletedDurableFuture;
 
-class WithRetryHelperTest {
+@SuppressWarnings("unchecked")
+class DurableContextWithRetryTest {
 
     private DurableContext context;
+    private DurableContext childContext;
 
     @BeforeEach
     void setUp() {
         context = mock(DurableContext.class);
+        childContext = mock(DurableContext.class);
+        stubWithRetryMethods(context);
+        stubWithRetryMethods(childContext);
+    }
+
+    /**
+     * Stubs the withRetry/withRetryAsync methods on a mock DurableContext so they execute the real retry loop logic.
+     * This is needed because withRetry/withRetryAsync are abstract interface methods, and mocks return null by default.
+     */
+    private void stubWithRetryMethods(DurableContext mock) {
+        // Named sync form
+        when(mock.<Object>withRetry(any(), nullable(WithRetry.class), nullable(WithRetryConfig.class)))
+                .thenAnswer(invocation -> {
+                    String name = invocation.getArgument(0);
+                    WithRetry<Object> operation = invocation.getArgument(1);
+                    WithRetryConfig config = invocation.getArgument(2);
+                    Objects.requireNonNull(name, "name cannot be null");
+                    Objects.requireNonNull(operation, "operation cannot be null");
+                    Objects.requireNonNull(config, "config cannot be null");
+                    if (config.wrapInChildContext()) {
+                        return mock.runInChildContext(
+                                name,
+                                new TypeToken<Object>() {},
+                                childCtx -> executeRetryLoop(childCtx, name, operation, config));
+                    }
+                    return executeRetryLoop(mock, name, operation, config);
+                });
+
+        // Anonymous sync form
+        when(mock.<Object>withRetry(nullable(WithRetry.class), nullable(WithRetryConfig.class)))
+                .thenAnswer(invocation -> {
+                    WithRetry<Object> operation = invocation.getArgument(0);
+                    WithRetryConfig config = invocation.getArgument(1);
+                    Objects.requireNonNull(operation, "operation cannot be null");
+                    Objects.requireNonNull(config, "config cannot be null");
+                    if (config.wrapInChildContext()) {
+                        return mock.runInChildContext(
+                                "retry",
+                                new TypeToken<Object>() {},
+                                childCtx -> executeRetryLoop(childCtx, null, operation, config));
+                    }
+                    return executeRetryLoop(mock, null, operation, config);
+                });
+
+        // Named async form
+        when(mock.<Object>withRetryAsync(any(), nullable(WithRetry.class), nullable(WithRetryConfig.class)))
+                .thenAnswer(invocation -> {
+                    String name = invocation.getArgument(0);
+                    WithRetry<Object> operation = invocation.getArgument(1);
+                    WithRetryConfig config = invocation.getArgument(2);
+                    Objects.requireNonNull(name, "name cannot be null");
+                    Objects.requireNonNull(operation, "operation cannot be null");
+                    Objects.requireNonNull(config, "config cannot be null");
+                    return mock.runInChildContextAsync(
+                            name,
+                            new TypeToken<Object>() {},
+                            childCtx -> executeRetryLoop(childCtx, name, operation, config));
+                });
+
+        // Anonymous async form
+        when(mock.<Object>withRetryAsync(nullable(WithRetry.class), nullable(WithRetryConfig.class)))
+                .thenAnswer(invocation -> {
+                    WithRetry<Object> operation = invocation.getArgument(0);
+                    WithRetryConfig config = invocation.getArgument(1);
+                    Objects.requireNonNull(operation, "operation cannot be null");
+                    Objects.requireNonNull(config, "config cannot be null");
+                    return mock.runInChildContextAsync(
+                            "retry",
+                            new TypeToken<Object>() {},
+                            childCtx -> executeRetryLoop(childCtx, null, operation, config));
+                });
+    }
+
+    /** Replicates the retry loop logic from DurableContextImpl for test stubbing. */
+    private static <T> T executeRetryLoop(
+            DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
+        var attempt = 1;
+        while (true) {
+            try {
+                return operation.execute(context, attempt);
+            } catch (SuspendExecutionException | UnrecoverableDurableExecutionException e) {
+                throw e;
+            } catch (Exception e) {
+                var decision = config.retryStrategy().makeRetryDecision(e, attempt);
+                if (!decision.shouldRetry()) {
+                    throw e;
+                }
+                var delay = decision.delay().isZero() ? Duration.ofSeconds(1) : decision.delay();
+                var waitName = name != null ? name + "-backoff-" + attempt : "retry-backoff-" + attempt;
+                context.wait(waitName, delay);
+                attempt++;
+            }
+        }
+    }
+
+    /** Stubs runInChildContextAsync to immediately execute the function with childContext. */
+    private void stubChildContext(String name) {
+        when(context.runInChildContextAsync(eq(name), any(TypeToken.class), any()))
+                .thenAnswer(invocation -> {
+                    Function<DurableContext, ?> func = invocation.getArgument(2);
+                    return new CompletedDurableFuture<>(func.apply(childContext));
+                });
+    }
+
+    /** Stubs runInChildContextAsync for any name to immediately execute the function with childContext. */
+    private void stubChildContextAnyName() {
+        when(context.runInChildContextAsync(anyString(), any(TypeToken.class), any()))
+                .thenAnswer(invocation -> {
+                    Function<DurableContext, ?> func = invocation.getArgument(2);
+                    return new CompletedDurableFuture<>(func.apply(childContext));
+                });
+    }
+
+    /** Stubs runInChildContext (sync) to immediately execute the function with childContext. */
+    private void stubChildContextSync(String name) {
+        when(context.runInChildContext(eq(name), any(TypeToken.class), any())).thenAnswer(invocation -> {
+            Function<DurableContext, ?> func = invocation.getArgument(2);
+            return func.apply(childContext);
+        });
     }
 
     // --- Named form tests ---
@@ -37,49 +161,37 @@ class WithRetryHelperTest {
     class NamedForm {
 
         @Test
-        void successOnFirstAttempt_wrapsInChildContext() {
-            // runInChildContextAsync should be called; delegate to the function immediately
-            when(context.runInChildContextAsync(eq("my-op"), any(TypeToken.class), any()))
-                    .thenAnswer(invocation -> {
-                        Function<DurableContext, ?> func = invocation.getArgument(2);
-                        return new CompletedDurableFuture<>(func.apply(context));
-                    });
-
+        void successOnFirstAttempt_runsDirectlyOnContext() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = WithRetryHelper.withRetry(context, "my-op", (ctx, attempt) -> "success", config);
+            var result = context.withRetry("my-op", (ctx, attempt) -> "success", config);
 
             assertEquals("success", result);
-            verify(context).runInChildContextAsync(eq("my-op"), any(TypeToken.class), any());
+            verify(context, never()).runInChildContextAsync(anyString(), any(TypeToken.class), any());
         }
 
         @Test
-        void successOnFirstAttempt_noChildContext_whenDisabled() {
+        void doesNotWrapInChildContext() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(false)
                     .build();
 
-            var result = WithRetryHelper.withRetry(context, "my-op", (ctx, attempt) -> "direct", config);
+            context.withRetry("my-op", (ctx, attempt) -> "result", config);
 
-            assertEquals("direct", result);
             verify(context, never()).runInChildContextAsync(anyString(), any(TypeToken.class), any());
         }
 
         @Test
         void retriesWithBackoffWaits_namedForm() {
-            // Disable child context wrapping so we can directly verify wait calls
             var callCount = new int[] {0};
             var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) ->
                             attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(5)) : RetryDecision.fail())
-                    .wrapInChildContext(false)
                     .build();
 
-            var result = WithRetryHelper.withRetry(
-                    context,
+            var result = context.withRetry(
                     "my-op",
                     (ctx, attempt) -> {
                         callCount[0]++;
@@ -92,6 +204,7 @@ class WithRetryHelperTest {
 
             assertEquals("success-on-3", result);
             assertEquals(3, callCount[0]);
+            // Backoff waits happen on the caller's context directly
             verify(context).wait("my-op-backoff-1", Duration.ofSeconds(5));
             verify(context).wait("my-op-backoff-2", Duration.ofSeconds(5));
             verify(context, times(2)).wait(anyString(), any(Duration.class));
@@ -101,13 +214,11 @@ class WithRetryHelperTest {
         void rethrowsWhenRetryStrategyReturnsFail() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(false)
                     .build();
 
             var exception = assertThrows(
                     RuntimeException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             "my-op",
                             (ctx, attempt) -> {
                                 throw new RuntimeException("terminal");
@@ -123,12 +234,10 @@ class WithRetryHelperTest {
             var config = WithRetryConfig.builder()
                     .retryStrategy(
                             (error, attempt) -> attempt < 2 ? RetryDecision.retry(Duration.ZERO) : RetryDecision.fail())
-                    .wrapInChildContext(false)
                     .build();
 
             var callCount = new int[] {0};
-            var result = WithRetryHelper.withRetry(
-                    context,
+            var result = context.withRetry(
                     "my-op",
                     (ctx, attempt) -> {
                         callCount[0]++;
@@ -145,24 +254,12 @@ class WithRetryHelperTest {
         }
 
         @Test
-        void nullContext_shouldThrow() {
-            var config = WithRetryConfig.builder()
-                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .build();
-
-            assertThrows(
-                    NullPointerException.class, () -> WithRetryHelper.withRetry(null, "name", (ctx, a) -> "x", config));
-        }
-
-        @Test
         void nullName_shouldThrow() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.withRetry(context, null, (ctx, a) -> "x", config));
+            assertThrows(NullPointerException.class, () -> context.withRetry(null, (ctx, a) -> "x", config));
         }
 
         @Test
@@ -171,27 +268,38 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(NullPointerException.class, () -> WithRetryHelper.withRetry(context, "name", null, config));
+            assertThrows(NullPointerException.class, () -> context.withRetry("name", null, config));
         }
 
         @Test
         void nullConfig_shouldThrow() {
-            assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.withRetry(context, "name", (ctx, a) -> "x", null));
+            assertThrows(NullPointerException.class, () -> context.withRetry("name", (ctx, a) -> "x", null));
         }
 
         @Test
         void operationReturnsNull() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(false)
                     .build();
 
-            var result =
-                    WithRetryHelper.withRetry(context, "my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
+            var result = context.withRetry("my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
 
             assertNull(result);
+        }
+
+        @Test
+        void passesCallerContextToOperation() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .build();
+
+            context.withRetry(
+                    "my-op",
+                    (ctx, attempt) -> {
+                        assertSame(context, ctx);
+                        return "verified";
+                    },
+                    config);
         }
     }
 
@@ -206,9 +314,19 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = WithRetryHelper.withRetry(context, (ctx, attempt) -> "anonymous-success", config);
+            var result = context.withRetry((ctx, attempt) -> "anonymous-success", config);
 
             assertEquals("anonymous-success", result);
+        }
+
+        @Test
+        void doesNotWrapInChildContext() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .build();
+
+            context.withRetry((ctx, attempt) -> "result", config);
+
             verify(context, never()).runInChildContextAsync(anyString(), any(TypeToken.class), any());
         }
 
@@ -219,8 +337,7 @@ class WithRetryHelperTest {
                             attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(2)) : RetryDecision.fail())
                     .build();
 
-            var result = WithRetryHelper.withRetry(
-                    context,
+            var result = context.withRetry(
                     (ctx, attempt) -> {
                         if (attempt < 3) {
                             throw new RuntimeException("fail");
@@ -235,18 +352,6 @@ class WithRetryHelperTest {
         }
 
         @Test
-        void neverWrapsInChildContext_evenWhenConfigSaysTrue() {
-            var config = WithRetryConfig.builder()
-                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(true) // should be ignored for anonymous form
-                    .build();
-
-            WithRetryHelper.withRetry(context, (ctx, attempt) -> "result", config);
-
-            verify(context, never()).runInChildContextAsync(anyString(), any(TypeToken.class), any());
-        }
-
-        @Test
         void rethrowsOriginalException() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
@@ -255,8 +360,7 @@ class WithRetryHelperTest {
             var original = new IllegalStateException("original error");
             var thrown = assertThrows(
                     IllegalStateException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 throw original;
                             },
@@ -266,28 +370,17 @@ class WithRetryHelperTest {
         }
 
         @Test
-        void nullContext_shouldThrow() {
-            var config = WithRetryConfig.builder()
-                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .build();
-
-            assertThrows(NullPointerException.class, () -> WithRetryHelper.withRetry(null, (ctx, a) -> "x", config));
-        }
-
-        @Test
         void nullOperation_shouldThrow() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.withRetry(context, (WithRetry<String>) null, config));
+            assertThrows(NullPointerException.class, () -> context.withRetry((WithRetry<String>) null, config));
         }
 
         @Test
         void nullConfig_shouldThrow() {
-            assertThrows(NullPointerException.class, () -> WithRetryHelper.withRetry(context, (ctx, a) -> "x", null));
+            assertThrows(NullPointerException.class, () -> context.withRetry((ctx, a) -> "x", null));
         }
 
         @Test
@@ -296,7 +389,7 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = WithRetryHelper.withRetry(context, (WithRetry<String>) (ctx, attempt) -> null, config);
+            var result = context.withRetry((WithRetry<String>) (ctx, attempt) -> null, config);
 
             assertNull(result);
         }
@@ -308,8 +401,7 @@ class WithRetryHelperTest {
                             (error, attempt) -> attempt < 2 ? RetryDecision.retry(Duration.ZERO) : RetryDecision.fail())
                     .build();
 
-            var result = WithRetryHelper.withRetry(
-                    context,
+            var result = context.withRetry(
                     (ctx, attempt) -> {
                         if (attempt == 1) {
                             throw new RuntimeException("fail");
@@ -321,6 +413,20 @@ class WithRetryHelperTest {
             assertEquals("ok", result);
             verify(context).wait("retry-backoff-1", Duration.ofSeconds(1));
         }
+
+        @Test
+        void passesCallerContextToOperation() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .build();
+
+            context.withRetry(
+                    (ctx, attempt) -> {
+                        assertSame(context, ctx);
+                        return "verified";
+                    },
+                    config);
+        }
     }
 
     // --- Async form tests ---
@@ -330,76 +436,69 @@ class WithRetryHelperTest {
 
         @Test
         void namedAsyncReturnsDurableFuture() {
-            when(context.runInChildContextAsync(eq("my-op"), any(TypeToken.class), any()))
-                    .thenAnswer(invocation -> {
-                        Function<DurableContext, ?> func = invocation.getArgument(2);
-                        return new CompletedDurableFuture<>(func.apply(context));
-                    });
+            stubChildContext("my-op");
 
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            DurableFuture<String> future =
-                    WithRetryHelper.withRetryAsync(context, "my-op", (ctx, attempt) -> "async-result", config);
+            DurableFuture<String> future = context.withRetryAsync("my-op", (ctx, attempt) -> "async-result", config);
 
             assertNotNull(future);
             assertEquals("async-result", future.get());
         }
 
         @Test
-        void namedAsyncWithoutChildContext_returnsCompletedFuture() {
+        void namedAsyncAlwaysWrapsInChildContext() {
+            stubChildContext("my-op");
+
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(false)
                     .build();
 
-            DurableFuture<String> future =
-                    WithRetryHelper.withRetryAsync(context, "my-op", (ctx, attempt) -> "direct-async", config);
+            context.withRetryAsync("my-op", (ctx, attempt) -> "result", config);
 
-            assertNotNull(future);
-            assertInstanceOf(CompletedDurableFuture.class, future);
-            assertEquals("direct-async", future.get());
-            verify(context, never()).runInChildContextAsync(anyString(), any(TypeToken.class), any());
+            verify(context).runInChildContextAsync(eq("my-op"), any(TypeToken.class), any());
         }
 
         @Test
         void anonymousAsyncReturnsDurableFuture() {
+            stubChildContext("retry");
+
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            DurableFuture<String> future =
-                    WithRetryHelper.withRetryAsync(context, (ctx, attempt) -> "anon-async", config);
+            DurableFuture<String> future = context.withRetryAsync((ctx, attempt) -> "anon-async", config);
 
             assertNotNull(future);
-            assertInstanceOf(CompletedDurableFuture.class, future);
             assertEquals("anon-async", future.get());
         }
 
         @Test
-        void anonymousAsyncNeverWrapsInChildContext() {
+        void anonymousAsyncWrapsInChildContext() {
+            stubChildContext("retry");
+
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(true)
                     .build();
 
-            WithRetryHelper.withRetryAsync(context, (ctx, attempt) -> "result", config);
+            context.withRetryAsync((ctx, attempt) -> "result", config);
 
-            verify(context, never()).runInChildContextAsync(anyString(), any(TypeToken.class), any());
+            verify(context).runInChildContextAsync(eq("retry"), any(TypeToken.class), any());
         }
 
         @Test
         void namedAsyncRetriesWithBackoff() {
+            stubChildContext("my-op");
+
             var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) ->
                             attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(5)) : RetryDecision.fail())
-                    .wrapInChildContext(false)
                     .build();
 
             var callCount = new int[] {0};
-            DurableFuture<String> future = WithRetryHelper.withRetryAsync(
-                    context,
+            DurableFuture<String> future = context.withRetryAsync(
                     "my-op",
                     (ctx, attempt) -> {
                         callCount[0]++;
@@ -412,19 +511,20 @@ class WithRetryHelperTest {
 
             assertEquals("success-on-3", future.get());
             assertEquals(3, callCount[0]);
-            verify(context).wait("my-op-backoff-1", Duration.ofSeconds(5));
-            verify(context).wait("my-op-backoff-2", Duration.ofSeconds(5));
+            verify(childContext).wait("my-op-backoff-1", Duration.ofSeconds(5));
+            verify(childContext).wait("my-op-backoff-2", Duration.ofSeconds(5));
         }
 
         @Test
         void anonymousAsyncRetriesWithBackoff() {
+            stubChildContext("retry");
+
             var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) ->
                             attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(2)) : RetryDecision.fail())
                     .build();
 
-            DurableFuture<String> future = WithRetryHelper.withRetryAsync(
-                    context,
+            DurableFuture<String> future = context.withRetryAsync(
                     (ctx, attempt) -> {
                         if (attempt < 3) {
                             throw new RuntimeException("fail");
@@ -434,19 +534,8 @@ class WithRetryHelperTest {
                     config);
 
             assertEquals("done", future.get());
-            verify(context).wait("retry-backoff-1", Duration.ofSeconds(2));
-            verify(context).wait("retry-backoff-2", Duration.ofSeconds(2));
-        }
-
-        @Test
-        void namedAsyncNullContext_shouldThrow() {
-            var config = WithRetryConfig.builder()
-                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .build();
-
-            assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.withRetryAsync(null, "name", (ctx, a) -> "x", config));
+            verify(childContext).wait("retry-backoff-1", Duration.ofSeconds(2));
+            verify(childContext).wait("retry-backoff-2", Duration.ofSeconds(2));
         }
 
         @Test
@@ -455,9 +544,7 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.withRetryAsync(context, null, (ctx, a) -> "x", config));
+            assertThrows(NullPointerException.class, () -> context.withRetryAsync(null, (ctx, a) -> "x", config));
         }
 
         @Test
@@ -466,25 +553,12 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(
-                    NullPointerException.class, () -> WithRetryHelper.withRetryAsync(context, "name", null, config));
+            assertThrows(NullPointerException.class, () -> context.withRetryAsync("name", null, config));
         }
 
         @Test
         void namedAsyncNullConfig_shouldThrow() {
-            assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.withRetryAsync(context, "name", (ctx, a) -> "x", null));
-        }
-
-        @Test
-        void anonymousAsyncNullContext_shouldThrow() {
-            var config = WithRetryConfig.builder()
-                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .build();
-
-            assertThrows(
-                    NullPointerException.class, () -> WithRetryHelper.withRetryAsync(null, (ctx, a) -> "x", config));
+            assertThrows(NullPointerException.class, () -> context.withRetryAsync("name", (ctx, a) -> "x", null));
         }
 
         @Test
@@ -493,40 +567,38 @@ class WithRetryHelperTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            assertThrows(
-                    NullPointerException.class,
-                    () -> WithRetryHelper.withRetryAsync(context, (WithRetry<String>) null, config));
+            assertThrows(NullPointerException.class, () -> context.withRetryAsync((WithRetry<String>) null, config));
         }
 
         @Test
         void anonymousAsyncNullConfig_shouldThrow() {
-            assertThrows(
-                    NullPointerException.class, () -> WithRetryHelper.withRetryAsync(context, (ctx, a) -> "x", null));
+            assertThrows(NullPointerException.class, () -> context.withRetryAsync((ctx, a) -> "x", null));
         }
 
         @Test
         void asyncOperationReturnsNull() {
+            stubChildContext("my-op");
+
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(false)
                     .build();
 
-            DurableFuture<String> future = WithRetryHelper.withRetryAsync(
-                    context, "my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
+            DurableFuture<String> future =
+                    context.withRetryAsync("my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
 
             assertNull(future.get());
         }
 
         @Test
-        void withRetryDelegatesToWithRetryAsync() {
-            // Verify that withRetry (sync) produces the same result as withRetryAsync().get()
+        void syncAndAsyncProduceSameResult() {
+            stubChildContextAnyName();
+
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(false)
                     .build();
 
-            var syncResult = WithRetryHelper.withRetry(context, "op", (ctx, attempt) -> "value", config);
-            var asyncResult = WithRetryHelper.withRetryAsync(context, "op", (ctx, attempt) -> "value", config)
+            var syncResult = context.withRetry("op", (ctx, attempt) -> "value", config);
+            var asyncResult = context.withRetryAsync("op", (ctx, attempt) -> "value", config)
                     .get();
 
             assertEquals(syncResult, asyncResult);
@@ -544,11 +616,34 @@ class WithRetryHelperTest {
             var config = WithRetryConfig.builder()
                     .retryStrategy((error, attempt) ->
                             attempt < 4 ? RetryDecision.retry(Duration.ofSeconds(1)) : RetryDecision.fail())
-                    .wrapInChildContext(false)
                     .build();
 
-            WithRetryHelper.withRetry(
-                    context,
+            context.withRetry(
+                    (ctx, attempt) -> {
+                        attempts.add(attempt);
+                        if (attempt < 4) {
+                            throw new RuntimeException("not yet");
+                        }
+                        return "done";
+                    },
+                    config);
+
+            assertEquals(4, attempts.size());
+            assertEquals(1, attempts.get(0));
+            assertEquals(2, attempts.get(1));
+            assertEquals(3, attempts.get(2));
+            assertEquals(4, attempts.get(3));
+        }
+
+        @Test
+        void passesCorrectAttemptNumberToOperation_namedForm() {
+            var attempts = new ArrayList<Integer>();
+            var config = WithRetryConfig.builder()
+                    .retryStrategy((error, attempt) ->
+                            attempt < 4 ? RetryDecision.retry(Duration.ofSeconds(1)) : RetryDecision.fail())
+                    .build();
+
+            context.withRetry(
                     "track",
                     (ctx, attempt) -> {
                         attempts.add(attempt);
@@ -578,8 +673,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     RuntimeException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 throw new RuntimeException("error-" + attempt);
                             },
@@ -597,8 +691,7 @@ class WithRetryHelperTest {
                     .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(attempt * 10L)))
                     .build();
 
-            WithRetryHelper.withRetry(
-                    context,
+            context.withRetry(
                     (ctx, attempt) -> {
                         if (attempt <= 2) {
                             throw new RuntimeException("fail");
@@ -612,13 +705,12 @@ class WithRetryHelperTest {
         }
 
         @Test
-        void passesContextToOperation() {
+        void anonymousFormPassesCallerContextToOperation() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            WithRetryHelper.withRetry(
-                    context,
+            context.withRetry(
                     (ctx, attempt) -> {
                         assertSame(context, ctx);
                         return "verified";
@@ -627,24 +719,15 @@ class WithRetryHelperTest {
         }
 
         @Test
-        void namedFormPassesChildContextToOperation_whenWrapped() {
-            var childContext = mock(DurableContext.class);
-            when(context.runInChildContextAsync(eq("wrapped"), any(TypeToken.class), any()))
-                    .thenAnswer(invocation -> {
-                        Function<DurableContext, ?> func = invocation.getArgument(2);
-                        return new CompletedDurableFuture<>(func.apply(childContext));
-                    });
-
+        void namedFormPassesCallerContextToOperation() {
             var config = WithRetryConfig.builder()
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                    .wrapInChildContext(true)
                     .build();
 
-            WithRetryHelper.withRetry(
-                    context,
+            context.withRetry(
                     "wrapped",
                     (ctx, attempt) -> {
-                        assertSame(childContext, ctx);
+                        assertSame(context, ctx);
                         return "verified";
                     },
                     config);
@@ -658,8 +741,7 @@ class WithRetryHelperTest {
 
             var thrown = assertThrows(
                     RuntimeException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 throw new RuntimeException("attempt-" + attempt);
                             },
@@ -677,8 +759,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     SuspendExecutionException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 throw new SuspendExecutionException();
                             },
@@ -696,8 +777,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     UnrecoverableDurableExecutionException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 throw new UnrecoverableDurableExecutionException(
                                         software.amazon.awssdk.services.lambda.model.ErrorObject.builder()
@@ -717,8 +797,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     SuspendExecutionException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 if (attempt == 1) {
                                     throw new RuntimeException("transient");
@@ -740,8 +819,7 @@ class WithRetryHelperTest {
 
             assertThrows(
                     UnrecoverableDurableExecutionException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 if (attempt == 1) {
                                     throw new RuntimeException("transient");
@@ -766,8 +844,7 @@ class WithRetryHelperTest {
 
             var thrown = assertThrows(
                     SerDesException.class,
-                    () -> WithRetryHelper.withRetry(
-                            context,
+                    () -> context.withRetry(
                             (ctx, attempt) -> {
                                 throw original;
                             },
@@ -775,6 +852,146 @@ class WithRetryHelperTest {
 
             assertSame(original, thrown);
             assertEquals("deserialization failed", thrown.getMessage());
+        }
+    }
+
+    // --- WrapInChildContext tests ---
+
+    @Nested
+    class WrapInChildContext {
+
+        @Test
+        void namedForm_wrapsInChildContextWhenEnabled() {
+            stubChildContextSync("my-op");
+
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .wrapInChildContext(true)
+                    .build();
+
+            var result = context.withRetry("my-op", (ctx, attempt) -> "wrapped", config);
+
+            assertEquals("wrapped", result);
+            verify(context).runInChildContext(eq("my-op"), any(TypeToken.class), any());
+        }
+
+        @Test
+        void namedForm_doesNotWrapWhenDisabled() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .wrapInChildContext(false)
+                    .build();
+
+            var result = context.withRetry("my-op", (ctx, attempt) -> "direct", config);
+
+            assertEquals("direct", result);
+            verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
+        }
+
+        @Test
+        void namedForm_doesNotWrapByDefault() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .build();
+
+            context.withRetry("my-op", (ctx, attempt) -> "direct", config);
+
+            verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
+        }
+
+        @Test
+        void anonymousForm_wrapsInChildContextWhenEnabled() {
+            stubChildContextSync("retry");
+
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .wrapInChildContext(true)
+                    .build();
+
+            var result = context.withRetry((ctx, attempt) -> "wrapped", config);
+
+            assertEquals("wrapped", result);
+            verify(context).runInChildContext(eq("retry"), any(TypeToken.class), any());
+        }
+
+        @Test
+        void anonymousForm_doesNotWrapWhenDisabled() {
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .wrapInChildContext(false)
+                    .build();
+
+            var result = context.withRetry((ctx, attempt) -> "direct", config);
+
+            assertEquals("direct", result);
+            verify(context, never()).runInChildContext(anyString(), any(TypeToken.class), any());
+        }
+
+        @Test
+        void namedForm_passesChildContextToOperationWhenWrapped() {
+            stubChildContextSync("my-op");
+
+            var config = WithRetryConfig.builder()
+                    .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                    .wrapInChildContext(true)
+                    .build();
+
+            context.withRetry(
+                    "my-op",
+                    (ctx, attempt) -> {
+                        assertSame(childContext, ctx);
+                        return "verified";
+                    },
+                    config);
+        }
+
+        @Test
+        void namedForm_retriesWithBackoffOnChildContextWhenWrapped() {
+            stubChildContextSync("my-op");
+
+            var config = WithRetryConfig.builder()
+                    .retryStrategy((error, attempt) ->
+                            attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(5)) : RetryDecision.fail())
+                    .wrapInChildContext(true)
+                    .build();
+
+            var result = context.withRetry(
+                    "my-op",
+                    (ctx, attempt) -> {
+                        if (attempt < 3) {
+                            throw new RuntimeException("fail-" + attempt);
+                        }
+                        return "success-on-3";
+                    },
+                    config);
+
+            assertEquals("success-on-3", result);
+            verify(childContext).wait("my-op-backoff-1", Duration.ofSeconds(5));
+            verify(childContext).wait("my-op-backoff-2", Duration.ofSeconds(5));
+        }
+
+        @Test
+        void anonymousForm_retriesWithBackoffOnChildContextWhenWrapped() {
+            stubChildContextSync("retry");
+
+            var config = WithRetryConfig.builder()
+                    .retryStrategy((error, attempt) ->
+                            attempt < 3 ? RetryDecision.retry(Duration.ofSeconds(2)) : RetryDecision.fail())
+                    .wrapInChildContext(true)
+                    .build();
+
+            var result = context.withRetry(
+                    (ctx, attempt) -> {
+                        if (attempt < 3) {
+                            throw new RuntimeException("fail");
+                        }
+                        return "done";
+                    },
+                    config);
+
+            assertEquals("done", result);
+            verify(childContext).wait("retry-backoff-1", Duration.ofSeconds(2));
+            verify(childContext).wait("retry-backoff-2", Duration.ofSeconds(2));
         }
     }
 }

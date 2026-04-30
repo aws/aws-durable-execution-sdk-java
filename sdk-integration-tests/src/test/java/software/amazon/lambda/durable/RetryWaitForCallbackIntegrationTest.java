@@ -12,7 +12,6 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
-import software.amazon.lambda.durable.util.WithRetryHelper;
 
 class RetryWaitForCallbackIntegrationTest {
 
@@ -20,8 +19,7 @@ class RetryWaitForCallbackIntegrationTest {
     void waitForCallbackSucceedsOnFirstAttempt() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.withRetry(
-                        context,
+                (input, context) -> context.withRetry(
                         (ctx, attempt) -> ctx.waitForCallback(
                                 "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
                                         .info("Submitting callback {}", callbackId)),
@@ -47,8 +45,7 @@ class RetryWaitForCallbackIntegrationTest {
     void waitForCallbackRetriesAfterFailure() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.withRetry(
-                        context,
+                (input, context) -> context.withRetry(
                         (ctx, attempt) -> ctx.waitForCallback(
                                 "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
                                         .info("Attempt {} callback {}", attempt, callbackId)),
@@ -94,8 +91,7 @@ class RetryWaitForCallbackIntegrationTest {
     void waitForCallbackFailsAfterAllRetriesExhausted() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.withRetry(
-                        context,
+                (input, context) -> context.withRetry(
                         (ctx, attempt) ->
                                 ctx.waitForCallback("approval-" + attempt, String.class, (callbackId, stepCtx) -> {}),
                         WithRetryConfig.builder()
@@ -132,8 +128,7 @@ class RetryWaitForCallbackIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var prefix = context.step("prepare", String.class, stepCtx -> "prepared");
 
-            var callbackResult = WithRetryHelper.withRetry(
-                    context,
+            var callbackResult = context.withRetry(
                     (ctx, attempt) ->
                             ctx.waitForCallback("approval-" + attempt, String.class, (callbackId, stepCtx) -> {}),
                     WithRetryConfig.builder()
@@ -161,8 +156,7 @@ class RetryWaitForCallbackIntegrationTest {
     void waitForCallbackRetryMultipleFailuresThenSuccess() {
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.withRetry(
-                        context,
+                (input, context) -> context.withRetry(
                         (ctx, attempt) ->
                                 ctx.waitForCallback("cb-" + attempt, String.class, (callbackId, stepCtx) -> {}),
                         WithRetryConfig.builder()
@@ -207,8 +201,7 @@ class RetryWaitForCallbackIntegrationTest {
         // Verify the submitter runs on each retry attempt
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> WithRetryHelper.withRetry(
-                        context,
+                (input, context) -> context.withRetry(
                         (ctx, attempt) ->
                                 ctx.waitForCallback("approval-" + attempt, String.class, (callbackId, stepCtx) -> {
                                     // Submitter runs each attempt — in a real scenario this would

@@ -8,16 +8,15 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.retry.RetryDecision;
-import software.amazon.lambda.durable.util.WithRetryHelper;
 
 /**
- * Example demonstrating {@link WithRetryHelper} with {@code context.invoke}.
+ * Example demonstrating {@code context.withRetry} with {@code context.invoke}.
  *
  * <p>Retries a chained Lambda invocation up to 3 times with a fixed 2-second backoff between attempts. Each attempt
  * uses a unique operation name ({@code "call-greeting-1"}, {@code "call-greeting-2"}, etc.) so the execution history
  * stays clean and replay-safe.
  *
- * <p>The anonymous form is used, so attempts run directly in the caller's context without child-context wrapping.
+ * <p>The anonymous form is used, so attempts are grouped under a default-named child context.
  */
 public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> {
 
@@ -25,8 +24,7 @@ public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> 
 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
-        return WithRetryHelper.withRetry(
-                context,
+        return context.withRetry(
                 (ctx, attempt) -> ctx.invoke(
                         "call-greeting-" + attempt,
                         "simple-step-example" + input.getName() + ":$LATEST",

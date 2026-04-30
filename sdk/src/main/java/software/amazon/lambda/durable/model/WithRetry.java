@@ -1,11 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.util;
+package software.amazon.lambda.durable.model;
 
 import software.amazon.lambda.durable.DurableContext;
 
 /**
- * A durable operation that can be retried end-to-end by {@link WithRetryHelper}.
+ * A durable operation that can be retried end-to-end by
+ * {@link software.amazon.lambda.durable.DurableContext#withRetry}.
  *
  * <p>Receives the durable context and the 1-based attempt number so callers can generate unique operation names per
  * attempt (e.g., {@code "approval-" + attempt}).

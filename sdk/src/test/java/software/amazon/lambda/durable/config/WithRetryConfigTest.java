@@ -27,45 +27,12 @@ class WithRetryConfigTest {
     }
 
     @Test
-    void wrapInChildContext_defaultsToTrue() {
-        var config = WithRetryConfig.builder()
-                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                .build();
-
-        assertTrue(config.wrapInChildContext());
-    }
-
-    @Test
-    void wrapInChildContext_canBeSetToFalse() {
-        var config = WithRetryConfig.builder()
-                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                .wrapInChildContext(false)
-                .build();
-
-        assertFalse(config.wrapInChildContext());
-    }
-
-    @Test
-    void wrapInChildContext_canBeSetToTrue() {
-        var config = WithRetryConfig.builder()
-                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                .wrapInChildContext(true)
-                .build();
-
-        assertTrue(config.wrapInChildContext());
-    }
-
-    @Test
     void builderChaining() {
         var strategy = RetryStrategies.Presets.DEFAULT;
 
-        var config = WithRetryConfig.builder()
-                .retryStrategy(strategy)
-                .wrapInChildContext(false)
-                .build();
+        var config = WithRetryConfig.builder().retryStrategy(strategy).build();
 
         assertEquals(strategy, config.retryStrategy());
-        assertFalse(config.wrapInChildContext());
     }
 
     @Test
@@ -75,5 +42,39 @@ class WithRetryConfigTest {
                 .build();
 
         assertNotNull(config.retryStrategy());
+    }
+
+    @Test
+    void wrapInChildContext_defaultsFalse() {
+        var config = WithRetryConfig.builder().build();
+
+        assertFalse(config.wrapInChildContext());
+    }
+
+    @Test
+    void wrapInChildContext_canBeEnabled() {
+        var config = WithRetryConfig.builder().wrapInChildContext(true).build();
+
+        assertTrue(config.wrapInChildContext());
+    }
+
+    @Test
+    void wrapInChildContext_canBeExplicitlyDisabled() {
+        var config = WithRetryConfig.builder().wrapInChildContext(false).build();
+
+        assertFalse(config.wrapInChildContext());
+    }
+
+    @Test
+    void builderChaining_withWrapInChildContext() {
+        var strategy = RetryStrategies.Presets.DEFAULT;
+
+        var config = WithRetryConfig.builder()
+                .retryStrategy(strategy)
+                .wrapInChildContext(true)
+                .build();
+
+        assertEquals(strategy, config.retryStrategy());
+        assertTrue(config.wrapInChildContext());
     }
 }

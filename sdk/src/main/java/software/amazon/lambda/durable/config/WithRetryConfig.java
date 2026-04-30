@@ -6,7 +6,7 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
 /**
- * Configuration for {@link software.amazon.lambda.durable.util.WithRetryHelper#withRetry}.
+ * Configuration for {@link software.amazon.lambda.durable.DurableContext#withRetry}.
  *
  * <p>Uses the same {@link RetryStrategy} shape that developers already know from {@link StepConfig}, so there are zero
  * new retry concepts to learn. If no retry strategy is specified, {@link RetryStrategies.Presets#DEFAULT} is used.
@@ -31,11 +31,15 @@ public class WithRetryConfig {
     }
 
     /**
-     * Whether to wrap the retry loop in {@code runInChildContext} so all attempts are grouped under a single named
-     * operation in execution history. Only applies when a name is provided to the named form of {@code withRetry}.
-     * Defaults to {@code true}.
+     * Returns whether the sync {@code withRetry} should wrap the retry loop in a child context.
      *
-     * @return true if child-context wrapping is enabled
+     * <p>When {@code true}, the sync form behaves like the async form — all retry attempts are grouped under a single
+     * named child context in execution history. When {@code false} (the default), the retry loop runs directly on the
+     * caller's context.
+     *
+     * <p>This setting has no effect on the async {@code withRetryAsync} methods, which always wrap in a child context.
+     *
+     * @return {@code true} if the sync retry loop should be wrapped in a child context
      */
     public boolean wrapInChildContext() {
         return wrapInChildContext;
@@ -53,7 +57,7 @@ public class WithRetryConfig {
     /** Builder for creating {@link WithRetryConfig} instances. */
     public static class Builder {
         private RetryStrategy retryStrategy;
-        private boolean wrapInChildContext = true;
+        private boolean wrapInChildContext;
 
         private Builder() {}
 
@@ -74,14 +78,14 @@ public class WithRetryConfig {
         }
 
         /**
-         * Controls whether the retry loop is wrapped in a child context. Only meaningful for the named form of
-         * {@code withRetry}. Defaults to {@code true}.
+         * Sets whether the sync {@code withRetry} should wrap the retry loop in a child context. Optional — defaults to
+         * {@code false}.
          *
-         * <p>When {@code true}, all attempts and backoff waits are grouped under a single named operation in execution
-         * history, providing a cleaner view and isolated operation ID space. Set to {@code false} to flatten attempts
-         * into the parent context.
+         * <p>When enabled, the sync form groups all retry attempts under a single named child context in execution
+         * history, matching the behavior of the async form. This is useful when you want operation isolation but don't
+         * need a {@link software.amazon.lambda.durable.DurableFuture}.
          *
-         * @param wrapInChildContext whether to wrap in a child context
+         * @param wrapInChildContext {@code true} to wrap in a child context
          * @return this builder for method chaining
          */
         public Builder wrapInChildContext(boolean wrapInChildContext) {
