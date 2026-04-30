@@ -68,6 +68,7 @@ public abstract class BaseDurableOperation {
      * @param operationIdentifier the unique identifier for this operation
      * @param durableContext the parent context this operation belongs to
      * @param parentOperation the parent operation if this is a branch/iteration of a ConcurrencyOperation
+     * @param isVirtual whether this is a virtual operation that should not be persisted
      */
     protected BaseDurableOperation(
             OperationIdentifier operationIdentifier,

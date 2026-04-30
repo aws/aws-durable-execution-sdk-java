@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import java.util.Objects;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -11,9 +12,11 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class RunInChildContextConfig {
     private final SerDes serDes;
+    private final Boolean isVirtual;
 
     private RunInChildContextConfig(Builder builder) {
         this.serDes = builder.serDes;
+        this.isVirtual = Objects.requireNonNullElse(builder.isVirtual, false);
     }
 
     /**
@@ -24,8 +27,13 @@ public class RunInChildContextConfig {
         return serDes;
     }
 
+    /** Returns true if the context operation will not be checkpointed, false otherwise. */
+    public Boolean isVirtual() {
+        return isVirtual;
+    }
+
     public Builder toBuilder() {
-        return new Builder(serDes);
+        return new Builder().serDes(serDes).isVirtual(isVirtual);
     }
 
     /**
@@ -34,16 +42,15 @@ public class RunInChildContextConfig {
      * @return a new Builder instance
      */
     public static Builder builder() {
-        return new Builder(null);
+        return new Builder();
     }
 
     /** Builder for creating StepConfig instances. */
     public static class Builder {
         private SerDes serDes;
+        private Boolean isVirtual;
 
-        public Builder(SerDes serDes) {
-            this.serDes = serDes;
-        }
+        private Builder() {}
 
         /**
          * Sets a custom serializer for the step.
@@ -57,6 +64,17 @@ public class RunInChildContextConfig {
          */
         public Builder serDes(SerDes serDes) {
             this.serDes = serDes;
+            return this;
+        }
+
+        /**
+         * Sets whether the context operation will be checkpointed (default: false).
+         *
+         * @param isVirtual true if the context is virtual (no checkpointing), false otherwise
+         * @return this builder for method chaining
+         */
+        public Builder isVirtual(Boolean isVirtual) {
+            this.isVirtual = isVirtual;
             return this;
         }
 
