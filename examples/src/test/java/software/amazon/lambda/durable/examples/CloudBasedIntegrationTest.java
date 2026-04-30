@@ -711,6 +711,89 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
+    void testRetryInvokeExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("retry-invoke-example"), GreetingRequest.class, String.class, lambdaClient);
+        // The handler invokes "simple-step-example" + input.getName() + ":$LATEST",
+        // so passing the functionNameSuffix as the name targets the deployed simple-step-example function
+        var result = runner.run(new GreetingRequest(functionNameSuffix));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertNotNull(result.getResult());
+    }
+
+    @Test
+    void testRetryWaitForCallbackExampleSucceeds() {
+        var runner = CloudDurableTestRunner.create(
+                arn("retry-wait-for-callback-example"), ApprovalRequest.class, String.class, lambdaClient);
+
+        var execution = runner.startAsync(new ApprovalRequest("Server upgrade", 5000.0));
+
+        // Wait for the first callback from attempt 1
+        execution.pollUntil(exec -> exec.hasCallback("approval-1-callback"));
+        var callbackId = execution.getCallbackId("approval-1-callback");
+        assertNotNull(callbackId);
+
+        // Complete the callback on the first attempt
+        execution.completeCallback(callbackId, "\"approved\"");
+
+        var result = execution.pollUntilComplete();
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult();
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("Approval for: Server upgrade"));
+        assertTrue(finalResult.contains("5000"));
+        assertTrue(finalResult.contains("approved"));
+
+        // Verify operations
+        assertNotNull(execution.getOperation("prepare"));
+        assertNotNull(execution.getOperation("process-result"));
+    }
+
+    @Test
+    void testRetryWaitForCallbackExampleRetriesAfterFailure() {
+        var runner = CloudDurableTestRunner.create(
+                arn("retry-wait-for-callback-example"), ApprovalRequest.class, String.class, lambdaClient);
+
+        var execution = runner.startAsync(new ApprovalRequest("Expensive item", 10000.0));
+
+        // Wait for the first callback from attempt 1
+        execution.pollUntil(exec -> exec.hasCallback("approval-1-callback"));
+        var callbackId1 = execution.getCallbackId("approval-1-callback");
+        assertNotNull(callbackId1);
+
+        // Fail the first attempt
+        execution.failCallback(
+                callbackId1,
+                ErrorObject.builder()
+                        .errorType("Rejected")
+                        .errorMessage("denied by reviewer")
+                        .build());
+
+        // Wait for the second callback from attempt 2 (after backoff)
+        execution.pollUntil(exec -> exec.hasCallback("approval-2-callback"));
+        var callbackId2 = execution.getCallbackId("approval-2-callback");
+        assertNotNull(callbackId2);
+
+        // Complete the second attempt
+        execution.completeCallback(callbackId2, "\"approved on retry\"");
+
+        var result = execution.pollUntilComplete();
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var finalResult = result.getResult();
+        assertNotNull(finalResult);
+        assertTrue(finalResult.contains("Approval for: Expensive item"));
+        assertTrue(finalResult.contains("10000"));
+        assertTrue(finalResult.contains("approved on retry"));
+
+        // Verify operations
+        assertNotNull(execution.getOperation("prepare"));
+        assertNotNull(execution.getOperation("process-result"));
+    }
+
+    @Test
     void testWaitForConditionExample() {
         var runner = CloudDurableTestRunner.create(
                 arn("wait-for-condition-example"), Integer.class, Integer.class, lambdaClient);
