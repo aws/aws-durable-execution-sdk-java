@@ -70,7 +70,8 @@ public class VirtualChildContextExample extends DurableHandler<GreetingRequest, 
                             "regional-adjustment",
                             String.class,
                             nested -> nested.step(
-                                    "lookup-region", String.class, stepCtx -> baseRate + " + regional adjustment"));
+                                    "lookup-region", String.class, stepCtx -> baseRate + " + regional adjustment"),
+                            RunInChildContextConfig.builder().isVirtual(true).build());
 
                     return child.step("finalize-shipping", String.class, stepCtx -> adjustment + " [shipping ready]");
                 },
