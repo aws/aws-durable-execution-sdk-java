@@ -751,7 +751,9 @@ public interface DurableContext extends BaseContext {
      * @param config retry configuration including the retry strategy and child context wrapping
      * @return the operation result
      */
-    <T> T withRetry(String name, WithRetry<T> operation, WithRetryConfig config);
+    default <T> T withRetry(String name, WithRetry<T> operation, WithRetryConfig config) {
+        return withRetryAsync(name, operation, config).get();
+    }
 
     /**
      * Replay-safe retry loop for any durable operation (anonymous form, sync).
@@ -766,7 +768,9 @@ public interface DurableContext extends BaseContext {
      * @param config retry configuration including the retry strategy and child context wrapping
      * @return the operation result
      */
-    <T> T withRetry(WithRetry<T> operation, WithRetryConfig config);
+    default <T> T withRetry(WithRetry<T> operation, WithRetryConfig config) {
+        return withRetryAsync(operation, config).get();
+    }
 
     /**
      * Replay-safe retry loop for any durable operation (named form, async).

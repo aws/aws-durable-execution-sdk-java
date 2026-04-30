@@ -401,55 +401,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     @SuppressWarnings("unchecked")
-    public <T> T withRetry(String name, WithRetry<T> operation, WithRetryConfig config) {
-        Objects.requireNonNull(name, "name cannot be null");
-        Objects.requireNonNull(operation, "operation cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-
-        if (config.wrapInChildContext()) {
-            return (T) runInChildContextAsync(
-                            name,
-                            new TypeToken<Object>() {},
-                            childCtx -> executeRetryLoop(childCtx, name, operation, config),
-                            RunInChildContextConfig.builder().build(),
-                            OperationSubType.WITH_RETRY)
-                    .get();
-        }
-        return (T) runInVirtualChildContextAsync(
-                        name,
-                        new TypeToken<Object>() {},
-                        childCtx -> executeRetryLoop(childCtx, name, operation, config),
-                        RunInChildContextConfig.builder().build(),
-                        OperationSubType.WITH_RETRY)
-                .get();
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> T withRetry(WithRetry<T> operation, WithRetryConfig config) {
-        Objects.requireNonNull(operation, "operation cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-
-        if (config.wrapInChildContext()) {
-            return (T) runInChildContextAsync(
-                            ANONYMOUS_CHILD_CONTEXT_NAME,
-                            new TypeToken<Object>() {},
-                            childCtx -> executeRetryLoop(childCtx, null, operation, config),
-                            RunInChildContextConfig.builder().build(),
-                            OperationSubType.WITH_RETRY)
-                    .get();
-        }
-        return (T) runInVirtualChildContextAsync(
-                        ANONYMOUS_CHILD_CONTEXT_NAME,
-                        new TypeToken<Object>() {},
-                        childCtx -> executeRetryLoop(childCtx, null, operation, config),
-                        RunInChildContextConfig.builder().build(),
-                        OperationSubType.WITH_RETRY)
-                .get();
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
     public <T> DurableFuture<T> withRetryAsync(String name, WithRetry<T> operation, WithRetryConfig config) {
         Objects.requireNonNull(name, "name cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
