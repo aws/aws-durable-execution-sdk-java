@@ -740,9 +740,10 @@ public interface DurableContext extends BaseContext {
      * <p>Every side-effect in the loop is a durable operation, so the loop is replay-safe by construction. On replay,
      * completed operations return cached results instantly and the loop fast-forwards to the current attempt.
      *
-     * <p>By default, the retry loop runs directly on the caller's context. If
-     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the loop is wrapped in a child context so all attempts
-     * are grouped under a single named operation in execution history.
+     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
      *
      * @param <T> the result type
      * @param name operation name (used for backoff wait names, and as the child context name when wrapping)
@@ -755,9 +756,10 @@ public interface DurableContext extends BaseContext {
     /**
      * Replay-safe retry loop for any durable operation (anonymous form, sync).
      *
-     * <p>By default, the retry loop runs directly on the caller's context. If
-     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the loop is wrapped in a child context with a default
-     * name so all attempts are grouped under a single operation in execution history.
+     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
      *
      * @param <T> the result type
      * @param operation the retryable operation — receives the context and 1-based attempt number
@@ -769,8 +771,10 @@ public interface DurableContext extends BaseContext {
     /**
      * Replay-safe retry loop for any durable operation (named form, async).
      *
-     * <p>Wraps the retry loop in {@code runInChildContextAsync} so all attempts are grouped under a single named
-     * operation in execution history, and returns a {@link DurableFuture} that can be composed or blocked on.
+     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
      *
      * @param <T> the result type
      * @param name operation name (used for child context and backoff wait names)
@@ -783,8 +787,10 @@ public interface DurableContext extends BaseContext {
     /**
      * Replay-safe retry loop for any durable operation (anonymous form, async).
      *
-     * <p>Wraps the retry loop in {@code runInChildContextAsync} with a default name so all attempts are grouped under a
-     * single operation in execution history, and returns a {@link DurableFuture} that can be composed or blocked on.
+     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
      *
      * @param <T> the result type
      * @param operation the retryable operation — receives the context and 1-based attempt number

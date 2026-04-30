@@ -238,6 +238,25 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Function<DurableContext, T> func,
             RunInChildContextConfig config,
             OperationSubType subType) {
+        return runInChildContextAsync(name, resultType, func, config, subType, false);
+    }
+
+    private <T> DurableFuture<T> runInVirtualChildContextAsync(
+            String name,
+            TypeToken<T> resultType,
+            Function<DurableContext, T> func,
+            RunInChildContextConfig config,
+            OperationSubType subType) {
+        return runInChildContextAsync(name, resultType, func, config, subType, true);
+    }
+
+    private <T> DurableFuture<T> runInChildContextAsync(
+            String name,
+            TypeToken<T> resultType,
+            Function<DurableContext, T> func,
+            RunInChildContextConfig config,
+            OperationSubType subType,
+            boolean isVirtual) {
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -253,7 +272,9 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 func,
                 resultType,
                 config,
-                this);
+                this,
+                isVirtual,
+                null);
 
         operation.execute();
         return operation;
@@ -386,10 +407,21 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         Objects.requireNonNull(config, "config cannot be null");
 
         if (config.wrapInChildContext()) {
-            return (T) runInChildContext(
-                    name, new TypeToken<Object>() {}, childCtx -> executeRetryLoop(childCtx, name, operation, config));
+            return (T) runInChildContextAsync(
+                            name,
+                            new TypeToken<Object>() {},
+                            childCtx -> executeRetryLoop(childCtx, name, operation, config),
+                            RunInChildContextConfig.builder().build(),
+                            OperationSubType.WITH_RETRY)
+                    .get();
         }
-        return executeRetryLoop(this, name, operation, config);
+        return (T) runInVirtualChildContextAsync(
+                        name,
+                        new TypeToken<Object>() {},
+                        childCtx -> executeRetryLoop(childCtx, name, operation, config),
+                        RunInChildContextConfig.builder().build(),
+                        OperationSubType.WITH_RETRY)
+                .get();
     }
 
     @Override
@@ -399,12 +431,21 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         Objects.requireNonNull(config, "config cannot be null");
 
         if (config.wrapInChildContext()) {
-            return (T) runInChildContext(
-                    ANONYMOUS_CHILD_CONTEXT_NAME,
-                    new TypeToken<Object>() {},
-                    childCtx -> executeRetryLoop(childCtx, null, operation, config));
+            return (T) runInChildContextAsync(
+                            ANONYMOUS_CHILD_CONTEXT_NAME,
+                            new TypeToken<Object>() {},
+                            childCtx -> executeRetryLoop(childCtx, null, operation, config),
+                            RunInChildContextConfig.builder().build(),
+                            OperationSubType.WITH_RETRY)
+                    .get();
         }
-        return executeRetryLoop(this, null, operation, config);
+        return (T) runInVirtualChildContextAsync(
+                        ANONYMOUS_CHILD_CONTEXT_NAME,
+                        new TypeToken<Object>() {},
+                        childCtx -> executeRetryLoop(childCtx, null, operation, config),
+                        RunInChildContextConfig.builder().build(),
+                        OperationSubType.WITH_RETRY)
+                .get();
     }
 
     @Override
@@ -414,8 +455,20 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
 
-        return (DurableFuture<T>) runInChildContextAsync(
-                name, new TypeToken<Object>() {}, childCtx -> executeRetryLoop(childCtx, name, operation, config));
+        if (config.wrapInChildContext()) {
+            return (DurableFuture<T>) runInChildContextAsync(
+                    name,
+                    new TypeToken<Object>() {},
+                    childCtx -> executeRetryLoop(childCtx, name, operation, config),
+                    RunInChildContextConfig.builder().build(),
+                    OperationSubType.WITH_RETRY);
+        }
+        return (DurableFuture<T>) runInVirtualChildContextAsync(
+                name,
+                new TypeToken<Object>() {},
+                childCtx -> executeRetryLoop(childCtx, name, operation, config),
+                RunInChildContextConfig.builder().build(),
+                OperationSubType.WITH_RETRY);
     }
 
     @Override
@@ -424,10 +477,20 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
 
-        return (DurableFuture<T>) runInChildContextAsync(
+        if (config.wrapInChildContext()) {
+            return (DurableFuture<T>) runInChildContextAsync(
+                    ANONYMOUS_CHILD_CONTEXT_NAME,
+                    new TypeToken<Object>() {},
+                    childCtx -> executeRetryLoop(childCtx, null, operation, config),
+                    RunInChildContextConfig.builder().build(),
+                    OperationSubType.WITH_RETRY);
+        }
+        return (DurableFuture<T>) runInVirtualChildContextAsync(
                 ANONYMOUS_CHILD_CONTEXT_NAME,
                 new TypeToken<Object>() {},
-                childCtx -> executeRetryLoop(childCtx, null, operation, config));
+                childCtx -> executeRetryLoop(childCtx, null, operation, config),
+                RunInChildContextConfig.builder().build(),
+                OperationSubType.WITH_RETRY);
     }
 
     /**
