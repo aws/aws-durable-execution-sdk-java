@@ -296,6 +296,23 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:child-context-example-${JavaVersion}-runtime"
 
+  VirtualChildContextExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'virtual-child-context-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.child.VirtualChildContextExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:virtual-child-context-example-${JavaVersion}-runtime"
+
   WaitAsyncExampleFunction:
     Type: AWS::Serverless::Function
     Properties:

@@ -55,6 +55,16 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
         this(operationIdentifier, resultTypeToken, resultSerDes, durableContext, null, false);
     }
 
+    /**
+     * Constructs a new durable operation.
+     *
+     * @param operationIdentifier the unique identifier for this operation
+     * @param resultTypeToken the type token for deserializing the result
+     * @param resultSerDes the serializer/deserializer for the result
+     * @param durableContext the parent context this operation belongs to
+     * @param isVirtual whether this is a virtual operation that should not be persisted
+     * @param parentOperation the parent operation if this is a branch/iteration of a ConcurrencyOperation
+     */
     protected SerializableDurableOperation(
             OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
