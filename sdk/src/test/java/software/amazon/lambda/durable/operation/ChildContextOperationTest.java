@@ -66,6 +66,15 @@ class ChildContextOperationTest {
                 durableContext);
     }
 
+    private ChildContextOperation<String> createVirtualOperation(Function<DurableContext, String> func) {
+        return new ChildContextOperation<>(
+                OPERATION_IDENTIFIER,
+                func,
+                TypeToken.get(String.class),
+                RunInChildContextConfig.builder().serDes(SERDES).isVirtual(true).build(),
+                durableContext);
+    }
+
     private ChildContextOperation<String> createOperationWithParent(
             Function<DurableContext, String> func, ConcurrencyOperation<?> parent) {
         return new ChildContextOperation<>(
@@ -105,6 +114,22 @@ class ChildContextOperationTest {
 
         assertEquals("cached-value", result);
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
+    }
+
+    /** Virtual contexts are always executed, even during SUCCEEDED replay. */
+    @Test
+    void executeVirtualContext() {
+        var functionCalled = new AtomicBoolean(false);
+        var operation = createVirtualOperation(ctx -> {
+            functionCalled.set(true);
+            return "should-execute";
+        });
+
+        operation.execute();
+        var result = operation.get();
+
+        assertEquals("should-execute", result);
+        assertTrue(functionCalled.get(), "Function should be called during SUCCEEDED replay");
     }
 
     // ===== FAILED replay =====

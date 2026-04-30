@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -42,6 +43,34 @@ class ChildContextIntegrationTest {
         assertEquals(1, childExecutionCount.get(), "Child function should not re-execute on replay");
     }
 
+    @Test
+    void virtualChildContextResultSurvivesReplay() {
+        var childExecutionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> ctx.runInChildContext(
+                        "compute",
+                        TypeToken.get(String.class),
+                        child -> {
+                            childExecutionCount.incrementAndGet();
+                            return child.step("work", String.class, stepCtx -> "result-" + input);
+                        },
+                        RunInChildContextConfig.builder().isVirtual(true).build()));
+
+        // First run - executes child context
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("result-test", result.getResult(String.class));
+        assertEquals(1, childExecutionCount.get());
+
+        // Second run - replays, should return cached result without re-executing
+        result = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("result-test", result.getResult(String.class));
+        assertEquals(2, childExecutionCount.get(), "Child function should re-execute on replay");
+    }
+
     /**
      * A child context that fails with a reconstructable exception SHALL preserve the exception type, message, and error
      * details through the checkpoint-and-replay cycle.
@@ -70,6 +99,36 @@ class ChildContextIntegrationTest {
         assertEquals("java.lang.IllegalArgumentException", error.errorType());
         assertEquals("bad input: test", error.errorMessage());
         assertEquals(1, childExecutionCount.get(), "Child function should not re-execute on failed replay");
+    }
+
+    @Test
+    void virtualChildContextExceptionPreservedOnReplay() {
+        var childExecutionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> ctx.runInChildContext(
+                        "failing",
+                        String.class,
+                        child -> {
+                            childExecutionCount.incrementAndGet();
+                            throw new IllegalArgumentException("bad input: " + input);
+                        },
+                        RunInChildContextConfig.builder().isVirtual(true).build()));
+
+        // First run - child context fails
+        var result = runner.run("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertEquals(1, childExecutionCount.get());
+
+        // Second run - replays, should throw same exception without re-executing
+        result = runner.run("test");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertTrue(result.getError().isPresent());
+        var error = result.getError().get();
+        assertEquals("java.lang.IllegalArgumentException", error.errorType());
+        assertEquals("bad input: test", error.errorMessage());
+        assertEquals(2, childExecutionCount.get(), "Child function should re-execute on failed replay");
     }
 
     /** Operations checkpointed from within a child context SHALL have the child context's ID as their parentId. */

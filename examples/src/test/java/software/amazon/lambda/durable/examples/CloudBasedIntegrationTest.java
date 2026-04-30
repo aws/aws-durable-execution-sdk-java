@@ -530,6 +530,23 @@ class CloudBasedIntegrationTest {
         assertNotNull(runner.getOperation("shipping-estimate"));
     }
 
+    @Test
+    void testVirtualChildContextExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("virtual-child-context-example"), GreetingRequest.class, String.class, lambdaClient);
+        var result = runner.run(new GreetingRequest("Alice"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(
+                "Order for Alice [validated] | Stock available for Alice [confirmed] | Base rate for Alice + regional adjustment [shipping ready]",
+                result.getResult());
+
+        // Verify step operations in child context were tracked
+        assertNotNull(runner.getOperation("validate-order"));
+        assertNotNull(runner.getOperation("confirm-inventory"));
+        assertNotNull(runner.getOperation("finalize-shipping"));
+    }
+
     @ParameterizedTest
     @CsvSource({"100, 1000, 20", "500, 2000, 30", "1000, 3000, 50"})
     void testManyAsyncStepsExample(int steps, long maxExecutionTime, long maxReplayTime) {
