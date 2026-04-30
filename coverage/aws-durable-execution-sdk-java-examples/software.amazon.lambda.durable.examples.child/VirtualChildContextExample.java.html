@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>VirtualChildContextExample.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">AWS Lambda Durable Execution SDK Coverage Report</a> &gt; <a href="../index.html" class="el_bundle">aws-durable-execution-sdk-java-examples</a> &gt; <a href="index.source.html" class="el_package">software.amazon.lambda.durable.examples.child</a> &gt; <span class="el_source">VirtualChildContextExample.java</span></div><h1>VirtualChildContextExample.java</h1><pre class="source lang-java linenums">// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.child;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
+import software.amazon.lambda.durable.examples.types.GreetingRequest;
+
+/**
+ * Example demonstrating virtual child context workflows with the Durable Execution SDK.
+ *
+ * &lt;p&gt;This handler runs three concurrent child contexts using {@code runInChildContextAsync}:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;&lt;b&gt;Order validation&lt;/b&gt; — performs a step then suspends via {@code wait()} before completing
+ *   &lt;li&gt;&lt;b&gt;Inventory check&lt;/b&gt; — performs a step then suspends via {@code wait()} before completing
+ *   &lt;li&gt;&lt;b&gt;Shipping estimate&lt;/b&gt; — nests another child context inside it to demonstrate hierarchical contexts
+ * &lt;/ol&gt;
+ *
+ * &lt;p&gt;All three child contexts run concurrently. Results are collected with {@link DurableFuture#allOf} and combined
+ * into a summary string.
+ */
+<span class="fc" id="L26">public class VirtualChildContextExample extends DurableHandler&lt;GreetingRequest, String&gt; {</span>
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+<span class="fc" id="L30">        var name = input.getName();</span>
+<span class="fc" id="L31">        context.getLogger().info(&quot;Starting child context workflow for {}&quot;, name);</span>
+
+        // Child context 1: Order validation — step + wait + step
+<span class="fc" id="L34">        var orderFuture = context.runInChildContextAsync(</span>
+                &quot;order-validation&quot;,
+                String.class,
+                child -&gt; {
+<span class="fc" id="L38">                    var prepared = child.step(&quot;prepare-order&quot;, String.class, stepCtx -&gt; &quot;Order for &quot; + name);</span>
+<span class="fc" id="L39">                    child.getLogger().info(&quot;Order prepared, waiting for validation&quot;);</span>
+
+<span class="fc" id="L41">                    child.wait(&quot;validation-delay&quot;, Duration.ofSeconds(5));</span>
+
+<span class="fc" id="L43">                    return child.step(&quot;validate-order&quot;, String.class, stepCtx -&gt; prepared + &quot; [validated]&quot;);</span>
+                },
+<span class="fc" id="L45">                RunInChildContextConfig.builder().isVirtual(true).build());</span>
+
+        // Child context 2: Inventory check — step + wait + step
+<span class="fc" id="L48">        var inventoryFuture = context.runInChildContextAsync(</span>
+                &quot;inventory-check&quot;,
+                String.class,
+                child -&gt; {
+<span class="fc" id="L52">                    var stock = child.step(&quot;check-stock&quot;, String.class, stepCtx -&gt; &quot;Stock available for &quot; + name);</span>
+<span class="fc" id="L53">                    child.getLogger().info(&quot;Stock checked, waiting for confirmation&quot;);</span>
+
+<span class="fc" id="L55">                    child.wait(&quot;confirmation-delay&quot;, Duration.ofSeconds(3));</span>
+
+<span class="fc" id="L57">                    return child.step(&quot;confirm-inventory&quot;, String.class, stepCtx -&gt; stock + &quot; [confirmed]&quot;);</span>
+                },
+<span class="fc" id="L59">                RunInChildContextConfig.builder().isVirtual(true).build());</span>
+
+        // Child context 3: Shipping estimate — nests a child context inside it
+<span class="fc" id="L62">        var shippingFuture = context.runInChildContextAsync(</span>
+                &quot;shipping-estimate&quot;,
+                String.class,
+                child -&gt; {
+<span class="fc" id="L66">                    var baseRate = child.step(&quot;calculate-base-rate&quot;, String.class, stepCtx -&gt; &quot;Base rate for &quot; + name);</span>
+
+                    // Nested child context: calculate regional adjustment
+<span class="fc" id="L69">                    var adjustment = child.runInChildContext(</span>
+                            &quot;regional-adjustment&quot;,
+                            String.class,
+<span class="fc" id="L72">                            nested -&gt; nested.step(</span>
+<span class="fc" id="L73">                                    &quot;lookup-region&quot;, String.class, stepCtx -&gt; baseRate + &quot; + regional adjustment&quot;),</span>
+<span class="fc" id="L74">                            RunInChildContextConfig.builder().isVirtual(true).build());</span>
+
+<span class="fc" id="L76">                    return child.step(&quot;finalize-shipping&quot;, String.class, stepCtx -&gt; adjustment + &quot; [shipping ready]&quot;);</span>
+                },
+<span class="fc" id="L78">                RunInChildContextConfig.builder().isVirtual(true).build());</span>
+
+        // Collect all results using allOf
+<span class="fc" id="L81">        context.getLogger().info(&quot;Waiting for all child contexts to complete&quot;);</span>
+<span class="fc" id="L82">        var results = DurableFuture.allOf(orderFuture, inventoryFuture, shippingFuture);</span>
+
+        // Combine into summary
+<span class="fc" id="L85">        var summary = String.join(&quot; | &quot;, results);</span>
+<span class="fc" id="L86">        context.getLogger().info(&quot;All child contexts complete: {}&quot;, summary);</span>
+
+<span class="fc" id="L88">        return summary;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

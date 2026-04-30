@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import java.util.Objects;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -11,21 +12,28 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class RunInChildContextConfig {
     private final SerDes serDes;
+    private final Boolean isVirtual;
 
-<span class="fc" id="L15">    private RunInChildContextConfig(Builder builder) {</span>
-<span class="fc" id="L16">        this.serDes = builder.serDes;</span>
-<span class="fc" id="L17">    }</span>
+<span class="fc" id="L17">    private RunInChildContextConfig(Builder builder) {</span>
+<span class="fc" id="L18">        this.serDes = builder.serDes;</span>
+<span class="fc" id="L19">        this.isVirtual = Objects.requireNonNullElse(builder.isVirtual, false);</span>
+<span class="fc" id="L20">    }</span>
 
     /**
      * Returns the custom serializer for this RunInChildContext operation, or null if not specified (uses default
      * SerDes).
      */
     public SerDes serDes() {
-<span class="fc" id="L24">        return serDes;</span>
+<span class="fc" id="L27">        return serDes;</span>
+    }
+
+    /** Returns true if the context operation will not be checkpointed, false otherwise. */
+    public Boolean isVirtual() {
+<span class="fc" id="L32">        return isVirtual;</span>
     }
 
     public Builder toBuilder() {
-<span class="fc" id="L28">        return new Builder(serDes);</span>
+<span class="fc" id="L36">        return new Builder().serDes(serDes).isVirtual(isVirtual);</span>
     }
 
     /**
@@ -34,16 +42,15 @@ public class RunInChildContextConfig {
      * @return a new Builder instance
      */
     public static Builder builder() {
-<span class="fc" id="L37">        return new Builder(null);</span>
+<span class="fc" id="L45">        return new Builder();</span>
     }
 
     /** Builder for creating StepConfig instances. */
     public static class Builder {
         private SerDes serDes;
+        private Boolean isVirtual;
 
-<span class="fc" id="L44">        public Builder(SerDes serDes) {</span>
-<span class="fc" id="L45">            this.serDes = serDes;</span>
-<span class="fc" id="L46">        }</span>
+        private Builder() {}
 
         /**
          * Sets a custom serializer for the step.
@@ -56,8 +63,19 @@ public class RunInChildContextConfig {
          * @return this builder for method chaining
          */
         public Builder serDes(SerDes serDes) {
-<span class="fc" id="L59">            this.serDes = serDes;</span>
-<span class="fc" id="L60">            return this;</span>
+<span class="fc" id="L66">            this.serDes = serDes;</span>
+<span class="fc" id="L67">            return this;</span>
+        }
+
+        /**
+         * Sets whether the context is virtual (not checkpointed) or not.
+         *
+         * @param isVirtual true if the context is virtual (no checkpointing), false otherwise
+         * @return this builder for method chaining
+         */
+        public Builder isVirtual(Boolean isVirtual) {
+<span class="fc" id="L77">            this.isVirtual = isVirtual;</span>
+<span class="fc" id="L78">            return this;</span>
         }
 
         /**
@@ -66,7 +84,7 @@ public class RunInChildContextConfig {
          * @return a new StepConfig with the configured options
          */
         public RunInChildContextConfig build() {
-<span class="fc" id="L69">            return new RunInChildContextConfig(this);</span>
+<span class="fc" id="L87">            return new RunInChildContextConfig(this);</span>
         }
     }
 }

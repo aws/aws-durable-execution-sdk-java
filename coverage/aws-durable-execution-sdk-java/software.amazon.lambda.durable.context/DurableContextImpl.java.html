@@ -407,7 +407,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * @return the parent of this context if virtual, otherwise this context id
      */
     public String getParentId() {
-<span class="fc bfc" id="L410" title="All 2 branches covered.">        return isVirtual ? parentContext.getContextId() : getContextId();</span>
+<span class="fc bfc" id="L410" title="All 2 branches covered.">        return isVirtual ? parentContext.getParentId() : getContextId();</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

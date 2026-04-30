@@ -55,6 +55,16 @@ public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableO
 <span class="fc" id="L55">        this(operationIdentifier, resultTypeToken, resultSerDes, durableContext, null, false);</span>
 <span class="fc" id="L56">    }</span>
 
+    /**
+     * Constructs a new durable operation.
+     *
+     * @param operationIdentifier the unique identifier for this operation
+     * @param resultTypeToken the type token for deserializing the result
+     * @param resultSerDes the serializer/deserializer for the result
+     * @param durableContext the parent context this operation belongs to
+     * @param isVirtual whether this is a virtual operation that should not be persisted
+     * @param parentOperation the parent operation if this is a branch/iteration of a ConcurrencyOperation
+     */
     protected SerializableDurableOperation(
             OperationIdentifier operationIdentifier,
             TypeToken&lt;T&gt; resultTypeToken,
@@ -62,10 +72,10 @@ public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableO
             DurableContextImpl durableContext,
             BaseDurableOperation parentOperation,
             boolean isVirtual) {
-<span class="fc" id="L65">        super(operationIdentifier, durableContext, parentOperation, isVirtual);</span>
-<span class="fc" id="L66">        this.resultTypeToken = resultTypeToken;</span>
-<span class="fc" id="L67">        this.resultSerDes = resultSerDes;</span>
-<span class="fc" id="L68">    }</span>
+<span class="fc" id="L75">        super(operationIdentifier, durableContext, parentOperation, isVirtual);</span>
+<span class="fc" id="L76">        this.resultTypeToken = resultTypeToken;</span>
+<span class="fc" id="L77">        this.resultSerDes = resultSerDes;</span>
+<span class="fc" id="L78">    }</span>
 
     /**
      * Checks if it's called from a Step.
@@ -73,15 +83,15 @@ public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableO
      * @throws IllegalDurableOperationException if it's in a step
      */
     private void validateCurrentThreadType() {
-<span class="nc" id="L76">        ThreadType current = getCurrentThreadContext().threadType();</span>
-<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (current == ThreadType.STEP) {</span>
-<span class="nc" id="L78">            var message = String.format(</span>
+<span class="nc" id="L86">        ThreadType current = getCurrentThreadContext().threadType();</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (current == ThreadType.STEP) {</span>
+<span class="nc" id="L88">            var message = String.format(</span>
                     &quot;Nested %s operation is not supported on %s from within a %s execution.&quot;,
-<span class="nc" id="L80">                    getType(), getName(), current);</span>
+<span class="nc" id="L90">                    getType(), getName(), current);</span>
             // terminate execution and throw the exception
-<span class="nc" id="L82">            throw terminateExecutionWithIllegalDurableOperationException(message);</span>
+<span class="nc" id="L92">            throw terminateExecutionWithIllegalDurableOperationException(message);</span>
         }
-<span class="nc" id="L84">    }</span>
+<span class="nc" id="L94">    }</span>
 
     /**
      * Deserializes a result string into the operation's result type.
@@ -92,13 +102,13 @@ public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableO
      */
     protected T deserializeResult(String result) {
         try {
-<span class="fc" id="L95">            return resultSerDes.deserialize(result, resultTypeToken);</span>
-<span class="fc" id="L96">        } catch (SerDesException e) {</span>
-<span class="fc" id="L97">            logger.warn(</span>
+<span class="fc" id="L105">            return resultSerDes.deserialize(result, resultTypeToken);</span>
+<span class="fc" id="L106">        } catch (SerDesException e) {</span>
+<span class="fc" id="L107">            logger.warn(</span>
                     &quot;Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.&quot;,
-<span class="fc" id="L99">                    getType(),</span>
-<span class="fc" id="L100">                    getName());</span>
-<span class="fc" id="L101">            throw e;</span>
+<span class="fc" id="L109">                    getType(),</span>
+<span class="fc" id="L110">                    getName());</span>
+<span class="fc" id="L111">            throw e;</span>
         }
     }
 
@@ -109,7 +119,7 @@ public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableO
      * @return the serialized string
      */
     protected String serializeResult(T result) {
-<span class="fc" id="L112">        return resultSerDes.serialize(result);</span>
+<span class="fc" id="L122">        return resultSerDes.serialize(result);</span>
     }
 
     /**
@@ -119,7 +129,7 @@ public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableO
      * @return the serialized error object
      */
     protected ErrorObject serializeException(Throwable throwable) {
-<span class="fc" id="L122">        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);</span>
+<span class="fc" id="L132">        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);</span>
     }
 
     /**
@@ -130,33 +140,33 @@ public abstract class SerializableDurableOperation&lt;T&gt; extends BaseDurableO
      * @return the reconstructed throwable, or null if reconstruction is not possible
      */
     protected Throwable deserializeException(ErrorObject errorObject) {
-<span class="fc" id="L133">        Throwable original = null;</span>
-<span class="fc bfc" id="L134" title="All 2 branches covered.">        if (errorObject == null) {</span>
-<span class="fc" id="L135">            return original;</span>
+<span class="fc" id="L143">        Throwable original = null;</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (errorObject == null) {</span>
+<span class="fc" id="L145">            return original;</span>
         }
-<span class="fc" id="L137">        var errorType = errorObject.errorType();</span>
-<span class="fc" id="L138">        var errorData = errorObject.errorData();</span>
+<span class="fc" id="L147">        var errorType = errorObject.errorType();</span>
+<span class="fc" id="L148">        var errorData = errorObject.errorData();</span>
 
-<span class="fc bfc" id="L140" title="All 2 branches covered.">        if (errorType == null) {</span>
-<span class="fc" id="L141">            return original;</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        if (errorType == null) {</span>
+<span class="fc" id="L151">            return original;</span>
         }
         try {
 
-<span class="fc" id="L145">            Class&lt;?&gt; exceptionClass = Class.forName(errorType);</span>
-<span class="pc bpc" id="L146" title="1 of 2 branches missed.">            if (Throwable.class.isAssignableFrom(exceptionClass)) {</span>
-<span class="fc" id="L147">                original =</span>
-<span class="fc" id="L148">                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));</span>
+<span class="fc" id="L155">            Class&lt;?&gt; exceptionClass = Class.forName(errorType);</span>
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">            if (Throwable.class.isAssignableFrom(exceptionClass)) {</span>
+<span class="fc" id="L157">                original =</span>
+<span class="fc" id="L158">                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));</span>
 
-<span class="fc bfc" id="L150" title="All 2 branches covered.">                if (original != null) {</span>
-<span class="fc" id="L151">                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">                if (original != null) {</span>
+<span class="fc" id="L161">                    original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));</span>
                 }
             }
-<span class="fc" id="L154">        } catch (ClassNotFoundException e) {</span>
-<span class="fc" id="L155">            logger.warn(&quot;Cannot re-construct original exception type. Falling back to generic StepFailedException.&quot;);</span>
-<span class="fc" id="L156">        } catch (SerDesException e) {</span>
-<span class="fc" id="L157">            logger.warn(&quot;Cannot deserialize original exception data. Falling back to generic StepFailedException.&quot;, e);</span>
-<span class="fc" id="L158">        }</span>
-<span class="fc" id="L159">        return original;</span>
+<span class="fc" id="L164">        } catch (ClassNotFoundException e) {</span>
+<span class="fc" id="L165">            logger.warn(&quot;Cannot re-construct original exception type. Falling back to generic StepFailedException.&quot;);</span>
+<span class="fc" id="L166">        } catch (SerDesException e) {</span>
+<span class="fc" id="L167">            logger.warn(&quot;Cannot deserialize original exception data. Falling back to generic StepFailedException.&quot;, e);</span>
+<span class="fc" id="L168">        }</span>
+<span class="fc" id="L169">        return original;</span>
     }
 
     public abstract T get();

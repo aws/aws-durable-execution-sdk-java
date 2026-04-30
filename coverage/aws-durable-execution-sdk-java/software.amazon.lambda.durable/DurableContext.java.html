@@ -415,8 +415,8 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; T runInChildContext(
             String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config) {
-<span class="nc" id="L418">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config)</span>
-<span class="nc" id="L419">                .get();</span>
+<span class="fc" id="L418">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config)</span>
+<span class="fc" id="L419">                .get();</span>
     }
 
     /**
@@ -433,7 +433,7 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; T runInChildContext(
             String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config) {
-<span class="nc" id="L436">        return runInChildContextAsync(name, resultType, func, config).get();</span>
+<span class="fc" id="L436">        return runInChildContextAsync(name, resultType, func, config).get();</span>
     }
 
     /**
@@ -450,7 +450,7 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
             String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config) {
-<span class="nc" id="L453">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config);</span>
+<span class="fc" id="L453">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config);</span>
     }
 
     /**
