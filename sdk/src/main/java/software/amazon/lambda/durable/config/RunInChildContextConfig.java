@@ -68,7 +68,7 @@ public class RunInChildContextConfig {
         }
 
         /**
-         * Sets whether the context operation will be checkpointed (default: false).
+         * Sets whether the context is virtual (not checkpointed) or not.
          *
          * @param isVirtual true if the context is virtual (no checkpointing), false otherwise
          * @return this builder for method chaining
