@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.execution;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +12,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -59,7 +59,7 @@ public class ExecutionManager implements AutoCloseable {
     private final DurableConfig durableConfig;
 
     // ===== Thread Coordination =====
-<span class="fc" id="L62">    private final Map&lt;String, BaseDurableOperation&gt; registeredOperations = Collections.synchronizedMap(new HashMap&lt;&gt;());</span>
+<span class="fc" id="L62">    private final Map&lt;String, BaseDurableOperation&gt; registeredOperations = new ConcurrentHashMap&lt;&gt;();</span>
 <span class="fc" id="L63">    private final Set&lt;String&gt; activeThreads = Collections.synchronizedSet(new HashSet&lt;&gt;());</span>
 <span class="fc" id="L64">    private static final ThreadLocal&lt;ThreadContext&gt; currentThreadContext = new ThreadLocal&lt;&gt;();</span>
 <span class="fc" id="L65">    private final CompletableFuture&lt;Void&gt; executionExceptionFuture = new CompletableFuture&lt;&gt;();</span>

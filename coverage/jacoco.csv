@@ -33,7 +33,7 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,BaseDurableOperation,73,558,6,46,9,129,6,52,1,31
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,MapOperation.new TypeToken() {...},0,3,0,0,0,1,0,1,0,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,InvokeOperation,7,115,2,10,2,31,2,11,0,5
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,ParallelOperation,27,230,3,23,8,58,3,21,0,11
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,ParallelOperation,27,239,4,24,8,60,4,21,0,11
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.operation,SerializableDurableOperation,31,106,3,7,6,34,3,10,1,7
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,WaitStrategies.Presets,3,10,0,0,1,2,1,1,1,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,JitterStrategy,0,21,0,0,0,4,0,1,0,1
@@ -46,7 +46,6 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,RetryStrategies,3,88,0,10,1,22,1,9,1,4
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,RetryStrategies.Presets,3,14,0,0,1,4,1,2,1,2
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.retry,RetryDecision,0,46,0,4,0,9,0,8,0,6
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,CompletedDurableFuture,9,0,0,0,4,0,2,0,2,0
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,ParameterValidator,0,170,0,40,0,39,0,29,0,9
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,DurableApiErrorClassifier,0,73,2,12,0,17,2,8,0,3
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.util,ExceptionHelper,3,94,0,2,1,22,1,9,1,8
@@ -79,7 +78,7 @@ AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.execution,DurableExecutor,8,204,1,17,2,57,1,17,0,9
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.execution,ExecutionMode,0,15,0,0,0,3,0,1,0,1
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.execution,ApiRequestDelayedBatcher.Item,0,9,0,0,0,1,0,1,0,1
-AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.execution,ExecutionManager,22,516,7,55,8,107,7,58,0,33
+AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.execution,ExecutionManager,22,515,7,55,8,107,7,58,0,33
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.execution,CheckpointManager,0,429,1,27,0,97,1,28,0,15
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.execution,ApiRequestDelayedBatcher,0,269,1,21,0,70,1,18,0,8
 AWS Lambda Durable Execution SDK Coverage Report/aws-durable-execution-sdk-java,software.amazon.lambda.durable.logging,DurableLogger,0,170,2,18,0,38,2,24,0,16
