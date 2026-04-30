@@ -732,6 +732,24 @@ public interface DurableContext extends BaseContext {
     // =============== withRetry ================
 
     /**
+     * Replay-safe retry loop for any durable operation (sync) with default configuration.
+     *
+     * <p>Uses {@link WithRetryConfig} defaults:
+     * {@link software.amazon.lambda.durable.retry.RetryStrategies.Presets#DEFAULT} retry strategy and no child context
+     * wrapping.
+     *
+     * @param <T> the result type
+     * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
+     *     {@code null} for an anonymous retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @return the operation result
+     * @see #withRetry(String, WithRetry, WithRetryConfig)
+     */
+    default <T> T withRetry(String name, WithRetry<T> operation) {
+        return withRetry(name, operation, WithRetryConfig.builder().build());
+    }
+
+    /**
      * Replay-safe retry loop for any durable operation (sync).
      *
      * <p>Provides the same retry-with-backoff pattern that {@code step()} has built in, but for operations that cannot
@@ -754,6 +772,24 @@ public interface DurableContext extends BaseContext {
      */
     default <T> T withRetry(String name, WithRetry<T> operation, WithRetryConfig config) {
         return withRetryAsync(name, operation, config).get();
+    }
+
+    /**
+     * Replay-safe retry loop for any durable operation (async) with default configuration.
+     *
+     * <p>Uses {@link WithRetryConfig} defaults:
+     * {@link software.amazon.lambda.durable.retry.RetryStrategies.Presets#DEFAULT} retry strategy and no child context
+     * wrapping.
+     *
+     * @param <T> the result type
+     * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
+     *     retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @return a future representing the operation result
+     * @see #withRetryAsync(String, WithRetry, WithRetryConfig)
+     */
+    default <T> DurableFuture<T> withRetryAsync(String name, WithRetry<T> operation) {
+        return withRetryAsync(name, operation, WithRetryConfig.builder().build());
     }
 
     /**

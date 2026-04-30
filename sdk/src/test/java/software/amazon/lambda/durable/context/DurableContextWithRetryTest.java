@@ -46,7 +46,7 @@ class DurableContextWithRetryTest {
      * when {@code wrapInChildContext} is false, and a checkpointed child context when true).
      */
     private void stubWithRetryMethods(DurableContext mock) {
-        // Sync form — always runs in a child context
+        // Sync form with config — always runs in a child context
         when(mock.<Object>withRetry(any(), nullable(WithRetry.class), nullable(WithRetryConfig.class)))
                 .thenAnswer(invocation -> {
                     String name = invocation.getArgument(0);
@@ -62,7 +62,14 @@ class DurableContextWithRetryTest {
                             .get();
                 });
 
-        // Async form
+        // Sync form without config — delegates to the 3-arg form with default config
+        when(mock.<Object>withRetry(any(), nullable(WithRetry.class))).thenAnswer(invocation -> {
+            String name = invocation.getArgument(0);
+            WithRetry<Object> operation = invocation.getArgument(1);
+            return mock.withRetry(name, operation, WithRetryConfig.builder().build());
+        });
+
+        // Async form with config
         when(mock.<Object>withRetryAsync(any(), nullable(WithRetry.class), nullable(WithRetryConfig.class)))
                 .thenAnswer(invocation -> {
                     String name = invocation.getArgument(0);
@@ -76,6 +83,14 @@ class DurableContextWithRetryTest {
                             new TypeToken<Object>() {},
                             childCtx -> executeRetryLoop(childCtx, name, operation, config));
                 });
+
+        // Async form without config — delegates to the 3-arg form with default config
+        when(mock.<Object>withRetryAsync(any(), nullable(WithRetry.class))).thenAnswer(invocation -> {
+            String name = invocation.getArgument(0);
+            WithRetry<Object> operation = invocation.getArgument(1);
+            return mock.withRetryAsync(
+                    name, operation, WithRetryConfig.builder().build());
+        });
     }
 
     /** Replicates the retry loop logic from DurableContextImpl for test stubbing. */
@@ -591,6 +606,66 @@ class DurableContextWithRetryTest {
         @Test
         void asyncNullConfigThrows() {
             assertThrows(NullPointerException.class, () -> context.withRetryAsync("name", (ctx, a) -> "x", null));
+        }
+    }
+
+    // --- Default config overloads (no WithRetryConfig parameter) ---
+
+    @Nested
+    class DefaultConfigOverloads {
+
+        @BeforeEach
+        void setUpChildContext() {
+            stubChildContextAnyName();
+        }
+
+        @Test
+        void syncWithRetryWithoutConfigSucceedsOnFirstAttempt() {
+            var result = context.withRetry("my-op", (ctx, attempt) -> "default-config-result");
+
+            assertEquals("default-config-result", result);
+        }
+
+        @Test
+        void syncWithRetryWithoutConfigRetriesOnFailure() {
+            var callCount = new int[] {0};
+
+            var result = context.withRetry("my-op", (ctx, attempt) -> {
+                callCount[0]++;
+                if (attempt == 1) {
+                    throw new RuntimeException("transient");
+                }
+                return "recovered";
+            });
+
+            assertEquals("recovered", result);
+            assertEquals(2, callCount[0]);
+            verify(childContext).wait(eq("my-op-backoff-1"), any(Duration.class));
+        }
+
+        @Test
+        void asyncWithRetryWithoutConfigSucceedsOnFirstAttempt() {
+            DurableFuture<String> future = context.withRetryAsync("my-op", (ctx, attempt) -> "async-default");
+
+            assertNotNull(future);
+            assertEquals("async-default", future.get());
+        }
+
+        @Test
+        void asyncWithRetryWithoutConfigRetriesOnFailure() {
+            var callCount = new int[] {0};
+
+            DurableFuture<String> future = context.withRetryAsync("my-op", (ctx, attempt) -> {
+                callCount[0]++;
+                if (attempt == 1) {
+                    throw new RuntimeException("transient");
+                }
+                return "async-recovered";
+            });
+
+            assertEquals("async-recovered", future.get());
+            assertEquals(2, callCount[0]);
+            verify(childContext).wait(eq("my-op-backoff-1"), any(Duration.class));
         }
     }
 }
