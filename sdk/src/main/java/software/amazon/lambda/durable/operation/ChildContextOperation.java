@@ -61,7 +61,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             RunInChildContextConfig config,
             DurableContextImpl durableContext) {
-        this(operationIdentifier, function, resultTypeToken, config, durableContext, false, null);
+        this(operationIdentifier, function, resultTypeToken, config, durableContext, null);
     }
 
     // child context for a ConcurrencyOperation branch
@@ -71,9 +71,14 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             RunInChildContextConfig config,
             DurableContextImpl durableContext,
-            boolean isVirtual,
             ConcurrencyOperation<?> parentOperation) {
-        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext, parentOperation, isVirtual);
+        super(
+                operationIdentifier,
+                resultTypeToken,
+                config.serDes(),
+                durableContext,
+                parentOperation,
+                config.isVirtual());
         this.function = function;
     }
 

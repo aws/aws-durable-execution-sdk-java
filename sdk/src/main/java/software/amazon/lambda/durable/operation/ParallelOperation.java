@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.util.List;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -66,7 +67,8 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
 
     @Override
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        var items = getBranches();
+
+        var items = List.copyOf(getBranches());
         var statuses = items.stream().map(this::getParallelItemStatus).toList();
         int succeededCount = Math.toIntExact(statuses.stream()
                 .filter(s -> s == ParallelResult.Status.SUCCEEDED)
@@ -76,6 +78,9 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
         int skippedCount = items.size() - succeededCount - failedCount;
         cachedResult = new ParallelResult(
                 items.size(), succeededCount, failedCount, skippedCount, concurrencyCompletionStatus, statuses);
+
+        // Branches added after checkpoint will not exist in the checkpointed result, but they'll be in the returned
+        // value from get() method.
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.SUCCEED)
                 .subType(getSubType().getValue())
@@ -157,9 +162,14 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
             throw new IllegalStateException("Cannot add branches after join() has been called");
         }
 
-        // ConcurrencyOperation will skip this branch if skip=true
+        var nextBranchIndex = getBranches().size();
+
+        // ConcurrencyOperation will skip this branch if skip=true:
+        // 1. if the parallel operation is already completed (partialResult is not null)
+        // 2. if the branch is already skipped in the partialResult or nonexistent in the partialResult
         var skip = partialResult != null
-                && partialResult.statuses().get(getBranches().size()) == ParallelResult.Status.SKIPPED;
+                && (partialResult.statuses().size() <= nextBranchIndex
+                        || partialResult.statuses().get(nextBranchIndex) == ParallelResult.Status.SKIPPED);
         var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
         return enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH, skip);
     }

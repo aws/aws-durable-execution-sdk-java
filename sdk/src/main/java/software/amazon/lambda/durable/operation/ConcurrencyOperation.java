@@ -119,9 +119,11 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                 OperationIdentifier.of(operationId, name, OperationType.CONTEXT, branchSubType),
                 function,
                 resultType,
-                RunInChildContextConfig.builder().serDes(serDes).build(),
+                RunInChildContextConfig.builder()
+                        .serDes(serDes)
+                        .isVirtual(nestingType == NestingType.FLAT)
+                        .build(),
                 rootContext,
-                nestingType == NestingType.FLAT,
                 this);
     }
 
