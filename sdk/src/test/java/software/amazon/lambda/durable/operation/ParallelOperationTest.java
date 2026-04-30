@@ -270,7 +270,7 @@ class ParallelOperationTest {
                         .status(OperationStatus.SUCCEEDED)
                         .contextDetails(ContextDetails.builder()
                                 .result(
-                                        "{\"succeeded\": 1, \"completionStatus\": \"MIN_SUCCESSFUL_REACHED\", \"statuses\":[\"SKIPPED\", \"SUCCEEDED\"]}")
+                                        "{\"size\": 2, \"skipped\": 1, \"succeeded\": 1, \"completionStatus\": \"MIN_SUCCESSFUL_REACHED\", \"statuses\":[\"SKIPPED\", \"SUCCEEDED\"]}")
                                 .build())
                         .build());
         when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_2))
