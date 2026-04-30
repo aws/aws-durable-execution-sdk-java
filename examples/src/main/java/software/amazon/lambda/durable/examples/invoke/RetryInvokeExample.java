@@ -16,7 +16,7 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * uses a unique operation name ({@code "call-greeting-1"}, {@code "call-greeting-2"}, etc.) so the execution history
  * stays clean and replay-safe.
  *
- * <p>The anonymous form is used, so attempts are grouped under a default-named child context.
+ * <p>A {@code null} name is used, so attempts are grouped under a default-named child context.
  */
 public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> {
 
@@ -25,6 +25,7 @@ public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
         return context.withRetry(
+                null,
                 (ctx, attempt) -> ctx.invoke(
                         "call-greeting-" + attempt,
                         "simple-step-example" + input.getName() + ":$LATEST",

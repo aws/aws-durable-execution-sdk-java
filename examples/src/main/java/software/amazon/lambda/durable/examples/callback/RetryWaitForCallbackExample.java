@@ -17,7 +17,7 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * each time.
  *
  * <p>Each attempt uses a unique callback name ({@code "approval-1"}, {@code "approval-2"}, etc.) so the execution
- * history stays clean and replay-safe. The anonymous form is used, so attempts are grouped under a default-named child
+ * history stays clean and replay-safe. A {@code null} name is used, so attempts are grouped under a default-named child
  * context.
  */
 public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest, String> {
@@ -34,6 +34,7 @@ public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest,
 
         // Step 2: waitForCallback with retry — if the external system fails, try again with a fresh callback
         var approvalResult = context.withRetry(
+                null,
                 (ctx, attempt) -> ctx.waitForCallback(
                         "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
                                 .info("Attempt {}: sending callback {} to approval system", attempt, callbackId)),

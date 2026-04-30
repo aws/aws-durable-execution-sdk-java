@@ -21,6 +21,7 @@ class RetryInvokeIntegrationTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.withRetry(
+                        null,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
@@ -41,6 +42,7 @@ class RetryInvokeIntegrationTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.withRetry(
+                        null,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
@@ -78,6 +80,7 @@ class RetryInvokeIntegrationTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.withRetry(
+                        null,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy((error, attempt) ->
@@ -111,6 +114,7 @@ class RetryInvokeIntegrationTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.withRetry(
+                        null,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy((error, attempt) -> attempt < 3
@@ -144,6 +148,7 @@ class RetryInvokeIntegrationTest {
             var prefix = context.step("prepare", String.class, stepCtx -> "prepared");
 
             var invokeResult = context.withRetry(
+                    null,
                     (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                     WithRetryConfig.builder()
                             .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)))
@@ -169,6 +174,7 @@ class RetryInvokeIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             try {
                 return context.withRetry(
+                        null,
                         (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)

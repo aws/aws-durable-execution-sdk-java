@@ -732,7 +732,7 @@ public interface DurableContext extends BaseContext {
     // =============== withRetry ================
 
     /**
-     * Replay-safe retry loop for any durable operation (named form, sync).
+     * Replay-safe retry loop for any durable operation (sync).
      *
      * <p>Provides the same retry-with-backoff pattern that {@code step()} has built in, but for operations that cannot
      * live inside a step ({@code waitForCallback}, {@code invoke}, {@code waitForCondition}, etc.).
@@ -746,7 +746,8 @@ public interface DurableContext extends BaseContext {
      * used — no checkpointing overhead, but the child re-executes on replay.
      *
      * @param <T> the result type
-     * @param name operation name (used for backoff wait names, and as the child context name when wrapping)
+     * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
+     *     {@code null} for an anonymous retry whose backoff waits use default names
      * @param operation the retryable operation — receives the context and 1-based attempt number
      * @param config retry configuration including the retry strategy and child context wrapping
      * @return the operation result
@@ -756,7 +757,7 @@ public interface DurableContext extends BaseContext {
     }
 
     /**
-     * Replay-safe retry loop for any durable operation (anonymous form, sync).
+     * Replay-safe retry loop for any durable operation (async).
      *
      * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
      * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
@@ -764,44 +765,13 @@ public interface DurableContext extends BaseContext {
      * used — no checkpointing overhead, but the child re-executes on replay.
      *
      * @param <T> the result type
-     * @param operation the retryable operation — receives the context and 1-based attempt number
-     * @param config retry configuration including the retry strategy and child context wrapping
-     * @return the operation result
-     */
-    default <T> T withRetry(WithRetry<T> operation, WithRetryConfig config) {
-        return withRetryAsync(operation, config).get();
-    }
-
-    /**
-     * Replay-safe retry loop for any durable operation (named form, async).
-     *
-     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
-     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
-     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
-     * used — no checkpointing overhead, but the child re-executes on replay.
-     *
-     * @param <T> the result type
-     * @param name operation name (used for child context and backoff wait names)
+     * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
+     *     retry whose backoff waits use default names
      * @param operation the retryable operation — receives the context and 1-based attempt number
      * @param config retry configuration including the retry strategy
      * @return a future representing the operation result
      */
     <T> DurableFuture<T> withRetryAsync(String name, WithRetry<T> operation, WithRetryConfig config);
-
-    /**
-     * Replay-safe retry loop for any durable operation (anonymous form, async).
-     *
-     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
-     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
-     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
-     * used — no checkpointing overhead, but the child re-executes on replay.
-     *
-     * @param <T> the result type
-     * @param operation the retryable operation — receives the context and 1-based attempt number
-     * @param config retry configuration including the retry strategy
-     * @return a future representing the operation result
-     */
-    <T> DurableFuture<T> withRetryAsync(WithRetry<T> operation, WithRetryConfig config);
 
     /**
      * Function applied to each item in a map operation.

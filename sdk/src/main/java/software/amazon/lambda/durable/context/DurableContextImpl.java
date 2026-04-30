@@ -238,25 +238,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Function<DurableContext, T> func,
             RunInChildContextConfig config,
             OperationSubType subType) {
-        return runInChildContextAsync(name, resultType, func, config, subType, false);
-    }
-
-    private <T> DurableFuture<T> runInVirtualChildContextAsync(
-            String name,
-            TypeToken<T> resultType,
-            Function<DurableContext, T> func,
-            RunInChildContextConfig config,
-            OperationSubType subType) {
-        return runInChildContextAsync(name, resultType, func, config, subType, true);
-    }
-
-    private <T> DurableFuture<T> runInChildContextAsync(
-            String name,
-            TypeToken<T> resultType,
-            Function<DurableContext, T> func,
-            RunInChildContextConfig config,
-            OperationSubType subType,
-            boolean isVirtual) {
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -272,9 +253,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 func,
                 resultType,
                 config,
-                this,
-                isVirtual,
-                null);
+                this);
 
         operation.execute();
         return operation;
@@ -402,45 +381,18 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     @SuppressWarnings("unchecked")
     public <T> DurableFuture<T> withRetryAsync(String name, WithRetry<T> operation, WithRetryConfig config) {
-        Objects.requireNonNull(name, "name cannot be null");
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
 
-        if (config.wrapInChildContext()) {
-            return (DurableFuture<T>) runInChildContextAsync(
-                    name,
-                    new TypeToken<Object>() {},
-                    childCtx -> executeRetryLoop(childCtx, name, operation, config),
-                    RunInChildContextConfig.builder().build(),
-                    OperationSubType.WITH_RETRY);
-        }
-        return (DurableFuture<T>) runInVirtualChildContextAsync(
-                name,
+        var childContextName = name != null ? name : ANONYMOUS_CHILD_CONTEXT_NAME;
+
+        return (DurableFuture<T>) runInChildContextAsync(
+                childContextName,
                 new TypeToken<Object>() {},
                 childCtx -> executeRetryLoop(childCtx, name, operation, config),
-                RunInChildContextConfig.builder().build(),
-                OperationSubType.WITH_RETRY);
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> DurableFuture<T> withRetryAsync(WithRetry<T> operation, WithRetryConfig config) {
-        Objects.requireNonNull(operation, "operation cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-
-        if (config.wrapInChildContext()) {
-            return (DurableFuture<T>) runInChildContextAsync(
-                    ANONYMOUS_CHILD_CONTEXT_NAME,
-                    new TypeToken<Object>() {},
-                    childCtx -> executeRetryLoop(childCtx, null, operation, config),
-                    RunInChildContextConfig.builder().build(),
-                    OperationSubType.WITH_RETRY);
-        }
-        return (DurableFuture<T>) runInVirtualChildContextAsync(
-                ANONYMOUS_CHILD_CONTEXT_NAME,
-                new TypeToken<Object>() {},
-                childCtx -> executeRetryLoop(childCtx, null, operation, config),
-                RunInChildContextConfig.builder().build(),
+                RunInChildContextConfig.builder()
+                        .isVirtual(!config.wrapInChildContext())
+                        .build(),
                 OperationSubType.WITH_RETRY);
     }
 
