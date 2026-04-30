@@ -91,7 +91,7 @@ class ChildContextIntegrationTest {
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertEquals(1, childExecutionCount.get());
 
-        // Second run - replays, should throw same exception without re-executing
+        // Second run - replays, should throw same exception with re-executing
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
@@ -121,7 +121,7 @@ class ChildContextIntegrationTest {
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertEquals(1, childExecutionCount.get());
 
-        // Second run - replays, should throw same exception without re-executing
+        // Second run - replays, should throw same exception with re-executing
         result = runner.run("test");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertTrue(result.getError().isPresent());
