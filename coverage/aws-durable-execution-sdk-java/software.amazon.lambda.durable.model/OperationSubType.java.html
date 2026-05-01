@@ -15,22 +15,23 @@ package software.amazon.lambda.durable.model;
 <span class="fc" id="L15">    PARALLEL(&quot;Parallel&quot;),</span>
 <span class="fc" id="L16">    PARALLEL_BRANCH(&quot;ParallelBranch&quot;),</span>
 <span class="fc" id="L17">    WAIT_FOR_CALLBACK(&quot;WaitForCallback&quot;),</span>
-<span class="fc" id="L18">    WAIT_FOR_CONDITION(&quot;WaitForCondition&quot;);</span>
+<span class="fc" id="L18">    WAIT_FOR_CONDITION(&quot;WaitForCondition&quot;),</span>
+<span class="fc" id="L19">    WITH_RETRY(&quot;WithRetry&quot;);</span>
 
     private final String value;
 
-<span class="fc" id="L22">    OperationSubType(String value) {</span>
-<span class="fc" id="L23">        this.value = value;</span>
-<span class="fc" id="L24">    }</span>
+<span class="fc" id="L23">    OperationSubType(String value) {</span>
+<span class="fc" id="L24">        this.value = value;</span>
+<span class="fc" id="L25">    }</span>
 
     /** Returns the wire-format string value sent in checkpoint updates. */
     public String getValue() {
-<span class="fc" id="L28">        return value;</span>
+<span class="fc" id="L29">        return value;</span>
     }
 
     @Override
     public String toString() {
-<span class="nc" id="L33">        return value;</span>
+<span class="nc" id="L34">        return value;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
