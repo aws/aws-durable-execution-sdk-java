@@ -16,6 +16,7 @@ import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.BaseContext;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -34,7 +35,7 @@ public interface DurableContext extends BaseContext {
      * @return the step result
      */
     default &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L37">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="fc" id="L38">        return step(name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     /**
@@ -48,7 +49,7 @@ public interface DurableContext extends BaseContext {
      * @return the step result
      */
     default &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
-<span class="fc" id="L51">        return stepAsync(name, resultType, func, config).get();</span>
+<span class="fc" id="L52">        return stepAsync(name, resultType, func, config).get();</span>
     }
 
     /**
@@ -61,7 +62,7 @@ public interface DurableContext extends BaseContext {
      * @return the step result
      */
     default &lt;T&gt; T step(String name, TypeToken&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L64">        return step(name, resultType, func, StepConfig.builder().build());</span>
+<span class="fc" id="L65">        return step(name, resultType, func, StepConfig.builder().build());</span>
     }
 
     /**
@@ -75,7 +76,7 @@ public interface DurableContext extends BaseContext {
      * @return the step result
      */
     default &lt;T&gt; T step(String name, TypeToken&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
-<span class="fc" id="L78">        return stepAsync(name, resultType, func, config).get();</span>
+<span class="fc" id="L79">        return stepAsync(name, resultType, func, config).get();</span>
     }
 
     /**
@@ -88,8 +89,8 @@ public interface DurableContext extends BaseContext {
      * @return a future representing the step result
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L91">        return stepAsync(</span>
-<span class="fc" id="L92">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="fc" id="L92">        return stepAsync(</span>
+<span class="fc" id="L93">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     /**
@@ -105,7 +106,7 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(
             String name, Class&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func, StepConfig config) {
-<span class="fc" id="L108">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
+<span class="fc" id="L109">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
     }
 
     /**
@@ -120,7 +121,7 @@ public interface DurableContext extends BaseContext {
      * @return a future representing the step result
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; resultType, Function&lt;StepContext, T&gt; func) {
-<span class="fc" id="L123">        return stepAsync(name, resultType, func, StepConfig.builder().build());</span>
+<span class="fc" id="L124">        return stepAsync(name, resultType, func, StepConfig.builder().build());</span>
     }
 
     /**
@@ -141,56 +142,56 @@ public interface DurableContext extends BaseContext {
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="nc" id="L144">        return stepAsync(</span>
+<span class="nc" id="L145">        return stepAsync(</span>
                         name,
-<span class="nc" id="L146">                        TypeToken.get(resultType),</span>
+<span class="nc" id="L147">                        TypeToken.get(resultType),</span>
                         func,
-<span class="nc" id="L148">                        StepConfig.builder().build())</span>
-<span class="nc" id="L149">                .get();</span>
+<span class="nc" id="L149">                        StepConfig.builder().build())</span>
+<span class="nc" id="L150">                .get();</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; T step(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
         // Simply delegate to stepAsync and block on the result
-<span class="nc" id="L156">        return stepAsync(name, TypeToken.get(resultType), func, config).get();</span>
+<span class="nc" id="L157">        return stepAsync(name, TypeToken.get(resultType), func, config).get();</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; T step(String name, TypeToken&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="nc" id="L162">        return stepAsync(name, resultType, func, StepConfig.builder().build()).get();</span>
+<span class="nc" id="L163">        return stepAsync(name, resultType, func, StepConfig.builder().build()).get();</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; T step(String name, TypeToken&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
-<span class="nc" id="L168">        return stepAsync(name, resultType, func, config).get();</span>
+<span class="nc" id="L169">        return stepAsync(name, resultType, func, config).get();</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="nc" id="L174">        return stepAsync(</span>
-<span class="nc" id="L175">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
+<span class="nc" id="L175">        return stepAsync(</span>
+<span class="nc" id="L176">                name, TypeToken.get(resultType), func, StepConfig.builder().build());</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, Class&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
-<span class="nc" id="L181">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
+<span class="nc" id="L182">        return stepAsync(name, TypeToken.get(resultType), func, config);</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; resultType, Supplier&lt;T&gt; func) {
-<span class="nc" id="L187">        return stepAsync(name, resultType, func, StepConfig.builder().build());</span>
+<span class="nc" id="L188">        return stepAsync(name, resultType, func, StepConfig.builder().build());</span>
     }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
     default &lt;T&gt; DurableFuture&lt;T&gt; stepAsync(String name, TypeToken&lt;T&gt; resultType, Supplier&lt;T&gt; func, StepConfig config) {
-<span class="nc" id="L193">        return stepAsync(name, resultType, stepContext -&gt; func.get(), config);</span>
+<span class="nc" id="L194">        return stepAsync(name, resultType, stepContext -&gt; func.get(), config);</span>
     }
 
     /**
@@ -204,7 +205,7 @@ public interface DurableContext extends BaseContext {
      * @return always {@code null}
      */
     default Void wait(String name, Duration duration) {
-<span class="fc" id="L207">        return waitAsync(name, duration).get();</span>
+<span class="fc" id="L208">        return waitAsync(name, duration).get();</span>
     }
 
     /**
@@ -231,57 +232,57 @@ public interface DurableContext extends BaseContext {
      * @return the invocation result
      */
     default &lt;T, U&gt; T invoke(String name, String functionName, U payload, Class&lt;T&gt; resultType) {
-<span class="fc" id="L234">        return invokeAsync(</span>
+<span class="fc" id="L235">        return invokeAsync(</span>
                         name,
                         functionName,
                         payload,
-<span class="fc" id="L238">                        TypeToken.get(resultType),</span>
-<span class="fc" id="L239">                        InvokeConfig.builder().build())</span>
-<span class="fc" id="L240">                .get();</span>
+<span class="fc" id="L239">                        TypeToken.get(resultType),</span>
+<span class="fc" id="L240">                        InvokeConfig.builder().build())</span>
+<span class="fc" id="L241">                .get();</span>
     }
 
     /** Invokes another Lambda function with custom configuration, blocking until the result is available. */
     default &lt;T, U&gt; T invoke(String name, String functionName, U payload, Class&lt;T&gt; resultType, InvokeConfig config) {
-<span class="fc" id="L245">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config)</span>
-<span class="fc" id="L246">                .get();</span>
+<span class="fc" id="L246">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config)</span>
+<span class="fc" id="L247">                .get();</span>
     }
 
     /** Invokes another Lambda function using a {@link TypeToken} for generic result types, blocking until complete. */
     default &lt;T, U&gt; T invoke(String name, String functionName, U payload, TypeToken&lt;T&gt; resultType) {
-<span class="nc" id="L251">        return invokeAsync(</span>
+<span class="nc" id="L252">        return invokeAsync(</span>
                         name,
                         functionName,
                         payload,
                         resultType,
-<span class="nc" id="L256">                        InvokeConfig.builder().build())</span>
-<span class="nc" id="L257">                .get();</span>
+<span class="nc" id="L257">                        InvokeConfig.builder().build())</span>
+<span class="nc" id="L258">                .get();</span>
     }
 
     /** Invokes another Lambda function using a {@link TypeToken} and custom configuration, blocking until complete. */
     default &lt;T, U&gt; T invoke(String name, String functionName, U payload, TypeToken&lt;T&gt; resultType, InvokeConfig config) {
-<span class="nc" id="L262">        return invokeAsync(name, functionName, payload, resultType, config).get();</span>
+<span class="nc" id="L263">        return invokeAsync(name, functionName, payload, resultType, config).get();</span>
     }
 
     /** Invokes another Lambda function using a {@link TypeToken} and custom configuration, blocking until complete. */
     default &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(
             String name, String functionName, U payload, Class&lt;T&gt; resultType, InvokeConfig config) {
-<span class="fc" id="L268">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config);</span>
+<span class="fc" id="L269">        return invokeAsync(name, functionName, payload, TypeToken.get(resultType), config);</span>
     }
 
     /** Asynchronously invokes another Lambda function, returning a {@link DurableFuture}. */
     default &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(String name, String functionName, U payload, Class&lt;T&gt; resultType) {
-<span class="fc" id="L273">        return invokeAsync(</span>
+<span class="fc" id="L274">        return invokeAsync(</span>
                 name,
                 functionName,
                 payload,
-<span class="fc" id="L277">                TypeToken.get(resultType),</span>
-<span class="fc" id="L278">                InvokeConfig.builder().build());</span>
+<span class="fc" id="L278">                TypeToken.get(resultType),</span>
+<span class="fc" id="L279">                InvokeConfig.builder().build());</span>
     }
 
     /** Asynchronously invokes another Lambda function using a {@link TypeToken} for generic result types. */
     default &lt;T, U&gt; DurableFuture&lt;T&gt; invokeAsync(String name, String functionName, U payload, TypeToken&lt;T&gt; resultType) {
-<span class="nc" id="L283">        return invokeAsync(</span>
-<span class="nc" id="L284">                name, functionName, payload, resultType, InvokeConfig.builder().build());</span>
+<span class="nc" id="L284">        return invokeAsync(</span>
+<span class="nc" id="L285">                name, functionName, payload, resultType, InvokeConfig.builder().build());</span>
     }
 
     /**
@@ -303,18 +304,18 @@ public interface DurableContext extends BaseContext {
 
     /** Creates a callback with custom configuration. */
     default &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, Class&lt;T&gt; resultType, CallbackConfig config) {
-<span class="fc" id="L306">        return createCallback(name, TypeToken.get(resultType), config);</span>
+<span class="fc" id="L307">        return createCallback(name, TypeToken.get(resultType), config);</span>
     }
 
     /** Creates a callback using a {@link TypeToken} for generic result types. */
     default &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, TypeToken&lt;T&gt; resultType) {
-<span class="nc" id="L311">        return createCallback(name, resultType, CallbackConfig.builder().build());</span>
+<span class="nc" id="L312">        return createCallback(name, resultType, CallbackConfig.builder().build());</span>
     }
 
     /** Creates a callback with default configuration. */
     default &lt;T&gt; DurableCallbackFuture&lt;T&gt; createCallback(String name, Class&lt;T&gt; resultType) {
-<span class="fc" id="L316">        return createCallback(</span>
-<span class="fc" id="L317">                name, TypeToken.get(resultType), CallbackConfig.builder().build());</span>
+<span class="fc" id="L317">        return createCallback(</span>
+<span class="fc" id="L318">                name, TypeToken.get(resultType), CallbackConfig.builder().build());</span>
     }
 
     /**
@@ -344,24 +345,24 @@ public interface DurableContext extends BaseContext {
      * @return the child context result
      */
     default &lt;T&gt; T runInChildContext(String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L347">        return runInChildContextAsync(</span>
+<span class="fc" id="L348">        return runInChildContextAsync(</span>
                         name,
-<span class="fc" id="L349">                        TypeToken.get(resultType),</span>
+<span class="fc" id="L350">                        TypeToken.get(resultType),</span>
                         func,
-<span class="fc" id="L351">                        RunInChildContextConfig.builder().build())</span>
-<span class="fc" id="L352">                .get();</span>
+<span class="fc" id="L352">                        RunInChildContextConfig.builder().build())</span>
+<span class="fc" id="L353">                .get();</span>
     }
 
     /**
      * Runs a function in a child context using a {@link TypeToken} for generic result types, blocking until complete.
      */
     default &lt;T&gt; T runInChildContext(String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L359">        return runInChildContextAsync(</span>
+<span class="fc" id="L360">        return runInChildContextAsync(</span>
                         name,
                         resultType,
                         func,
-<span class="fc" id="L363">                        RunInChildContextConfig.builder().build())</span>
-<span class="fc" id="L364">                .get();</span>
+<span class="fc" id="L364">                        RunInChildContextConfig.builder().build())</span>
+<span class="fc" id="L365">                .get();</span>
     }
 
     /**
@@ -377,11 +378,11 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
             String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="fc" id="L380">        return runInChildContextAsync(</span>
+<span class="fc" id="L381">        return runInChildContextAsync(</span>
                 name,
-<span class="fc" id="L382">                TypeToken.get(resultType),</span>
+<span class="fc" id="L383">                TypeToken.get(resultType),</span>
                 func,
-<span class="fc" id="L384">                RunInChildContextConfig.builder().build());</span>
+<span class="fc" id="L385">                RunInChildContextConfig.builder().build());</span>
     }
 
     /**
@@ -397,8 +398,8 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
             String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func) {
-<span class="nc" id="L400">        return runInChildContextAsync(</span>
-<span class="nc" id="L401">                name, resultType, func, RunInChildContextConfig.builder().build());</span>
+<span class="nc" id="L401">        return runInChildContextAsync(</span>
+<span class="nc" id="L402">                name, resultType, func, RunInChildContextConfig.builder().build());</span>
     }
 
     /**
@@ -415,8 +416,8 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; T runInChildContext(
             String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config) {
-<span class="fc" id="L418">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config)</span>
-<span class="fc" id="L419">                .get();</span>
+<span class="fc" id="L419">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config)</span>
+<span class="fc" id="L420">                .get();</span>
     }
 
     /**
@@ -433,7 +434,7 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; T runInChildContext(
             String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config) {
-<span class="fc" id="L436">        return runInChildContextAsync(name, resultType, func, config).get();</span>
+<span class="fc" id="L437">        return runInChildContextAsync(name, resultType, func, config).get();</span>
     }
 
     /**
@@ -450,7 +451,7 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; DurableFuture&lt;T&gt; runInChildContextAsync(
             String name, Class&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config) {
-<span class="fc" id="L453">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config);</span>
+<span class="fc" id="L454">        return runInChildContextAsync(name, TypeToken.get(resultType), func, config);</span>
     }
 
     /**
@@ -469,50 +470,50 @@ public interface DurableContext extends BaseContext {
             String name, TypeToken&lt;T&gt; resultType, Function&lt;DurableContext, T&gt; func, RunInChildContextConfig config);
 
     default &lt;I, O&gt; MapResult&lt;O&gt; map(String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="fc" id="L472">        return mapAsync(</span>
+<span class="fc" id="L473">        return mapAsync(</span>
                         name,
                         items,
-<span class="fc" id="L475">                        TypeToken.get(resultType),</span>
+<span class="fc" id="L476">                        TypeToken.get(resultType),</span>
                         function,
-<span class="fc" id="L477">                        MapConfig.builder().build())</span>
-<span class="fc" id="L478">                .get();</span>
+<span class="fc" id="L478">                        MapConfig.builder().build())</span>
+<span class="fc" id="L479">                .get();</span>
     }
 
     default &lt;I, O&gt; MapResult&lt;O&gt; map(
             String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="fc" id="L483">        return mapAsync(name, items, TypeToken.get(resultType), function, config)</span>
-<span class="fc" id="L484">                .get();</span>
+<span class="fc" id="L484">        return mapAsync(name, items, TypeToken.get(resultType), function, config)</span>
+<span class="fc" id="L485">                .get();</span>
     }
 
     default &lt;I, O&gt; MapResult&lt;O&gt; map(
             String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="nc" id="L489">        return mapAsync(name, items, resultType, function, MapConfig.builder().build())</span>
-<span class="nc" id="L490">                .get();</span>
+<span class="nc" id="L490">        return mapAsync(name, items, resultType, function, MapConfig.builder().build())</span>
+<span class="nc" id="L491">                .get();</span>
     }
 
     default &lt;I, O&gt; MapResult&lt;O&gt; map(
             String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="fc" id="L495">        return mapAsync(name, items, resultType, function, config).get();</span>
+<span class="fc" id="L496">        return mapAsync(name, items, resultType, function, config).get();</span>
     }
 
     default &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
             String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="nc" id="L500">        return mapAsync(</span>
+<span class="nc" id="L501">        return mapAsync(</span>
                 name,
                 items,
-<span class="nc" id="L503">                TypeToken.get(resultType),</span>
+<span class="nc" id="L504">                TypeToken.get(resultType),</span>
                 function,
-<span class="nc" id="L505">                MapConfig.builder().build());</span>
+<span class="nc" id="L506">                MapConfig.builder().build());</span>
     }
 
     default &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
             String name, Collection&lt;I&gt; items, Class&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function, MapConfig config) {
-<span class="fc" id="L510">        return mapAsync(name, items, TypeToken.get(resultType), function, config);</span>
+<span class="fc" id="L511">        return mapAsync(name, items, TypeToken.get(resultType), function, config);</span>
     }
 
     default &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
             String name, Collection&lt;I&gt; items, TypeToken&lt;O&gt; resultType, MapFunction&lt;I, O&gt; function) {
-<span class="nc" id="L515">        return mapAsync(name, items, resultType, function, MapConfig.builder().build());</span>
+<span class="nc" id="L516">        return mapAsync(name, items, resultType, function, MapConfig.builder().build());</span>
     }
 
     &lt;I, O&gt; DurableFuture&lt;MapResult&lt;O&gt;&gt; mapAsync(
@@ -524,7 +525,7 @@ public interface DurableContext extends BaseContext {
      * @return a new ParallelDurableFuture for registering and executing branches
      */
     default ParallelDurableFuture parallel(String name) {
-<span class="nc" id="L527">        return parallel(name, ParallelConfig.builder().build());</span>
+<span class="nc" id="L528">        return parallel(name, ParallelConfig.builder().build());</span>
     }
 
     /**
@@ -548,19 +549,19 @@ public interface DurableContext extends BaseContext {
      * @return the callback result
      */
     default &lt;T&gt; T waitForCallback(String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="fc" id="L551">        return waitForCallbackAsync(</span>
+<span class="fc" id="L552">        return waitForCallbackAsync(</span>
                         name,
-<span class="fc" id="L553">                        TypeToken.get(resultType),</span>
+<span class="fc" id="L554">                        TypeToken.get(resultType),</span>
                         func,
-<span class="fc" id="L555">                        WaitForCallbackConfig.builder().build())</span>
-<span class="fc" id="L556">                .get();</span>
+<span class="fc" id="L556">                        WaitForCallbackConfig.builder().build())</span>
+<span class="fc" id="L557">                .get();</span>
     }
 
     /** Executes a submitter and waits for an external callback using a {@link TypeToken}, blocking until complete. */
     default &lt;T&gt; T waitForCallback(String name, TypeToken&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="nc" id="L561">        return waitForCallbackAsync(</span>
-<span class="nc" id="L562">                        name, resultType, func, WaitForCallbackConfig.builder().build())</span>
-<span class="nc" id="L563">                .get();</span>
+<span class="nc" id="L562">        return waitForCallbackAsync(</span>
+<span class="nc" id="L563">                        name, resultType, func, WaitForCallbackConfig.builder().build())</span>
+<span class="nc" id="L564">                .get();</span>
     }
 
     /** Executes a submitter and waits for an external callback with custom configuration, blocking until complete. */
@@ -569,8 +570,8 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="pc" id="L572">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
-<span class="nc" id="L573">                .get();</span>
+<span class="pc" id="L573">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig)</span>
+<span class="nc" id="L574">                .get();</span>
     }
 
     /** Executes a submitter and waits for an external callback using a {@link TypeToken} and custom configuration. */
@@ -579,25 +580,25 @@ public interface DurableContext extends BaseContext {
             TypeToken&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L582">        return waitForCallbackAsync(name, resultType, func, waitForCallbackConfig)</span>
-<span class="nc" id="L583">                .get();</span>
+<span class="nc" id="L583">        return waitForCallbackAsync(name, resultType, func, waitForCallbackConfig)</span>
+<span class="nc" id="L584">                .get();</span>
     }
 
     /** Asynchronously executes a submitter and waits for an external callback. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
             String name, Class&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="fc" id="L589">        return waitForCallbackAsync(</span>
+<span class="fc" id="L590">        return waitForCallbackAsync(</span>
                 name,
-<span class="fc" id="L591">                TypeToken.get(resultType),</span>
+<span class="fc" id="L592">                TypeToken.get(resultType),</span>
                 func,
-<span class="fc" id="L593">                WaitForCallbackConfig.builder().build());</span>
+<span class="fc" id="L594">                WaitForCallbackConfig.builder().build());</span>
     }
 
     /** Asynchronously executes a submitter and waits for an external callback using a {@link TypeToken}. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForCallbackAsync(
             String name, TypeToken&lt;T&gt; resultType, BiConsumer&lt;String, StepContext&gt; func) {
-<span class="nc" id="L599">        return waitForCallbackAsync(</span>
-<span class="nc" id="L600">                name, resultType, func, WaitForCallbackConfig.builder().build());</span>
+<span class="nc" id="L600">        return waitForCallbackAsync(</span>
+<span class="nc" id="L601">                name, resultType, func, WaitForCallbackConfig.builder().build());</span>
     }
 
     /** Asynchronously executes a submitter and waits for an external callback with custom configuration. */
@@ -606,7 +607,7 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiConsumer&lt;String, StepContext&gt; func,
             WaitForCallbackConfig waitForCallbackConfig) {
-<span class="nc" id="L609">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);</span>
+<span class="nc" id="L610">        return waitForCallbackAsync(name, TypeToken.get(resultType), func, waitForCallbackConfig);</span>
     }
 
     /**
@@ -641,12 +642,12 @@ public interface DurableContext extends BaseContext {
      */
     default &lt;T&gt; T waitForCondition(
             String name, Class&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L644">        return waitForConditionAsync(</span>
+<span class="nc" id="L645">        return waitForConditionAsync(</span>
                         name,
-<span class="nc" id="L646">                        TypeToken.get(resultType),</span>
+<span class="nc" id="L647">                        TypeToken.get(resultType),</span>
                         checkFunc,
-<span class="nc" id="L648">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
-<span class="nc" id="L649">                .get();</span>
+<span class="nc" id="L649">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
+<span class="nc" id="L650">                .get();</span>
     }
 
     /** Polls a condition function until it signals done, using a custom configuration, blocking until complete. */
@@ -655,18 +656,18 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L658">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
+<span class="fc" id="L659">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
     }
 
     /** Polls a condition function until it signals done, using a {@link TypeToken}, blocking until complete. */
     default &lt;T&gt; T waitForCondition(
             String name, TypeToken&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L664">        return waitForConditionAsync(</span>
+<span class="nc" id="L665">        return waitForConditionAsync(</span>
                         name,
                         resultType,
                         checkFunc,
-<span class="nc" id="L668">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
-<span class="nc" id="L669">                .get();</span>
+<span class="nc" id="L669">                        WaitForConditionConfig.&lt;T&gt;builder().build())</span>
+<span class="nc" id="L670">                .get();</span>
     }
 
     /**
@@ -678,17 +679,17 @@ public interface DurableContext extends BaseContext {
             TypeToken&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="nc" id="L681">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
+<span class="nc" id="L682">        return waitForConditionAsync(name, resultType, checkFunc, config).get();</span>
     }
 
     /** Asynchronously polls a condition function until it signals done. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
             String name, Class&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L687">        return waitForConditionAsync(</span>
+<span class="nc" id="L688">        return waitForConditionAsync(</span>
                 name,
-<span class="nc" id="L689">                TypeToken.get(resultType),</span>
+<span class="nc" id="L690">                TypeToken.get(resultType),</span>
                 checkFunc,
-<span class="nc" id="L691">                WaitForConditionConfig.&lt;T&gt;builder().build());</span>
+<span class="nc" id="L692">                WaitForConditionConfig.&lt;T&gt;builder().build());</span>
     }
 
     /** Asynchronously polls a condition function until it signals done, using custom configuration. */
@@ -697,14 +698,14 @@ public interface DurableContext extends BaseContext {
             Class&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             WaitForConditionConfig&lt;T&gt; config) {
-<span class="fc" id="L700">        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config);</span>
+<span class="fc" id="L701">        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunc, config);</span>
     }
 
     /** Asynchronously polls a condition function until it signals done, using a {@link TypeToken}. */
     default &lt;T&gt; DurableFuture&lt;T&gt; waitForConditionAsync(
             String name, TypeToken&lt;T&gt; resultType, BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc) {
-<span class="nc" id="L706">        return waitForConditionAsync(</span>
-<span class="nc" id="L707">                name, resultType, checkFunc, WaitForConditionConfig.&lt;T&gt;builder().build());</span>
+<span class="nc" id="L707">        return waitForConditionAsync(</span>
+<span class="nc" id="L708">                name, resultType, checkFunc, WaitForConditionConfig.&lt;T&gt;builder().build());</span>
     }
 
     /**
@@ -726,6 +727,87 @@ public interface DurableContext extends BaseContext {
             TypeToken&lt;T&gt; resultType,
             BiFunction&lt;T, StepContext, WaitForConditionResult&lt;T&gt;&gt; checkFunc,
             WaitForConditionConfig&lt;T&gt; config);
+
+    // =============== withRetry ================
+
+    /**
+     * Replay-safe retry loop for any durable operation (sync) with default configuration.
+     *
+     * &lt;p&gt;Uses {@link WithRetryConfig} defaults:
+     * {@link software.amazon.lambda.durable.retry.RetryStrategies.Presets#DEFAULT} retry strategy and no child context
+     * wrapping.
+     *
+     * @param &lt;T&gt; the result type
+     * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
+     *     {@code null} for an anonymous retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @return the operation result
+     * @see #withRetry(String, BiFunction, WithRetryConfig)
+     */
+    default &lt;T&gt; T withRetry(String name, BiFunction&lt;Integer, DurableContext, T&gt; operation) {
+<span class="nc" id="L748">        return withRetry(name, operation, WithRetryConfig.builder().build());</span>
+    }
+
+    /**
+     * Replay-safe retry loop for any durable operation (sync).
+     *
+     * &lt;p&gt;Provides the same retry-with-backoff pattern that {@code step()} has built in, but for operations that cannot
+     * live inside a step ({@code waitForCallback}, {@code invoke}, {@code waitForCondition}, etc.).
+     *
+     * &lt;p&gt;Every side-effect in the loop is a durable operation, so the loop is replay-safe by construction. On replay,
+     * completed operations return cached results instantly and the loop fast-forwards to the current attempt.
+     *
+     * &lt;p&gt;The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
+     *
+     * @param &lt;T&gt; the result type
+     * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
+     *     {@code null} for an anonymous retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @param config retry configuration including the retry strategy and child context wrapping
+     * @return the operation result
+     */
+    default &lt;T&gt; T withRetry(String name, BiFunction&lt;Integer, DurableContext, T&gt; operation, WithRetryConfig config) {
+<span class="fc" id="L773">        return withRetryAsync(name, operation, config).get();</span>
+    }
+
+    /**
+     * Replay-safe retry loop for any durable operation (async) with default configuration.
+     *
+     * &lt;p&gt;Uses {@link WithRetryConfig} defaults:
+     * {@link software.amazon.lambda.durable.retry.RetryStrategies.Presets#DEFAULT} retry strategy and no child context
+     * wrapping.
+     *
+     * @param &lt;T&gt; the result type
+     * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
+     *     retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @return a future representing the operation result
+     * @see #withRetryAsync(String, BiFunction, WithRetryConfig)
+     */
+    default &lt;T&gt; DurableFuture&lt;T&gt; withRetryAsync(String name, BiFunction&lt;Integer, DurableContext, T&gt; operation) {
+<span class="nc" id="L791">        return withRetryAsync(name, operation, WithRetryConfig.builder().build());</span>
+    }
+
+    /**
+     * Replay-safe retry loop for any durable operation (async).
+     *
+     * &lt;p&gt;The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
+     *
+     * @param &lt;T&gt; the result type
+     * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
+     *     retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @param config retry configuration including the retry strategy
+     * @return a future representing the operation result
+     */
+    &lt;T&gt; DurableFuture&lt;T&gt; withRetryAsync(
+            String name, BiFunction&lt;Integer, DurableContext, T&gt; operation, WithRetryConfig config);
 
     /**
      * Function applied to each item in a map operation.

@@ -15,10 +15,10 @@ public class CallbackFailedException extends CallbackException {
 <span class="fc" id="L15">        var errorType = error.errorType();</span>
 <span class="fc" id="L16">        var errorMessage = error.errorMessage();</span>
 
-<span class="pc bpc" id="L18" title="2 of 4 branches missed.">        if (errorType != null &amp;&amp; !errorType.isEmpty()) {</span>
+<span class="pc bpc" id="L18" title="1 of 4 branches missed.">        if (errorType != null &amp;&amp; !errorType.isEmpty()) {</span>
 <span class="fc" id="L19">            return errorType + &quot;: &quot; + errorMessage;</span>
         }
-<span class="nc" id="L21">        return errorMessage;</span>
+<span class="fc" id="L21">        return errorMessage;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>

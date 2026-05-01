@@ -245,7 +245,7 @@ public class ChildContextOperation&lt;T&gt; extends SerializableDurableOperation
 <span class="fc" id="L245">            case WAIT_FOR_CALLBACK -&gt; handleWaitForCallbackFailure();</span>
 <span class="fc" id="L246">            case MAP_ITERATION -&gt; new MapIterationFailedException(op);</span>
 <span class="fc" id="L247">            case PARALLEL_BRANCH -&gt; new ParallelBranchFailedException(op);</span>
-<span class="fc" id="L248">            case RUN_IN_CHILD_CONTEXT -&gt; new ChildContextFailedException(op);</span>
+<span class="fc" id="L248">            case RUN_IN_CHILD_CONTEXT, WITH_RETRY -&gt; new ChildContextFailedException(op);</span>
 
             // the following subtypes should not be able to reach here
 <span class="nc" id="L251">            case PARALLEL, MAP, WAIT_FOR_CONDITION -&gt; new IllegalStateException(&quot;Unexpected sub-type: &quot; + getSubType());</span>
