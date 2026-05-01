@@ -432,6 +432,186 @@ Resources:
                 - lambda:GetDurableExecutionState
               Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:concurrent-wait-for-condition-example-${JavaVersion}-runtime"
 
+  RetryWaitForCallbackExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'retry-wait-for-callback-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.callback.RetryWaitForCallbackExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-wait-for-callback-example-${JavaVersion}-runtime"
+
+  WaitForCallbackFailedExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'wait-for-callback-failed-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.callback.WaitForCallbackFailedExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:wait-for-callback-failed-example-${JavaVersion}-runtime"
+
+  CustomPollingExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'custom-polling-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.general.CustomPollingExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+                - lambda:InvokeFunction
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:custom-polling-example-${JavaVersion}-runtime"
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: '*'
+
+  RetryInvokeExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'retry-invoke-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.invoke.RetryInvokeExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+                - lambda:InvokeFunction
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:retry-invoke-example-${JavaVersion}-runtime"
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: '*'
+
+  DeserializationFailedMapExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'deserialization-failed-map-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.map.DeserializationFailedMapExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:deserialization-failed-map-example-${JavaVersion}-runtime"
+
+  ParallelExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'parallel-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.parallel.ParallelExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:parallel-example-${JavaVersion}-runtime"
+
+  ParallelFailureToleranceExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'parallel-failure-tolerance-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.parallel.ParallelFailureToleranceExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:parallel-failure-tolerance-example-${JavaVersion}-runtime"
+
+  ParallelWithWaitExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'parallel-with-wait-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.parallel.ParallelWithWaitExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:parallel-with-wait-example-${JavaVersion}-runtime"
+
+  DeserializationFailedParallelExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'deserialization-failed-parallel-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.parallel.DeserializationFailedParallelExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:deserialization-failed-parallel-example-${JavaVersion}-runtime"
+
+  DeserializationFailureExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'deserialization-failure-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.step.DeserializationFailureExample"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:CheckpointDurableExecutions
+                - lambda:GetDurableExecutionState
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:deserialization-failure-example-${JavaVersion}-runtime"
+
   ManyAsyncStepsVirtualThreadPoolExampleFunction:
     Type: AWS::Serverless::Function
     Condition: IsJava21OrLater
@@ -515,6 +695,10 @@ Outputs:
     Description: Child Context Example Function ARN
     Value: !GetAtt ChildContextExampleFunction.Arn
 
+  VirtualChildContextExampleFunction:
+    Description: Virtual Child Context Example Function ARN
+    Value: !GetAtt VirtualChildContextExampleFunction.Arn
+
   WaitAsyncExampleFunction:
     Description: Wait Async Example Function ARN
     Value: !GetAtt WaitAsyncExampleFunction.Arn
@@ -542,6 +726,46 @@ Outputs:
   ConcurrentWaitForConditionExampleFunction:
     Description: Concurrent Wait For Condition Example Function ARN
     Value: !GetAtt ConcurrentWaitForConditionExampleFunction.Arn
+
+  RetryWaitForCallbackExampleFunction:
+    Description: Retry Wait For Callback Example Function ARN
+    Value: !GetAtt RetryWaitForCallbackExampleFunction.Arn
+
+  WaitForCallbackFailedExampleFunction:
+    Description: Wait For Callback Failed Example Function ARN
+    Value: !GetAtt WaitForCallbackFailedExampleFunction.Arn
+
+  CustomPollingExampleFunction:
+    Description: Custom Polling Example Function ARN
+    Value: !GetAtt CustomPollingExampleFunction.Arn
+
+  RetryInvokeExampleFunction:
+    Description: Retry Invoke Example Function ARN
+    Value: !GetAtt RetryInvokeExampleFunction.Arn
+
+  DeserializationFailedMapExampleFunction:
+    Description: Deserialization Failed Map Example Function ARN
+    Value: !GetAtt DeserializationFailedMapExampleFunction.Arn
+
+  ParallelExampleFunction:
+    Description: Parallel Example Function ARN
+    Value: !GetAtt ParallelExampleFunction.Arn
+
+  ParallelFailureToleranceExampleFunction:
+    Description: Parallel Failure Tolerance Example Function ARN
+    Value: !GetAtt ParallelFailureToleranceExampleFunction.Arn
+
+  ParallelWithWaitExampleFunction:
+    Description: Parallel With Wait Example Function ARN
+    Value: !GetAtt ParallelWithWaitExampleFunction.Arn
+
+  DeserializationFailedParallelExampleFunction:
+    Description: Deserialization Failed Parallel Example Function ARN
+    Value: !GetAtt DeserializationFailedParallelExampleFunction.Arn
+
+  DeserializationFailureExampleFunction:
+    Description: Deserialization Failure Example Function ARN
+    Value: !GetAtt DeserializationFailureExampleFunction.Arn
 
   ManyAsyncStepsVirtualThreadPoolExampleFunction:
     Condition: IsJava21OrLater

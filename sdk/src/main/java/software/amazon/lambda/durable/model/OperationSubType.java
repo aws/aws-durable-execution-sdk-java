@@ -15,7 +15,8 @@ public enum OperationSubType {
     PARALLEL("Parallel"),
     PARALLEL_BRANCH("ParallelBranch"),
     WAIT_FOR_CALLBACK("WaitForCallback"),
-    WAIT_FOR_CONDITION("WaitForCondition");
+    WAIT_FOR_CONDITION("WaitForCondition"),
+    WITH_RETRY("WithRetry");
 
     private final String value;
 

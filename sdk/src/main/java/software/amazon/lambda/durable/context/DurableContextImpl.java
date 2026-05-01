@@ -27,8 +27,11 @@ import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.MapResult;
@@ -43,6 +46,7 @@ import software.amazon.lambda.durable.operation.ParallelOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitForConditionOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
+import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
@@ -364,6 +368,65 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         operation.execute();
 
         return operation;
+    }
+
+    // =============== withRetry ================
+
+    private static final Duration DEFAULT_BACKOFF_DELAY = Duration.ofSeconds(1);
+    private static final String BACKOFF_SUFFIX = "-backoff-";
+    private static final String ANONYMOUS_CHILD_CONTEXT_NAME = "retry";
+    private static final String ANONYMOUS_BACKOFF_PREFIX = "retry-backoff-";
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> DurableFuture<T> withRetryAsync(
+            String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {
+        Objects.requireNonNull(operation, "operation cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+
+        var childContextName = name != null ? name : ANONYMOUS_CHILD_CONTEXT_NAME;
+
+        return (DurableFuture<T>) runInChildContextAsync(
+                childContextName,
+                new TypeToken<Object>() {},
+                childCtx -> executeRetryLoop(childCtx, name, operation, config),
+                RunInChildContextConfig.builder()
+                        .isVirtual(!config.wrapInChildContext())
+                        .build(),
+                OperationSubType.WITH_RETRY);
+    }
+
+    /**
+     * Core retry loop. Replay-safe because every side-effect is a durable operation: the user's operation calls durable
+     * primitives, and backoff uses {@code context.wait()}.
+     *
+     * <p>{@link SuspendExecutionException} and {@link UnrecoverableDurableExecutionException} are never retried — they
+     * are internal SDK control flow signals that must propagate immediately.
+     */
+    private static <T> T executeRetryLoop(
+            DurableContext context,
+            String name,
+            BiFunction<Integer, DurableContext, T> operation,
+            WithRetryConfig config) {
+        var attempt = 1;
+        while (true) {
+            try {
+                return operation.apply(attempt, context);
+            } catch (SuspendExecutionException | UnrecoverableDurableExecutionException e) {
+                // Internal SDK control flow — never retry, always propagate
+                throw e;
+            } catch (Exception e) {
+                RetryDecision decision = config.retryStrategy().makeRetryDecision(e, attempt);
+                if (!decision.shouldRetry()) {
+                    throw e;
+                }
+
+                var delay = decision.delay().isZero() ? DEFAULT_BACKOFF_DELAY : decision.delay();
+                var waitName = name != null ? name + BACKOFF_SUFFIX + attempt : ANONYMOUS_BACKOFF_PREFIX + attempt;
+                context.wait(waitName, delay);
+                attempt++;
+            }
+        }
     }
 
     // =============== accessors ================

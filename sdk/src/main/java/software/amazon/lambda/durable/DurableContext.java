@@ -16,6 +16,7 @@ import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.BaseContext;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -726,6 +727,87 @@ public interface DurableContext extends BaseContext {
             TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             WaitForConditionConfig<T> config);
+
+    // =============== withRetry ================
+
+    /**
+     * Replay-safe retry loop for any durable operation (sync) with default configuration.
+     *
+     * <p>Uses {@link WithRetryConfig} defaults:
+     * {@link software.amazon.lambda.durable.retry.RetryStrategies.Presets#DEFAULT} retry strategy and no child context
+     * wrapping.
+     *
+     * @param <T> the result type
+     * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
+     *     {@code null} for an anonymous retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @return the operation result
+     * @see #withRetry(String, BiFunction, WithRetryConfig)
+     */
+    default <T> T withRetry(String name, BiFunction<Integer, DurableContext, T> operation) {
+        return withRetry(name, operation, WithRetryConfig.builder().build());
+    }
+
+    /**
+     * Replay-safe retry loop for any durable operation (sync).
+     *
+     * <p>Provides the same retry-with-backoff pattern that {@code step()} has built in, but for operations that cannot
+     * live inside a step ({@code waitForCallback}, {@code invoke}, {@code waitForCondition}, etc.).
+     *
+     * <p>Every side-effect in the loop is a durable operation, so the loop is replay-safe by construction. On replay,
+     * completed operations return cached results instantly and the loop fast-forwards to the current attempt.
+     *
+     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
+     *
+     * @param <T> the result type
+     * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
+     *     {@code null} for an anonymous retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @param config retry configuration including the retry strategy and child context wrapping
+     * @return the operation result
+     */
+    default <T> T withRetry(String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {
+        return withRetryAsync(name, operation, config).get();
+    }
+
+    /**
+     * Replay-safe retry loop for any durable operation (async) with default configuration.
+     *
+     * <p>Uses {@link WithRetryConfig} defaults:
+     * {@link software.amazon.lambda.durable.retry.RetryStrategies.Presets#DEFAULT} retry strategy and no child context
+     * wrapping.
+     *
+     * @param <T> the result type
+     * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
+     *     retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @return a future representing the operation result
+     * @see #withRetryAsync(String, BiFunction, WithRetryConfig)
+     */
+    default <T> DurableFuture<T> withRetryAsync(String name, BiFunction<Integer, DurableContext, T> operation) {
+        return withRetryAsync(name, operation, WithRetryConfig.builder().build());
+    }
+
+    /**
+     * Replay-safe retry loop for any durable operation (async).
+     *
+     * <p>The retry loop always runs in a child context to provide an isolated operation ID namespace. If
+     * {@link WithRetryConfig#wrapInChildContext()} is enabled, the child context is checkpointed (persisted) so all
+     * attempts are grouped under a single named operation in execution history. Otherwise, a virtual child context is
+     * used — no checkpointing overhead, but the child re-executes on replay.
+     *
+     * @param <T> the result type
+     * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
+     *     retry whose backoff waits use default names
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
+     * @param config retry configuration including the retry strategy
+     * @return a future representing the operation result
+     */
+    <T> DurableFuture<T> withRetryAsync(
+            String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config);
 
     /**
      * Function applied to each item in a map operation.

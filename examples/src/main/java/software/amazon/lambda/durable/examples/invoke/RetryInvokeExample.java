@@ -1,0 +1,40 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.invoke;
+
+import java.time.Duration;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.examples.types.GreetingRequest;
+import software.amazon.lambda.durable.retry.RetryDecision;
+
+/**
+ * Example demonstrating {@code context.withRetry} with {@code context.invoke}.
+ *
+ * <p>Retries a chained Lambda invocation up to 3 times with a fixed 2-second backoff between attempts. Each attempt
+ * uses a unique operation name ({@code "call-greeting-1"}, {@code "call-greeting-2"}, etc.) so the execution history
+ * stays clean and replay-safe.
+ *
+ * <p>A {@code null} name is used, so attempts are grouped under a default-named child context.
+ */
+public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> {
+
+    private static final int MAX_ATTEMPTS = 3;
+
+    @Override
+    public String handleRequest(GreetingRequest input, DurableContext context) {
+        return context.withRetry(
+                null,
+                (attempt, ctx) -> ctx.invoke(
+                        "call-greeting-" + attempt,
+                        "simple-step-example" + input.getName() + ":$LATEST",
+                        input,
+                        String.class),
+                WithRetryConfig.builder()
+                        .retryStrategy((error, attempt) -> attempt < MAX_ATTEMPTS
+                                ? RetryDecision.retry(Duration.ofSeconds(2))
+                                : RetryDecision.fail())
+                        .build());
+    }
+}
