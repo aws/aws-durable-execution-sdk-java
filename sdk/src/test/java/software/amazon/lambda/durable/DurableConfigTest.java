@@ -272,7 +272,7 @@ class DurableConfigTest {
         var userAgentSuffix = overrideConfig.advancedOption(SdkAdvancedClientOption.USER_AGENT_SUFFIX);
         assertTrue(userAgentSuffix.isPresent(), "USER_AGENT_SUFFIX should be set");
         assertTrue(
-                userAgentSuffix.get().contains("@aws/durable-execution-sdk-java/"),
+                userAgentSuffix.get().contains("aws-durable-execution-sdk-java/"),
                 "User agent suffix should contain SDK identifier, got: " + userAgentSuffix.get());
     }
 
@@ -286,7 +286,7 @@ class DurableConfigTest {
         var overrideConfig = result.overrideConfiguration();
         var userAgentSuffix = overrideConfig.advancedOption(SdkAdvancedClientOption.USER_AGENT_SUFFIX);
         assertTrue(userAgentSuffix.isPresent());
-        assertTrue(userAgentSuffix.get().contains("@aws/durable-execution-sdk-java/"));
+        assertTrue(userAgentSuffix.get().contains("aws-durable-execution-sdk-java/"));
     }
 
     @Test

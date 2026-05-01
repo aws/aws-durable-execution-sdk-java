@@ -72,7 +72,7 @@ public final class DurableConfig {
 
     private static final String VERSION_FILE = "/version.prop";
     private static final String PROJECT_VERSION = getProjectVersion(VERSION_FILE);
-    private static final String USER_AGENT_SUFFIX = "@aws/durable-execution-sdk-java/" + PROJECT_VERSION;
+    private static final String USER_AGENT_SUFFIX = "aws-durable-execution-sdk-java/" + PROJECT_VERSION;
 
     /**
      * A default ExecutorService for running user-defined operations. Uses a cached thread pool with daemon threads by
