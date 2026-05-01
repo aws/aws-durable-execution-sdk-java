@@ -237,7 +237,7 @@ public class ExecutionManager implements AutoCloseable {
 <span class="fc bfc" id="L237" title="All 4 branches covered.">        var hasAnyPendingOperation = operationStorage.values().stream().anyMatch(o -&gt; switch (o.type()) {</span>
 <span class="fc bfc" id="L238" title="All 2 branches covered.">            case STEP -&gt; o.status() == OperationStatus.PENDING;</span>
 <span class="fc bfc" id="L239" title="All 2 branches covered.">            case WAIT, CALLBACK -&gt; o.status() == OperationStatus.STARTED;</span>
-<span class="pc bpc" id="L240" title="1 of 4 branches missed.">            case CHAINED_INVOKE -&gt; o.status() == OperationStatus.PENDING || o.status() == OperationStatus.STARTED;</span>
+<span class="pc bpc" id="L240" title="2 of 4 branches missed.">            case CHAINED_INVOKE -&gt; o.status() == OperationStatus.PENDING || o.status() == OperationStatus.STARTED;</span>
 <span class="fc" id="L241">            default -&gt; false;</span>
         });
 
