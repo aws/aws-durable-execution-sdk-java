@@ -35,7 +35,7 @@ public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest,
         // Step 2: waitForCallback with retry — if the external system fails, try again with a fresh callback
         var approvalResult = context.withRetry(
                 null,
-                (ctx, attempt) -> ctx.waitForCallback(
+                (attempt, ctx) -> ctx.waitForCallback(
                         "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
                                 .info("Attempt {}: sending callback {} to approval system", attempt, callbackId)),
                 WithRetryConfig.builder()

@@ -38,7 +38,6 @@ import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
-import software.amazon.lambda.durable.model.WithRetry;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
@@ -380,7 +379,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     @SuppressWarnings("unchecked")
-    public <T> DurableFuture<T> withRetryAsync(String name, WithRetry<T> operation, WithRetryConfig config) {
+    public <T> DurableFuture<T> withRetryAsync(
+            String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
 
@@ -404,11 +404,14 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * are internal SDK control flow signals that must propagate immediately.
      */
     private static <T> T executeRetryLoop(
-            DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
+            DurableContext context,
+            String name,
+            BiFunction<Integer, DurableContext, T> operation,
+            WithRetryConfig config) {
         var attempt = 1;
         while (true) {
             try {
-                return operation.execute(context, attempt);
+                return operation.apply(attempt, context);
             } catch (SuspendExecutionException | UnrecoverableDurableExecutionException e) {
                 // Internal SDK control flow — never retry, always propagate
                 throw e;

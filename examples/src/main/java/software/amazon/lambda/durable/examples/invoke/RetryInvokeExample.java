@@ -26,7 +26,7 @@ public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> 
     public String handleRequest(GreetingRequest input, DurableContext context) {
         return context.withRetry(
                 null,
-                (ctx, attempt) -> ctx.invoke(
+                (attempt, ctx) -> ctx.invoke(
                         "call-greeting-" + attempt,
                         "simple-step-example" + input.getName() + ":$LATEST",
                         input,

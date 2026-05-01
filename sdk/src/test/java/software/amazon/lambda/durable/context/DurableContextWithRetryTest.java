@@ -9,6 +9,7 @@ import static org.mockito.Mockito.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -20,7 +21,6 @@ import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.model.WithRetry;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
@@ -47,10 +47,10 @@ class DurableContextWithRetryTest {
      */
     private void stubWithRetryMethods(DurableContext mock) {
         // Sync form with config — always runs in a child context
-        when(mock.<Object>withRetry(any(), nullable(WithRetry.class), nullable(WithRetryConfig.class)))
+        when(mock.<Object>withRetry(any(), nullable(BiFunction.class), nullable(WithRetryConfig.class)))
                 .thenAnswer(invocation -> {
                     String name = invocation.getArgument(0);
-                    WithRetry<Object> operation = invocation.getArgument(1);
+                    BiFunction<Integer, DurableContext, Object> operation = invocation.getArgument(1);
                     WithRetryConfig config = invocation.getArgument(2);
                     Objects.requireNonNull(operation, "operation cannot be null");
                     Objects.requireNonNull(config, "config cannot be null");
@@ -63,17 +63,17 @@ class DurableContextWithRetryTest {
                 });
 
         // Sync form without config — delegates to the 3-arg form with default config
-        when(mock.<Object>withRetry(any(), nullable(WithRetry.class))).thenAnswer(invocation -> {
+        when(mock.<Object>withRetry(any(), nullable(BiFunction.class))).thenAnswer(invocation -> {
             String name = invocation.getArgument(0);
-            WithRetry<Object> operation = invocation.getArgument(1);
+            BiFunction<Integer, DurableContext, Object> operation = invocation.getArgument(1);
             return mock.withRetry(name, operation, WithRetryConfig.builder().build());
         });
 
         // Async form with config
-        when(mock.<Object>withRetryAsync(any(), nullable(WithRetry.class), nullable(WithRetryConfig.class)))
+        when(mock.<Object>withRetryAsync(any(), nullable(BiFunction.class), nullable(WithRetryConfig.class)))
                 .thenAnswer(invocation -> {
                     String name = invocation.getArgument(0);
-                    WithRetry<Object> operation = invocation.getArgument(1);
+                    BiFunction<Integer, DurableContext, Object> operation = invocation.getArgument(1);
                     WithRetryConfig config = invocation.getArgument(2);
                     Objects.requireNonNull(operation, "operation cannot be null");
                     Objects.requireNonNull(config, "config cannot be null");
@@ -85,9 +85,9 @@ class DurableContextWithRetryTest {
                 });
 
         // Async form without config — delegates to the 3-arg form with default config
-        when(mock.<Object>withRetryAsync(any(), nullable(WithRetry.class))).thenAnswer(invocation -> {
+        when(mock.<Object>withRetryAsync(any(), nullable(BiFunction.class))).thenAnswer(invocation -> {
             String name = invocation.getArgument(0);
-            WithRetry<Object> operation = invocation.getArgument(1);
+            BiFunction<Integer, DurableContext, Object> operation = invocation.getArgument(1);
             return mock.withRetryAsync(
                     name, operation, WithRetryConfig.builder().build());
         });
@@ -95,11 +95,14 @@ class DurableContextWithRetryTest {
 
     /** Replicates the retry loop logic from DurableContextImpl for test stubbing. */
     private static <T> T executeRetryLoop(
-            DurableContext context, String name, WithRetry<T> operation, WithRetryConfig config) {
+            DurableContext context,
+            String name,
+            BiFunction<Integer, DurableContext, T> operation,
+            WithRetryConfig config) {
         var attempt = 1;
         while (true) {
             try {
-                return operation.execute(context, attempt);
+                return operation.apply(attempt, context);
             } catch (SuspendExecutionException | UnrecoverableDurableExecutionException e) {
                 throw e;
             } catch (Exception e) {
@@ -151,7 +154,7 @@ class DurableContextWithRetryTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = context.withRetry("my-op", (ctx, attempt) -> "success", config);
+            var result = context.withRetry("my-op", (attempt, ctx) -> "success", config);
 
             assertEquals("success", result);
         }
@@ -166,7 +169,7 @@ class DurableContextWithRetryTest {
 
             var result = context.withRetry(
                     "my-op",
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         callCount[0]++;
                         if (attempt < 3) {
                             throw new RuntimeException("fail-" + attempt);
@@ -192,7 +195,7 @@ class DurableContextWithRetryTest {
                     RuntimeException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 throw new RuntimeException("terminal");
                             },
                             config));
@@ -211,7 +214,7 @@ class DurableContextWithRetryTest {
                     RuntimeException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 throw new RuntimeException("attempt-" + attempt);
                             },
                             config));
@@ -229,7 +232,7 @@ class DurableContextWithRetryTest {
             var callCount = new int[] {0};
             var result = context.withRetry(
                     "my-op",
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         callCount[0]++;
                         if (attempt == 1) {
                             throw new RuntimeException("fail");
@@ -252,7 +255,7 @@ class DurableContextWithRetryTest {
 
             context.withRetry(
                     "track",
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         attempts.add(attempt);
                         if (attempt < 4) {
                             throw new RuntimeException("not yet");
@@ -282,7 +285,7 @@ class DurableContextWithRetryTest {
                     RuntimeException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 throw new RuntimeException("error-" + attempt);
                             },
                             config));
@@ -301,7 +304,7 @@ class DurableContextWithRetryTest {
 
             context.withRetry(
                     "my-op",
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         if (attempt <= 2) {
                             throw new RuntimeException("fail");
                         }
@@ -321,7 +324,7 @@ class DurableContextWithRetryTest {
 
             context.withRetry(
                     "my-op",
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         assertSame(childContext, ctx);
                         return "verified";
                     },
@@ -334,7 +337,8 @@ class DurableContextWithRetryTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = context.withRetry("my-op", (WithRetry<String>) (ctx, attempt) -> null, config);
+            var result = context.withRetry(
+                    "my-op", (BiFunction<Integer, DurableContext, String>) (attempt, ctx) -> null, config);
 
             assertNull(result);
         }
@@ -351,7 +355,7 @@ class DurableContextWithRetryTest {
                     SerDesException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 throw original;
                             },
                             config));
@@ -381,7 +385,7 @@ class DurableContextWithRetryTest {
                     SuspendExecutionException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 throw new SuspendExecutionException();
                             },
                             config));
@@ -399,7 +403,7 @@ class DurableContextWithRetryTest {
                     UnrecoverableDurableExecutionException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 throw new UnrecoverableDurableExecutionException(
                                         software.amazon.awssdk.services.lambda.model.ErrorObject.builder()
                                                 .errorMessage("unrecoverable")
@@ -420,7 +424,7 @@ class DurableContextWithRetryTest {
                     SuspendExecutionException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 if (attempt == 1) {
                                     throw new RuntimeException("transient");
                                 }
@@ -441,7 +445,7 @@ class DurableContextWithRetryTest {
                     UnrecoverableDurableExecutionException.class,
                     () -> context.withRetry(
                             "my-op",
-                            (ctx, attempt) -> {
+                            (attempt, ctx) -> {
                                 if (attempt == 1) {
                                     throw new RuntimeException("transient");
                                 }
@@ -471,7 +475,7 @@ class DurableContextWithRetryTest {
 
             context.withRetry(
                     "my-op",
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         if (attempt < 2) {
                             throw new RuntimeException("fail");
                         }
@@ -493,7 +497,7 @@ class DurableContextWithRetryTest {
 
             context.withRetry(
                     null,
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         if (attempt < 2) {
                             throw new RuntimeException("fail");
                         }
@@ -522,7 +526,7 @@ class DurableContextWithRetryTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var result = context.withRetry("my-op", (ctx, attempt) -> "sync-value", config);
+            var result = context.withRetry("my-op", (attempt, ctx) -> "sync-value", config);
 
             assertEquals("sync-value", result);
         }
@@ -533,7 +537,7 @@ class DurableContextWithRetryTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            DurableFuture<String> future = context.withRetryAsync("my-op", (ctx, attempt) -> "async-value", config);
+            DurableFuture<String> future = context.withRetryAsync("my-op", (attempt, ctx) -> "async-value", config);
 
             assertNotNull(future);
             assertEquals("async-value", future.get());
@@ -545,8 +549,8 @@ class DurableContextWithRetryTest {
                     .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                     .build();
 
-            var syncResult = context.withRetry("op", (ctx, attempt) -> "value", config);
-            var asyncResult = context.withRetryAsync("op", (ctx, attempt) -> "value", config)
+            var syncResult = context.withRetry("op", (attempt, ctx) -> "value", config);
+            var asyncResult = context.withRetryAsync("op", (attempt, ctx) -> "value", config)
                     .get();
 
             assertEquals(syncResult, asyncResult);
@@ -561,7 +565,7 @@ class DurableContextWithRetryTest {
 
             DurableFuture<String> future = context.withRetryAsync(
                     "my-op",
-                    (ctx, attempt) -> {
+                    (attempt, ctx) -> {
                         if (attempt < 3) {
                             throw new RuntimeException("fail-" + attempt);
                         }
@@ -591,7 +595,7 @@ class DurableContextWithRetryTest {
 
         @Test
         void syncNullConfigThrows() {
-            assertThrows(NullPointerException.class, () -> context.withRetry("name", (ctx, a) -> "x", null));
+            assertThrows(NullPointerException.class, () -> context.withRetry("name", (a, ctx) -> "x", null));
         }
 
         @Test
@@ -605,7 +609,7 @@ class DurableContextWithRetryTest {
 
         @Test
         void asyncNullConfigThrows() {
-            assertThrows(NullPointerException.class, () -> context.withRetryAsync("name", (ctx, a) -> "x", null));
+            assertThrows(NullPointerException.class, () -> context.withRetryAsync("name", (a, ctx) -> "x", null));
         }
     }
 
@@ -621,7 +625,7 @@ class DurableContextWithRetryTest {
 
         @Test
         void syncWithRetryWithoutConfigSucceedsOnFirstAttempt() {
-            var result = context.withRetry("my-op", (ctx, attempt) -> "default-config-result");
+            var result = context.withRetry("my-op", (attempt, ctx) -> "default-config-result");
 
             assertEquals("default-config-result", result);
         }
@@ -630,7 +634,7 @@ class DurableContextWithRetryTest {
         void syncWithRetryWithoutConfigRetriesOnFailure() {
             var callCount = new int[] {0};
 
-            var result = context.withRetry("my-op", (ctx, attempt) -> {
+            var result = context.withRetry("my-op", (attempt, ctx) -> {
                 callCount[0]++;
                 if (attempt == 1) {
                     throw new RuntimeException("transient");
@@ -645,7 +649,7 @@ class DurableContextWithRetryTest {
 
         @Test
         void asyncWithRetryWithoutConfigSucceedsOnFirstAttempt() {
-            DurableFuture<String> future = context.withRetryAsync("my-op", (ctx, attempt) -> "async-default");
+            DurableFuture<String> future = context.withRetryAsync("my-op", (attempt, ctx) -> "async-default");
 
             assertNotNull(future);
             assertEquals("async-default", future.get());
@@ -655,7 +659,7 @@ class DurableContextWithRetryTest {
         void asyncWithRetryWithoutConfigRetriesOnFailure() {
             var callCount = new int[] {0};
 
-            DurableFuture<String> future = context.withRetryAsync("my-op", (ctx, attempt) -> {
+            DurableFuture<String> future = context.withRetryAsync("my-op", (attempt, ctx) -> {
                 callCount[0]++;
                 if (attempt == 1) {
                     throw new RuntimeException("transient");

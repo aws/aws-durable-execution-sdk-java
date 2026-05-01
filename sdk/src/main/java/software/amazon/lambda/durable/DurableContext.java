@@ -20,7 +20,6 @@ import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.BaseContext;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
-import software.amazon.lambda.durable.model.WithRetry;
 
 public interface DurableContext extends BaseContext {
     /**
@@ -741,11 +740,11 @@ public interface DurableContext extends BaseContext {
      * @param <T> the result type
      * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
      *     {@code null} for an anonymous retry whose backoff waits use default names
-     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
      * @return the operation result
-     * @see #withRetry(String, WithRetry, WithRetryConfig)
+     * @see #withRetry(String, BiFunction, WithRetryConfig)
      */
-    default <T> T withRetry(String name, WithRetry<T> operation) {
+    default <T> T withRetry(String name, BiFunction<Integer, DurableContext, T> operation) {
         return withRetry(name, operation, WithRetryConfig.builder().build());
     }
 
@@ -766,11 +765,11 @@ public interface DurableContext extends BaseContext {
      * @param <T> the result type
      * @param name operation name (used for backoff wait names, and as the child context name when wrapping); pass
      *     {@code null} for an anonymous retry whose backoff waits use default names
-     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
      * @param config retry configuration including the retry strategy and child context wrapping
      * @return the operation result
      */
-    default <T> T withRetry(String name, WithRetry<T> operation, WithRetryConfig config) {
+    default <T> T withRetry(String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {
         return withRetryAsync(name, operation, config).get();
     }
 
@@ -784,11 +783,11 @@ public interface DurableContext extends BaseContext {
      * @param <T> the result type
      * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
      *     retry whose backoff waits use default names
-     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
      * @return a future representing the operation result
-     * @see #withRetryAsync(String, WithRetry, WithRetryConfig)
+     * @see #withRetryAsync(String, BiFunction, WithRetryConfig)
      */
-    default <T> DurableFuture<T> withRetryAsync(String name, WithRetry<T> operation) {
+    default <T> DurableFuture<T> withRetryAsync(String name, BiFunction<Integer, DurableContext, T> operation) {
         return withRetryAsync(name, operation, WithRetryConfig.builder().build());
     }
 
@@ -803,11 +802,12 @@ public interface DurableContext extends BaseContext {
      * @param <T> the result type
      * @param name operation name (used for child context and backoff wait names); pass {@code null} for an anonymous
      *     retry whose backoff waits use default names
-     * @param operation the retryable operation — receives the context and 1-based attempt number
+     * @param operation the retryable operation — receives the 1-based attempt number and the durable context
      * @param config retry configuration including the retry strategy
      * @return a future representing the operation result
      */
-    <T> DurableFuture<T> withRetryAsync(String name, WithRetry<T> operation, WithRetryConfig config);
+    <T> DurableFuture<T> withRetryAsync(
+            String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config);
 
     /**
      * Function applied to each item in a map operation.

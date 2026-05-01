@@ -22,7 +22,7 @@ class RetryInvokeIntegrationTest {
                 String.class,
                 (input, context) -> context.withRetry(
                         null,
-                        (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
+                        (attempt, ctx) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
                                 .build()));
@@ -43,7 +43,7 @@ class RetryInvokeIntegrationTest {
                 String.class,
                 (input, context) -> context.withRetry(
                         null,
-                        (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
+                        (attempt, ctx) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
                                 .build()));
@@ -81,7 +81,7 @@ class RetryInvokeIntegrationTest {
                 String.class,
                 (input, context) -> context.withRetry(
                         null,
-                        (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
+                        (attempt, ctx) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy((error, attempt) ->
                                         attempt < 2 ? RetryDecision.retry(Duration.ofSeconds(1)) : RetryDecision.fail())
@@ -115,7 +115,7 @@ class RetryInvokeIntegrationTest {
                 String.class,
                 (input, context) -> context.withRetry(
                         null,
-                        (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
+                        (attempt, ctx) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy((error, attempt) -> attempt < 3
                                         ? RetryDecision.retry(Duration.ofSeconds(attempt * 5L))
@@ -149,7 +149,7 @@ class RetryInvokeIntegrationTest {
 
             var invokeResult = context.withRetry(
                     null,
-                    (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
+                    (attempt, ctx) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                     WithRetryConfig.builder()
                             .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)))
                             .build());
@@ -175,7 +175,7 @@ class RetryInvokeIntegrationTest {
             try {
                 return context.withRetry(
                         null,
-                        (ctx, attempt) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
+                        (attempt, ctx) -> ctx.invoke("invoke-" + attempt, "target-fn", "{}", String.class),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                                 .build());
