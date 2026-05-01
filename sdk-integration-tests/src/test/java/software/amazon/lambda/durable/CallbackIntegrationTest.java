@@ -271,10 +271,9 @@ class CallbackIntegrationTest {
                 ctx.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {});
                 fail();
                 return "should not reach here";
+            } catch (SuspendExecutionException e) {
+                throw e;
             } catch (Exception e) {
-                if (e instanceof SuspendExecutionException) {
-                    throw e;
-                }
                 assertInstanceOf(CallbackFailedException.class, e);
                 throw e;
             }
@@ -309,10 +308,9 @@ class CallbackIntegrationTest {
                 ctx.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {});
                 fail();
                 return "should not reach here";
+            } catch (SuspendExecutionException e) {
+                throw e;
             } catch (Exception e) {
-                if (e instanceof SuspendExecutionException) {
-                    throw e;
-                }
                 assertInstanceOf(CallbackTimeoutException.class, e);
                 throw e;
             }
@@ -339,10 +337,9 @@ class CallbackIntegrationTest {
                     // original exception
                     throw new IllegalArgumentException(errorMessage);
                 });
+            } catch (SuspendExecutionException e) {
+                throw e;
             } catch (Exception e) {
-                if (e instanceof SuspendExecutionException) {
-                    throw e;
-                }
                 assertInstanceOf(IllegalArgumentException.class, e);
                 assertEquals(errorMessage, e.getMessage());
                 throw e;

@@ -351,7 +351,7 @@ public class ExecutionManager implements AutoCloseable {
         return executionExceptionFuture.isCompletedExceptionally();
     }
 
-    private void stopAllOperations(Exception cause) {
+    private void stopAllOperations(Throwable cause) {
         registeredOperations.values().forEach(op -> op.getCompletionFuture().completeExceptionally(cause));
     }
 
