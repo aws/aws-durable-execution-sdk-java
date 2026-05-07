@@ -101,14 +101,14 @@ public class ParallelOperation extends ConcurrencyOperation&lt;ParallelResult&gt
     }
 
     private ParallelResult rebuildParallelResult() {
-<span class="pc bpc" id="L104" title="2 of 4 branches missed.">        if (cachedResult != null &amp;&amp; cachedResult.size() != getBranches().size()) {</span>
-<span class="nc" id="L105">            return new ParallelResult(</span>
-<span class="nc" id="L106">                    getBranches().size(), // size might be updated after cached result is built</span>
-<span class="nc" id="L107">                    cachedResult.succeeded(),</span>
-<span class="nc" id="L108">                    cachedResult.failed(),</span>
-<span class="nc" id="L109">                    cachedResult.skipped(),</span>
-<span class="nc" id="L110">                    cachedResult.completionStatus(),</span>
-<span class="nc" id="L111">                    cachedResult.statuses());</span>
+<span class="pc bpc" id="L104" title="1 of 4 branches missed.">        if (cachedResult != null &amp;&amp; cachedResult.size() != getBranches().size()) {</span>
+<span class="fc" id="L105">            return new ParallelResult(</span>
+<span class="fc" id="L106">                    getBranches().size(), // size might be updated after cached result is built</span>
+<span class="fc" id="L107">                    cachedResult.succeeded(),</span>
+<span class="fc" id="L108">                    cachedResult.failed(),</span>
+<span class="fc" id="L109">                    cachedResult.skipped(),</span>
+<span class="fc" id="L110">                    cachedResult.completionStatus(),</span>
+<span class="fc" id="L111">                    cachedResult.statuses());</span>
         }
 <span class="fc" id="L113">        return cachedResult;</span>
     }
