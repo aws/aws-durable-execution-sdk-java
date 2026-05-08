@@ -4,7 +4,7 @@ on:
   issues:
     types: [opened, reopened]
   pull_request_target:
-    types: [opened, reopened]
+    types: [opened, reopened, ready_for_review]
 
 permissions: {}
 
@@ -12,10 +12,6 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Use Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24.x'
       - name: Send issue notification to Slack
         if: github.event_name == 'issues'
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
@@ -30,7 +26,7 @@ jobs:
             }
 
       - name: Send pull request notification to Slack
-        if: github.event_name == 'pull_request_target'
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.draft == false
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL_PR }}
