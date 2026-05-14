@@ -103,3 +103,11 @@ jobs:
         uses: ad-m/github-push-action@4cc74773234f74829a8c21bc4d69dd4be9cfa599 # master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-release:
+    needs: [release]
+    uses: ./.github/workflows/notify-release.yml
+    with:
+      tag_name: v${{ github.event.inputs.release_version }}
+      release_url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ github.event.inputs.release_version }}
+    secrets: inherit
