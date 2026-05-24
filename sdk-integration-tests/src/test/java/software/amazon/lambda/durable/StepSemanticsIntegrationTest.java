@@ -4,6 +4,7 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.config.StepConfig;
@@ -157,7 +158,7 @@ class StepSemanticsIntegrationTest {
     }
 
     @Test
-    void testAtMostOnceThrowsExceptionAfterCheckpointFailure() {
+    void testAtMostOnceNoRetryFailsAfterCheckpointFailure() {
         var executionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
@@ -170,6 +171,7 @@ class StepSemanticsIntegrationTest {
                     },
                     StepConfig.builder()
                             .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
         });
 
@@ -182,5 +184,34 @@ class StepSemanticsIntegrationTest {
 
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
         assertEquals(1, executionCount.get());
+    }
+
+    @Test
+    void testAtMostOnceRetriesAfterCheckpointFailure() {
+        var executionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            return context.step(
+                    "step",
+                    String.class,
+                    stepCtx -> {
+                        var count = executionCount.incrementAndGet();
+                        return "Executed " + count + " times";
+                    },
+                    StepConfig.builder()
+                            .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)))
+                            .build());
+        });
+
+        runner.run("test");
+        assertEquals(1, executionCount.get());
+
+        runner.resetCheckpointToStarted("step");
+        var result = runner.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(2, executionCount.get());
+        assertEquals("Executed 2 times", result.getResult(String.class));
     }
 }

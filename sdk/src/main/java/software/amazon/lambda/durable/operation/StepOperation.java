@@ -165,10 +165,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             errorObject = serializeException(exception);
         }
 
-        var isRetryable = !(exception instanceof StepInterruptedException);
         var retryDecision = config.retryStrategy().makeRetryDecision(exception, attempt);
 
-        if (isRetryable && retryDecision.shouldRetry()) {
+        if (retryDecision.shouldRetry()) {
             // Send RETRY
             var retryDelayInSeconds = Math.toIntExact(retryDecision.delay().toSeconds());
             var retryUpdate = OperationUpdate.builder()
