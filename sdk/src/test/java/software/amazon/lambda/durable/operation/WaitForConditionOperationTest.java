@@ -27,6 +27,8 @@ import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
@@ -57,7 +59,11 @@ class WaitForConditionOperationTest {
                     checkFunc,
             WaitForConditionConfig<Integer> config) {
         return new WaitForConditionOperation<>(
-                OPERATION_ID, OPERATION_NAME, checkFunc, TypeToken.get(Integer.class), config, durableContext);
+                OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT_FOR_CONDITION),
+                checkFunc,
+                TypeToken.get(Integer.class),
+                config,
+                durableContext);
     }
 
     // ===== Replay SUCCEEDED =====

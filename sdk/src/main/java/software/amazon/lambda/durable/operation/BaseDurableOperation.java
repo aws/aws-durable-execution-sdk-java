@@ -410,11 +410,11 @@ public abstract class BaseDurableOperation {
 
     /** Sends an operation update asynchronously. */
     protected CompletableFuture<Void> sendOperationUpdateAsync(OperationUpdate.Builder builder) {
-        var updateBuilder =
-                builder.id(getOperationId()).name(getName()).type(getType()).parentId(durableContext.getParentId());
-        if (getSubType() != null) {
-            updateBuilder.subType(getSubType().getValue());
-        }
+        var updateBuilder = builder.id(getOperationId())
+                .name(getName())
+                .type(getType())
+                .subType(getSubType().getValue())
+                .parentId(durableContext.getParentId());
         var update = updateBuilder.build();
         if (replayCompletedOperation.get()) {
             // We are replaying a completed operation, so complete the completableFuture without checkpointing
@@ -444,9 +444,7 @@ public abstract class BaseDurableOperation {
                     getOperationId(), checkpointed.name(), getName())));
         }
 
-        if ((getSubType() == null && checkpointed.subType() != null)
-                || getSubType() != null
-                        && !Objects.equals(checkpointed.subType(), getSubType().getValue())) {
+        if (!Objects.equals(checkpointed.subType(), getSubType().getValue())) {
             throw terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation subType mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     getOperationId(), checkpointed.subType(), getSubType())));

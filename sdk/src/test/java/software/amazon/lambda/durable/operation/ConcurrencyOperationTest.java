@@ -85,8 +85,7 @@ class ConcurrencyOperationTest {
 
     private TestConcurrencyOperation createOperation(CompletionConfig completionConfig) throws Exception {
         return new TestConcurrencyOperation(
-                OperationIdentifier.of(
-                        OPERATION_ID, "test-concurrency", OperationType.CONTEXT, OperationSubType.PARALLEL),
+                OperationIdentifier.of(OPERATION_ID, "test-concurrency", OperationSubType.PARALLEL),
                 RESULT_TYPE,
                 SER_DES,
                 durableContext,

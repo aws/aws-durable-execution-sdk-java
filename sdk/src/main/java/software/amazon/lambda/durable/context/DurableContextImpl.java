@@ -11,7 +11,6 @@ import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -146,7 +145,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.STEP), func, resultType, config, this);
+                OperationIdentifier.of(operationId, name, OperationSubType.STEP), func, resultType, config, this);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -162,7 +161,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Create and start wait operation
         var operation =
-                new WaitOperation(OperationIdentifier.of(operationId, name, OperationType.WAIT), duration, this);
+                new WaitOperation(OperationIdentifier.of(operationId, name, OperationSubType.WAIT), duration, this);
 
         operation.execute(); // Checkpoint the wait
         return operation;
@@ -187,7 +186,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CHAINED_INVOKE),
+                OperationIdentifier.of(operationId, name, OperationSubType.CHAINED_INVOKE),
                 functionName,
                 payload,
                 resultType,
@@ -207,7 +206,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var operation = new CallbackOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CALLBACK), resultType, config, this);
+                OperationIdentifier.of(operationId, name, OperationSubType.CALLBACK), resultType, config, this);
         operation.execute();
 
         return operation;
@@ -248,11 +247,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, subType),
-                func,
-                resultType,
-                config,
-                this);
+                OperationIdentifier.of(operationId, name, subType), func, resultType, config, this);
 
         operation.execute();
         return operation;
@@ -277,7 +272,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var operation = new MapOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.MAP),
+                OperationIdentifier.of(operationId, name, OperationSubType.MAP),
                 itemList,
                 function,
                 resultType,
@@ -293,7 +288,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var parallelOp = new ParallelOperation(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, OperationSubType.PARALLEL),
+                OperationIdentifier.of(operationId, name, OperationSubType.PARALLEL),
                 getDurableConfig().getSerDes(),
                 this,
                 config);
@@ -363,7 +358,12 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         }
         var operationId = nextOperationId();
 
-        var operation = new WaitForConditionOperation<>(operationId, name, checkFunc, resultType, config, this);
+        var operation = new WaitForConditionOperation<>(
+                OperationIdentifier.of(operationId, name, OperationSubType.WAIT_FOR_CONDITION),
+                checkFunc,
+                resultType,
+                config,
+                this);
 
         operation.execute();
 

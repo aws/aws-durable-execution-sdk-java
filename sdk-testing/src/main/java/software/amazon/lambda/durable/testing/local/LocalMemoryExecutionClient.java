@@ -190,6 +190,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                     .id(op.id())
                     .name(op.name())
                     .type(op.type())
+                    .subType(op.subType())
                     .action(action)
                     .parentId(op.parentId())
                     .payload(result.result())

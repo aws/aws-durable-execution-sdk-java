@@ -115,7 +115,7 @@ class ParallelOperationTest {
 
     private ParallelOperation createOperation(CompletionConfig completionConfig) {
         var op = new ParallelOperation(
-                OperationIdentifier.of(OPERATION_ID, "test-parallel", OperationType.CONTEXT, OperationSubType.PARALLEL),
+                OperationIdentifier.of(OPERATION_ID, "test-parallel", OperationSubType.PARALLEL),
                 SER_DES,
                 durableContext,
                 ParallelConfig.builder().completionConfig(completionConfig).build());

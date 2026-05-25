@@ -36,6 +36,7 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -47,7 +48,7 @@ class SerializableDurableOperationTest {
     private static final Operation OPERATION = Operation.builder().build();
     private static final OperationType OPERATION_TYPE = OperationType.STEP;
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OPERATION_TYPE);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.STEP);
     private static final TypeToken<String> RESULT_TYPE = TypeToken.get(String.class);
     private static final SerDes SER_DES = new JacksonSerDes();
     private static final String RESULT = "name";
@@ -272,6 +273,7 @@ class SerializableDurableOperationTest {
                 .thenReturn(Operation.builder()
                         .name(OPERATION_NAME)
                         .type(OPERATION_TYPE)
+                        .subType(OperationSubType.STEP.getValue())
                         .build());
 
         SerializableDurableOperation<String> op =

@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
@@ -24,6 +23,7 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class StepOperationTest {
@@ -32,7 +32,7 @@ class StepOperationTest {
     private static final String OPERATION_NAME = "test-step";
     private static final String RESULT = "result";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.STEP);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.STEP);
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
 

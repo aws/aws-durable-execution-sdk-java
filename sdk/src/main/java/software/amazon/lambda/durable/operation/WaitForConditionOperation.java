@@ -8,7 +8,6 @@ import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.StepContext;
@@ -21,7 +20,6 @@ import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -41,17 +39,12 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     private final WaitForConditionConfig<T> config;
 
     public WaitForConditionOperation(
-            String operationId,
-            String name,
+            OperationIdentifier operationIdentifier,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             TypeToken<T> resultTypeToken,
             WaitForConditionConfig<T> config,
             DurableContextImpl durableContext) {
-        super(
-                OperationIdentifier.of(operationId, name, OperationType.STEP, OperationSubType.WAIT_FOR_CONDITION),
-                resultTypeToken,
-                config.serDes(),
-                durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 
         this.checkFunc = checkFunc;
         this.config = config;

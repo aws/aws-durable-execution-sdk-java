@@ -5,24 +5,21 @@ package software.amazon.lambda.durable.model;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 
 /**
- * Identifies a durable operation by its unique ID, human-readable name, type, and optional sub-type.
+ * Identifies a durable operation by its unique ID, human-readable name, type and sub-type.
  *
  * @param operationId unique sequential identifier for the operation within an execution
  * @param name human-readable name for the operation
- * @param operationType the kind of operation (STEP, WAIT, CALLBACK, etc.)
- * @param subType optional sub-type for operations that need further classification (e.g. child contexts)
+ * @param subType the operation sub-type which also determines the operation type
  */
-public record OperationIdentifier(
-        String operationId, String name, OperationType operationType, OperationSubType subType) {
+public record OperationIdentifier(String operationId, String name, OperationSubType subType) {
 
-    /** Creates an identifier without a sub-type. */
-    public static OperationIdentifier of(String operationId, String name, OperationType type) {
-        return new OperationIdentifier(operationId, name, type, null);
+    /** Returns the operation type derived from the sub-type. */
+    public OperationType operationType() {
+        return subType.getOperationType();
     }
 
-    /** Creates an identifier with a sub-type. */
-    public static OperationIdentifier of(
-            String operationId, String name, OperationType type, OperationSubType subType) {
-        return new OperationIdentifier(operationId, name, type, subType);
+    /** Creates an identifier with the given sub-type. */
+    public static OperationIdentifier of(String operationId, String name, OperationSubType subType) {
+        return new OperationIdentifier(operationId, name, subType);
     }
 }

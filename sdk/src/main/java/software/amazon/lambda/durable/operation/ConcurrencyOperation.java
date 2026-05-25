@@ -16,7 +16,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.NestingType;
@@ -116,7 +115,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             SerDes serDes,
             OperationSubType branchSubType) {
         return new ChildContextOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CONTEXT, branchSubType),
+                OperationIdentifier.of(operationId, name, branchSubType),
                 function,
                 resultType,
                 RunInChildContextConfig.builder()

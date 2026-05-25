@@ -12,20 +12,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 
 class WaitOperationTest {
     private static final String OPERATION_ID = "2";
     private static final String CONTEXT_ID = "handler";
     private static final String OPERATION_NAME = "test-wait";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
-            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationType.WAIT);
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT);
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
 

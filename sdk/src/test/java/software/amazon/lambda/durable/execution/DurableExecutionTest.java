@@ -25,6 +25,7 @@ import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationSubType;
 
 class DurableExecutionTest {
 
@@ -187,6 +188,7 @@ class DurableExecutionTest {
                 .id(OPERATION_ID1)
                 .name("step1")
                 .type(OperationType.STEP)
+                .subType(OperationSubType.STEP.getValue())
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"First\"").build())
                 .build();
