@@ -21,6 +21,7 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.OperationSubType;
 
 class ReplayValidationTest {
     private static final String EXECUTION_NAME = "exec-name";
@@ -67,6 +68,7 @@ class ReplayValidationTest {
                 .id(OPERATION_ID1)
                 .name("test")
                 .type(OperationType.STEP)
+                .subType(OperationSubType.STEP.getValue())
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();
@@ -83,6 +85,7 @@ class ReplayValidationTest {
         var existingOp = Operation.builder()
                 .id(OPERATION_ID1)
                 .type(OperationType.WAIT)
+                .subType(OperationSubType.WAIT.getValue())
                 .status(OperationStatus.SUCCEEDED)
                 .build();
 
@@ -144,6 +147,7 @@ class ReplayValidationTest {
                 .id(OPERATION_ID1)
                 .name(null)
                 .type(OperationType.STEP)
+                .subType(OperationSubType.STEP.getValue())
                 .status(OperationStatus.SUCCEEDED)
                 .stepDetails(StepDetails.builder().result("\"result\"").build())
                 .build();

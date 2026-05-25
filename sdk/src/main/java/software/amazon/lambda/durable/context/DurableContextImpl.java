@@ -146,7 +146,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.STEP), func, resultType, config, this);
+                OperationIdentifier.of(operationId, name, OperationType.STEP, OperationSubType.STEP),
+                func,
+                resultType,
+                config,
+                this);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -161,8 +165,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         // Create and start wait operation
-        var operation =
-                new WaitOperation(OperationIdentifier.of(operationId, name, OperationType.WAIT), duration, this);
+        var operation = new WaitOperation(
+                OperationIdentifier.of(operationId, name, OperationType.WAIT, OperationSubType.WAIT), duration, this);
 
         operation.execute(); // Checkpoint the wait
         return operation;
@@ -187,7 +191,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CHAINED_INVOKE),
+                OperationIdentifier.of(
+                        operationId, name, OperationType.CHAINED_INVOKE, OperationSubType.CHAINED_INVOKE),
                 functionName,
                 payload,
                 resultType,
@@ -207,7 +212,10 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var operationId = nextOperationId();
 
         var operation = new CallbackOperation<>(
-                OperationIdentifier.of(operationId, name, OperationType.CALLBACK), resultType, config, this);
+                OperationIdentifier.of(operationId, name, OperationType.CALLBACK, OperationSubType.CALLBACK),
+                resultType,
+                config,
+                this);
         operation.execute();
 
         return operation;
