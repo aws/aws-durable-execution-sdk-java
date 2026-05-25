@@ -63,6 +63,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     private final DurableContextImpl parentContext;
     private final boolean isVirtual;
     private volatile DurableLogger logger;
+    private boolean replayMode;
 
     /** Shared initialization — sets all fields. */
     private DurableContextImpl(
@@ -77,6 +78,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         operationIdGenerator = new OperationIdGenerator(contextId);
         this.parentContext = parentContext;
         this.isVirtual = isVirtual;
+        // Initialize replay mode by checking if the next operation (first in this context) exists in storage
+        this.replayMode = executionManager.hasOperation(operationIdGenerator.peekNextOperationId());
     }
 
     /**
@@ -142,6 +145,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
@@ -158,6 +162,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         ParameterValidator.validateOperationName(name);
 
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         // Create and start wait operation
         var operation =
@@ -183,6 +188,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                     .build();
         }
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
@@ -204,6 +210,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         var operation = new CallbackOperation<>(
                 OperationIdentifier.of(operationId, name, OperationSubType.CALLBACK), resultType, config, this);
@@ -245,6 +252,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         }
 
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         var operation = new ChildContextOperation<>(
                 OperationIdentifier.of(operationId, name, subType), func, resultType, config, this);
@@ -270,6 +278,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         // Convert to List for deterministic index-based access
         var itemList = List.copyOf(items);
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         var operation = new MapOperation<>(
                 OperationIdentifier.of(operationId, name, OperationSubType.MAP),
@@ -286,6 +295,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     public ParallelDurableFuture parallel(String name, ParallelConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         var parallelOp = new ParallelOperation(
                 OperationIdentifier.of(operationId, name, OperationSubType.PARALLEL),
@@ -357,6 +367,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
         var operationId = nextOperationId();
+        updateReplayStatus();
 
         var operation = new WaitForConditionOperation<>(
                 OperationIdentifier.of(operationId, name, OperationSubType.WAIT_FOR_CONDITION),
@@ -451,6 +462,28 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     public void close() {
         if (logger != null) {
             logger.close();
+        }
+    }
+
+    /**
+     * Returns whether this context is currently in replay mode based on per-context tracking. A context is replaying
+     * when its next operation already exists in checkpoint storage.
+     */
+    @Override
+    public boolean isReplayingContext() {
+        return replayMode;
+    }
+
+    /**
+     * Checks if the next operation exists in checkpoint storage and transitions out of replay mode if it does not. This
+     * is called before each operation to maintain accurate per-context replay status.
+     */
+    public void updateReplayStatus() {
+        if (!replayMode) {
+            return;
+        }
+        if (!getExecutionManager().hasOperation(operationIdGenerator.peekNextOperationId())) {
+            replayMode = false;
         }
     }
 

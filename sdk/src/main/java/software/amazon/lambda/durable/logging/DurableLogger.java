@@ -93,8 +93,7 @@ public class DurableLogger {
     }
 
     private boolean shouldSuppress() {
-        return context.getDurableConfig().getLoggerConfig().suppressReplayLogs()
-                && context.getExecutionManager().isReplaying();
+        return context.getDurableConfig().getLoggerConfig().suppressReplayLogs() && context.isReplayingContext();
     }
 
     private void log(Runnable logAction) {

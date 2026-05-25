@@ -134,9 +134,6 @@ public abstract class BaseDurableOperation {
                 }
                 replay(existing);
             } else {
-                if (durableContext.isReplaying()) {
-                    this.durableContext.setExecutionMode();
-                }
                 start();
             }
         }

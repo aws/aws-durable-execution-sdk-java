@@ -15,8 +15,6 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
     private final String contextName;
     private final ThreadType threadType;
 
-    private boolean isReplaying;
-
     /**
      * Creates a new BaseContext instance.
      *
@@ -39,7 +37,6 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
         this.lambdaContext = lambdaContext;
         this.contextId = contextId;
         this.contextName = contextName;
-        this.isReplaying = executionManager.hasOperationsForContext(contextId);
         this.threadType = threadType;
     }
 
@@ -97,16 +94,12 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
         return executionManager;
     }
 
-    /** Returns whether this context is currently in replay mode. */
-    @Override
-    public boolean isReplaying() {
-        return isReplaying;
-    }
-
     /**
-     * Transitions this context from replay to execution mode. Called when the first un-cached operation is encountered.
+     * Returns whether this context is currently in replay mode. The default implementation returns false. Subclasses
+     * that track per-context replay status (like DurableContextImpl) override this.
      */
-    public void setExecutionMode() {
-        this.isReplaying = false;
+    @Override
+    public boolean isReplayingContext() {
+        return false;
     }
 }

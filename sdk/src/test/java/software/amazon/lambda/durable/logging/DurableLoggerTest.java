@@ -13,6 +13,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestContext;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
 
 class DurableLoggerTest {
     private static final String EXECUTION_NAME = "exec-123";
@@ -42,7 +43,7 @@ class DurableLoggerTest {
     }
 
     private DurableLogger createLogger(Mode mode, Suppression suppression) {
-        when(mockExecutionManager.isReplaying()).thenReturn(mode == Mode.REPLAYING);
+        when(mockExecutionManager.hasOperation(anyString())).thenReturn(mode == Mode.REPLAYING);
         return new DurableLogger(mockLogger, createDurableContext(REQUEST_ID, suppression));
     }
 
@@ -104,7 +105,7 @@ class DurableLoggerTest {
     void setStepThreadPropertiesSetsMdc() {
         try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
             mdcMock.clearInvocations();
-            when(mockExecutionManager.isReplaying()).thenReturn(false);
+            when(mockExecutionManager.hasOperation(anyString())).thenReturn(false);
             var logger = new DurableLogger(
                     mockLogger,
                     createDurableContext(REQUEST_ID, Suppression.ENABLED)
@@ -130,12 +131,17 @@ class DurableLoggerTest {
 
     @Test
     void replayModeTransitionAllowsSubsequentLogs() {
-        when(mockExecutionManager.isReplaying()).thenReturn(true, false);
-        var logger = new DurableLogger(mockLogger, createDurableContext(REQUEST_ID, Suppression.ENABLED));
+        when(mockExecutionManager.hasOperation(anyString())).thenReturn(true);
+        var durableContext = createDurableContext(REQUEST_ID, Suppression.ENABLED);
+        var logger = new DurableLogger(mockLogger, durableContext);
 
         // During replay - suppressed
         logger.info("suppressed");
         verify(mockLogger, never()).info(anyString(), any(Object[].class));
+
+        // Simulate next operation not existing in storage — triggers transition out of replay
+        when(mockExecutionManager.hasOperation(anyString())).thenReturn(false);
+        durableContext.updateReplayStatus();
 
         // After transition to execution mode - logged
         logger.info("logged after transition");
@@ -164,9 +170,43 @@ class DurableLoggerTest {
     }
 
     @Test
+    void concurrentContextsHaveIndependentReplayState() {
+        var rootNextOp = OperationIdGenerator.hashOperationId("1");
+        var childANextOp = OperationIdGenerator.hashOperationId("child-a-1");
+        var childBNextOp = OperationIdGenerator.hashOperationId("child-b-1");
+
+        when(mockExecutionManager.hasOperation(rootNextOp)).thenReturn(true);
+        when(mockExecutionManager.hasOperation(childANextOp)).thenReturn(false);
+        when(mockExecutionManager.hasOperation(childBNextOp)).thenReturn(true);
+
+        var rootContext = createDurableContext(REQUEST_ID, Suppression.ENABLED);
+        var childA = rootContext.createChildContext("child-a", "branch-a", false);
+        var childB = rootContext.createChildContext("child-b", "branch-b", false);
+
+        var loggerForA = mock(Logger.class);
+        var loggerForB = mock(Logger.class);
+        var durableLoggerA = new DurableLogger(loggerForA, childA);
+        var durableLoggerB = new DurableLogger(loggerForB, childB);
+
+        // Child A is in execution mode — logs should pass through
+        durableLoggerA.info("from branch A");
+        verify(loggerForA).info(eq("from branch A"), any(Object[].class));
+
+        // Child B is still replaying — logs should be suppressed
+        durableLoggerB.info("from branch B");
+        verify(loggerForB, never()).info(anyString(), any(Object[].class));
+
+        // After child B transitions, its logs should pass through
+        when(mockExecutionManager.hasOperation(childBNextOp)).thenReturn(false);
+        childB.updateReplayStatus();
+        durableLoggerB.info("branch B after transition");
+        verify(loggerForB).info(eq("branch B after transition"), any(Object[].class));
+    }
+
+    @Test
     void handlesNullRequestId() {
         try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            when(mockExecutionManager.isReplaying()).thenReturn(false);
+            when(mockExecutionManager.hasOperation(anyString())).thenReturn(false);
             new DurableLogger(mockLogger, createDurableContext(null, Suppression.DISABLED));
 
             mdcMock.verify(() -> MDC.put(DurableLogger.MDC_EXECUTION_ARN, EXECUTION_ARN));

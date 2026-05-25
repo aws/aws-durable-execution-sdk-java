@@ -178,6 +178,16 @@ public class ExecutionManager implements AutoCloseable {
         return operationStorage.values().stream().anyMatch(op -> Objects.equals(op.parentId(), parentId));
     }
 
+    /**
+     * Checks whether an operation with the given ID exists in checkpoint storage.
+     *
+     * @param operationId the operation ID to check
+     * @return true if the operation exists
+     */
+    public boolean hasOperation(String operationId) {
+        return operationStorage.containsKey(operationId);
+    }
+
     // ===== Thread Coordination =====
     /** Sets the current thread's ThreadContext (threadId and threadType). Called when a user thread is started. */
     public void setCurrentThreadContext(ThreadContext threadContext) {

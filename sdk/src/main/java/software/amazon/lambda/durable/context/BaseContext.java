@@ -44,8 +44,12 @@ public interface BaseContext extends AutoCloseable {
     /** Gets the context name for this context. Null for root context. */
     String getContextName();
 
-    /** Returns whether this context is currently in replay mode. */
-    boolean isReplaying();
+    /**
+     * Returns whether this context is currently replaying based on per-context tracking. Checks whether the next
+     * operation in this specific context already exists in checkpoint storage, providing accurate replay status even
+     * when multiple contexts run concurrently.
+     */
+    boolean isReplayingContext();
 
     /** Closes this context. */
     void close();
