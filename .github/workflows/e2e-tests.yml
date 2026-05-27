@@ -68,13 +68,13 @@ jobs:
       - name: sam build
         run: | # add --no-cached  if debugging sam build
           sam build --debug --parameter-overrides \
-            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }}'
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=RoleArn,ParameterValue=${{ secrets.DURABLE_INTEGRATION_TEST_ROLE_ARN }}'
         working-directory: ./examples
       - name: sam deploy
         run: | 
           sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack-Java${{ matrix.java }}Runtime \
-            --resolve-image-repos --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides \
-            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }}'
+            --resolve-image-repos --resolve-s3 --parameter-overrides \
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=RoleArn,ParameterValue=${{ secrets.DURABLE_INTEGRATION_TEST_ROLE_ARN }}'
         working-directory: ./examples
       - name: Cloud Based Integration Tests
         run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest=CloudBasedIntegrationTest -Dtest.function.name.suffix='-java${{ matrix.java }}-runtime'
