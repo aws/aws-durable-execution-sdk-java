@@ -21,6 +21,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -94,6 +95,7 @@ public final class DurableConfig {
     private final LoggerConfig loggerConfig;
     private final PollingStrategy pollingStrategy;
     private final Duration checkpointDelay;
+    private final PluginRunner pluginRunner;
 
     private DurableConfig(Builder builder) {
         this.durableExecutionClient = Objects.requireNonNullElseGet(
@@ -104,6 +106,7 @@ public final class DurableConfig {
         this.loggerConfig = Objects.requireNonNullElseGet(builder.loggerConfig, LoggerConfig::defaults);
         this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
+        this.pluginRunner = PluginRunner.noOp();
 
         validateConfiguration();
     }
@@ -178,6 +181,20 @@ public final class DurableConfig {
      */
     public Duration getCheckpointDelay() {
         return checkpointDelay;
+    }
+
+    /**
+     * Gets the plugin runner that dispatches lifecycle events to registered plugins.
+     *
+     * <p>Currently returns a no-op runner. Plugin registration via config will be added when the plugin system is fully
+     * wired.
+     *
+     * @return PluginRunner instance (always no-op until plugin wiring is complete)
+     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+     */
+    @Deprecated
+    public PluginRunner getPluginRunner() {
+        return pluginRunner;
     }
 
     public void validateConfiguration() {
