@@ -5,6 +5,8 @@ package software.amazon.lambda.durable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -21,6 +23,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
@@ -106,7 +109,7 @@ public final class DurableConfig {
         this.loggerConfig = Objects.requireNonNullElseGet(builder.loggerConfig, LoggerConfig::defaults);
         this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
-        this.pluginRunner = PluginRunner.noOp();
+        this.pluginRunner = builder.plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(builder.plugins);
 
         validateConfiguration();
     }
@@ -186,10 +189,9 @@ public final class DurableConfig {
     /**
      * Gets the plugin runner that dispatches lifecycle events to registered plugins.
      *
-     * <p>Currently returns a no-op runner. Plugin registration via config will be added when the plugin system is fully
-     * wired.
+     * <p>Returns a no-op runner if no plugins were registered via the builder.
      *
-     * @return PluginRunner instance (always no-op until plugin wiring is complete)
+     * @return PluginRunner instance (never null)
      * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
      */
     @Deprecated
@@ -291,6 +293,7 @@ public final class DurableConfig {
         private LoggerConfig loggerConfig;
         private PollingStrategy pollingStrategy;
         private Duration checkpointDelay;
+        private List<DurableExecutionPlugin> plugins = new ArrayList<>();
 
         public Builder() {}
 
@@ -397,6 +400,30 @@ public final class DurableConfig {
          */
         public Builder withCheckpointDelay(Duration duration) {
             this.checkpointDelay = duration;
+            return this;
+        }
+
+        /**
+         * Registers one or more plugins for lifecycle event instrumentation.
+         *
+         * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Errors thrown by plugins are
+         * isolated and never disrupt SDK execution.
+         *
+         * <p>Calling this method replaces any previously registered plugins. Plugins are called in registration order.
+         *
+         * @param plugins the plugins to register
+         * @return This builder
+         * @throws NullPointerException if any plugin is null
+         * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+         */
+        @Deprecated
+        public Builder withPlugins(DurableExecutionPlugin... plugins) {
+            Objects.requireNonNull(plugins, "Plugins array cannot be null");
+            var newPlugins = new ArrayList<DurableExecutionPlugin>(plugins.length);
+            for (var plugin : plugins) {
+                newPlugins.add(Objects.requireNonNull(plugin, "Plugin cannot be null"));
+            }
+            this.plugins = newPlugins;
             return this;
         }
 

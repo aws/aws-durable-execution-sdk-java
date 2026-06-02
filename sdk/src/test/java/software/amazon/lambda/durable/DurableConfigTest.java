@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -460,5 +463,112 @@ class DurableConfigTest {
         var field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    // --- Plugin registration tests ---
+
+    @Test
+    void testDefaultConfig_PluginRunnerIsNoOp() {
+        var config = DurableConfig.defaultConfig();
+
+        assertNotNull(config.getPluginRunner());
+        assertTrue(config.getPluginRunner().isEmpty());
+    }
+
+    @Test
+    void testBuilder_NoPlugins_PluginRunnerIsNoOp() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        assertNotNull(config.getPluginRunner());
+        assertTrue(config.getPluginRunner().isEmpty());
+    }
+
+    @Test
+    void testBuilder_WithPlugin_CreatesActivePluginRunner() {
+        var plugin = new DurableExecutionPlugin() {};
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPlugins(plugin)
+                .build();
+
+        assertNotNull(config.getPluginRunner());
+        assertFalse(config.getPluginRunner().isEmpty());
+    }
+
+    @Test
+    void testBuilder_WithMultiplePlugins_AllRegistered() {
+        var calls = new ArrayList<String>();
+        var plugin1 = new TestPlugin("p1", calls);
+        var plugin2 = new TestPlugin("p2", calls);
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPlugins(plugin1, plugin2)
+                .build();
+
+        config.getPluginRunner()
+                .onInvocationStart(new software.amazon.lambda.durable.plugin.InvocationInfo("req-1", "arn:test", true));
+
+        assertEquals(List.of("p1:onInvocationStart", "p2:onInvocationStart"), calls);
+    }
+
+    @Test
+    void testBuilder_WithPlugins_CalledMultipleTimes_Replaces() {
+        var calls = new ArrayList<String>();
+        var plugin1 = new TestPlugin("p1", calls);
+        var plugin2 = new TestPlugin("p2", calls);
+        var plugin3 = new TestPlugin("p3", calls);
+
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPlugins(plugin1)
+                .withPlugins(plugin2, plugin3)
+                .build();
+
+        config.getPluginRunner()
+                .onInvocationStart(new software.amazon.lambda.durable.plugin.InvocationInfo("req-1", "arn:test", true));
+
+        assertEquals(List.of("p2:onInvocationStart", "p3:onInvocationStart"), calls);
+    }
+
+    @Test
+    void testBuilder_WithPlugins_NullArrayThrows() {
+        var builder = DurableConfig.builder();
+
+        var ex = assertThrows(NullPointerException.class, () -> builder.withPlugins((DurableExecutionPlugin[]) null));
+        assertEquals("Plugins array cannot be null", ex.getMessage());
+    }
+
+    @Test
+    void testBuilder_WithPlugins_NullElementThrows() {
+        var builder = DurableConfig.builder();
+
+        var ex = assertThrows(
+                NullPointerException.class, () -> builder.withPlugins(new DurableExecutionPlugin[] {null}));
+        assertEquals("Plugin cannot be null", ex.getMessage());
+    }
+
+    @Test
+    void testBuilder_WithPlugins_FluentAPI() {
+        var builder = DurableConfig.builder();
+        var plugin = new DurableExecutionPlugin() {};
+
+        assertSame(builder, builder.withPlugins(plugin));
+    }
+
+    /** Simple test plugin that records hook calls. */
+    private static class TestPlugin implements DurableExecutionPlugin {
+        private final String name;
+        private final List<String> calls;
+
+        TestPlugin(String name, List<String> calls) {
+            this.name = name;
+            this.calls = calls;
+        }
+
+        @Override
+        public void onInvocationStart(software.amazon.lambda.durable.plugin.InvocationInfo info) {
+            calls.add(name + ":onInvocationStart");
+        }
     }
 }

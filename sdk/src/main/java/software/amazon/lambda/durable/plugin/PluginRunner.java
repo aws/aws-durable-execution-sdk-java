@@ -40,6 +40,11 @@ public class PluginRunner {
         return plugins.isEmpty();
     }
 
+    /** Returns the list of registered plugins. */
+    public List<DurableExecutionPlugin> getPlugins() {
+        return plugins;
+    }
+
     // ─── Event hooks ─────────────────────────────────────────────────────
 
     /** Calls a void hook on all plugins, swallowing any errors. */

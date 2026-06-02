@@ -833,4 +833,18 @@ class CloudBasedIntegrationTest {
                             + waitForConditionResult.getDuration().toSeconds() + "s, expected < 30s");
         }
     }
+
+    @Test
+    void testPluginExample() {
+        var runner =
+                CloudDurableTestRunner.create(arn("plugin-example"), GreetingRequest.class, String.class, lambdaClient);
+        var result = runner.run(new GreetingRequest("World"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("HELLO, WORLD!", result.getResult());
+
+        // Verify operations were tracked
+        assertNotNull(runner.getOperation("create-greeting"));
+        assertNotNull(runner.getOperation("transform"));
+    }
 }

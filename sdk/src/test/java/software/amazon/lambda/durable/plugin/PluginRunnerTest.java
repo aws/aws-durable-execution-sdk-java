@@ -142,21 +142,20 @@ class PluginRunnerTest {
     }
 
     private static OperationInfo operationInfo() {
-        return new OperationInfo("op-1", "1", "test-step", "STEP", null, null, null, Instant.now(), null);
+        return new OperationInfo("op-1", "test-step", "STEP", null, null, Instant.now(), null);
     }
 
     private static OperationEndInfo operationEndInfo() {
-        return new OperationEndInfo(
-                "op-1", "1", "test-step", "STEP", null, null, null, Instant.now(), Instant.now(), null);
+        return new OperationEndInfo("op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), null);
     }
 
     private static UserFunctionStartInfo attemptInfo() {
-        return new UserFunctionStartInfo("op-1", "1", "test-step", "STEP", null, null, null, Instant.now(), false, 1);
+        return new UserFunctionStartInfo("op-1", "test-step", "STEP", null, null, Instant.now(), false, 1);
     }
 
     private static UserFunctionEndInfo attemptEndInfo() {
         return new UserFunctionEndInfo(
-                "op-1", "1", "test-step", "STEP", null, null, null, Instant.now(), Instant.now(), false, 1, true, null);
+                "op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), false, 1, true, null);
     }
 
     // ─── Test plugin implementations ─────────────────────────────────────

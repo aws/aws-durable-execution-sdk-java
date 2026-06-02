@@ -7,134 +7,57 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
-import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 
 class PluginInfoConverterTest {
 
     private static final String OPERATION_ID = "op-1";
-    private static final String RAW_ID = "1";
     private static final String OPERATION_NAME = "validate-order";
     private static final String PARENT_ID = "parent-ctx";
-    private static final String RAW_PARENT_ID = "0";
     private static final Instant START = Instant.parse("2026-01-01T00:00:00Z");
     private static final Instant END = Instant.parse("2026-01-01T00:00:05Z");
 
-    // ─── toOperationInfo (from Operation) ────────────────────────────────
+    private static final OperationIdentifier STEP_IDENTIFIER =
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.STEP);
+    private static final OperationIdentifier WAIT_IDENTIFIER =
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT);
+    private static final OperationIdentifier WAIT_FOR_CONDITION_IDENTIFIER =
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT_FOR_CONDITION);
+    private static final OperationIdentifier MAP_IDENTIFIER =
+            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.MAP);
+
+    // ─── toOperationInfo ─────────────────────────────────────────────────
 
     @Test
-    void toOperationInfo_fromOperation_mapsAllFields() {
-        var operation = Operation.builder()
-                .id(OPERATION_ID)
-                .name(OPERATION_NAME)
-                .type(OperationType.STEP)
-                .subType("WaitForCondition")
-                .parentId(PARENT_ID)
-                .status(OperationStatus.SUCCEEDED)
-                .startTimestamp(START)
-                .endTimestamp(END)
-                .build();
-
-        var info = PluginInfoConverter.toOperationInfo(operation);
-
-        assertEquals(OPERATION_ID, info.id());
-        assertNull(info.rawId());
-        assertEquals(OPERATION_NAME, info.name());
-        assertEquals("STEP", info.type());
-        assertEquals("WaitForCondition", info.subType());
-        assertEquals(PARENT_ID, info.parentId());
-        assertNull(info.rawParentId());
-        assertEquals(START, info.startTimestamp());
-        assertEquals(END, info.endTimestamp());
-    }
-
-    @Test
-    void toOperationInfo_fromNullOperation_returnsAllNulls() {
-        var info = PluginInfoConverter.toOperationInfo(null);
-
-        assertNull(info.id());
-        assertNull(info.rawId());
-        assertNull(info.name());
-        assertNull(info.type());
-        assertNull(info.subType());
-        assertNull(info.parentId());
-        assertNull(info.rawParentId());
-        assertNull(info.startTimestamp());
-        assertNull(info.endTimestamp());
-    }
-
-    @Test
-    void toOperationInfo_fromOperation_handlesNullFields() {
-        var operation = Operation.builder()
-                .id(OPERATION_ID)
-                .status(OperationStatus.STARTED)
-                .startTimestamp(START)
-                .build();
-
-        var info = PluginInfoConverter.toOperationInfo(operation);
-
-        assertEquals(OPERATION_ID, info.id());
-        assertNull(info.rawId());
-        assertNull(info.name());
-        assertNull(info.type());
-        assertNull(info.subType());
-        assertNull(info.parentId());
-        assertNull(info.rawParentId());
-        assertEquals(START, info.startTimestamp());
-        assertNull(info.endTimestamp());
-    }
-
-    // ─── toOperationInfo (from explicit params) ──────────────────────────
-
-    @Test
-    void toOperationInfo_fromParams_mapsAllFields() {
+    void toOperationInfo_withIdentifier_mapsAllFields() {
         var operation =
                 Operation.builder().startTimestamp(START).endTimestamp(END).build();
 
-        var info = PluginInfoConverter.toOperationInfo(
-                operation,
-                OPERATION_ID,
-                RAW_ID,
-                OPERATION_NAME,
-                OperationType.STEP,
-                OperationSubType.WAIT_FOR_CONDITION,
-                PARENT_ID,
-                RAW_PARENT_ID);
+        var info = PluginInfoConverter.toOperationInfo(operation, WAIT_FOR_CONDITION_IDENTIFIER, PARENT_ID);
 
         assertEquals(OPERATION_ID, info.id());
-        assertEquals(RAW_ID, info.rawId());
         assertEquals(OPERATION_NAME, info.name());
         assertEquals("STEP", info.type());
         assertEquals("WaitForCondition", info.subType());
         assertEquals(PARENT_ID, info.parentId());
-        assertEquals(RAW_PARENT_ID, info.rawParentId());
         assertEquals(START, info.startTimestamp());
         assertEquals(END, info.endTimestamp());
     }
 
     @Test
-    void toOperationInfo_fromParams_nullOperation_noTimestamps() {
-        var info = PluginInfoConverter.toOperationInfo(
-                null, OPERATION_ID, RAW_ID, OPERATION_NAME, OperationType.WAIT, OperationSubType.WAIT, null, null);
+    void toOperationInfo_withIdentifier_nullOperation_usesCurrentTime() {
+        var before = Instant.now();
+        var info = PluginInfoConverter.toOperationInfo(null, WAIT_IDENTIFIER, null);
 
         assertEquals(OPERATION_ID, info.id());
-        assertEquals(RAW_ID, info.rawId());
         assertEquals(OPERATION_NAME, info.name());
         assertEquals("WAIT", info.type());
         assertEquals("Wait", info.subType());
         assertNull(info.parentId());
-        assertNull(info.rawParentId());
-        assertNull(info.startTimestamp());
+        assertNotNull(info.startTimestamp());
+        assertFalse(info.startTimestamp().isBefore(before));
         assertNull(info.endTimestamp());
-    }
-
-    @Test
-    void toOperationInfo_fromParams_nullSubType() {
-        var info = PluginInfoConverter.toOperationInfo(
-                null, OPERATION_ID, RAW_ID, OPERATION_NAME, OperationType.STEP, null, null, null);
-
-        assertNull(info.subType());
     }
 
     // ─── toOperationEndInfo ──────────────────────────────────────────────
@@ -145,24 +68,13 @@ class PluginInfoConverterTest {
                 Operation.builder().startTimestamp(START).endTimestamp(END).build();
         var error = new RuntimeException("step failed");
 
-        var info = PluginInfoConverter.toOperationEndInfo(
-                operation,
-                OPERATION_ID,
-                RAW_ID,
-                OPERATION_NAME,
-                OperationType.STEP,
-                OperationSubType.STEP,
-                PARENT_ID,
-                RAW_PARENT_ID,
-                error);
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, PARENT_ID, error);
 
         assertEquals(OPERATION_ID, info.id());
-        assertEquals(RAW_ID, info.rawId());
         assertEquals(OPERATION_NAME, info.name());
         assertEquals("STEP", info.type());
         assertEquals("Step", info.subType());
         assertEquals(PARENT_ID, info.parentId());
-        assertEquals(RAW_PARENT_ID, info.rawParentId());
         assertEquals(START, info.startTimestamp());
         assertEquals(END, info.endTimestamp());
         assertEquals(error, info.error());
@@ -173,16 +85,7 @@ class PluginInfoConverterTest {
         var operation =
                 Operation.builder().startTimestamp(START).endTimestamp(END).build();
 
-        var info = PluginInfoConverter.toOperationEndInfo(
-                operation,
-                OPERATION_ID,
-                RAW_ID,
-                OPERATION_NAME,
-                OperationType.STEP,
-                OperationSubType.STEP,
-                null,
-                null,
-                null);
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, null);
 
         assertNull(info.error());
     }
@@ -191,45 +94,25 @@ class PluginInfoConverterTest {
 
     @Test
     void toUserFunctionStartInfo_stepAttempt() {
-        var info = PluginInfoConverter.toUserFunctionStartInfo(
-                OPERATION_ID,
-                RAW_ID,
-                OPERATION_NAME,
-                OperationType.STEP,
-                OperationSubType.STEP,
-                PARENT_ID,
-                RAW_PARENT_ID,
-                false,
-                3);
+        var info = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, false, 3);
 
         assertEquals(OPERATION_ID, info.id());
-        assertEquals(RAW_ID, info.rawId());
         assertEquals(OPERATION_NAME, info.name());
         assertEquals("STEP", info.type());
         assertEquals("Step", info.subType());
         assertEquals(PARENT_ID, info.parentId());
-        assertEquals(RAW_PARENT_ID, info.rawParentId());
         assertNotNull(info.startTimestamp());
-        assertFalse(info.isReplay());
+        assertFalse(info.isReplayingChildren());
         assertEquals(3, info.attempt());
     }
 
     @Test
     void toUserFunctionStartInfo_contextOperation() {
-        var info = PluginInfoConverter.toUserFunctionStartInfo(
-                OPERATION_ID,
-                RAW_ID,
-                OPERATION_NAME,
-                OperationType.CONTEXT,
-                OperationSubType.MAP,
-                PARENT_ID,
-                RAW_PARENT_ID,
-                true,
-                null);
+        var info = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, PARENT_ID, true, null);
 
         assertEquals("CONTEXT", info.type());
         assertEquals("Map", info.subType());
-        assertTrue(info.isReplay());
+        assertTrue(info.isReplayingChildren());
         assertNull(info.attempt());
     }
 
@@ -237,25 +120,15 @@ class PluginInfoConverterTest {
 
     @Test
     void toUserFunctionEndInfo_succeeded() {
-        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
-                OPERATION_ID,
-                RAW_ID,
-                OPERATION_NAME,
-                OperationType.STEP,
-                OperationSubType.STEP,
-                PARENT_ID,
-                RAW_PARENT_ID,
-                false,
-                1);
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, false, 1);
 
         var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, true, null);
 
         assertEquals(OPERATION_ID, endInfo.id());
-        assertEquals(RAW_ID, endInfo.rawId());
         assertEquals(OPERATION_NAME, endInfo.name());
         assertEquals(startInfo.startTimestamp(), endInfo.startTimestamp());
         assertNotNull(endInfo.endTimestamp());
-        assertFalse(endInfo.isReplay());
+        assertFalse(endInfo.isReplayingChildren());
         assertEquals(1, endInfo.attempt());
         assertTrue(endInfo.succeeded());
         assertNull(endInfo.error());
@@ -264,8 +137,7 @@ class PluginInfoConverterTest {
     @Test
     void toUserFunctionEndInfo_failed() {
         var error = new RuntimeException("step failed");
-        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
-                OPERATION_ID, RAW_ID, OPERATION_NAME, OperationType.STEP, null, null, null, false, 2);
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, null, false, 2);
 
         var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, error);
 

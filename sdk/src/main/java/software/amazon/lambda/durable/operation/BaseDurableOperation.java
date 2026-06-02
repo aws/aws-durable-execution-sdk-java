@@ -23,6 +23,8 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -132,11 +134,15 @@ public abstract class BaseDurableOperation {
                 if (ExecutionManager.isTerminalStatus(existing.status())) {
                     replayCompletedOperation.set(true);
                 }
+                // Fire onOperationStart plugin hook (including replay)
+                fireOnOperationStart(existing);
                 replay(existing);
             } else {
                 if (durableContext.isReplaying()) {
                     this.durableContext.setExecutionMode();
                 }
+                // Fire onOperationStart plugin hook (first execution, no existing operation)
+                fireOnOperationStart(null);
                 start();
             }
         }
@@ -245,13 +251,41 @@ public abstract class BaseDurableOperation {
     }
 
     protected void runUserHandler(Runnable runnable, ThreadType threadType) {
+        runUserHandler(runnable, threadType, null);
+    }
+
+    /**
+     * Runs user code in a separate thread with plugin hook instrumentation.
+     *
+     * @param runnable the user code to run
+     * @param threadType the thread type (STEP or CONTEXT)
+     * @param attempt the 1-based attempt number for steps/waitForCondition, null for context operations
+     */
+    protected void runUserHandler(Runnable runnable, ThreadType threadType, Integer attempt) {
         String operationId = getOperationId();
         logger.debug("Starting user handler for operation {} ({})", operationId, threadType);
+        var pluginRunner = getPluginRunner();
         Runnable wrapped = () -> {
             executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));
+
+            // Fire onUserFunctionStart on the user code thread
+            var userFunctionStartInfo = PluginInfoConverter.toUserFunctionStartInfo(
+                    operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
+            pluginRunner.onUserFunctionStart(userFunctionStartInfo);
+
             try {
                 runnable.run();
+                // Fire onUserFunctionEnd on success
+                pluginRunner.onUserFunctionEnd(
+                        PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, true, null));
             } catch (Throwable throwable) {
+                // Fire onUserFunctionEnd for actual user function failures,
+                // not for SDK control flow signals (SuspendExecutionException)
+                if (!(throwable instanceof SuspendExecutionException)) {
+                    pluginRunner.onUserFunctionEnd(
+                            PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, false, throwable));
+                }
+
                 // Operations always wrap the user's function and handles all possible exceptions except for
                 // SuspendExecutionException.
                 if (!executionManager.isExecutionCompletedExceptionally()
@@ -309,6 +343,11 @@ public abstract class BaseDurableOperation {
             // This method handles only terminal status updates. Override this method if a DurableOperation needs to
             // handle other updates.
             logger.trace("In onCheckpointComplete, completing operation {} ({})", getOperationId(), completionFuture);
+
+            // Fire onOperationEnd plugin hook — operation reached terminal status for the first time (not replay)
+            if (!replayCompletedOperation.get()) {
+                fireOnOperationEnd(operation, null);
+            }
 
             markCompletionFutureCompleted();
         }
@@ -453,5 +492,26 @@ public abstract class BaseDurableOperation {
 
     public CompletableFuture<Void> getRunningUserHandler() {
         return runningUserHandler.get();
+    }
+
+    // ─── Plugin hook helpers ─────────────────────────────────────────────
+
+    /** Returns the plugin runner from config, or no-op if config is unavailable. */
+    private PluginRunner getPluginRunner() {
+        var config = getContext().getDurableConfig();
+        return config != null ? config.getPluginRunner() : PluginRunner.noOp();
+    }
+
+    /** Fires onOperationStart plugin hook. */
+    private void fireOnOperationStart(Operation existing) {
+        var info = PluginInfoConverter.toOperationInfo(existing, operationIdentifier, durableContext.getParentId());
+        getPluginRunner().onOperationStart(info);
+    }
+
+    /** Fires onOperationEnd plugin hook when an operation reaches terminal status for the first time. */
+    private void fireOnOperationEnd(Operation operation, Throwable error) {
+        var info = PluginInfoConverter.toOperationEndInfo(
+                operation, operationIdentifier, durableContext.getParentId(), error);
+        getPluginRunner().onOperationEnd(info);
     }
 }

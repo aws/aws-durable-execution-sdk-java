@@ -333,6 +333,17 @@ Resources:
       Handler: "software.amazon.lambda.durable.examples.general.CustomPollingExample"
       Role: !Ref RoleArn
 
+  PluginExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'plugin-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.general.PluginExample"
+      Role: !Ref RoleArn
+
   RetryInvokeExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -530,6 +541,10 @@ Outputs:
   CustomPollingExampleFunction:
     Description: Custom Polling Example Function ARN
     Value: !GetAtt CustomPollingExampleFunction.Arn
+
+  PluginExampleFunction:
+    Description: Plugin Example Function ARN
+    Value: !GetAtt PluginExampleFunction.Arn
 
   RetryInvokeExampleFunction:
     Description: Retry Invoke Example Function ARN

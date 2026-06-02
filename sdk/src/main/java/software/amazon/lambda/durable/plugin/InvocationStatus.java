@@ -11,8 +11,10 @@ package software.amazon.lambda.durable.plugin;
 public enum InvocationStatus {
     /** Execution completed successfully in this invocation. */
     SUCCEEDED,
-    /** Execution failed in this invocation. */
+    /** Execution failed permanently in this invocation. */
     FAILED,
     /** Execution suspended — will resume in a future invocation. */
-    PENDING
+    PENDING,
+    /** Execution failed but will be retried by the backend in a new invocation. */
+    RETRYING
 }
