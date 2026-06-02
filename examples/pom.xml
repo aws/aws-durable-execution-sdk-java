@@ -31,6 +31,25 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- OTel Plugin -->
+        <dependency>
+            <groupId>software.amazon.lambda.durable</groupId>
+            <artifactId>aws-durable-execution-sdk-java-otel</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- OpenTelemetry SDK (required for OTel example) -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk</artifactId>
+            <version>1.62.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-logging</artifactId>
+            <version>1.62.0</version>
+        </dependency>
+
         <!-- AWS Lambda Java Core -->
         <dependency>
             <groupId>com.amazonaws</groupId>

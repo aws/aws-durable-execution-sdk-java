@@ -847,4 +847,17 @@ class CloudBasedIntegrationTest {
         assertNotNull(runner.getOperation("create-greeting"));
         assertNotNull(runner.getOperation("transform"));
     }
+
+    @Test
+    void testOtelExample() {
+        var runner =
+                CloudDurableTestRunner.create(arn("otel-example"), GreetingRequest.class, String.class, lambdaClient);
+        var result = runner.run(new GreetingRequest("World"));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("HELLO, WORLD!", result.getResult());
+
+        assertNotNull(runner.getOperation("create-greeting"));
+        assertNotNull(runner.getOperation("transform"));
+    }
 }

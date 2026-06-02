@@ -344,6 +344,17 @@ Resources:
       Handler: "software.amazon.lambda.durable.examples.general.PluginExample"
       Role: !Ref RoleArn
 
+  OtelExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'otel-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.general.OtelExample"
+      Role: !Ref RoleArn
+
   RetryInvokeExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -545,6 +556,10 @@ Outputs:
   PluginExampleFunction:
     Description: Plugin Example Function ARN
     Value: !GetAtt PluginExampleFunction.Arn
+
+  OtelExampleFunction:
+    Description: OTel Example Function ARN
+    Value: !GetAtt OtelExampleFunction.Arn
 
   RetryInvokeExampleFunction:
     Description: Retry Invoke Example Function ARN
