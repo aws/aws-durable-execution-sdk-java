@@ -4,7 +4,12 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 class DurableHandlerTest {
@@ -45,6 +50,19 @@ class DurableHandlerTest {
                     "Cannot determine type from base class: class software.amazon.lambda.durable.DurableHandlerTest$1InvalidHandler",
                     e.getMessage());
         }
+    }
+
+    @Test
+    void testNonDurableFunctionThrowsUserFriendlyError() throws Exception {
+        var handler = new TestDurableHandler();
+        // Durable function inputs must contain DurableExecutionArn and CheckpointToken
+        var nonDurableInput = "{\"input\": \"non-durable\"}";
+        var inputStream = new ByteArrayInputStream(nonDurableInput.getBytes(StandardCharsets.UTF_8));
+        var outputStream = new ByteArrayOutputStream();
+
+        var exception =
+                assertThrows(IllegalStateException.class, () -> handler.handleRequest(inputStream, outputStream, null));
+        assertTrue(exception.getMessage().contains("Unexpected payload provided to start the durable execution"));
     }
 
     // Test handler implementation
