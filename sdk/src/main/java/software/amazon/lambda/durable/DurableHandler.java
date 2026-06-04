@@ -130,6 +130,11 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
         var inputString = new String(inputStream.readAllBytes());
         logger.debug("Raw input from durable handler: {}", inputString);
         var input = serDes.deserialize(inputString, TypeToken.get(DurableExecutionInput.class));
+        // Durable function inputs must contain DurableExecutionArn and CheckpointToken
+        if (input.durableExecutionArn() == null || input.checkpointToken() == null) {
+            throw new IllegalStateException(
+                    "Unexpected payload provided to start the durable execution. DurableConfig must be set in Lambda function configuration.");
+        }
         var output = DurableExecutor.execute(input, context, inputType, this::handleRequest, config);
         outputStream.write(serDes.serialize(output).getBytes());
     }
