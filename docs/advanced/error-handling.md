@@ -18,7 +18,7 @@ RuntimeException
     └── DurableOperationException          - General operation exception
         ├── StepException                  - General Step exception
         │   ├── StepFailedException        - Step exhausted all retry attempts. Catch to implement fallback logic or let execution fail.
-        │   └── StepInterruptedException   - `AT_MOST_ONCE` step was interrupted before completion. Implement manual recovery (check if operation completed externally)
+        │   └── StepInterruptedException   - `AT_MOST_ONCE` step was interrupted before completion and retries exhausted. Implement manual recovery (check if operation completed externally)
         ├── InvokeException                - General chained invocation exception
         │   ├── InvokeFailedException      - Chained invocation failed. Handle the error or propagate failure.
         │   ├── InvokeTimedOutException    - Chained invocation timed out. Handle the error or propagate failure.
@@ -38,7 +38,7 @@ try {
     var result = ctx.step("charge-payment", Payment.class,
         stepCtx -> paymentService.charge(amount),
         StepConfig.builder()
-            .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
             .build());
 } catch (StepInterruptedException e) {
     // Step started but we don't know if it completed

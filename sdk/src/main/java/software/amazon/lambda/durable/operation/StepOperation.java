@@ -66,7 +66,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         switch (existing.status()) {
             case SUCCEEDED, FAILED -> markAlreadyCompleted();
             case STARTED -> {
-                if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+                if (isAtMostOnce()) {
                     // AT_MOST_ONCE: treat as interrupted, go through retry logic
                     handleStepFailure(new StepInterruptedException(existing), attempt);
                 } else {
@@ -128,7 +128,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         if (existing == null || existing.status() != OperationStatus.STARTED) {
             var startUpdate = OperationUpdate.builder().action(OperationAction.START);
 
-            if (config.semantics() == StepSemantics.AT_MOST_ONCE_PER_RETRY) {
+            if (isAtMostOnce()) {
                 // AT_MOST_ONCE: await START checkpoint before executing user code
                 sendOperationUpdate(startUpdate);
             } else {
@@ -165,7 +165,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             errorObject = serializeException(exception);
         }
 
-        var isRetryable = !(exception instanceof StepInterruptedException);
+        var isRetryable = !(exception instanceof StepInterruptedException)
+                || config.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
         var retryDecision = config.retryStrategy().makeRetryDecision(exception, attempt);
 
         if (isRetryable && retryDecision.shouldRetry()) {
@@ -216,5 +217,11 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             // Fallback: wrap in StepFailedException
             throw new StepFailedException(op);
         }
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean isAtMostOnce() {
+        var semantics = config.semanticsPerRetry() != null ? config.semanticsPerRetry() : config.semantics();
+        return semantics == StepSemantics.AT_MOST_ONCE_PER_RETRY;
     }
 }

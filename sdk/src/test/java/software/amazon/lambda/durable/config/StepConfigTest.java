@@ -45,6 +45,22 @@ class StepConfigTest {
     }
 
     @Test
+    void testBuilderChainingWithSemanticsPerRetry() {
+        var strategy = RetryStrategies.Presets.DEFAULT;
+        var customSerDes = new JacksonSerDes();
+
+        var config = StepConfig.builder()
+                .retryStrategy(strategy)
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .serDes(customSerDes)
+                .build();
+
+        assertEquals(strategy, config.retryStrategy());
+        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.semanticsPerRetry());
+        assertEquals(customSerDes, config.serDes());
+    }
+
+    @Test
     void testBuilderWithNullRetryStrategy() {
         var config = StepConfig.builder().retryStrategy(null).build();
 
@@ -56,6 +72,22 @@ class StepConfigTest {
         var config = StepConfig.builder().build();
 
         assertEquals(StepSemantics.AT_LEAST_ONCE_PER_RETRY, config.semantics());
+    }
+
+    @Test
+    void testSemanticsPerRetryDefaultsToNull() {
+        var config = StepConfig.builder().build();
+
+        assertNull(config.semanticsPerRetry());
+    }
+
+    @Test
+    void testBuilderWithSemanticsPerRetry() {
+        var config = StepConfig.builder()
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .build();
+
+        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.semanticsPerRetry());
     }
 
     @Test
