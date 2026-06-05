@@ -199,7 +199,7 @@ context.step("name", Type.class, stepCtx -> doWork(),
     StepConfig.builder()
         .serDes(stepSpecificSerDes)
         .retryStrategy(RetryStrategies.exponentialBackoff(3, Duration.ofSeconds(1)))
-        .semantics(AT_MOST_ONCE_PER_RETRY)
+        .semanticsPerRetry(AT_MOST_ONCE_PER_RETRY)
         .build());
 ```
 

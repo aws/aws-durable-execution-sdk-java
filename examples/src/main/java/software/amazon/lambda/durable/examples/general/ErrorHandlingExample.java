@@ -73,7 +73,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
 
         // Example 2: Handling StepInterruptedException for AT_MOST_ONCE operations
         // StepInterruptedException is thrown when an AT_MOST_ONCE step was started
-        // but the function was interrupted before the step completed.
+        // but the function was interrupted before the step completed on every attempt.
         // In normal execution, this step succeeds. The catch block handles the
         // interruption scenario that occurs during replay after an unexpected termination.
         String paymentResult;
@@ -83,7 +83,8 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
                     String.class,
                     stepCtx -> "payment-" + input,
                     StepConfig.builder()
-                            .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
         } catch (StepInterruptedException e) {
             logger.warn(

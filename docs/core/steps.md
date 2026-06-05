@@ -11,7 +11,7 @@ var result = ctx.step("call-api", Response.class,
 	stepCtx -> externalApi.call(request),
 	StepConfig.builder()
 		.retryStrategy(...)
-		.semantics(...)
+		.semanticsPerRetry(...)
 		.build());
 ```
 
@@ -42,7 +42,7 @@ Configure step behavior with `StepConfig`:
 ctx.step("my-step", Result.class, stepCtx -> doWork(),
 	StepConfig.builder()
 		.retryStrategy(...)    // How to handle failures
-		.semantics(...)        // At-least-once vs at-most-once
+		.semanticsPerRetry(...)        // At-least-once vs at-most-once
 		.serDes(...)           // Custom serialization
 		.build());
 ```
@@ -73,7 +73,7 @@ Control how steps behave when interrupted mid-execution:
 | Semantic | Behavior | Use Case |
 |----------|----------|----------|
 | `AT_LEAST_ONCE_PER_RETRY` (default) | Re-executes step if interrupted before completion | Idempotent operations (database upserts, API calls with idempotency keys) |
-| `AT_MOST_ONCE_PER_RETRY` | Never re-executes; throws `StepInterruptedException` if interrupted | Non-idempotent operations (sending emails, charging payments) |
+| `AT_MOST_ONCE_PER_RETRY` | Re-executes step once per retry if interrupted. Throws `StepInterruptedException` if retries exhausted | Non-idempotent operations (sending emails, charging payments) |
 
 ```java
 // Default: at-least-once per retry (step may re-run if interrupted)
@@ -84,14 +84,14 @@ var result = ctx.step("idempotent-update", Result.class,
 var result = ctx.step("send-email", Result.class,
 	stepCtx -> emailService.send(notification),
 	StepConfig.builder()
-		.semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+		.semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
 		.build());
 ```
 
 **Important**: These semantics apply *per retry attempt*, not per overall execution:
 
 - **AT_LEAST_ONCE_PER_RETRY**: The step executes at least once per retry. If the step succeeds but checkpointing fails (e.g., sandbox crash), the step re-executes on replay.
-- **AT_MOST_ONCE_PER_RETRY**: A checkpoint is created before execution. If failure occurs after checkpoint but before completion, the step is skipped on replay and `StepInterruptedException` is thrown.
+- **AT_MOST_ONCE_PER_RETRY**: A checkpoint is created before execution. If failure occurs after checkpoint but before completion, the step is re-executed on a new retry attempt. `StepInterruptedException` is thrown if retries are exhausted.
 
 To achieve step-level at-most-once semantics, combine with a no-retry strategy:
 
@@ -100,7 +100,7 @@ To achieve step-level at-most-once semantics, combine with a no-retry strategy:
 var result = ctx.step("charge-payment", Result.class,
 	stepCtx -> paymentService.charge(amount),
 	StepConfig.builder()
-		.semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+		.semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
 		.retryStrategy(RetryStrategies.Presets.NO_RETRY)
 		.build());
 ```
