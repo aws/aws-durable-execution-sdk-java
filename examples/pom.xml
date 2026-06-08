@@ -47,7 +47,7 @@
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-exporter-logging</artifactId>
-            <version>1.62.0</version>
+            <version>1.63.0</version>
         </dependency>
 
         <!-- AWS Lambda Java Core -->
