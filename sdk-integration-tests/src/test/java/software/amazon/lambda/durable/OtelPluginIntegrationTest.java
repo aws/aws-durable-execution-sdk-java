@@ -15,7 +15,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.otel.DeterministicIdGenerator;
 import software.amazon.lambda.durable.otel.OpenTelemetryDurablePlugin;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
@@ -27,21 +26,16 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 class OtelPluginIntegrationTest {
 
     private InMemorySpanExporter spanExporter;
-    private DeterministicIdGenerator idGenerator;
     private DurableConfig otelConfig;
 
     @BeforeEach
     void setUp() {
         spanExporter = InMemorySpanExporter.create();
-        idGenerator = new DeterministicIdGenerator();
-
-        var tracerProvider = SdkTracerProvider.builder()
-                .setIdGenerator(idGenerator)
-                .addSpanProcessor(SimpleSpanProcessor.create(spanExporter))
-                .build();
 
         var plugin = new OpenTelemetryDurablePlugin(
-                tracerProvider, idGenerator, () -> io.opentelemetry.context.Context.root(), 1.0, false);
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> io.opentelemetry.context.Context.root(),
+                false);
 
         otelConfig = DurableConfig.builder().withPlugins(plugin).build();
     }
@@ -218,16 +212,15 @@ class OtelPluginIntegrationTest {
     }
 
     @Test
-    void sampling_zeroRate_producesNoSpans() {
+    void sampling_off_producesNoSpans() {
         var sampledExporter = InMemorySpanExporter.create();
-        var sampledIdGen = new DeterministicIdGenerator();
-        var sampledProvider = SdkTracerProvider.builder()
-                .setIdGenerator(sampledIdGen)
-                .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter))
-                .build();
 
         var noSamplePlugin = new OpenTelemetryDurablePlugin(
-                sampledProvider, sampledIdGen, () -> io.opentelemetry.context.Context.root(), 0.0, false);
+                SdkTracerProvider.builder()
+                        .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
+                        .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter)),
+                () -> io.opentelemetry.context.Context.root(),
+                false);
 
         var noSampleConfig = DurableConfig.builder().withPlugins(noSamplePlugin).build();
 

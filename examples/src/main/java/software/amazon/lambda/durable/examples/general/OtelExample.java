@@ -9,7 +9,6 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.otel.DeterministicIdGenerator;
 import software.amazon.lambda.durable.otel.OpenTelemetryDurablePlugin;
 
 /**
@@ -40,12 +39,8 @@ public class OtelExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        var idGenerator = new DeterministicIdGenerator();
-        var tracerProvider = SdkTracerProvider.builder()
-                .setIdGenerator(idGenerator)
-                .addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create()))
-                .build();
-        var otelPlugin = new OpenTelemetryDurablePlugin(tracerProvider, idGenerator);
+        var otelPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
 
         return DurableConfig.builder().withPlugins(otelPlugin).build();
     }

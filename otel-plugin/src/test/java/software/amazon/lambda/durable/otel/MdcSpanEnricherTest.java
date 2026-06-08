@@ -54,14 +54,11 @@ class MdcSpanEnricherTest {
     void plugin_withMdcEnabled_setsArnInMdc() {
         // Test MDC through the full plugin lifecycle (where makeCurrent is called on same thread)
         var spanExporter = InMemorySpanExporter.create();
-        var idGenerator = new DeterministicIdGenerator();
-        var tracerProvider = SdkTracerProvider.builder()
-                .setIdGenerator(idGenerator)
-                .addSpanProcessor(SimpleSpanProcessor.create(spanExporter))
-                .build();
 
         var plugin = new OpenTelemetryDurablePlugin(
-                tracerProvider, idGenerator, () -> io.opentelemetry.context.Context.root(), 1.0, true);
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> io.opentelemetry.context.Context.root(),
+                true);
 
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-mdc-test", true));
 

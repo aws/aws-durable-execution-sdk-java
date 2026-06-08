@@ -17,20 +17,15 @@ class OpenTelemetryDurablePluginTest {
 
     private InMemorySpanExporter spanExporter;
     private OpenTelemetryDurablePlugin plugin;
-    private DeterministicIdGenerator idGenerator;
 
     @BeforeEach
     void setUp() {
         spanExporter = InMemorySpanExporter.create();
-        idGenerator = new DeterministicIdGenerator();
-
-        var tracerProvider = SdkTracerProvider.builder()
-                .setIdGenerator(idGenerator)
-                .addSpanProcessor(SimpleSpanProcessor.create(spanExporter))
-                .build();
 
         plugin = new OpenTelemetryDurablePlugin(
-                tracerProvider, idGenerator, () -> io.opentelemetry.context.Context.root(), 1.0, false);
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> io.opentelemetry.context.Context.root(),
+                false);
     }
 
     @Test
@@ -215,16 +210,13 @@ class OpenTelemetryDurablePluginTest {
     }
 
     @Test
-    void sampling_disabledExecution_producesNoSpans() {
+    void sampling_disabled_producesNoSpans() {
         spanExporter = InMemorySpanExporter.create();
         var sampledPlugin = new OpenTelemetryDurablePlugin(
                 SdkTracerProvider.builder()
-                        .setIdGenerator(idGenerator)
-                        .addSpanProcessor(SimpleSpanProcessor.create(spanExporter))
-                        .build(),
-                idGenerator,
+                        .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
+                        .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> io.opentelemetry.context.Context.root(),
-                0.0, // 0% sampling — nothing should be traced
                 false);
 
         sampledPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
