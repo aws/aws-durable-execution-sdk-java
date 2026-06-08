@@ -52,7 +52,7 @@
         <dependency>
             <groupId>io.opentelemetry.contrib</groupId>
             <artifactId>opentelemetry-aws-xray-propagator</artifactId>
-            <version>1.56.0-alpha</version>
+            <version>1.57.0-alpha</version>
         </dependency>
 
         <!-- SLF4J for logging -->
