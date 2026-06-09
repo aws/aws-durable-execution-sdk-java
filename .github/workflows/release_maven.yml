@@ -21,6 +21,8 @@ on:
 permissions:
   contents: write
   id-token: write
+  issues: read
+  pull-requests: read
 
 env:
   AWS_REGION: us-west-2
@@ -34,6 +36,232 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Determine previous release tag
+        id: previous_release
+        shell: bash
+        run: |
+          previous_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1)"
+          if [ -z "$previous_tag" ]; then
+            echo "No previous release tag found. Skipping BREAKING change validation."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Found previous release tag: $previous_tag"
+          echo "tag=$previous_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Collect release commit SHAs
+        id: release_commits
+        if: steps.previous_release.outputs.tag != ''
+        shell: bash
+        run: |
+          {
+            echo "shas<<EOF"
+            git rev-list "${{ steps.previous_release.outputs.tag }}..HEAD"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Collect release pull request numbers from git history
+        id: release_pull_requests
+        if: steps.previous_release.outputs.tag != ''
+        shell: bash
+        run: |
+          {
+            echo "numbers<<EOF"
+            git log --format='%s' "${{ steps.previous_release.outputs.tag }}..HEAD" |
+              sed -nE 's/^.*\(#([0-9]+)\)$/\1/p; s/^Merge pull request #([0-9]+).*$/\1/p' |
+              sort -u
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate BREAKING changes require major version bump
+        if: steps.previous_release.outputs.tag != ''
+        uses: actions/github-script@v8
+        env:
+          PREVIOUS_TAG: ${{ steps.previous_release.outputs.tag }}
+          RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+          RELEASE_COMMITS: ${{ steps.release_commits.outputs.shas }}
+          RELEASE_PULL_REQUESTS: ${{ steps.release_pull_requests.outputs.numbers }}
+        with:
+          script: |
+            const previousTag = process.env.PREVIOUS_TAG;
+            const releaseVersion = process.env.RELEASE_VERSION;
+            const commitShas = process.env.RELEASE_COMMITS
+              .split('\n')
+              .map((sha) => sha.trim())
+              .filter(Boolean);
+            const releasePullRequestNumbers = process.env.RELEASE_PULL_REQUESTS
+              .split('\n')
+              .map((number) => number.trim())
+              .filter(Boolean)
+              .map((number) => Number.parseInt(number, 10))
+              .filter((number) => Number.isInteger(number));
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const breakingLabel = 'BREAKING';
+
+            const parseMajor = (version) => {
+              const match = version.match(/^v?(\d+)\.\d+\.\d+(?:[-+].*)?$/);
+              if (!match) {
+                throw new Error(`Unable to parse semantic version from "${version}"`);
+              }
+              return Number.parseInt(match[1], 10);
+            };
+
+            const previousMajor = parseMajor(previousTag);
+            const releaseMajor = parseMajor(releaseVersion);
+
+            if (commitShas.length === 0) {
+              core.info(`No commits found between ${previousTag} and HEAD. Skipping BREAKING change validation.`);
+              return;
+            }
+
+            const prsByNumber = new Map();
+            for (const commitSha of commitShas) {
+              const { data: pullRequests } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: commitSha,
+              });
+
+              for (const pullRequest of pullRequests) {
+                if (pullRequest.merged_at) {
+                  prsByNumber.set(pullRequest.number, pullRequest);
+                }
+              }
+            }
+
+            for (const pullRequestNumber of releasePullRequestNumbers) {
+              if (prsByNumber.has(pullRequestNumber)) {
+                continue;
+              }
+
+              const { data: pullRequest } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: pullRequestNumber,
+              });
+
+              if (pullRequest.merged_at) {
+                prsByNumber.set(pullRequest.number, pullRequest);
+              }
+            }
+
+            const hasBreakingLabel = (labels) =>
+              labels.some((label) => label.name?.toUpperCase() === breakingLabel);
+
+            const getTimelineLinkedPullRequestNumbers = (event) => {
+              const currentRepoApiUrl = `https://api.github.com/repos/${owner}/${repo}`.toLowerCase();
+              const candidatePullRequests = [
+                event.source?.issue,
+                event.subject,
+              ].filter(
+                (item) =>
+                  item &&
+                  Number.isInteger(item.number) &&
+                  item.pull_request &&
+                  item.repository_url?.toLowerCase() === currentRepoApiUrl
+              );
+
+              return [...new Set(candidatePullRequests.map((item) => item.number))];
+            };
+
+            core.info(
+              `Evaluating ${prsByNumber.size} pull requests since ${previousTag}: ${[...prsByNumber.keys()]
+                .map((number) => `#${number}`)
+                .join(', ')}`
+            );
+
+            const releasePullRequestNumbersSet = new Set(prsByNumber.keys());
+            const breakingIssuesByPullRequest = new Map();
+            const breakingIssues = (
+              await github.paginate(github.rest.issues.listForRepo, {
+                owner,
+                repo,
+                labels: breakingLabel,
+                state: 'all',
+                per_page: 100,
+              })
+            ).filter((issue) => !issue.pull_request);
+
+            core.info(
+              `Evaluating ${breakingIssues.length} BREAKING-labeled issues in ${owner}/${repo}: ${breakingIssues
+                .map((issue) => `#${issue.number}`)
+                .join(', ')}`
+            );
+
+            for (const issue of breakingIssues) {
+              const timelineEvents = await github.paginate(github.rest.issues.listEventsForTimeline, {
+                owner,
+                repo,
+                issue_number: issue.number,
+                per_page: 100,
+              });
+
+              const linkedReleasePullRequestNumbers = new Set();
+
+              for (const event of timelineEvents) {
+                if (!['connected', 'cross-referenced'].includes(event.event)) {
+                  continue;
+                }
+
+                for (const pullRequestNumber of getTimelineLinkedPullRequestNumbers(event)) {
+                  if (releasePullRequestNumbersSet.has(pullRequestNumber)) {
+                    linkedReleasePullRequestNumbers.add(pullRequestNumber);
+                  }
+                }
+              }
+
+              for (const pullRequestNumber of linkedReleasePullRequestNumbers) {
+                const linkedIssues = breakingIssuesByPullRequest.get(pullRequestNumber) ?? [];
+                linkedIssues.push({ number: issue.number });
+                breakingIssuesByPullRequest.set(pullRequestNumber, linkedIssues);
+              }
+            }
+
+            const breakingPullRequests = [];
+
+            for (const pullRequest of prsByNumber.values()) {
+              const prHasBreakingLabel = hasBreakingLabel(pullRequest.labels);
+              const breakingIssues = breakingIssuesByPullRequest.get(pullRequest.number) ?? [];
+
+              if (prHasBreakingLabel || breakingIssues.length > 0) {
+                breakingPullRequests.push({
+                  number: pullRequest.number,
+                  breakingIssues,
+                });
+              }
+            }
+
+            if (breakingPullRequests.length === 0) {
+              core.info(`No BREAKING-labeled pull requests or linked issues found since ${previousTag}.`);
+              return;
+            }
+
+            const formatBreakingReferences = (pullRequest) => {
+              const issueSuffix =
+                pullRequest.breakingIssues.length === 0
+                  ? ''
+                  : ` (linked issues: ${pullRequest.breakingIssues.map((issue) => `#${issue.number}`).join(', ')})`;
+
+              return `#${pullRequest.number}${issueSuffix}`;
+            };
+
+            if (releaseMajor > previousMajor) {
+              core.info(
+                `Found BREAKING-labeled pull requests or linked issues (${breakingPullRequests
+                  .map(formatBreakingReferences)
+                  .join(', ')}), and release version ${releaseVersion} bumps the major version from ${previousMajor} to ${releaseMajor}.`
+              );
+              return;
+            }
+
+            core.setFailed(
+              `Release ${releaseVersion} includes BREAKING-labeled pull requests or linked issues (${breakingPullRequests
+                .map(formatBreakingReferences)
+                .join(', ')}) since ${previousTag}, but the major version was not bumped from ${previousMajor}.`
+            );
   
       - name: Setup Java
         uses: actions/setup-java@v5
