@@ -41,6 +41,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         java:
           - 17
@@ -84,4 +85,3 @@ jobs:
           target-folder: javadoc
           java-version: 17
           project: maven
-
