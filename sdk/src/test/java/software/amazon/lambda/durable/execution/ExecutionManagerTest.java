@@ -139,4 +139,59 @@ class ExecutionManagerTest {
         assertNotNull(executionManager.getExecutionOperation());
         assertEquals(EXECUTION_OP_ID, executionManager.getExecutionOperation().id());
     }
+
+    // ─── UpdatedOperationIds tests ───────────────────────────────────────
+
+    @Test
+    void isOperationUpdatedSinceLastInvocation_returnsFalse_whenEmptyList() {
+        // Default 3-arg constructor uses empty list
+        var manager = createManager(List.of(executionOp(), stepOp("1", OperationStatus.SUCCEEDED)));
+
+        assertFalse(manager.isOperationUpdatedSinceLastInvocation("1"));
+    }
+
+    @Test
+    void isOperationUpdatedSinceLastInvocation_returnsTrue_whenOperationIsInList() {
+        client = TestUtils.createMockClient();
+        var initialState = CheckpointUpdatedExecutionState.builder()
+                .operations(List.of(executionOp(), stepOp("1", OperationStatus.SUCCEEDED)))
+                .build();
+        var input = new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState, List.of("1"));
+        var manager = new ExecutionManager(
+                input,
+                DurableConfig.builder().withDurableExecutionClient(client).build());
+
+        assertTrue(manager.isOperationUpdatedSinceLastInvocation("1"));
+    }
+
+    @Test
+    void isOperationUpdatedSinceLastInvocation_returnsFalse_whenOperationNotInList() {
+        client = TestUtils.createMockClient();
+        var initialState = CheckpointUpdatedExecutionState.builder()
+                .operations(List.of(executionOp(), stepOp("1", OperationStatus.SUCCEEDED)))
+                .build();
+        var input = new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState, List.of("2"));
+        var manager = new ExecutionManager(
+                input,
+                DurableConfig.builder().withDurableExecutionClient(client).build());
+
+        assertFalse(manager.isOperationUpdatedSinceLastInvocation("1"));
+    }
+
+    @Test
+    void isOperationUpdatedSinceLastInvocation_handlesMultipleIds() {
+        client = TestUtils.createMockClient();
+        var initialState = CheckpointUpdatedExecutionState.builder()
+                .operations(List.of(executionOp(), stepOp("1", OperationStatus.SUCCEEDED)))
+                .build();
+        var input = new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState, List.of("1", "2", "3"));
+        var manager = new ExecutionManager(
+                input,
+                DurableConfig.builder().withDurableExecutionClient(client).build());
+
+        assertTrue(manager.isOperationUpdatedSinceLastInvocation("1"));
+        assertTrue(manager.isOperationUpdatedSinceLastInvocation("2"));
+        assertTrue(manager.isOperationUpdatedSinceLastInvocation("3"));
+        assertFalse(manager.isOperationUpdatedSinceLastInvocation("4"));
+    }
 }

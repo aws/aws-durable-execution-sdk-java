@@ -136,6 +136,14 @@ public abstract class BaseDurableOperation {
                 }
                 // Fire onOperationStart plugin hook (including replay)
                 fireOnOperationStart(existing);
+
+                // Fire onOperationEnd for operations that completed during suspension (between invocations).
+                // This enables the OTel plugin to emit spans for operations that transitioned while Lambda was frozen.
+                if (replayCompletedOperation.get()
+                        && executionManager.isOperationUpdatedSinceLastInvocation(getOperationId())) {
+                    fireOnOperationEnd(existing, null);
+                }
+
                 replay(existing);
             } else {
                 if (durableContext.isReplaying()) {

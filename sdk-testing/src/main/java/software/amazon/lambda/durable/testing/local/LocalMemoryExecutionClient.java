@@ -4,9 +4,11 @@ package software.amazon.lambda.durable.testing.local;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,11 +37,12 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final EventProcessor eventProcessor = new EventProcessor();
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
     private final Map<String, Operation> updatedOperations = new HashMap<>();
+    private final Set<String> operationIdsUpdatedSinceLastInvocation = new HashSet<>();
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
         operationUpdates.addAll(updates);
-        updates.forEach(this::applyUpdate);
+        updates.forEach(update -> applyUpdate(update, true));
 
         var newToken = UUID.randomUUID().toString();
 
@@ -116,6 +119,16 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         return existingOperations.values().stream().toList();
     }
 
+    /**
+     * Returns the list of operation IDs that have been updated since the last invocation, then clears the tracking set.
+     * This simulates the backend's {@code UpdatedOperationIds} field behavior.
+     */
+    public List<String> getUpdatedOperationIdsSinceLastInvocation() {
+        var ids = List.copyOf(operationIdsUpdatedSinceLastInvocation);
+        operationIdsUpdatedSinceLastInvocation.clear();
+        return ids;
+    }
+
     /** Build TestResult from current state. */
     public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
         var testOperations = existingOperations.values().stream()
@@ -139,7 +152,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             throw new IllegalStateException("Operation not found: " + stepName);
         }
         var startedOp = op.toBuilder().status(OperationStatus.STARTED).build();
-        updateOperation(null, startedOp);
+        updateOperation(null, startedOp, false);
     }
 
     /** Simulate fire-and-forget checkpoint loss by removing the operation entirely */
@@ -154,10 +167,10 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         }
     }
 
-    private void applyUpdate(OperationUpdate update) {
+    private void applyUpdate(OperationUpdate update, boolean withinCheckpoint) {
         var existingOp = existingOperations.get(update.id());
         var updatedOp = OperationProcessor.applyUpdate(update, existingOp);
-        updateOperation(update, updatedOp);
+        updateOperation(update, updatedOp, withinCheckpoint);
     }
 
     /** Get callback ID for a named callback operation. */
@@ -196,12 +209,12 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                     .payload(result.result())
                     .error(result.error())
                     .build();
-            applyUpdate(update);
+            applyUpdate(update, false);
         } else if (result.operationStatus() == OperationStatus.TIMED_OUT
                 || result.operationStatus() == OperationStatus.STOPPED
                 || result.operationStatus() == OperationStatus.READY) {
             var newOp = OperationProcessor.applyResult(op, result);
-            updateOperation(null, newOp);
+            updateOperation(null, newOp, false);
         } else {
             throw new IllegalStateException("Unsupported OperationStatus in result: " + result.operationStatus());
         }
@@ -227,7 +240,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 .orElse(null);
     }
 
-    private void updateOperation(OperationUpdate update, Operation op) {
+    private void updateOperation(OperationUpdate update, Operation op, boolean withinCheckpoint) {
         // update can be null when an operation is updated without an OperationUpdate
         if (update == null) {
             eventProcessor.processUpdate(op);
@@ -237,6 +250,12 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         existingOperations.put(op.id(), op);
         synchronized (updatedOperations) {
             updatedOperations.put(op.id(), op);
+        }
+        // Only track operations updated outside of a checkpoint call (i.e., between invocations)
+        // for the updatedOperationIds field. Operations updated during a checkpoint are already
+        // visible to the SDK via the checkpoint response.
+        if (!withinCheckpoint) {
+            operationIdsUpdatedSinceLastInvocation.add(op.id());
         }
     }
 }

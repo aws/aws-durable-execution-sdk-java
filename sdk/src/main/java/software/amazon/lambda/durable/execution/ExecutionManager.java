@@ -57,6 +57,7 @@ public class ExecutionManager implements AutoCloseable {
     private final String durableExecutionArn;
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
+    private final Set<String> updatedOperationIdsSinceLastInvocation;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
@@ -70,6 +71,10 @@ public class ExecutionManager implements AutoCloseable {
     public ExecutionManager(DurableExecutionInput input, DurableConfig config) {
         durableConfig = config;
         this.durableExecutionArn = input.durableExecutionArn();
+
+        // Store the set of operation IDs updated since the last successful invocation
+        this.updatedOperationIdsSinceLastInvocation =
+                input.updatedOperationIds() != null ? Set.copyOf(input.updatedOperationIds()) : Collections.emptySet();
 
         // Create checkpoint batcher for internal coordination
         this.checkpointManager =
@@ -107,6 +112,18 @@ public class ExecutionManager implements AutoCloseable {
     /** Returns {@code true} if the execution is currently replaying completed operations. */
     public boolean isReplaying() {
         return executionMode.get() == ExecutionMode.REPLAY;
+    }
+
+    /**
+     * Returns {@code true} if the given operation was updated since the last successful invocation. This is used by the
+     * OTel plugin to determine whether a replayed completed operation should emit a span — only operations that
+     * transitioned during suspension should be traced on reinvocation.
+     *
+     * @param operationId the operation ID to check
+     * @return true if the operation was updated since the last successful invocation
+     */
+    public boolean isOperationUpdatedSinceLastInvocation(String operationId) {
+        return updatedOperationIdsSinceLastInvocation.contains(operationId);
     }
 
     /** Registers an operation so it can receive checkpoint completion notifications. */

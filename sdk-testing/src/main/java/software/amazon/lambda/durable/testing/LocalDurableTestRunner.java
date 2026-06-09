@@ -346,10 +346,15 @@ public class LocalDurableTestRunner<I, O> {
         var allOps = new ArrayList<>(List.of(executionOp));
         allOps.addAll(existingOps);
 
+        // Compute updatedOperationIds: all operations that were updated since the last invocation.
+        // In the test runner, this is all operations that have been modified by advanceTime/complete calls.
+        var updatedOperationIds = storage.getUpdatedOperationIdsSinceLastInvocation();
+
         return new DurableExecutionInput(
                 executionArn,
                 UUID.randomUUID().toString(),
-                CheckpointUpdatedExecutionState.builder().operations(allOps).build());
+                CheckpointUpdatedExecutionState.builder().operations(allOps).build(),
+                updatedOperationIds);
     }
 
     private Context mockLambdaContext() {

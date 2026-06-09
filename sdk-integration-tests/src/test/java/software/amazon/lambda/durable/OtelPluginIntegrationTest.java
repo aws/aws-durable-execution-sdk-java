@@ -159,6 +159,50 @@ class OtelPluginIntegrationTest {
     }
 
     @Test
+    void waitCompletedDuringSuspension_producesOperationSpan() {
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> {
+                    ctx.step("before-wait", String.class, stepCtx -> "pre");
+                    ctx.wait("pause", Duration.ofMinutes(1));
+                    ctx.step("after-wait", String.class, stepCtx -> "post");
+                    return "done";
+                },
+                otelConfig);
+
+        // First invocation: step completes, wait starts, suspend
+        var result1 = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result1.getStatus());
+
+        // The wait operation span should be open (ended with PENDING status at invocation end)
+        var spansAfterFirst = spanExporter.getFinishedSpanItems();
+        var waitSpansAfterFirst = spansAfterFirst.stream()
+                .filter(s -> s.getName().equals("durable.wait:pause"))
+                .toList();
+        assertEquals(1, waitSpansAfterFirst.size(), "Wait span should exist after first invocation (ended as PENDING)");
+
+        // Advance time (wait completes externally) and resume
+        runner.advanceTime();
+        var result2 = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+
+        // After second invocation, the wait should have a second operation span
+        // (fired by onOperationEnd via updatedOperationIds) showing it completed
+        var allSpans = spanExporter.getFinishedSpanItems();
+        var waitSpansTotal = allSpans.stream()
+                .filter(s -> s.getName().equals("durable.wait:pause"))
+                .toList();
+        assertEquals(
+                2,
+                waitSpansTotal.size(),
+                "Wait should have 2 spans: one PENDING from first invocation, one completed from second. Got: "
+                        + allSpans.stream()
+                                .map(SpanData::getName)
+                                .filter(n -> n.contains("pause"))
+                                .toList());
+    }
+
+    @Test
     void childContext_producesNestedSpans() {
         var runner = LocalDurableTestRunner.create(
                 String.class,

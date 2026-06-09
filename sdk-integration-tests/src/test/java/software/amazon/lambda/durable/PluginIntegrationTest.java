@@ -175,6 +175,66 @@ class PluginIntegrationTest {
         assertEquals(1, step1EndCount, "step1 onOperationEnd should fire only once (not on replay)");
     }
 
+    @Test
+    void plugin_operationEnd_firedForOperationCompletedDuringSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.step("step1", String.class, stepCtx -> "done");
+                    context.wait("pause", Duration.ofMinutes(1));
+                    context.step("step2", String.class, stepCtx -> "final");
+                    return "complete";
+                },
+                config);
+
+        // First invocation: step1 completes, then suspends at wait
+        var result1 = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result1.getStatus());
+
+        // Advance time (wait completes externally while Lambda was frozen)
+        runner.advanceTime();
+
+        // Clear plugin state to only track second invocation
+        plugin.operationEnds.clear();
+        plugin.operationStarts.clear();
+
+        var result2 = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+
+        // onOperationEnd for "pause" should fire during the second invocation
+        // because the wait completed during suspension (it's in updatedOperationIds)
+        long pauseEndCount = plugin.operationEnds.stream()
+                .filter(info -> "pause".equals(info.name()))
+                .count();
+        assertEquals(1, pauseEndCount, "wait operation onOperationEnd should fire when it completes during suspension");
+    }
+
+    @Test
+    void plugin_operationEnd_firedOnceForStepCompletingInCurrentInvocation() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.step("step1", String.class, stepCtx -> "done");
+                    return "complete";
+                },
+                config);
+
+        // Single invocation: step1 completes within this invocation
+        var result = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        long step1EndCount = plugin.operationEnds.stream()
+                .filter(info -> "step1".equals(info.name()))
+                .count();
+        assertEquals(1, step1EndCount, "step1 onOperationEnd should fire exactly once");
+    }
+
     // ─── User function hooks ─────────────────────────────────────────────
 
     @Test
