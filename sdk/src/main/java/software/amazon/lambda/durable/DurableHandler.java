@@ -36,6 +36,17 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     }
 
     /**
+     * Constructs a handler with an explicitly provided input type. Use this when the input type cannot be inferred from
+     * the generic superclass, such as when extending {@link DurableHandler} indirectly through an intermediate class.
+     *
+     * @param inputType the token capturing the handler's input type
+     */
+    protected DurableHandler(TypeToken<I> inputType) {
+        this.inputType = inputType;
+        this.config = createConfiguration();
+    }
+
+    /**
      * Gets the configuration used by this handler. This allows test frameworks and other tools to access the handler's
      * configuration for testing purposes.
      *
