@@ -65,11 +65,38 @@ class DurableHandlerTest {
         assertTrue(exception.getMessage().contains("Unexpected payload provided to start the durable execution"));
     }
 
+    @Test
+    void testIndirectDurableHandlerInheritance() {
+        // Handler reaching DurableHandler through an intermediate class resolves
+        // its input type via the explicit constructor.
+        var handler = new ConcreteIndirectHandler();
+
+        assertNotNull(handler);
+
+        var result = handler.handleRequest("test-input", null);
+        assertEquals("indirect: test-input", result);
+    }
+
     // Test handler implementation
     private static class TestDurableHandler extends DurableHandler<String, String> {
         @Override
         public String handleRequest(String input, DurableContext context) {
             return "processed: " + input;
+        }
+    }
+
+    // Intermediate handler that forwards an explicit input type
+    private abstract static class AbstractIndirectHandler<O> extends DurableHandler<String, O> {
+        protected AbstractIndirectHandler() {
+            super(TypeToken.get(String.class));
+        }
+    }
+
+    // Inherits DurableHandler indirectly
+    private static class ConcreteIndirectHandler extends AbstractIndirectHandler<String> {
+        @Override
+        public String handleRequest(String input, DurableContext context) {
+            return "indirect: " + input;
         }
     }
 }
