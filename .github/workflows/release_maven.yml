@@ -77,7 +77,7 @@ jobs:
 
       - name: Validate BREAKING changes require major version bump
         if: steps.previous_release.outputs.tag != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           PREVIOUS_TAG: ${{ steps.previous_release.outputs.tag }}
           RELEASE_VERSION: ${{ github.event.inputs.release_version }}
