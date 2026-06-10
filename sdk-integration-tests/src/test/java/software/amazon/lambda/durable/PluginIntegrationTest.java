@@ -39,7 +39,7 @@ class PluginIntegrationTest {
         // Verify invocation hooks fired
         assertEquals(1, plugin.invocationStarts.size());
         assertTrue(plugin.invocationStarts.get(0).isFirstInvocation());
-        assertNotNull(plugin.invocationStarts.get(0).executionArn());
+        assertNotNull(plugin.invocationStarts.get(0).durableExecutionArn());
 
         assertEquals(1, plugin.invocationEnds.size());
         assertEquals(InvocationStatus.SUCCEEDED, plugin.invocationEnds.get(0).invocationStatus());

@@ -6,7 +6,7 @@ package software.amazon.lambda.durable.plugin;
  * Information provided at the end of a Lambda invocation.
  *
  * @param requestId the Lambda request ID for this invocation
- * @param executionArn the durable execution ARN
+ * @param durableExecutionArn the durable execution ARN
  * @param isFirstInvocation true if this is the first invocation of the execution
  * @param invocationStatus the invocation outcome (SUCCEEDED, FAILED, or PENDING)
  * @param executionError non-null if the execution failed
@@ -15,7 +15,7 @@ package software.amazon.lambda.durable.plugin;
 @Deprecated
 public record InvocationEndInfo(
         String requestId,
-        String executionArn,
+        String durableExecutionArn,
         boolean isFirstInvocation,
         InvocationStatus invocationStatus,
         Throwable executionError) {}

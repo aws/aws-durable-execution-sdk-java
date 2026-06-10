@@ -29,7 +29,7 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void generateTraceId_withArn_returnsDeterministic() {
-        generator.setExecutionArn("arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1");
+        generator.setDurableExecutionArn("arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1");
 
         var id1 = generator.generateTraceId();
         var id2 = generator.generateTraceId();
@@ -40,10 +40,10 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void generateTraceId_differentArns_produceDifferentIds() {
-        generator.setExecutionArn("arn:exec1");
+        generator.setDurableExecutionArn("arn:exec1");
         var id1 = generator.generateTraceId();
 
-        generator.setExecutionArn("arn:exec2");
+        generator.setDurableExecutionArn("arn:exec2");
         var id2 = generator.generateTraceId();
 
         assertNotEquals(id1, id2);
@@ -60,7 +60,7 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void generateSpanId_withOperationId_returnsDeterministic() {
-        generator.setExecutionArn("arn:exec1");
+        generator.setDurableExecutionArn("arn:exec1");
         generator.setNextSpanOperationId("op-hash-1");
         var id1 = generator.generateSpanId();
 
@@ -73,7 +73,7 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void generateSpanId_differentOperationIds_produceDifferentIds() {
-        generator.setExecutionArn("arn:exec1");
+        generator.setDurableExecutionArn("arn:exec1");
 
         generator.setNextSpanOperationId("op-1");
         var id1 = generator.generateSpanId();
@@ -96,7 +96,7 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void generateSpanIdForOperation_doesNotConsumePending() {
-        generator.setExecutionArn("arn:exec1");
+        generator.setDurableExecutionArn("arn:exec1");
         generator.setNextSpanOperationId("op-1");
 
         // This should NOT consume the pending
@@ -112,7 +112,7 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void generateSpanIdForOperation_isDeterministic() {
-        generator.setExecutionArn("arn:exec1");
+        generator.setDurableExecutionArn("arn:exec1");
 
         var id1 = generator.generateSpanIdForOperation("op-1");
         var id2 = generator.generateSpanIdForOperation("op-1");
@@ -122,7 +122,7 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void traceId_isValidHex() {
-        generator.setExecutionArn("arn:exec1");
+        generator.setDurableExecutionArn("arn:exec1");
         var traceId = generator.generateTraceId();
 
         assertTrue(traceId.matches("[0-9a-f]{32}"), "Trace ID should be 32 hex chars: " + traceId);
@@ -130,7 +130,7 @@ class DeterministicIdGeneratorTest {
 
     @Test
     void spanId_isValidHex() {
-        generator.setExecutionArn("arn:exec1");
+        generator.setDurableExecutionArn("arn:exec1");
         generator.setNextSpanOperationId("op-1");
         var spanId = generator.generateSpanId();
 

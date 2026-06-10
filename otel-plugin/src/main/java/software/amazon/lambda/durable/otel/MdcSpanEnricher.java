@@ -37,16 +37,16 @@ public final class MdcSpanEnricher {
     /**
      * Injects the current span's trace ID and span ID into MDC.
      *
-     * @param executionArn the durable execution ARN (may be null)
+     * @param durableExecutionArn the durable execution ARN (may be null)
      */
-    public static void inject(String executionArn) {
+    public static void inject(String durableExecutionArn) {
         var span = Span.current();
         if (span.getSpanContext().isValid()) {
             MDC.put(MDC_TRACE_ID, span.getSpanContext().getTraceId());
             MDC.put(MDC_SPAN_ID, span.getSpanContext().getSpanId());
         }
-        if (executionArn != null) {
-            MDC.put(MDC_EXECUTION_ARN, executionArn);
+        if (durableExecutionArn != null) {
+            MDC.put(MDC_EXECUTION_ARN, durableExecutionArn);
         }
     }
 

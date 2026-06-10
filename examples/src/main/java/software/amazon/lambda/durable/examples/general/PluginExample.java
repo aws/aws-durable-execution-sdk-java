@@ -17,7 +17,7 @@ import software.amazon.lambda.durable.plugin.*;
  * <p>Expected output for a successful run:
  *
  * <pre>
- * [PLUGIN] onInvocationStart: requestId=..., executionArn=..., firstInvocation=true
+ * [PLUGIN] onInvocationStart: requestId=..., durableExecutionArn=..., firstInvocation=true
  * [PLUGIN] onOperationStart: name=create-greeting, type=STEP
  * [PLUGIN] onUserFunctionStart: name=create-greeting, attempt=1
  * [PLUGIN] onUserFunctionEnd: name=create-greeting, succeeded=true
@@ -54,8 +54,8 @@ public class PluginExample extends DurableHandler<GreetingRequest, String> {
         @Override
         public void onInvocationStart(InvocationInfo info) {
             System.out.printf(
-                    "[PLUGIN] onInvocationStart: requestId=%s, executionArn=%s, firstInvocation=%s%n",
-                    info.requestId(), info.executionArn(), info.isFirstInvocation());
+                    "[PLUGIN] onInvocationStart: requestId=%s, durableExecutionArn=%s, firstInvocation=%s%n",
+                    info.requestId(), info.durableExecutionArn(), info.isFirstInvocation());
         }
 
         @Override

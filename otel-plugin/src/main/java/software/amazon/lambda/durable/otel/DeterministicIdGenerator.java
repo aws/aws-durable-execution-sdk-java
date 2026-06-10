@@ -26,15 +26,15 @@ public class DeterministicIdGenerator implements IdGenerator {
 
     private final AtomicReference<String> executionTraceId = new AtomicReference<>(null);
     private final ThreadLocal<String> pendingSpanOperationId = new ThreadLocal<>();
-    private final AtomicReference<String> executionArn = new AtomicReference<>(null);
+    private final AtomicReference<String> durableExecutionArn = new AtomicReference<>(null);
 
     /**
      * Sets the execution ARN used for generating deterministic IDs.
      *
      * @param arn the durable execution ARN
      */
-    public void setExecutionArn(String arn) {
-        this.executionArn.set(arn);
+    public void setDurableExecutionArn(String arn) {
+        this.durableExecutionArn.set(arn);
         this.executionTraceId.set(generateTraceIdFromArn(arn));
     }
 
@@ -96,7 +96,7 @@ public class DeterministicIdGenerator implements IdGenerator {
      * <p>Uses SHA-256 hash truncated to 16 hex chars (64 bits) for the span ID.
      */
     private String generateSpanIdFromOperation(String operationId) {
-        var arn = executionArn.get();
+        var arn = durableExecutionArn.get();
         var input = arn != null ? arn + ":" + operationId : operationId;
         var hash = sha256(input);
         // Span ID is 16 hex chars (8 bytes)

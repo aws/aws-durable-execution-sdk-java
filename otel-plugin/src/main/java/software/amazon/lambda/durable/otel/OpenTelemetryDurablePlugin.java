@@ -60,7 +60,7 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
 
     // Per-invocation state
     private volatile Span invocationSpan;
-    private volatile String executionArn;
+    private volatile String durableExecutionArn;
 
     // Thread-safe storage for operation spans (keyed by operationId) — open spans that need ending
     private final ConcurrentHashMap<String, Span> operationSpans = new ConcurrentHashMap<>();
@@ -116,8 +116,8 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
 
     @Override
     public void onInvocationStart(InvocationInfo info) {
-        this.executionArn = info.executionArn();
-        idGenerator.setExecutionArn(info.executionArn());
+        this.durableExecutionArn = info.durableExecutionArn();
+        idGenerator.setDurableExecutionArn(info.durableExecutionArn());
 
         // Extract parent context from Lambda environment (X-Ray, W3C, etc.)
         var extractedParentContext = contextExtractor.extract();
@@ -125,7 +125,7 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
         // Create invocation span as child of extracted context
         var spanBuilder = tracer.spanBuilder("durable.invocation")
                 .setParent(extractedParentContext)
-                .setAttribute(DURABLE_EXECUTION_ARN, info.executionArn())
+                .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
                 .setAttribute(DURABLE_FIRST_INVOCATION, info.isFirstInvocation());
 
         if (info.requestId() != null) {
@@ -189,7 +189,7 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
 
         var spanBuilder = tracer.spanBuilder(spanName(info.type(), info.subType(), info.name()))
                 .setParent(parentContext)
-                .setAttribute(DURABLE_EXECUTION_ARN, executionArn)
+                .setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn)
                 .setAttribute(DURABLE_OPERATION_ID, info.id())
                 .setAttribute(DURABLE_OPERATION_TYPE, info.type());
 
@@ -239,7 +239,7 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
                 .setParent(parentContext)
                 .setStartTimestamp(info.startTimestamp() != null ? info.startTimestamp() : Instant.now());
 
-        spanBuilder.setAttribute(DURABLE_EXECUTION_ARN, executionArn);
+        spanBuilder.setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn);
         spanBuilder.setAttribute(DURABLE_OPERATION_ID, info.id());
 
         if (info.type() != null) {
@@ -261,7 +261,7 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
 
         // Inject trace context into MDC for log-trace correlation
         if (enableMdc) {
-            MdcSpanEnricher.inject(executionArn);
+            MdcSpanEnricher.inject(durableExecutionArn);
         }
     }
 
