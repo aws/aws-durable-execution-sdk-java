@@ -10,10 +10,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -141,7 +144,7 @@ public abstract class BaseDurableOperation {
                 // This enables the OTel plugin to emit spans for operations that transitioned while Lambda was frozen.
                 if (replayCompletedOperation.get()
                         && executionManager.isOperationUpdatedSinceLastInvocation(getOperationId())) {
-                    fireOnOperationEnd(existing, null);
+                    fireOnOperationEnd(existing, extractErrorFromOperation(existing));
                 }
 
                 replay(existing);
@@ -354,7 +357,7 @@ public abstract class BaseDurableOperation {
 
             // Fire onOperationEnd plugin hook — operation reached terminal status for the first time (not replay)
             if (!replayCompletedOperation.get()) {
-                fireOnOperationEnd(operation, null);
+                fireOnOperationEnd(operation, extractErrorFromOperation(operation));
             }
 
             markCompletionFutureCompleted();
@@ -521,5 +524,44 @@ public abstract class BaseDurableOperation {
         var info = PluginInfoConverter.toOperationEndInfo(
                 operation, operationIdentifier, durableContext.getParentId(), error);
         getPluginRunner().onOperationEnd(info);
+    }
+
+    /**
+     * Extracts the error from a terminal operation as a Throwable. Returns null if the operation succeeded or has no
+     * error details.
+     */
+    private Throwable extractErrorFromOperation(Operation operation) {
+        if (operation.status() != OperationStatus.FAILED
+                && operation.status() != OperationStatus.TIMED_OUT
+                && operation.status() != OperationStatus.STOPPED) {
+            return null;
+        }
+        var errorObject = getErrorObject(operation);
+        if (errorObject == null) {
+            return null;
+        }
+        return new DurableOperationException(operation, errorObject);
+    }
+
+    /** Extracts the ErrorObject from an operation based on its type. */
+    private static ErrorObject getErrorObject(Operation operation) {
+        if (operation.type() == null) {
+            return null;
+        }
+        return switch (operation.type()) {
+            case STEP ->
+                operation.stepDetails() != null ? operation.stepDetails().error() : null;
+            case CHAINED_INVOKE ->
+                operation.chainedInvokeDetails() != null
+                        ? operation.chainedInvokeDetails().error()
+                        : null;
+            case CALLBACK ->
+                operation.callbackDetails() != null
+                        ? operation.callbackDetails().error()
+                        : null;
+            case CONTEXT ->
+                operation.contextDetails() != null ? operation.contextDetails().error() : null;
+            default -> null;
+        };
     }
 }

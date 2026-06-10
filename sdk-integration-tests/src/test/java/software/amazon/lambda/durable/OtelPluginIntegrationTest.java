@@ -203,6 +203,52 @@ class OtelPluginIntegrationTest {
     }
 
     @Test
+    void invokeFailedDuringSuspension_producesErrorSpan() {
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> {
+                    try {
+                        ctx.invoke("call-target", "target-fn", "{}", String.class);
+                    } catch (Exception e) {
+                        // expected failure
+                    }
+                    return "handled";
+                },
+                otelConfig);
+
+        // First invocation: invoke starts, suspends waiting for target
+        var result1 = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result1.getStatus());
+
+        // Target fails while Lambda is frozen
+        runner.failChainedInvoke(
+                "call-target",
+                software.amazon.awssdk.services.lambda.model.ErrorObject.builder()
+                        .errorType("TargetError")
+                        .errorMessage("target function failed")
+                        .build());
+
+        // Resume
+        var result2 = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+
+        // The invoke operation span from the second invocation should have ERROR status
+        var allSpans = spanExporter.getFinishedSpanItems();
+        var invokeSpans = allSpans.stream()
+                .filter(s -> s.getName().contains("call-target"))
+                .toList();
+        assertTrue(invokeSpans.size() >= 2, "Should have at least 2 invoke spans (one PENDING, one ended with error)");
+
+        // The span from the second invocation should be marked as error
+        var errorSpan = invokeSpans.stream()
+                .filter(s -> s.getStatus().getStatusCode() == io.opentelemetry.api.trace.StatusCode.ERROR)
+                .findFirst();
+        assertTrue(
+                errorSpan.isPresent(),
+                "Should have an invoke span with ERROR status when invoke fails during suspension");
+    }
+
+    @Test
     void childContext_producesNestedSpans() {
         var runner = LocalDurableTestRunner.create(
                 String.class,

@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -233,6 +234,100 @@ class PluginIntegrationTest {
                 .filter(info -> "step1".equals(info.name()))
                 .count();
         assertEquals(1, step1EndCount, "step1 onOperationEnd should fire exactly once");
+    }
+
+    @Test
+    void plugin_operationEnd_includesError_whenInvokeFailsDuringSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    try {
+                        context.invoke("call-target", "target-fn", "{}", String.class);
+                    } catch (Exception e) {
+                        // expected
+                    }
+                    return "done";
+                },
+                config);
+
+        // First invocation: invoke starts, suspends waiting for target
+        var result1 = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result1.getStatus());
+
+        // Target fails while Lambda is frozen
+        runner.failChainedInvoke(
+                "call-target",
+                ErrorObject.builder()
+                        .errorType("TargetError")
+                        .errorMessage("target function failed")
+                        .build());
+
+        // Clear plugin state to only track second invocation
+        plugin.operationEnds.clear();
+
+        var result2 = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+
+        // onOperationEnd for "call-target" should fire with error info
+        var invokeEnd = plugin.operationEnds.stream()
+                .filter(info -> "call-target".equals(info.name()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(invokeEnd, "onOperationEnd should fire for failed invoke during suspension");
+        assertNotNull(invokeEnd.error(), "error should be propagated for failed invoke");
+        assertEquals("target function failed", invokeEnd.error().getMessage());
+    }
+
+    @Test
+    void plugin_operationEnd_includesError_whenStepFailsViaCheckpoint() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "failing-step",
+                        String.class,
+                        stepCtx -> {
+                            throw new RuntimeException("step exploded");
+                        },
+                        StepConfig.builder()
+                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                                .build()),
+                config);
+
+        var result = runner.run("input");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // onOperationEnd for "failing-step" should fire with error info
+        var stepEnd = plugin.operationEnds.stream()
+                .filter(info -> "failing-step".equals(info.name()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(stepEnd, "onOperationEnd should fire for failed step");
+        assertNotNull(stepEnd.error(), "error should be propagated for failed step");
+        assertTrue(stepEnd.error().getMessage().contains("step exploded"));
+    }
+
+    @Test
+    void plugin_operationEnd_noError_whenOperationSucceeds() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("ok-step", String.class, stepCtx -> "success"), config);
+
+        runner.runUntilComplete("input");
+
+        var stepEnd = plugin.operationEnds.stream()
+                .filter(info -> "ok-step".equals(info.name()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(stepEnd, "onOperationEnd should fire for successful step");
+        assertNull(stepEnd.error(), "error should be null for successful step");
     }
 
     // ─── User function hooks ─────────────────────────────────────────────
