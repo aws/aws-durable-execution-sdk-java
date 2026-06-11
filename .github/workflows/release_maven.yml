@@ -20,12 +20,8 @@ on:
 
 permissions:
   contents: write
-  id-token: write
   issues: read
   pull-requests: read
-
-env:
-  AWS_REGION: us-west-2
 
 jobs:
   release:
@@ -270,13 +266,6 @@ jobs:
           distribution: 'corretto'
           cache: maven
 
-      - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.0
-        with:
-          role-to-assume: "${{ secrets.ACTIONS_MVN_ROLE_NAME }}"
-          role-session-name: mavenreleasesession
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Set release version
         run: mvn -q versions:set -DnewVersion=${{ github.event.inputs.release_version }} -DgenerateBackupPoms=false
 
@@ -306,18 +295,14 @@ jobs:
             sdk/target/aws-durable-execution-sdk-java-${{ github.event.inputs.release_version }}.jar
             sdk-testing/target/aws-durable-execution-sdk-java-testing-${{ github.event.inputs.release_version }}.jar
       
-      - name: Get Env variables
-        uses: aws-actions/aws-secretsmanager-get-secrets@v3
-        with:
-            secret-ids: |
-                mvn_gpg_keys
-                mvn_account_keys
-            parse-json-secrets: true
-          
       - name: Sign and publish
         run: bash .github/scripts/maven_publish.sh
         env:
           RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+          MVN_GPG_KEYS_GPGPRIVATEKEY: ${{ secrets.MVN_GPG_KEYS_GPGPRIVATEKEY }}
+          MVN_GPG_KEYS_GPGPASSPHRASE: ${{ secrets.MVN_GPG_KEYS_GPGPASSPHRASE }}
+          MVN_ACCOUNT_KEYS_USERNAME: ${{ secrets.MVN_ACCOUNT_KEYS_USERNAME }}
+          MVN_ACCOUNT_KEYS_PASSWORD: ${{ secrets.MVN_ACCOUNT_KEYS_PASSWORD }}
 
       - name: Set next development version
         run: mvn -q versions:set -DnewVersion=${{ github.event.inputs.next_version }} -DgenerateBackupPoms=false
