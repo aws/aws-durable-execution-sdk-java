@@ -3,16 +3,35 @@
 package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import org.slf4j.Logger;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.logging.DurableLogger;
 
-public interface BaseContext extends AutoCloseable {
+public interface BaseContext {
+    ThreadLocal<BaseContext> CONTEXT = new ThreadLocal<>();
+
+    /**
+     * Gets the current context (DurableContext or StepContext) for this thread.
+     *
+     * @return the current context or null if not set
+     */
+    static BaseContext getCurrentContext() {
+        return CONTEXT.get();
+    }
     /**
      * Gets a logger with additional information of the current execution context.
      *
      * @return a DurableLogger instance
      */
     DurableLogger getLogger();
+
+    /**
+     * Gets a logger with additional information of the current execution context.
+     *
+     * @param delegate the logger to wrap
+     * @return a DurableLogger instance
+     */
+    DurableLogger getLogger(Logger delegate);
 
     /**
      * Returns the AWS Lambda runtime context.
@@ -46,7 +65,4 @@ public interface BaseContext extends AutoCloseable {
 
     /** Returns whether this context is currently in replay mode. */
     boolean isReplaying();
-
-    /** Closes this context. */
-    void close();
 }

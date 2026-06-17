@@ -8,9 +8,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -75,22 +73,6 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
         super(operationIdentifier, durableContext, parentOperation, isVirtual);
         this.resultTypeToken = resultTypeToken;
         this.resultSerDes = resultSerDes;
-    }
-
-    /**
-     * Checks if it's called from a Step.
-     *
-     * @throws IllegalDurableOperationException if it's in a step
-     */
-    private void validateCurrentThreadType() {
-        ThreadType current = getCurrentThreadContext().threadType();
-        if (current == ThreadType.STEP) {
-            var message = String.format(
-                    "Nested %s operation is not supported on %s from within a %s execution.",
-                    getType(), getName(), current);
-            // terminate execution and throw the exception
-            throw terminateExecutionWithIllegalDurableOperationException(message);
-        }
     }
 
     /**

@@ -7,4 +7,8 @@ import software.amazon.lambda.durable.context.BaseContext;
 public interface StepContext extends BaseContext {
     /** Returns the current retry attempt number (0-based). */
     int getAttempt();
+
+    static StepContext getCurrentContext() {
+        return (StepContext) BaseContext.getCurrentContext();
+    }
 }

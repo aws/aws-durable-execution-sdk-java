@@ -5,9 +5,10 @@ package software.amazon.lambda.durable;
 import java.util.function.Function;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.model.ParallelResult;
+import software.amazon.lambda.durable.model.SafeCloseable;
 
 /** User-facing context for managing parallel branch execution within a durable function. */
-public interface ParallelDurableFuture extends AutoCloseable, DurableFuture<ParallelResult> {
+public interface ParallelDurableFuture extends SafeCloseable, DurableFuture<ParallelResult> {
 
     /**
      * Registers and immediately starts a branch (respects maxConcurrency).
@@ -68,7 +69,4 @@ public interface ParallelDurableFuture extends AutoCloseable, DurableFuture<Para
      */
     <T> DurableFuture<T> branch(
             String name, TypeToken<T> resultType, Function<DurableContext, T> func, ParallelBranchConfig config);
-
-    /** Calls {@link #get()} if not already called. Guarantees that the context is closed. */
-    void close();
 }

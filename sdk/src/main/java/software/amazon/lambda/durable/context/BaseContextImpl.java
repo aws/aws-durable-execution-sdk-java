@@ -3,11 +3,13 @@
 package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import org.slf4j.Logger;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
 
-public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
+public abstract class BaseContextImpl implements BaseContext {
     private final ExecutionManager executionManager;
     private final DurableConfig durableConfig;
     private final Context lambdaContext;
@@ -108,5 +110,19 @@ public abstract class BaseContextImpl implements AutoCloseable, BaseContext {
      */
     public void setExecutionMode() {
         this.isReplaying = false;
+    }
+
+    /** Returns a durable logger for this context. */
+    public DurableLogger getLogger() {
+        return DurableLogger.INSTANCE;
+    }
+
+    /** Returns a durable logger for this context. */
+    public DurableLogger getLogger(Logger delegate) {
+        return new DurableLogger(delegate);
+    }
+
+    public static void setCurrentContext(BaseContext context) {
+        CONTEXT.set(context);
     }
 }

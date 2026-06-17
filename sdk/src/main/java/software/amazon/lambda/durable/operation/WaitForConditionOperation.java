@@ -13,12 +13,14 @@ import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -112,7 +114,9 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     private void executeCheckLogic(T currentState, int attempt) {
         Runnable userHandler = () -> {
-            try (var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {
+            var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
+            BaseContextImpl.setCurrentContext(stepContext);
+            try (var ignored = DurableLogger.attachContext()) {
                 try {
                     // Checkpoint START if not already started
                     var existing = getOperation();

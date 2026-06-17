@@ -254,6 +254,14 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
+    void testLoggingExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("logging-example"), GreetingRequest.class, String.class, lambdaClient);
+        var result = runner.run(new GreetingRequest("TestUser"));
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+    }
+
+    @Test
     void testGenericTypesExample() {
         var runner = CloudDurableTestRunner.create(
                 arn("generic-types-example"),

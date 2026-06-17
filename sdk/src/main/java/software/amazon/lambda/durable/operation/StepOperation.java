@@ -15,6 +15,7 @@ import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.StepSemantics;
+import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.StepFailedException;
@@ -22,6 +23,7 @@ import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -104,7 +106,10 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             // use a try-with-resources to
             // - add thread id/type to thread local when the step starts
             // - clear logger properties when the step finishes
-            try (StepContext stepContext = getContext().createStepContext(getOperationId(), getName(), attempt)) {
+            StepContext stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
+            BaseContextImpl.setCurrentContext(stepContext);
+
+            try (var ignored = DurableLogger.attachContext()) {
                 try {
                     checkpointStarted();
 

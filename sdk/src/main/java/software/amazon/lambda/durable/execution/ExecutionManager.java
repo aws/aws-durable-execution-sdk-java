@@ -20,10 +20,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
@@ -47,7 +49,7 @@ import software.amazon.lambda.durable.operation.BaseDurableOperation;
  *
  * @see InternalExecutor
  */
-public class ExecutionManager implements AutoCloseable {
+public class ExecutionManager implements SafeCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
 
@@ -192,7 +194,8 @@ public class ExecutionManager implements AutoCloseable {
      * @return true if at least one operation exists with the given parentId
      */
     public boolean hasOperationsForContext(String parentId) {
-        return operationStorage.values().stream().anyMatch(op -> Objects.equals(op.parentId(), parentId));
+        return operationStorage.values().stream()
+                .anyMatch(op -> op.type() != OperationType.EXECUTION && Objects.equals(op.parentId(), parentId));
     }
 
     // ===== Thread Coordination =====

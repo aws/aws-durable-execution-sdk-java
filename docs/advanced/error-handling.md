@@ -3,13 +3,13 @@
 The SDK throws specific exceptions to help you handle different failure scenarios:
 
 ```
+Error
+└── DurableExecutionError                 - Internal SDK control-flow/error base type
+    └── SuspendExecutionException         - Internal signal used by the SDK to suspend execution
+                                           (for example during `wait()`, `waitForCallback()`, and
+                                           `waitForCondition()`). User code should not catch it.
+
 RuntimeException
-├── SuspendExecutionException          - Internal control-flow exception thrown by the SDK to suspend execution
-│                                        (e.g., during wait(), waitForCallback(), waitForCondition()).
-│                                        The SDK catches this internally — you will never see it unless you have
-│                                        a broad catch(Exception) block around durable operations. If caught
-│                                        accidentally, you MUST re-throw it so the SDK can suspend correctly.
-│
 └── DurableExecutionException              - General durable exception
     ├── SerDesException                    - Serialization and deserialization exception.
     ├── UnrecoverableDurableExecutionException - Execution cannot be recovered. The durable execution will be immediately terminated.
@@ -52,7 +52,11 @@ try {
 
 ### Handling SuspendExecutionException
 
-If you have a broad `catch (Exception e)` block around durable operations, you must re-throw `SuspendExecutionException` to let the SDK suspend correctly:
+`SuspendExecutionException` is an internal SDK control-flow signal. It extends `Error`, not `Exception`, so a
+normal `catch (Exception e)` block will not intercept it.
+
+The real risk is code that catches `Throwable`, or code that explicitly catches `SuspendExecutionException`. In those
+cases, you must re-throw it immediately so the SDK can suspend the execution correctly.
 
 ```java
 try {
@@ -60,8 +64,24 @@ try {
     ctx.wait("pause", Duration.ofDays(1));
     ctx.step("more-work", String.class, stepCtx -> doMoreWork());
 } catch (SuspendExecutionException e) {
-    throw e; // Always re-throw — lets the SDK suspend the execution
-} catch (Exception e) {
+    throw e; // Always re-throw internal suspension signals
+} catch (Throwable t) {
+    log.error("Unexpected throwable", t);
+    throw t;
+}
+```
+
+Avoid broad `catch (Throwable)` blocks around durable operations unless you have a strong reason to use them. Prefer
+catching specific application exceptions instead:
+
+```java
+try {
+    ctx.step("work", String.class, stepCtx -> doWork());
+    ctx.wait("pause", Duration.ofDays(1));
+    ctx.step("more-work", String.class, stepCtx -> doMoreWork());
+} catch (SuspendExecutionException e) {
+    throw e; // Always re-throw internal suspension signals
+} catch (MyBusinessException e) {
     log.error("Operation failed", e);
 }
 ```

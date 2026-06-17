@@ -3,17 +3,20 @@
 package software.amazon.lambda.durable.logging;
 
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.StepContext;
-import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.context.BaseContext;
+import software.amazon.lambda.durable.model.SafeCloseable;
 
 /**
  * Logger wrapper that adds durable execution context to log entries via MDC and optionally suppresses logs during
  * replay.
  */
 public class DurableLogger {
-    static final String MDC_EXECUTION_ARN = "durableExecutionArn";
+    static final String MDC_DURABLE_EXECUTION_ARN = "durableExecutionArn";
+    static final String MDC_EXECUTION_ARN = "executionArn";
     static final String MDC_REQUEST_ID = "requestId";
     static final String MDC_OPERATION_ID = "operationId";
     static final String MDC_CONTEXT_ID = "contextId";
@@ -21,21 +24,44 @@ public class DurableLogger {
     static final String MDC_CONTEXT_NAME = "contextName";
     static final String MDC_ATTEMPT = "attempt";
 
+    public static final DurableLogger INSTANCE = new DurableLogger(LoggerFactory.getLogger(DurableLogger.class));
+    private static final SafeCloseable AUTO_CLOSER = DurableLogger::detachContext;
+
     private final Logger delegate;
-    private final BaseContextImpl context;
 
     /**
      * Creates a DurableLogger wrapping the given SLF4J logger with execution context MDC entries.
      *
      * @param delegate the SLF4J logger to wrap
-     * @param context the durable execution context providing MDC values
      */
-    public DurableLogger(Logger delegate, BaseContextImpl context) {
+    public DurableLogger(Logger delegate) {
         this.delegate = delegate;
-        this.context = context;
+    }
+
+    public static SafeCloseable attachContext() {
+        var context = BaseContext.getCurrentContext();
+        if (context != null) {
+            injectMdcProperties(context);
+        }
+        return AUTO_CLOSER;
+    }
+
+    public static void detachContext() {
+        var context = BaseContext.getCurrentContext();
+        if (context != null) {
+            MDC.clear();
+        }
+    }
+
+    private static void injectMdcProperties(BaseContext context) {
+        var config = context.getDurableConfig().getLoggerConfig();
 
         // execution arn
-        MDC.put(MDC_EXECUTION_ARN, context.getExecutionArn());
+        if (config.oldKeyNames()) {
+            MDC.put(MDC_DURABLE_EXECUTION_ARN, context.getExecutionArn());
+        } else {
+            MDC.put(MDC_EXECUTION_ARN, context.getExecutionArn());
+        }
 
         // lambda request id
         var requestId =
@@ -47,10 +73,18 @@ public class DurableLogger {
         if (context instanceof DurableContext) {
             // context thread - context id and name
             if (context.getContextId() != null) {
-                MDC.put(MDC_CONTEXT_ID, context.getContextId());
+                if (config.oldKeyNames()) {
+                    MDC.put(MDC_CONTEXT_ID, context.getContextId());
+                } else {
+                    MDC.put(MDC_OPERATION_ID, context.getContextId());
+                }
             }
             if (context.getContextName() != null) {
-                MDC.put(MDC_CONTEXT_NAME, context.getContextName());
+                if (config.oldKeyNames()) {
+                    MDC.put(MDC_CONTEXT_NAME, context.getContextName());
+                } else {
+                    MDC.put(MDC_OPERATION_NAME, context.getContextName());
+                }
             }
         } else if (context instanceof StepContext stepContext) {
             // In step context, context id is the operation id, context name is the operation name
@@ -61,11 +95,6 @@ public class DurableLogger {
             }
             MDC.put(MDC_ATTEMPT, String.valueOf(stepContext.getAttempt()));
         }
-    }
-
-    /** Clears all MDC entries. User set MDC entries will also be removed as the thread will not be used anymore. */
-    public void close() {
-        MDC.clear();
     }
 
     public void trace(String format, Object... args) {
@@ -92,13 +121,13 @@ public class DurableLogger {
         log(() -> delegate.error(message, t));
     }
 
-    private boolean shouldSuppress() {
-        return context.getDurableConfig().getLoggerConfig().suppressReplayLogs()
-                && context.getExecutionManager().isReplaying();
+    private boolean shouldSuppress(BaseContext context) {
+        return context.getDurableConfig().getLoggerConfig().suppressReplayLogs() && context.isReplaying();
     }
 
     private void log(Runnable logAction) {
-        if (!shouldSuppress()) {
+        var threadLocalContext = BaseContext.getCurrentContext();
+        if (threadLocalContext == null || !shouldSuppress(threadLocalContext)) {
             logAction.run();
         }
     }

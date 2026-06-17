@@ -22,6 +22,10 @@ import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 public interface DurableContext extends BaseContext {
+    static DurableContext getCurrentContext() {
+        return (DurableContext) BaseContext.getCurrentContext();
+    }
+
     /**
      * Executes a durable step with the given name and blocks until it completes.
      *

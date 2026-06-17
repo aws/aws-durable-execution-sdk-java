@@ -2,17 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.logging;
 
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
+import org.slf4j.helpers.BasicMDCAdapter;
+import org.slf4j.spi.MDCAdapter;
+import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
+import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TestContext;
-import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.context.BaseContext;
+import software.amazon.lambda.durable.context.BaseContextImpl;
 
 class DurableLoggerTest {
     private static final String EXECUTION_NAME = "exec-123";
@@ -20,157 +32,301 @@ class DurableLoggerTest {
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
             + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
     private static final String REQUEST_ID = "req-456";
-
-    private enum Mode {
-        REPLAYING,
-        EXECUTING
-    }
-
-    private enum Suppression {
-        ENABLED,
-        DISABLED
-    }
-
-    private Logger mockLogger;
-    private ExecutionManager mockExecutionManager;
+    private MDCAdapter originalMdcAdapter;
 
     @BeforeEach
-    void setUp() {
-        mockLogger = mock(Logger.class);
-        mockExecutionManager = mock(ExecutionManager.class);
-        when(mockExecutionManager.getDurableExecutionArn()).thenReturn(EXECUTION_ARN);
+    void setUp() throws ReflectiveOperationException {
+        originalMdcAdapter = MDC.getMDCAdapter();
+        setMdcAdapter(new BasicMDCAdapter());
     }
 
-    private DurableLogger createLogger(Mode mode, Suppression suppression) {
-        when(mockExecutionManager.isReplaying()).thenReturn(mode == Mode.REPLAYING);
-        return new DurableLogger(mockLogger, createDurableContext(REQUEST_ID, suppression));
-    }
-
-    private DurableContextImpl createDurableContext(String requestId, Suppression suppression) {
-        return DurableContextImpl.createRootContext(
-                mockExecutionManager,
-                DurableConfig.builder()
-                        .withLoggerConfig(new LoggerConfig(suppression == Suppression.ENABLED))
-                        .build(),
-                new TestContext(requestId));
+    @AfterEach
+    void tearDown() throws ReflectiveOperationException {
+        MDC.clear();
+        BaseContextImpl.setCurrentContext(null);
+        DurableLogger.detachContext();
+        setMdcAdapter(originalMdcAdapter);
     }
 
     @Test
     void logsWhenNotReplaying() {
-        var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
+        var recordingLogger = new RecordingLogger();
+        var logger = new DurableLogger(recordingLogger.delegate());
+        var replaying = new AtomicBoolean(false);
 
-        logger.info("test message");
+        withContext(
+                createDurableContext(replaying, LoggerConfig.defaults(), REQUEST_ID),
+                () -> logger.info("test message"));
 
-        verify(mockLogger).info(eq("test message"), any(Object[].class));
+        assertEquals(1, recordingLogger.calls().size());
+        assertEquals("info", recordingLogger.calls().get(0).methodName());
+        assertEquals("test message", recordingLogger.calls().get(0).message());
     }
 
     @Test
     void suppressesLogsWhenReplayingAndSuppressionEnabled() {
-        var logger = createLogger(Mode.REPLAYING, Suppression.ENABLED);
+        var recordingLogger = new RecordingLogger();
+        var logger = new DurableLogger(recordingLogger.delegate());
+        var replaying = new AtomicBoolean(true);
 
-        logger.trace("suppressed");
-        logger.info("should be suppressed");
-        logger.debug("also suppressed");
-        logger.warn("suppressed too");
-        logger.error("even errors suppressed");
+        withContext(createDurableContext(replaying, LoggerConfig.defaults(), REQUEST_ID), () -> {
+            logger.trace("suppressed");
+            logger.info("should be suppressed");
+            logger.debug("also suppressed");
+            logger.warn("suppressed too");
+            logger.error("even errors suppressed");
+        });
 
-        verify(mockLogger, never()).trace(anyString(), any(Object[].class));
-        verify(mockLogger, never()).info(anyString(), any(Object[].class));
-        verify(mockLogger, never()).debug(anyString(), any(Object[].class));
-        verify(mockLogger, never()).warn(anyString(), any(Object[].class));
-        verify(mockLogger, never()).error(anyString(), any(Object[].class));
+        assertTrue(recordingLogger.calls().isEmpty());
     }
 
     @Test
     void logsWhenReplayingButSuppressionDisabled() {
-        var logger = createLogger(Mode.REPLAYING, Suppression.DISABLED);
+        var recordingLogger = new RecordingLogger();
+        var logger = new DurableLogger(recordingLogger.delegate());
+        var replaying = new AtomicBoolean(true);
 
-        logger.info("should log during replay");
+        withContext(
+                createDurableContext(replaying, LoggerConfig.withReplayLogging(), REQUEST_ID),
+                () -> logger.info("should log during replay"));
 
-        verify(mockLogger).info(eq("should log during replay"), any(Object[].class));
+        assertEquals(1, recordingLogger.calls().size());
+        assertEquals("should log during replay", recordingLogger.calls().get(0).message());
     }
 
     @Test
-    void setsExecutionMdcInConstructor() {
-        try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            createLogger(Mode.EXECUTING, Suppression.ENABLED);
+    void setsExecutionMdcOnFirstLog() {
+        var logger = new DurableLogger(new RecordingLogger().delegate());
+        var replaying = new AtomicBoolean(false);
 
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_EXECUTION_ARN, EXECUTION_ARN));
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_REQUEST_ID, REQUEST_ID));
+        BaseContextImpl.setCurrentContext(createDurableContext(replaying, LoggerConfig.defaults(), REQUEST_ID));
+        DurableLogger.attachContext();
+        try {
+            logger.info("test");
+
+            assertEquals(EXECUTION_ARN, MDC.get(DurableLogger.MDC_EXECUTION_ARN));
+            assertEquals(REQUEST_ID, MDC.get(DurableLogger.MDC_REQUEST_ID));
+        } finally {
+            DurableLogger.detachContext();
         }
     }
 
     @Test
     void setStepThreadPropertiesSetsMdc() {
-        try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            mdcMock.clearInvocations();
-            when(mockExecutionManager.isReplaying()).thenReturn(false);
-            var logger = new DurableLogger(
-                    mockLogger,
-                    createDurableContext(REQUEST_ID, Suppression.ENABLED)
-                            .createStepContext("op-1", "validateOrder", 2));
+        var logger = new DurableLogger(new RecordingLogger().delegate());
+        var replaying = new AtomicBoolean(false);
 
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_OPERATION_ID, "op-1"));
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_OPERATION_NAME, "validateOrder"));
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_ATTEMPT, "2"));
+        BaseContextImpl.setCurrentContext(
+                createStepContext(replaying, LoggerConfig.defaults(), REQUEST_ID, "op-1", "validateOrder", 2));
+        DurableLogger.attachContext();
+        try {
+            logger.info("step log");
+
+            assertEquals("op-1", MDC.get(DurableLogger.MDC_OPERATION_ID));
+            assertEquals("validateOrder", MDC.get(DurableLogger.MDC_OPERATION_NAME));
+            assertEquals("2", MDC.get(DurableLogger.MDC_ATTEMPT));
+        } finally {
+            DurableLogger.detachContext();
         }
     }
 
     @Test
     void clearThreadPropertiesRemovesMdc() {
-        try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
-            mdcMock.clearInvocations();
+        var logger = new DurableLogger(new RecordingLogger().delegate());
+        var replaying = new AtomicBoolean(false);
 
-            logger.close();
+        BaseContextImpl.setCurrentContext(createDurableContext(replaying, LoggerConfig.defaults(), REQUEST_ID));
+        DurableLogger.attachContext();
+        logger.info("test");
 
-            mdcMock.verify(() -> MDC.clear());
-        }
+        DurableLogger.detachContext();
+
+        assertNull(MDC.get(DurableLogger.MDC_EXECUTION_ARN));
+        assertNull(MDC.get(DurableLogger.MDC_REQUEST_ID));
     }
 
     @Test
     void replayModeTransitionAllowsSubsequentLogs() {
-        when(mockExecutionManager.isReplaying()).thenReturn(true, false);
-        var logger = new DurableLogger(mockLogger, createDurableContext(REQUEST_ID, Suppression.ENABLED));
+        var recordingLogger = new RecordingLogger();
+        var logger = new DurableLogger(recordingLogger.delegate());
+        var replaying = new AtomicBoolean(true);
+        var context = createDurableContext(replaying, LoggerConfig.defaults(), REQUEST_ID);
 
-        // During replay - suppressed
-        logger.info("suppressed");
-        verify(mockLogger, never()).info(anyString(), any(Object[].class));
+        withContext(context, () -> logger.info("suppressed"));
+        assertTrue(recordingLogger.calls().isEmpty());
 
-        // After transition to execution mode - logged
-        logger.info("logged after transition");
-        verify(mockLogger).info(eq("logged after transition"), any(Object[].class));
+        replaying.set(false);
+        withContext(context, () -> logger.info("logged after transition"));
+
+        assertEquals(1, recordingLogger.calls().size());
+        assertEquals("logged after transition", recordingLogger.calls().get(0).message());
     }
 
     @Test
     void allLogLevelsDelegateCorrectly() {
-        var logger = createLogger(Mode.EXECUTING, Suppression.ENABLED);
-
-        logger.trace("trace msg");
-        logger.debug("debug msg");
-        logger.info("info msg");
-        logger.warn("warn msg");
-        logger.error("error msg");
-
+        var recordingLogger = new RecordingLogger();
+        var logger = new DurableLogger(recordingLogger.delegate());
+        var replaying = new AtomicBoolean(false);
         var exception = new RuntimeException("test");
-        logger.error("error with exception", exception);
 
-        verify(mockLogger).trace(eq("trace msg"), any(Object[].class));
-        verify(mockLogger).debug(eq("debug msg"), any(Object[].class));
-        verify(mockLogger).info(eq("info msg"), any(Object[].class));
-        verify(mockLogger).warn(eq("warn msg"), any(Object[].class));
-        verify(mockLogger).error(eq("error msg"), any(Object[].class));
-        verify(mockLogger).error("error with exception", exception);
+        withContext(createDurableContext(replaying, LoggerConfig.defaults(), REQUEST_ID), () -> {
+            logger.trace("trace msg");
+            logger.debug("debug msg");
+            logger.info("info msg");
+            logger.warn("warn msg");
+            logger.error("error msg");
+            logger.error("error with exception", exception);
+        });
+
+        assertEquals(
+                List.of("trace", "debug", "info", "warn", "error", "error"),
+                recordingLogger.calls().stream().map(LogCall::methodName).toList());
+        var lastCall = recordingLogger.calls().get(recordingLogger.calls().size() - 1);
+        assertEquals("error with exception", lastCall.message());
+        assertSame(exception, lastCall.throwable());
     }
 
     @Test
     void handlesNullRequestId() {
-        try (MockedStatic<MDC> mdcMock = mockStatic(MDC.class)) {
-            when(mockExecutionManager.isReplaying()).thenReturn(false);
-            new DurableLogger(mockLogger, createDurableContext(null, Suppression.DISABLED));
+        var logger = new DurableLogger(new RecordingLogger().delegate());
+        var replaying = new AtomicBoolean(false);
 
-            mdcMock.verify(() -> MDC.put(DurableLogger.MDC_EXECUTION_ARN, EXECUTION_ARN));
-            mdcMock.verify(() -> MDC.put(eq(DurableLogger.MDC_REQUEST_ID), anyString()), never());
+        BaseContextImpl.setCurrentContext(createDurableContext(replaying, LoggerConfig.withReplayLogging(), null));
+        DurableLogger.attachContext();
+        try {
+            logger.info("test");
+
+            assertEquals(EXECUTION_ARN, MDC.get(DurableLogger.MDC_EXECUTION_ARN));
+            assertNull(MDC.get(DurableLogger.MDC_REQUEST_ID));
+        } finally {
+            DurableLogger.detachContext();
+        }
+    }
+
+    private static DurableContext createDurableContext(
+            AtomicBoolean replaying, LoggerConfig loggerConfig, String requestId) {
+        return (DurableContext) Proxy.newProxyInstance(
+                DurableContext.class.getClassLoader(),
+                new Class<?>[] {DurableContext.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getExecutionArn" -> EXECUTION_ARN;
+                    case "getLambdaContext" -> requestId == null ? null : new TestContext(requestId);
+                    case "getDurableConfig" -> createDurableConfig(loggerConfig);
+                    case "getContextId" -> null;
+                    case "getContextName" -> null;
+                    case "isReplaying" -> replaying.get();
+                    case "toString" -> "TestDurableContext";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+    }
+
+    private static StepContext createStepContext(
+            AtomicBoolean replaying,
+            LoggerConfig loggerConfig,
+            String requestId,
+            String operationId,
+            String operationName,
+            int attempt) {
+        return (StepContext) Proxy.newProxyInstance(
+                StepContext.class.getClassLoader(),
+                new Class<?>[] {StepContext.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getExecutionArn" -> EXECUTION_ARN;
+                    case "getLambdaContext" -> requestId == null ? null : new TestContext(requestId);
+                    case "getDurableConfig" -> createDurableConfig(loggerConfig);
+                    case "getContextId" -> operationId;
+                    case "getContextName" -> operationName;
+                    case "getAttempt" -> attempt;
+                    case "isReplaying" -> replaying.get();
+                    case "toString" -> "TestStepContext";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+    }
+
+    private static void withContext(BaseContext context, Runnable action) {
+        BaseContextImpl.setCurrentContext(context);
+        DurableLogger.attachContext();
+        try {
+            action.run();
+        } finally {
+            DurableLogger.detachContext();
+            BaseContextImpl.setCurrentContext(null);
+        }
+    }
+
+    private static DurableConfig createDurableConfig(LoggerConfig loggerConfig) {
+        return DurableConfig.builder()
+                .withLoggerConfig(loggerConfig)
+                .withDurableExecutionClient(new NoOpDurableExecutionClient())
+                .build();
+    }
+
+    private static void setMdcAdapter(MDCAdapter adapter) throws ReflectiveOperationException {
+        var field = MDC.class.getDeclaredField("MDC_ADAPTER");
+        field.setAccessible(true);
+        field.set(null, adapter);
+    }
+
+    private record LogCall(String methodName, String message, Throwable throwable) {}
+
+    private static final class RecordingLogger {
+        private final List<LogCall> calls = new ArrayList<>();
+        private final Logger delegate = (Logger) Proxy.newProxyInstance(
+                Logger.class.getClassLoader(), new Class<?>[] {Logger.class}, (proxy, method, args) -> {
+                    switch (method.getName()) {
+                        case "trace", "debug", "info", "warn", "error" -> {
+                            var message = args != null && args.length > 0 ? (String) args[0] : null;
+                            var throwable =
+                                    args != null && args.length > 1 && args[1] instanceof Throwable t ? t : null;
+                            calls.add(new LogCall(method.getName(), message, throwable));
+                            return null;
+                        }
+                        case "getName" -> {
+                            return "recording-logger";
+                        }
+                        case "isTraceEnabled", "isDebugEnabled", "isInfoEnabled", "isWarnEnabled", "isErrorEnabled" -> {
+                            return true;
+                        }
+                        case "toString" -> {
+                            return "RecordingLogger";
+                        }
+                        case "hashCode" -> {
+                            return System.identityHashCode(proxy);
+                        }
+                        case "equals" -> {
+                            return proxy == args[0];
+                        }
+                        default -> {
+                            if (method.getReturnType() == boolean.class) {
+                                return false;
+                            }
+                            return null;
+                        }
+                    }
+                });
+
+        private Logger delegate() {
+            return delegate;
+        }
+
+        private List<LogCall> calls() {
+            return calls;
+        }
+    }
+
+    private static final class NoOpDurableExecutionClient implements DurableExecutionClient {
+        @Override
+        public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
+            throw new UnsupportedOperationException("Not used in DurableLoggerTest");
+        }
+
+        @Override
+        public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
+            throw new UnsupportedOperationException("Not used in DurableLoggerTest");
         }
     }
 }

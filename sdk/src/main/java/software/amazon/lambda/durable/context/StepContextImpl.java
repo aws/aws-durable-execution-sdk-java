@@ -3,12 +3,10 @@
 package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.logging.DurableLogger;
 
 /**
  * Context available inside a step operation's user function.
@@ -17,7 +15,6 @@ import software.amazon.lambda.durable.logging.DurableLogger;
  * {@link BaseContext} for thread lifecycle management.
  */
 public class StepContextImpl extends BaseContextImpl implements StepContext {
-    private volatile DurableLogger logger;
     private final int attempt;
 
     /**
@@ -45,26 +42,5 @@ public class StepContextImpl extends BaseContextImpl implements StepContext {
     @Override
     public int getAttempt() {
         return attempt;
-    }
-
-    @Override
-    public DurableLogger getLogger() {
-        // lazy initialize logger
-        if (logger == null) {
-            synchronized (this) {
-                if (logger == null) {
-                    logger = new DurableLogger(LoggerFactory.getLogger(StepContext.class), this);
-                }
-            }
-        }
-        return logger;
-    }
-
-    /** Closes the logger for this context. */
-    @Override
-    public void close() {
-        if (logger != null) {
-            logger.close();
-        }
     }
 }

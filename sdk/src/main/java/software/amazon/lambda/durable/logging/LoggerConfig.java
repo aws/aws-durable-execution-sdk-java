@@ -3,15 +3,15 @@
 package software.amazon.lambda.durable.logging;
 
 /** Configuration for DurableLogger behavior. */
-public record LoggerConfig(boolean suppressReplayLogs) {
+public record LoggerConfig(boolean suppressReplayLogs, boolean oldKeyNames) {
 
     /** Default configuration: suppress logs during replay. */
     public static LoggerConfig defaults() {
-        return new LoggerConfig(true);
+        return new LoggerConfig(true, false);
     }
 
     /** Configuration that allows logs during replay. */
     public static LoggerConfig withReplayLogging() {
-        return new LoggerConfig(false);
+        return new LoggerConfig(false, false);
     }
 }

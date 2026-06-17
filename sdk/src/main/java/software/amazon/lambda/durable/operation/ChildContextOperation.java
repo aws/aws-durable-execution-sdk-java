@@ -32,6 +32,7 @@ import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -130,7 +131,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // When this child is part of a ConcurrencyOperation (parentOperation != null),
             // we notify the parent BEFORE closing the child context. This ensures the parent
             // can trigger the next queued branch while the current child context is still valid.
-            try (var childContext = getContext().createChildContext(contextId, getName(), isVirtual)) {
+            var childContext = getContext().createChildContext(contextId, getName(), isVirtual);
+            DurableContextImpl.setCurrentContext(childContext);
+            try (var ignored = DurableLogger.attachContext()) {
                 try {
                     T result = function.apply(childContext);
 

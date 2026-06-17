@@ -10,7 +10,6 @@ import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -32,7 +31,6 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -62,7 +60,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl parentContext;
     private final boolean isVirtual;
-    private volatile DurableLogger logger;
 
     /** Shared initialization — sets all fields. */
     private DurableContextImpl(
@@ -430,30 +427,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     // =============== accessors ================
-    @Override
-    public DurableLogger getLogger() {
-        // lazy initialize logger
-        if (logger == null) {
-            synchronized (this) {
-                if (logger == null) {
-                    logger = new DurableLogger(LoggerFactory.getLogger(DurableContext.class), this);
-                }
-            }
-        }
-        return logger;
-    }
-
-    /**
-     * Clears the logger's thread properties. Called during context destruction to prevent memory leaks and ensure clean
-     * state for subsequent executions.
-     */
-    @Override
-    public void close() {
-        if (logger != null) {
-            logger.close();
-        }
-    }
-
     /**
      * Get the next operationId. Returns a globally unique operation ID by hashing a sequential operation counter. For
      * root contexts, the counter value is hashed directly (e.g. "1", "2", "3"). For child contexts, the values are
