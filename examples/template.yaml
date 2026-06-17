@@ -355,6 +355,44 @@ Resources:
       Handler: "software.amazon.lambda.durable.examples.general.OtelExample"
       Role: !Ref RoleArn
 
+  OtelXRayStepExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'otel-xray-step-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.otel.OtelXRayStepExample"
+      Role: !Ref RoleArn
+      Tracing: Active
+      Layers:
+        - !Sub
+          - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${AdotArch}-ver-1-32-0:6
+          - AdotArch: amd64
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler
+
+  OtelXRayWaitExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - 'otel-xray-wait-example'
+          - !Ref JavaVersion
+          - runtime
+      Handler: "software.amazon.lambda.durable.examples.otel.OtelXRayWaitExample"
+      Role: !Ref RoleArn
+      Tracing: Active
+      Layers:
+        - !Sub
+          - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${AdotArch}-ver-1-32-0:6
+          - AdotArch: amd64
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler
+
   RetryInvokeExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -560,6 +598,14 @@ Outputs:
   OtelExampleFunction:
     Description: OTel Example Function ARN
     Value: !GetAtt OtelExampleFunction.Arn
+
+  OtelXRayStepExampleFunction:
+    Description: OTel X-Ray Step Example Function ARN
+    Value: !GetAtt OtelXRayStepExampleFunction.Arn
+
+  OtelXRayWaitExampleFunction:
+    Description: OTel X-Ray Wait Example Function ARN
+    Value: !GetAtt OtelXRayWaitExampleFunction.Arn
 
   RetryInvokeExampleFunction:
     Description: Retry Invoke Example Function ARN

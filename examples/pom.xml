@@ -50,6 +50,18 @@
             <version>1.63.0</version>
         </dependency>
 
+        <!-- OTLP gRPC exporter (sends spans to ADOT collector layer at localhost:4317) -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <version>1.63.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
+            <version>1.72.0</version>
+        </dependency>
+
         <!-- AWS Lambda Java Core -->
         <dependency>
             <groupId>com.amazonaws</groupId>
@@ -90,6 +102,15 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>sts</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>xray</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
