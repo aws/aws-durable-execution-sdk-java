@@ -34,7 +34,7 @@ class OtelPluginIntegrationTest {
 
         var plugin = new OpenTelemetryDurablePlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> io.opentelemetry.context.Context.root(),
+                () -> null,
                 false);
 
         otelConfig = DurableConfig.builder().withPlugins(plugin).build();
@@ -309,7 +309,7 @@ class OtelPluginIntegrationTest {
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter)),
-                () -> io.opentelemetry.context.Context.root(),
+                () -> null,
                 false);
 
         var noSampleConfig = DurableConfig.builder().withPlugins(noSamplePlugin).build();

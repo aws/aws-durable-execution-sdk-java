@@ -11,11 +11,18 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Generates deterministic trace and span IDs for durable execution observability.
  *
- * <p>All invocations of the same execution share a single trace ID (derived from the execution ARN). Operations get
- * stable span IDs derived from the execution ARN + operation ID, ensuring the same operation produces the same span
- * across invocations.
+ * <p>Trace ID resolution order:
  *
- * <p>When no pending operation ID is set, falls back to random generation (standard OTel behavior).
+ * <ol>
+ *   <li>If an extracted trace ID is set (from {@code _X_AMZN_TRACE_ID}), use it. The durable execution backend
+ *       propagates the same Root to all invocations, so this naturally unifies the trace.
+ *   <li>If no extracted trace ID is available (local tests, non-Lambda environments), derive a deterministic trace ID
+ *       from the execution ARN using SHA-256.
+ *   <li>If neither is set, fall back to random generation.
+ * </ol>
+ *
+ * <p>Span IDs for operations are deterministic (derived from execution ARN + operation ID), ensuring the same operation
+ * produces the same span across invocations. When no pending operation ID is set, falls back to random generation.
  *
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
@@ -24,18 +31,30 @@ public class DeterministicIdGenerator implements IdGenerator {
 
     private static final IdGenerator RANDOM = IdGenerator.random();
 
-    private final AtomicReference<String> executionTraceId = new AtomicReference<>(null);
+    private final AtomicReference<String> extractedTraceId = new AtomicReference<>(null);
+    private final AtomicReference<String> arnDerivedTraceId = new AtomicReference<>(null);
     private final ThreadLocal<String> pendingSpanOperationId = new ThreadLocal<>();
     private final AtomicReference<String> durableExecutionArn = new AtomicReference<>(null);
 
     /**
-     * Sets the execution ARN used for generating deterministic IDs.
+     * Sets an externally extracted trace ID (e.g., from the X-Ray trace header). This takes highest priority for trace
+     * ID generation.
+     *
+     * @param traceId 32-char lowercase hex trace ID
+     */
+    public void setExtractedTraceId(String traceId) {
+        this.extractedTraceId.set(traceId);
+    }
+
+    /**
+     * Sets the execution ARN used for generating deterministic IDs. Computes and caches an ARN-derived trace ID as
+     * fallback when no extracted trace ID is available.
      *
      * @param arn the durable execution ARN
      */
     public void setDurableExecutionArn(String arn) {
         this.durableExecutionArn.set(arn);
-        this.executionTraceId.set(generateTraceIdFromArn(arn));
+        this.arnDerivedTraceId.set(generateTraceIdFromArn(arn));
     }
 
     /**
@@ -50,9 +69,6 @@ public class DeterministicIdGenerator implements IdGenerator {
     /**
      * Generates a deterministic span ID for a given operation ID without consuming the ThreadLocal state.
      *
-     * <p>Used for creating non-recording placeholder spans when a parent operation's span context is needed but hasn't
-     * been exported yet.
-     *
      * @param operationId the operation ID to derive the span ID from
      * @return a deterministic 16-char hex span ID
      */
@@ -62,10 +78,17 @@ public class DeterministicIdGenerator implements IdGenerator {
 
     @Override
     public String generateTraceId() {
-        var cached = executionTraceId.get();
-        if (cached != null) {
-            return cached;
+        // Priority 1: extracted from X-Ray header (backend propagates same Root across invocations)
+        var extracted = extractedTraceId.get();
+        if (extracted != null) {
+            return extracted;
         }
+        // Priority 2: deterministic from execution ARN (local tests, non-Lambda)
+        var arnDerived = arnDerivedTraceId.get();
+        if (arnDerived != null) {
+            return arnDerived;
+        }
+        // Priority 3: random fallback
         return RANDOM.generateTraceId();
     }
 
@@ -79,27 +102,19 @@ public class DeterministicIdGenerator implements IdGenerator {
         return RANDOM.generateSpanId();
     }
 
-    /**
-     * Generates a deterministic trace ID from an execution ARN.
-     *
-     * <p>Uses SHA-256 hash truncated to 32 hex chars (128 bits) for the trace ID.
-     */
+    /** Generates a deterministic trace ID from an execution ARN using SHA-256 truncated to 32 hex chars. */
     private String generateTraceIdFromArn(String arn) {
         var hash = sha256(arn);
-        // Trace ID is 32 hex chars (16 bytes)
         return hash.substring(0, 32);
     }
 
     /**
-     * Generates a deterministic span ID from the execution ARN + operation ID.
-     *
-     * <p>Uses SHA-256 hash truncated to 16 hex chars (64 bits) for the span ID.
+     * Generates a deterministic span ID from the execution ARN + operation ID using SHA-256 truncated to 16 hex chars.
      */
     private String generateSpanIdFromOperation(String operationId) {
         var arn = durableExecutionArn.get();
         var input = arn != null ? arn + ":" + operationId : operationId;
         var hash = sha256(input);
-        // Span ID is 16 hex chars (8 bytes)
         return hash.substring(0, 16);
     }
 

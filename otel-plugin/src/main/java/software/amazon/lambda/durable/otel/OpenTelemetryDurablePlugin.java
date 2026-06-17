@@ -39,7 +39,22 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *   <li><b>Attempt span</b> — one per user function execution (step attempt, child context run)
  * </ul>
  *
- * <p>Uses deterministic span/trace IDs so all invocations of the same execution share a single trace.
+ * <p>Trace ID resolution:
+ *
+ * <ol>
+ *   <li>Uses the X-Ray trace ID from {@code _X_AMZN_TRACE_ID} when available. The durable execution backend propagates
+ *       the same Root to all invocations of the same execution, naturally unifying the trace.
+ *   <li>Falls back to a deterministic trace ID derived from the execution ARN (for local tests or non-Lambda
+ *       environments).
+ * </ol>
+ *
+ * <p>Requires the ADOT Lambda Layer for trace export. Configure with:
+ *
+ * <ul>
+ *   <li>Lambda Layer: {@code aws-otel-java-agent} (ADOT Java auto-instrumentation layer)
+ *   <li>Env var: {@code AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler}
+ *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
+ * </ul>
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
@@ -75,6 +90,17 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
     /**
      * Creates an OTel plugin with default settings: X-Ray context extraction, MDC enabled.
      *
+     * <p>Uses the provided tracer provider builder. Customers configure exporters and span processors on the builder —
+     * the plugin handles ID generation.
+     *
+     * <p>For ADOT layer usage, configure with an OTLP exporter:
+     *
+     * <pre>{@code
+     * var otlpExporter = OtlpGrpcSpanExporter.getDefault(); // sends to localhost:4317
+     * var plugin = new OpenTelemetryDurablePlugin(
+     *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
+     * }</pre>
+     *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
     public OpenTelemetryDurablePlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
@@ -95,10 +121,6 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
     /**
      * Creates an OTel plugin with full configuration.
      *
-     * <p>The plugin internally creates a {@link DeterministicIdGenerator} and sets it on the provided builder before
-     * building the tracer provider. Customers configure exporters, span processors, and samplers on the builder — the
-     * plugin handles ID generation.
-     *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
      * @param enableMdc if true, injects trace_id/span_id into SLF4J MDC for log correlation
@@ -117,14 +139,36 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
     @Override
     public void onInvocationStart(InvocationInfo info) {
         this.durableExecutionArn = info.durableExecutionArn();
+
+        // Set execution ARN for deterministic span ID generation
         idGenerator.setDurableExecutionArn(info.durableExecutionArn());
 
-        // Extract parent context from Lambda environment (X-Ray, W3C, etc.)
-        var extractedParentContext = contextExtractor.extract();
+        // Extract trace context from environment (X-Ray header)
+        var extractedContext = contextExtractor.extract();
 
-        // Create invocation span as child of extracted context
+        if (extractedContext != null) {
+            // Use the X-Ray trace ID — backend propagates same Root across all invocations
+            idGenerator.setExtractedTraceId(extractedContext.traceId());
+        }
+        // If no extracted context, idGenerator falls back to ARN-derived trace ID
+
+        // Determine parent context for the invocation span
+        Context parentContext;
+        if (extractedContext != null && extractedContext.parentSpanId() != null) {
+            // Create a remote parent span context from the X-Ray Parent field
+            var parentSpanContext = SpanContext.createFromRemoteParent(
+                    extractedContext.traceId(),
+                    extractedContext.parentSpanId(),
+                    TraceFlags.getSampled(),
+                    TraceState.getDefault());
+            parentContext = Context.root().with(Span.wrap(parentSpanContext));
+        } else {
+            parentContext = Context.root();
+        }
+
+        // Create invocation span as child of Lambda's X-Ray segment (via Parent field)
         var spanBuilder = tracer.spanBuilder("durable.invocation")
-                .setParent(extractedParentContext)
+                .setParent(parentContext)
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
                 .setAttribute(DURABLE_FIRST_INVOCATION, info.isFirstInvocation());
 

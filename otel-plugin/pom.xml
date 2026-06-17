@@ -11,7 +11,7 @@
     </parent>
 
     <artifactId>aws-durable-execution-sdk-java-otel</artifactId>
-    <name>AWS Lambda Durable Execution SDK - OpenTelemetry Plugin</name>
+    <name>AWS Lambda Durable Execution SDK OpenTelemetry Plugin</name>
     <description>OpenTelemetry instrumentation plugin for AWS Lambda Durable Execution SDK</description>
 
     <properties>
@@ -46,13 +46,6 @@
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-context</artifactId>
             <version>${opentelemetry.version}</version>
-        </dependency>
-
-        <!-- AWS X-Ray Propagator (official OTel contrib) -->
-        <dependency>
-            <groupId>io.opentelemetry.contrib</groupId>
-            <artifactId>opentelemetry-aws-xray-propagator</artifactId>
-            <version>1.57.0-alpha</version>
         </dependency>
 
         <!-- SLF4J for logging -->

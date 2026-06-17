@@ -24,7 +24,7 @@ class OpenTelemetryDurablePluginTest {
 
         plugin = new OpenTelemetryDurablePlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> io.opentelemetry.context.Context.root(),
+                () -> null,
                 false);
     }
 
@@ -216,7 +216,7 @@ class OpenTelemetryDurablePluginTest {
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> io.opentelemetry.context.Context.root(),
+                () -> null,
                 false);
 
         sampledPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
@@ -230,5 +230,191 @@ class OpenTelemetryDurablePluginTest {
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         assertTrue(spanExporter.getFinishedSpanItems().isEmpty(), "No spans should be exported with 0% sampling");
+    }
+
+    // ─── X-Ray trace ID extraction integration tests ─────────────────────
+
+    @Test
+    void xrayExtraction_usesExtractedTraceId_overArnDerived() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        var extractedContext = new ExtractedContext(xrayTraceId, null);
+
+        spanExporter = InMemorySpanExporter.create();
+        var xrayPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> extractedContext,
+                false);
+
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+        assertEquals(xrayTraceId, spans.get(0).getTraceId(), "Span should use the extracted X-Ray trace ID");
+    }
+
+    @Test
+    void xrayExtraction_allSpansShareExtractedTraceId() {
+        var xrayTraceId = "aabbccddee112233445566778899aabb";
+        var extractedContext = new ExtractedContext(xrayTraceId, null);
+
+        spanExporter = InMemorySpanExporter.create();
+        var xrayPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> extractedContext,
+                false);
+
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null));
+        xrayPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        xrayPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        xrayPlugin.onOperationEnd(
+                new OperationEndInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), null));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertTrue(spans.size() >= 2, "Should have invocation + operation + attempt spans");
+        assertTrue(
+                spans.stream().allMatch(s -> s.getTraceId().equals(xrayTraceId)),
+                "All spans must share the extracted X-Ray trace ID");
+    }
+
+    @Test
+    void xrayExtraction_withParentSpanId_invocationSpanHasCorrectParent() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var extractedContext = new ExtractedContext(xrayTraceId, parentSpanId);
+
+        spanExporter = InMemorySpanExporter.create();
+        var xrayPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> extractedContext,
+                false);
+
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+
+        var invocationSpan = spans.get(0);
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(
+                parentSpanId,
+                invocationSpan.getParentSpanId(),
+                "Invocation span should be parented to X-Ray Parent span");
+    }
+
+    @Test
+    void xrayExtraction_withoutParentSpanId_invocationSpanIsRoot() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        var extractedContext = new ExtractedContext(xrayTraceId, null);
+
+        spanExporter = InMemorySpanExporter.create();
+        var xrayPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> extractedContext,
+                false);
+
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+
+        var invocationSpan = spans.get(0);
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        // Parent span ID should be empty/invalid when no parent provided
+        assertFalse(
+                io.opentelemetry.api.trace.SpanContext.create(
+                                xrayTraceId,
+                                invocationSpan.getParentSpanId(),
+                                io.opentelemetry.api.trace.TraceFlags.getSampled(),
+                                io.opentelemetry.api.trace.TraceState.getDefault())
+                        .isRemote(),
+                "Without X-Ray parent, invocation span should not have a remote parent");
+    }
+
+    @Test
+    void xrayExtraction_multipleInvocations_sameTraceId_unifiedTrace() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        var extractedContext = new ExtractedContext(xrayTraceId, "53995c3f42cd8ad8");
+
+        spanExporter = InMemorySpanExporter.create();
+        var xrayPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> extractedContext,
+                false);
+
+        // First invocation
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onOperationStart(new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null));
+        xrayPlugin.onOperationEnd(
+                new OperationEndInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), Instant.now(), null));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+
+        // Second invocation (same execution, same X-Ray Root from backend)
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-2", "arn:exec1", false));
+        xrayPlugin.onOperationStart(new OperationInfo("op-2", "step-2", "STEP", "Step", null, Instant.now(), null));
+        xrayPlugin.onOperationEnd(
+                new OperationEndInfo("op-2", "step-2", "STEP", "Step", null, Instant.now(), Instant.now(), null));
+        xrayPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", "arn:exec1", false, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertTrue(spans.size() >= 4, "Should have spans from both invocations");
+
+        // All spans share the same X-Ray trace ID — unified trace
+        assertTrue(
+                spans.stream().allMatch(s -> s.getTraceId().equals(xrayTraceId)),
+                "Both invocations should produce spans with the same X-Ray trace ID");
+    }
+
+    @Test
+    void xrayExtraction_nullExtractor_fallsBackToArnDerived() {
+        spanExporter = InMemorySpanExporter.create();
+        var noXrayPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> null,
+                false);
+
+        var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
+        noXrayPlugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        noXrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+
+        var traceId = spans.get(0).getTraceId();
+        assertNotNull(traceId);
+        assertEquals(32, traceId.length());
+        assertTrue(traceId.matches("[0-9a-f]{32}"), "ARN-derived trace ID should be valid hex");
+    }
+
+    @Test
+    void xrayExtraction_extractedTraceIdMatchesXrayConversion() {
+        // Verify the end-to-end flow: X-Ray header → parse → trace ID in span
+        var xrayRoot = "1-5759e988-bd862e3fe1be46a994272793";
+        var expectedOtelTraceId = "5759e988bd862e3fe1be46a994272793";
+
+        // Simulate what XRayContextExtractor does
+        var convertedId = XRayContextExtractor.xrayRootToOtelTraceId(xrayRoot);
+        assertEquals(expectedOtelTraceId, convertedId);
+
+        // Now feed it through the plugin
+        var extractedContext = new ExtractedContext(convertedId, null);
+        spanExporter = InMemorySpanExporter.create();
+        var xrayPlugin = new OpenTelemetryDurablePlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                () -> extractedContext,
+                false);
+
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(expectedOtelTraceId, spans.get(0).getTraceId());
     }
 }

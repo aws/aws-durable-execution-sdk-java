@@ -2,19 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
-import io.opentelemetry.context.Context;
-import io.opentelemetry.context.propagation.TextMapGetter;
-import io.opentelemetry.contrib.awsxray.propagator.AwsXrayPropagator;
-import java.util.Collections;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Extracts OTel trace context from the AWS X-Ray {@code _X_AMZN_TRACE_ID} environment variable using the official
- * OpenTelemetry AWS X-Ray Propagator.
+ * Extracts OTel trace context from the AWS X-Ray {@code _X_AMZN_TRACE_ID} environment variable.
  *
- * <p>Lambda runtime sets this environment variable with the X-Ray trace header for each invocation. This extractor
- * reads it and uses the official {@link AwsXrayPropagator} to parse it into an OTel-compatible {@link Context}.
+ * <p>The durable execution backend propagates the same Root trace ID to every invocation of the same execution, so all
+ * invocations share one trace. This extractor parses that header and returns the trace ID in OTel format (32 hex chars)
+ * along with the parent span ID (16 hex chars).
+ *
+ * <p>X-Ray header format: {@code Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1}
+ *
+ * <p>The Root field is converted to OTel format by stripping "1-" and removing dashes:
+ * {@code 5759e988bd862e3fe1be46a994272793}
  *
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
@@ -23,33 +25,74 @@ public class XRayContextExtractor implements ContextExtractor {
 
     private static final Logger logger = LoggerFactory.getLogger(XRayContextExtractor.class);
     private static final String XRAY_ENV_VAR = "_X_AMZN_TRACE_ID";
-    private static final String XRAY_HEADER_KEY = "X-Amzn-Trace-Id";
-    private static final AwsXrayPropagator PROPAGATOR = AwsXrayPropagator.getInstance();
-
-    /** A TextMapGetter that reads the X-Ray trace header from the Lambda environment variable. */
-    private static final TextMapGetter<String> ENV_GETTER = new TextMapGetter<>() {
-        @Override
-        public Iterable<String> keys(String carrier) {
-            return Collections.singletonList(XRAY_HEADER_KEY);
-        }
-
-        @Override
-        public String get(String carrier, String key) {
-            if (XRAY_HEADER_KEY.equalsIgnoreCase(key)) {
-                return carrier;
-            }
-            return null;
-        }
-    };
+    private static final Pattern HEX_32 = Pattern.compile("[0-9a-f]{32}");
+    private static final Pattern HEX_16 = Pattern.compile("[0-9a-f]{16}");
 
     @Override
-    public Context extract() {
+    public ExtractedContext extract() {
         var traceHeader = System.getenv(XRAY_ENV_VAR);
         if (traceHeader == null || traceHeader.isEmpty()) {
             logger.debug("No X-Ray trace header found in environment");
-            return Context.root();
+            return null;
         }
 
-        return PROPAGATOR.extract(Context.root(), traceHeader, ENV_GETTER);
+        String root = null;
+        String parent = null;
+
+        for (var part : traceHeader.split(";")) {
+            var eqIdx = part.indexOf('=');
+            if (eqIdx <= 0) continue;
+            var key = part.substring(0, eqIdx).trim();
+            var value = part.substring(eqIdx + 1).trim();
+
+            switch (key) {
+                case "Root" -> root = value;
+                case "Parent" -> parent = value;
+            }
+        }
+
+        if (root == null) {
+            logger.debug("X-Ray header missing Root field: {}", traceHeader);
+            return null;
+        }
+
+        // Root format: 1-5759e988-bd862e3fe1be46a994272793
+        // Strip "1-" prefix, remove dashes → 32-char hex OTel trace ID
+        var traceId = xrayRootToOtelTraceId(root);
+        if (traceId == null) {
+            logger.debug("Invalid X-Ray Root field: {}", root);
+            return null;
+        }
+
+        // Parent is a 16-char hex span ID
+        String parentSpanId = null;
+        if (parent != null) {
+            var normalized = parent.toLowerCase();
+            if (HEX_16.matcher(normalized).matches()) {
+                parentSpanId = normalized;
+            }
+        }
+
+        return new ExtractedContext(traceId, parentSpanId);
+    }
+
+    /**
+     * Converts an X-Ray Root value to a 32-char OTel trace ID.
+     *
+     * @param root e.g. "1-5759e988-bd862e3fe1be46a994272793"
+     * @return 32-char lowercase hex string, or null if invalid
+     */
+    static String xrayRootToOtelTraceId(String root) {
+        // Strip "1-" version prefix
+        if (!root.startsWith("1-")) {
+            return null;
+        }
+        var withoutVersion = root.substring(2);
+        var hex = withoutVersion.replace("-", "").toLowerCase();
+
+        if (hex.length() != 32 || !HEX_32.matcher(hex).matches()) {
+            return null;
+        }
+        return hex;
     }
 }

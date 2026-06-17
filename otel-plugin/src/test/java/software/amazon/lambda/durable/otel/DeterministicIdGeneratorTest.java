@@ -136,4 +136,122 @@ class DeterministicIdGeneratorTest {
 
         assertTrue(spanId.matches("[0-9a-f]{16}"), "Span ID should be 16 hex chars: " + spanId);
     }
+
+    // ─── X-Ray extracted trace ID priority tests ─────────────────────────
+
+    @Test
+    void generateTraceId_extractedTakesPriorityOverArn() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        generator.setDurableExecutionArn("arn:aws:lambda:us-east-1:123:function:test");
+        generator.setExtractedTraceId(xrayTraceId);
+
+        var result = generator.generateTraceId();
+
+        assertEquals(xrayTraceId, result, "Extracted X-Ray trace ID should take priority over ARN-derived");
+    }
+
+    @Test
+    void generateTraceId_extractedIdReturnedConsistently() {
+        var xrayTraceId = "aabbccddee112233445566778899aabb";
+        generator.setExtractedTraceId(xrayTraceId);
+
+        // Should return the same value on every call
+        assertEquals(xrayTraceId, generator.generateTraceId());
+        assertEquals(xrayTraceId, generator.generateTraceId());
+        assertEquals(xrayTraceId, generator.generateTraceId());
+    }
+
+    @Test
+    void generateTraceId_extractedIdOverridesArnDerived() {
+        generator.setDurableExecutionArn("arn:exec1");
+        var arnDerived = generator.generateTraceId();
+
+        // Now set an extracted ID — it should override
+        var xrayTraceId = "1234567890abcdef1234567890abcdef";
+        generator.setExtractedTraceId(xrayTraceId);
+
+        var afterExtracted = generator.generateTraceId();
+        assertEquals(xrayTraceId, afterExtracted);
+        assertNotEquals(arnDerived, afterExtracted, "Extracted should differ from ARN-derived");
+    }
+
+    @Test
+    void generateTraceId_priorityOrder_extractedFirst() {
+        // Priority 1: extracted > Priority 2: ARN-derived > Priority 3: random
+        var extracted = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1";
+        generator.setDurableExecutionArn("arn:some-arn");
+        generator.setExtractedTraceId(extracted);
+
+        assertEquals(extracted, generator.generateTraceId());
+    }
+
+    @Test
+    void generateTraceId_priorityOrder_arnDerivedWhenNoExtracted() {
+        // Priority 2: ARN-derived when no extracted set
+        generator.setDurableExecutionArn("arn:some-arn");
+
+        var result = generator.generateTraceId();
+        assertNotNull(result);
+        assertEquals(32, result.length());
+
+        // Should be deterministic
+        assertEquals(result, generator.generateTraceId());
+    }
+
+    @Test
+    void generateTraceId_priorityOrder_randomWhenNeitherSet() {
+        // Priority 3: random when neither extracted nor ARN set
+        var id1 = generator.generateTraceId();
+        var id2 = generator.generateTraceId();
+
+        assertNotNull(id1);
+        assertEquals(32, id1.length());
+        assertNotEquals(id1, id2, "Random IDs should differ");
+    }
+
+    @Test
+    void setExtractedTraceId_withNull_clearsExtracted() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        generator.setDurableExecutionArn("arn:exec1");
+        generator.setExtractedTraceId(xrayTraceId);
+
+        assertEquals(xrayTraceId, generator.generateTraceId());
+
+        // Clear extracted — should fall back to ARN-derived
+        generator.setExtractedTraceId(null);
+        var afterClear = generator.generateTraceId();
+        assertNotEquals(xrayTraceId, afterClear, "Should fall back to ARN-derived after clearing extracted");
+        assertEquals(32, afterClear.length());
+    }
+
+    @Test
+    void setExtractedTraceId_simulatesMultipleInvocations_sameExecution() {
+        // Simulates backend propagating same X-Ray Root across invocations
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+
+        // First invocation
+        generator.setExtractedTraceId(xrayTraceId);
+        generator.setDurableExecutionArn("arn:exec1");
+        var firstInvocation = generator.generateTraceId();
+
+        // Second invocation (same execution, same X-Ray Root from backend)
+        var generator2 = new DeterministicIdGenerator();
+        generator2.setExtractedTraceId(xrayTraceId);
+        generator2.setDurableExecutionArn("arn:exec1");
+        var secondInvocation = generator2.generateTraceId();
+
+        assertEquals(firstInvocation, secondInvocation, "Same X-Ray Root should produce same trace across invocations");
+        assertEquals(xrayTraceId, firstInvocation);
+    }
+
+    @Test
+    void setExtractedTraceId_validXrayFormat_32HexChars() {
+        // Real-world format: X-Ray Root stripped and dashless
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        generator.setExtractedTraceId(xrayTraceId);
+
+        var result = generator.generateTraceId();
+        assertEquals(xrayTraceId, result);
+        assertTrue(result.matches("[0-9a-f]{32}"));
+    }
 }

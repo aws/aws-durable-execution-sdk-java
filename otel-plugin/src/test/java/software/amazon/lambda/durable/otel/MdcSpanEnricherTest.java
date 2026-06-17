@@ -57,7 +57,7 @@ class MdcSpanEnricherTest {
 
         var plugin = new OpenTelemetryDurablePlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> io.opentelemetry.context.Context.root(),
+                () -> null,
                 true);
 
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-mdc-test", true));
