@@ -26,6 +26,9 @@ public interface DurableContext extends BaseContext {
         return (DurableContext) BaseContext.getCurrentContext();
     }
 
+    /** Returns whether this context is currently replaying checkpointed durable operations. */
+    boolean isReplaying();
+
     /**
      * Executes a durable step with the given name and blocks until it completes.
      *

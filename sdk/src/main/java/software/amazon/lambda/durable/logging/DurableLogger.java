@@ -122,12 +122,14 @@ public class DurableLogger {
     }
 
     private boolean shouldSuppress(BaseContext context) {
-        return context.getDurableConfig().getLoggerConfig().suppressReplayLogs() && context.isReplaying();
+        return context instanceof DurableContext durableContext
+                && context.getDurableConfig().getLoggerConfig().suppressReplayLogs()
+                && durableContext.isReplaying();
     }
 
     private void log(Runnable logAction) {
         var threadLocalContext = BaseContext.getCurrentContext();
-        if (threadLocalContext == null || !shouldSuppress(threadLocalContext)) {
+        if (!shouldSuppress(threadLocalContext)) {
             logAction.run();
         }
     }

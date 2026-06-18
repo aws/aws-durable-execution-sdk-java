@@ -62,7 +62,4 @@ public interface BaseContext {
 
     /** Gets the context name for this context. Null for root context. */
     String getContextName();
-
-    /** Returns whether this context is currently in replay mode. */
-    boolean isReplaying();
 }

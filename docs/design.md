@@ -519,7 +519,7 @@ SuspendExecutionException                  # Internal: triggers suspension (not 
 
 Terminal states (SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, STOPPED) stay in REPLAY mode since we're just returning cached results.
 
-This is a one-way transition (REPLAY → EXECUTION, never back). `DurableLogger` checks `isReplaying()` to suppress duplicate logs during replay.
+This is a one-way transition (REPLAY → EXECUTION, never back). `DurableLogger` checks `DurableContext.isReplaying()` to suppress duplicate logs during replay; `StepContext` logs are attempt-based and are never replay-suppressed.
 
 ### MDC-Based Context Enrichment
 
@@ -896,4 +896,3 @@ var result = stepFuture.get();
 | 6   | `wait()` returns. `stepFuture.get()` → result already available.   | —                              | —                                                                                                       |
 
 If the wait duration hasn't elapsed when the step completes, the execution is suspended. If the step finishes *after* the wait, the step thread keeps the execution alive (prevents suspension) while the wait polls to completion.
-

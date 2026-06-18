@@ -60,6 +60,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl parentContext;
     private final boolean isVirtual;
+    private boolean isReplaying;
 
     /** Shared initialization — sets all fields. */
     private DurableContextImpl(
@@ -74,6 +75,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         operationIdGenerator = new OperationIdGenerator(contextId);
         this.parentContext = parentContext;
         this.isVirtual = isVirtual;
+        this.isReplaying = executionManager.hasOperationsForContext(contextId);
     }
 
     /**
@@ -435,6 +437,19 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      */
     private String nextOperationId() {
         return operationIdGenerator.nextOperationId();
+    }
+
+    /** Returns whether this context is currently in replay mode. */
+    @Override
+    public boolean isReplaying() {
+        return isReplaying;
+    }
+
+    /**
+     * Transitions this context from replay to execution mode. Called when the first un-cached operation is encountered.
+     */
+    public void setExecutionMode() {
+        this.isReplaying = false;
     }
 
     /**

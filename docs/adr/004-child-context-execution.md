@@ -46,7 +46,7 @@ Inner operation IDs are prefixed with the parent context's operation ID using `-
 
 ### Per-context replay state
 
-A global `executionMode` doesn't work for child contexts — a child may be replaying while the parent is already executing. Each `DurableContext` tracks its own replay state via an `isReplaying` field, initialized by checking `ExecutionManager.hasOperationsForContext(contextId)`.
+A global `executionMode` doesn't work for child contexts — a child may be replaying while the parent is already executing. Each `DurableContext` tracks its own replay state via an `isReplaying` field, initialized by checking `ExecutionManager.hasOperationsForContext(contextId)`. `StepContext` does not track replay state because steps are retried by attempt, not replayed as independent contexts.
 
 ### Thread model
 

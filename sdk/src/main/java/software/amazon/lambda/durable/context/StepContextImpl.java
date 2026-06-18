@@ -11,8 +11,8 @@ import software.amazon.lambda.durable.execution.ThreadType;
 /**
  * Context available inside a step operation's user function.
  *
- * <p>Provides access to the current retry attempt number and a logger that includes execution metadata. Extends
- * {@link BaseContext} for thread lifecycle management.
+ * <p>Provides access to the current retry attempt number and a logger that includes execution metadata. Steps are
+ * retried by attempt rather than replayed, so this context does not track replay state.
  */
 public class StepContextImpl extends BaseContextImpl implements StepContext {
     private final int attempt;

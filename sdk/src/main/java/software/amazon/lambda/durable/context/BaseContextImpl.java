@@ -17,8 +17,6 @@ public abstract class BaseContextImpl implements BaseContext {
     private final String contextName;
     private final ThreadType threadType;
 
-    private boolean isReplaying;
-
     /**
      * Creates a new BaseContext instance.
      *
@@ -41,7 +39,6 @@ public abstract class BaseContextImpl implements BaseContext {
         this.lambdaContext = lambdaContext;
         this.contextId = contextId;
         this.contextName = contextName;
-        this.isReplaying = executionManager.hasOperationsForContext(contextId);
         this.threadType = threadType;
     }
 
@@ -97,19 +94,6 @@ public abstract class BaseContextImpl implements BaseContext {
 
     public ExecutionManager getExecutionManager() {
         return executionManager;
-    }
-
-    /** Returns whether this context is currently in replay mode. */
-    @Override
-    public boolean isReplaying() {
-        return isReplaying;
-    }
-
-    /**
-     * Transitions this context from replay to execution mode. Called when the first un-cached operation is encountered.
-     */
-    public void setExecutionMode() {
-        this.isReplaying = false;
     }
 
     /** Returns a durable logger for this context. */

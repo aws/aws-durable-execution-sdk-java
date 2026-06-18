@@ -114,10 +114,9 @@ class DurableLoggerTest {
     @Test
     void setStepThreadPropertiesSetsMdc() {
         var logger = new DurableLogger(new RecordingLogger().delegate());
-        var replaying = new AtomicBoolean(false);
 
         BaseContextImpl.setCurrentContext(
-                createStepContext(replaying, LoggerConfig.defaults(), REQUEST_ID, "op-1", "validateOrder", 2));
+                createStepContext(LoggerConfig.defaults(), REQUEST_ID, "op-1", "validateOrder", 2));
         DurableLogger.attachContext();
         try {
             logger.info("step log");
@@ -143,6 +142,20 @@ class DurableLoggerTest {
 
         assertNull(MDC.get(DurableLogger.MDC_EXECUTION_ARN));
         assertNull(MDC.get(DurableLogger.MDC_REQUEST_ID));
+    }
+
+    @Test
+    void stepLogsAreNotSuppressed() {
+        var recordingLogger = new RecordingLogger();
+        var logger = new DurableLogger(recordingLogger.delegate());
+
+        withContext(createStepContext(LoggerConfig.defaults(), REQUEST_ID, "op-1", "validateOrder", 2), () -> {
+            logger.info("step logs should always emit");
+        });
+
+        assertEquals(1, recordingLogger.calls().size());
+        assertEquals(
+                "step logs should always emit", recordingLogger.calls().get(0).message());
     }
 
     @Test
@@ -223,12 +236,7 @@ class DurableLoggerTest {
     }
 
     private static StepContext createStepContext(
-            AtomicBoolean replaying,
-            LoggerConfig loggerConfig,
-            String requestId,
-            String operationId,
-            String operationName,
-            int attempt) {
+            LoggerConfig loggerConfig, String requestId, String operationId, String operationName, int attempt) {
         return (StepContext) Proxy.newProxyInstance(
                 StepContext.class.getClassLoader(),
                 new Class<?>[] {StepContext.class},
@@ -239,7 +247,6 @@ class DurableLoggerTest {
                     case "getContextId" -> operationId;
                     case "getContextName" -> operationName;
                     case "getAttempt" -> attempt;
-                    case "isReplaying" -> replaying.get();
                     case "toString" -> "TestStepContext";
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
