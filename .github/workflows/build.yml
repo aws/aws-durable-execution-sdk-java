@@ -37,7 +37,7 @@ on:
       - 'pom.xml'
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -66,38 +66,30 @@ jobs:
         run: mvn -B install --file pom.xml
 
       - name: Generate JaCoCo Badge
-        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        if: ${{ matrix.java == 17 }}
         uses: cicirello/jacoco-badge-generator@72266185b7ee48a6fd74eaf0238395cc8b14fef8 # v2
         with:
           jacoco-csv-file: coverage-report/target/site/jacoco-aggregate/jacoco.csv
           badges-directory: coverage-report/target/site/jacoco-aggregate
 
-      - name: Publish coverage report to GitHub Pages
-        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
-        uses: JamesIves/github-pages-deploy-action@d92aa235d04922e8f08b40ce78cc5442fcfbfa2f # v4
-        with:
-          branch: docs
-          folder: coverage-report/target/site/jacoco-aggregate
-          target-folder: coverage
-
       - name: Generate javadoc site
-        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        if: ${{ matrix.java == 17 }}
         run: mvn -B -pl sdk -am javadoc:javadoc
 
       - name: Configure GitHub Pages
-        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        if: ${{ matrix.java == 17 }}
         uses: actions/configure-pages@v5
 
       - name: Prepare GitHub Pages artifact
-        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        if: ${{ matrix.java == 17 }}
         run: |
           mkdir -p github-pages/coverage github-pages/javadoc
           cp -R coverage-report/target/site/jacoco-aggregate/. github-pages/coverage
-          cp -R sdk/target/site/apidocs/. github-pages/javadoc
+          cp -R sdk/target/reports/apidocs/. github-pages/javadoc
           touch github-pages/.nojekyll
 
       - name: Upload GitHub Pages artifact
-        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        if: ${{ matrix.java == 17 }}
         uses: actions/upload-pages-artifact@v4
         with:
           path: github-pages
