@@ -114,6 +114,31 @@ class SerializableDurableOperationTest {
     }
 
     @Test
+    void waitForOperationCompletionThrowsIllegalStateExceptionWhenCalledFromStepThread() {
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.STEP));
+
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        markAlreadyCompleted();
+                        assertThrows(IllegalStateException.class, this::waitForOperationCompletion);
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+        verify(executionManager, never()).terminateExecution(any(IllegalDurableOperationException.class));
+    }
+
+    @Test
     void waitForOperationCompletionWhenRunningAndReadyToComplete()
             throws InterruptedException, ExecutionException, TimeoutException {
         SerializableDurableOperation<String> op =

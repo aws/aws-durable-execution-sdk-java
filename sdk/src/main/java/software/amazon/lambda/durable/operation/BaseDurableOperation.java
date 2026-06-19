@@ -191,7 +191,7 @@ public abstract class BaseDurableOperation {
     /**
      * Checks if it's called from a Step.
      *
-     * @throws IllegalDurableOperationException if it's in a step
+     * @throws IllegalStateException if it's in a step
      */
     private void validateCurrentThreadType() {
         ThreadType current = getCurrentThreadContext().threadType();
@@ -199,8 +199,7 @@ public abstract class BaseDurableOperation {
             var message = String.format(
                     "Nested %s operation is not supported on %s from within a %s execution.",
                     getType(), getName(), current);
-            // terminate execution and throw the exception
-            throw terminateExecutionWithIllegalDurableOperationException(message);
+            throw new IllegalStateException(message);
         }
     }
 

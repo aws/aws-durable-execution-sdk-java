@@ -5,7 +5,9 @@ package software.amazon.lambda.durable;
 import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 /** Tests that nested step calling is properly rejected. */
@@ -16,9 +18,13 @@ class NestedStepIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             // outer-step's supplier calls context.step() which internally calls stepAsync().get()
             // The get() is called from the outer step's thread (named "1-step"), triggering the check
-            var future = context.stepAsync("outer-step", String.class, stepCtx -> {
-                return context.step("inner-step", String.class, stepCtx2 -> "inner-result");
-            });
+            var future = context.stepAsync(
+                    "outer-step",
+                    String.class,
+                    stepCtx -> context.step("inner-step", String.class, stepCtx2 -> "inner-result"),
+                    StepConfig.builder()
+                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                            .build());
             return future.get();
         });
 
@@ -38,10 +44,16 @@ class NestedStepIntegrationTest {
             var asyncFuture = context.stepAsync("async-step", String.class, stepCtx -> "async-result");
 
             // Sync step tries to await the async step's result inside its supplier
-            return context.step("sync-step", String.class, stepCtx -> {
-                // This get() is called from sync-step's thread ("2-step"), which is not allowed
-                return "combined: " + asyncFuture.get();
-            });
+            return context.step(
+                    "sync-step",
+                    String.class,
+                    stepCtx -> {
+                        // This get() is called from sync-step's thread ("2-step"), which is not allowed
+                        return "combined: " + asyncFuture.get();
+                    },
+                    StepConfig.builder()
+                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                            .build());
         });
 
         var result = runner.run("test");
