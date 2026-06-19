@@ -101,7 +101,11 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * @return the serialized string
      */
     protected String serializeResult(T result) {
-        return resultSerDes.serialize(result);
+        var serialized = resultSerDes.serialize(result);
+        if (shouldValidateSerializationRoundTrip()) {
+            deserializeResult(serialized);
+        }
+        return serialized;
     }
 
     /**
@@ -110,8 +114,18 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * @param throwable the exception to serialize
      * @return the serialized error object
      */
+    @SuppressWarnings("ThrowableNotThrown")
     protected ErrorObject serializeException(Throwable throwable) {
-        return ExceptionHelper.buildErrorObject(throwable, resultSerDes);
+        var error = ExceptionHelper.buildErrorObject(throwable, resultSerDes);
+        if (shouldValidateSerializationRoundTrip()) {
+            deserializeException(error);
+        }
+        return error;
+    }
+
+    private boolean shouldValidateSerializationRoundTrip() {
+        var config = getContext().getDurableConfig();
+        return config == null || config.shouldValidateSerializationRoundTrip();
     }
 
     /**

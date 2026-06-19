@@ -88,6 +88,24 @@ class DurableConfigTest {
     }
 
     @Test
+    void testBuilder_SerializationRoundTripValidationDefaultsToTrue() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        assertTrue(config.shouldValidateSerializationRoundTrip());
+    }
+
+    @Test
+    void testBuilder_WithSerializationRoundTripValidationDisabled() {
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withSerializationRoundTripValidation(false)
+                .build();
+
+        assertFalse(config.shouldValidateSerializationRoundTrip());
+    }
+
+    @Test
     void testBuilder_WithAllCustomComponents() {
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(mockClient)
@@ -131,6 +149,7 @@ class DurableConfigTest {
         assertSame(builder, builder.withDurableExecutionClient(mockClient));
         assertSame(builder, builder.withSerDes(mockSerDes));
         assertSame(builder, builder.withExecutorService(mockExecutor));
+        assertSame(builder, builder.withSerializationRoundTripValidation(false));
     }
 
     @Test

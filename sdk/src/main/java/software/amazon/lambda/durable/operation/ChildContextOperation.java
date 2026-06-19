@@ -149,6 +149,8 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextSuccess(T result) {
+        var serialized = serializeResult(result);
+
         if (replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted()) {
             // Skip checkpointing if
             // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes
@@ -162,13 +164,11 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             }
             markAlreadyCompleted();
         } else {
-            checkpointSuccess(result);
+            checkpointSuccess(result, serialized);
         }
     }
 
-    private void checkpointSuccess(T result) {
-        var serialized = serializeResult(result);
-
+    private void checkpointSuccess(T result, String serialized) {
         if (serialized == null || serialized.getBytes(StandardCharsets.UTF_8).length < LARGE_RESULT_THRESHOLD) {
             sendOperationUpdate(
                     OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));

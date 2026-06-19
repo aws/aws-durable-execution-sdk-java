@@ -24,15 +24,29 @@ import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 
 /** Unit tests for ChildContextOperation. */
 class ChildContextOperationTest {
+
+    private static final class SerializationOnlySerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return "\"serialized\"";
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            throw new SerDesException("cannot deserialize");
+        }
+    }
 
     private static final JacksonSerDes SERDES = new JacksonSerDes();
 
@@ -49,8 +63,13 @@ class ChildContextOperationTest {
     }
 
     private DurableConfig createConfig() {
+        return createConfig(true);
+    }
+
+    private DurableConfig createConfig(boolean validateSerializationRoundTrip) {
         return DurableConfig.builder()
                 .withExecutorService(Executors.newCachedThreadPool())
+                .withSerializationRoundTripValidation(validateSerializationRoundTrip)
                 .build();
     }
 
@@ -58,20 +77,28 @@ class ChildContextOperationTest {
             OperationIdentifier.of("1", "test-context", OperationSubType.RUN_IN_CHILD_CONTEXT);
 
     private ChildContextOperation<String> createOperation(Function<DurableContext, String> func) {
+        return createOperation(func, SERDES);
+    }
+
+    private ChildContextOperation<String> createOperation(Function<DurableContext, String> func, SerDes serDes) {
         return new ChildContextOperation<>(
                 OPERATION_IDENTIFIER,
                 func,
                 TypeToken.get(String.class),
-                RunInChildContextConfig.builder().serDes(SERDES).build(),
+                RunInChildContextConfig.builder().serDes(serDes).build(),
                 durableContext);
     }
 
     private ChildContextOperation<String> createVirtualOperation(Function<DurableContext, String> func) {
+        return createVirtualOperation(func, SERDES);
+    }
+
+    private ChildContextOperation<String> createVirtualOperation(Function<DurableContext, String> func, SerDes serDes) {
         return new ChildContextOperation<>(
                 OPERATION_IDENTIFIER,
                 func,
                 TypeToken.get(String.class),
-                RunInChildContextConfig.builder().serDes(SERDES).isVirtual(true).build(),
+                RunInChildContextConfig.builder().serDes(serDes).isVirtual(true).build(),
                 durableContext);
     }
 
@@ -309,6 +336,40 @@ class ChildContextOperationTest {
         // sendOperationUpdate should only be called once for START, not for SUCCEED
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+    }
+
+    /** Virtual child still validates result round-trip before skipping a success checkpoint. */
+    @Test
+    void virtualChildFailsWhenResultCannotBeDeserialized() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+
+        var operation = createVirtualOperation(ctx -> "result", new SerializationOnlySerDes());
+        operation.execute();
+        Thread.sleep(200);
+
+        var thrown = assertThrows(ChildContextFailedException.class, operation::get);
+        assertTrue(thrown.getMessage().contains(SerDesException.class.getName()));
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
+    }
+
+    /** Virtual child can skip round-trip validation when disabled in DurableConfig. */
+    @Test
+    void virtualChildSucceedsWhenResultValidationDisabled() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        when(durableContext.getDurableConfig()).thenReturn(createConfig(false));
+
+        var operation = createVirtualOperation(ctx -> "result", new SerializationOnlySerDes());
+        operation.execute();
+        Thread.sleep(200);
+
+        assertEquals("result", operation.get());
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
     }
 
     /** Child skips failure checkpoint when parent operation has already completed. */

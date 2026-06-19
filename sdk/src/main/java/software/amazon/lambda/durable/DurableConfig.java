@@ -98,6 +98,7 @@ public final class DurableConfig {
     private final LoggerConfig loggerConfig;
     private final PollingStrategy pollingStrategy;
     private final Duration checkpointDelay;
+    private final boolean validateSerializationRoundTrip;
     private final PluginRunner pluginRunner;
 
     private DurableConfig(Builder builder) {
@@ -109,6 +110,7 @@ public final class DurableConfig {
         this.loggerConfig = Objects.requireNonNullElseGet(builder.loggerConfig, LoggerConfig::defaults);
         this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
+        this.validateSerializationRoundTrip = builder.validateSerializationRoundTrip;
         this.pluginRunner = builder.plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(builder.plugins);
 
         validateConfiguration();
@@ -184,6 +186,19 @@ public final class DurableConfig {
      */
     public Duration getCheckpointDelay() {
         return checkpointDelay;
+    }
+
+    /**
+     * Gets whether serialized operation data should be immediately deserialized to verify round-trip compatibility.
+     *
+     * <p>When enabled, the SDK validates serialized operation results and exceptions before checkpointing them. This
+     * catches incompatible SerDes behavior early at the cost of an extra deserialize pass. Defaults to true, and custom
+     * SerDes implementations are still expected to be round-trip safe even if this validation is disabled.
+     *
+     * @return true when round-trip serialization validation is enabled
+     */
+    public boolean shouldValidateSerializationRoundTrip() {
+        return validateSerializationRoundTrip;
     }
 
     /**
@@ -293,6 +308,7 @@ public final class DurableConfig {
         private LoggerConfig loggerConfig;
         private PollingStrategy pollingStrategy;
         private Duration checkpointDelay;
+        private boolean validateSerializationRoundTrip = true;
         private List<DurableExecutionPlugin> plugins = new ArrayList<>();
 
         public Builder() {}
@@ -400,6 +416,22 @@ public final class DurableConfig {
          */
         public Builder withCheckpointDelay(Duration duration) {
             this.checkpointDelay = duration;
+            return this;
+        }
+
+        /**
+         * Controls whether the SDK immediately deserializes serialized results and exceptions to verify they can be
+         * read back before checkpointing.
+         *
+         * <p>This validation is enabled by default. Disable it only to avoid the extra deserialize pass when the
+         * additional safety check is too expensive for your workload. Custom SerDes implementations are still expected
+         * to round-trip SDK-managed values correctly.
+         *
+         * @param validateSerializationRoundTrip true to validate serialized data with an immediate deserialize pass
+         * @return This builder
+         */
+        public Builder withSerializationRoundTripValidation(boolean validateSerializationRoundTrip) {
+            this.validateSerializationRoundTrip = validateSerializationRoundTrip;
             return this;
         }
 

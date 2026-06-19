@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -27,7 +28,9 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
@@ -41,6 +44,32 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
 class SerializableDurableOperationTest {
+
+    private static final class TrackingSerDes extends JacksonSerDes {
+        private final AtomicInteger deserializeCount = new AtomicInteger(0);
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializeCount.incrementAndGet();
+            return super.deserialize(data, typeToken);
+        }
+
+        int getDeserializeCount() {
+            return deserializeCount.get();
+        }
+    }
+
+    private static final class SerializationOnlySerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return "\"serialized\"";
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            throw new SerDesException("cannot deserialize");
+        }
+    }
 
     private static final String OPERATION_ID = "1";
     private static final String CONTEXT_ID = "1-step";
@@ -341,6 +370,73 @@ class SerializableDurableOperationTest {
     }
 
     @Test
+    void serializeResultValidatesRoundTrip() {
+        var serDes = new TrackingSerDes();
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        assertEquals("\"abc\"", serializeResult("abc"));
+                        assertEquals(1, serDes.getDeserializeCount());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeResultThrowsWhenRoundTripFails() {
+        var serDes = new SerializationOnlySerDes();
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var thrown = assertThrows(SerDesException.class, () -> serializeResult("abc"));
+                        assertEquals("cannot deserialize", thrown.getMessage());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeResultSkipsRoundTripValidationWhenDisabled() {
+        when(durableContext.getDurableConfig()).thenReturn(configWithSerializationValidation(false));
+
+        var serDes = new SerializationOnlySerDes();
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        assertEquals("\"serialized\"", serializeResult("abc"));
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
     void deserializeException() {
         SerializableDurableOperation<String> op =
                 new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
@@ -359,6 +455,53 @@ class SerializableDurableOperationTest {
                         Throwable ex = deserializeException(serializeException(new RuntimeException("test exception")));
                         assertInstanceOf(RuntimeException.class, ex);
                         assertEquals("test exception", ex.getMessage());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeExceptionValidatesRoundTrip() {
+        var serDes = new TrackingSerDes();
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var error = serializeException(new RuntimeException("test exception"));
+                        assertEquals(RuntimeException.class.getName(), error.errorType());
+                        assertEquals(1, serDes.getDeserializeCount());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeExceptionSkipsRoundTripValidationWhenDisabled() {
+        when(durableContext.getDurableConfig()).thenReturn(configWithSerializationValidation(false));
+
+        var serDes = new SerializationOnlySerDes();
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var error = serializeException(new RuntimeException("test exception"));
+                        assertEquals(RuntimeException.class.getName(), error.errorType());
                         return RESULT;
                     }
                 };
@@ -410,5 +553,12 @@ class SerializableDurableOperationTest {
 
         op.execute();
         verify(executionManager, times(1)).sendOperationUpdate(update.build());
+    }
+
+    private DurableConfig configWithSerializationValidation(boolean validateSerializationRoundTrip) {
+        return DurableConfig.builder()
+                .withDurableExecutionClient(mock(DurableExecutionClient.class))
+                .withSerializationRoundTripValidation(validateSerializationRoundTrip)
+                .build();
     }
 }
