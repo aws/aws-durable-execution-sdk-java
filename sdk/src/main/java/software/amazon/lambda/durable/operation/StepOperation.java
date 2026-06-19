@@ -170,11 +170,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             errorObject = serializeException(exception);
         }
 
-        var isRetryable = !(exception instanceof StepInterruptedException)
-                || config.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
         var retryDecision = config.retryStrategy().makeRetryDecision(exception, attempt);
 
-        if (isRetryable && retryDecision.shouldRetry()) {
+        if (retryDecision.shouldRetry()) {
             // Send RETRY
             var retryDelayInSeconds = Math.toIntExact(retryDecision.delay().toSeconds());
             var retryUpdate = OperationUpdate.builder()
@@ -224,9 +222,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
-    @SuppressWarnings("deprecation")
     private boolean isAtMostOnce() {
-        var semantics = config.semanticsPerRetry() != null ? config.semanticsPerRetry() : config.semantics();
-        return semantics == StepSemantics.AT_MOST_ONCE_PER_RETRY;
+        return config.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
     }
 }

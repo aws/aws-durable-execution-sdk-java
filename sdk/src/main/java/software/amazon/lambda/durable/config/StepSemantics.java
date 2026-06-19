@@ -17,12 +17,6 @@ public enum StepSemantics {
     /**
      * At-most-once delivery per retry attempt. START checkpoint is awaited before user code runs. If interrupted,
      * throws {@link software.amazon.lambda.durable.exception.StepInterruptedException}.
-     *
-     * <p>When used with {@link StepConfig.Builder#semantics(StepSemantics)}: interrupted steps are NOT retried
-     * (incorrect behavior, kept for backward compatibility).
-     *
-     * <p>When used with {@link StepConfig.Builder#semanticsPerRetry(StepSemantics)}: interrupted steps are retried
-     * according to the retry strategy (correct behavior).
      */
     AT_MOST_ONCE_PER_RETRY
 }

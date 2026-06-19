@@ -14,13 +14,11 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class StepConfig {
     private final RetryStrategy retryStrategy;
-    private final StepSemantics semantics;
     private final StepSemantics semanticsPerRetry;
     private final SerDes serDes;
 
     private StepConfig(Builder builder) {
         this.retryStrategy = builder.retryStrategy;
-        this.semantics = builder.semantics;
         this.semanticsPerRetry = builder.semanticsPerRetry;
         this.serDes = builder.serDes;
     }
@@ -30,20 +28,9 @@ public class StepConfig {
         return retryStrategy != null ? retryStrategy : RetryStrategies.Presets.DEFAULT;
     }
 
-    /**
-     * Returns the delivery semantics for this step, defaults to AT_LEAST_ONCE_PER_RETRY if not specified.
-     *
-     * @deprecated Use {@link #semanticsPerRetry()} instead. This method has incorrect behavior where
-     *     AT_MOST_ONCE_PER_RETRY does not retry after step interruption.
-     */
-    @Deprecated(forRemoval = true)
-    public StepSemantics semantics() {
-        return semantics != null ? semantics : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
-    }
-
-    /** Returns the delivery semantics per retry for this step, or null if not specified. */
+    /** Returns the delivery semantics per retry for this step. */
     public StepSemantics semanticsPerRetry() {
-        return semanticsPerRetry;
+        return semanticsPerRetry != null ? semanticsPerRetry : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
     }
 
     /** Returns the custom serializer for this step, or null if not specified (uses default SerDes). */
@@ -52,7 +39,7 @@ public class StepConfig {
     }
 
     public Builder toBuilder() {
-        return new Builder(retryStrategy, semantics, semanticsPerRetry, serDes);
+        return new Builder(retryStrategy, semanticsPerRetry, serDes);
     }
 
     /**
@@ -61,20 +48,17 @@ public class StepConfig {
      * @return a new Builder instance
      */
     public static Builder builder() {
-        return new Builder(null, null, null, null);
+        return new Builder(null, null, null);
     }
 
     /** Builder for creating StepConfig instances. */
     public static class Builder {
         private RetryStrategy retryStrategy;
-        private StepSemantics semantics;
         private StepSemantics semanticsPerRetry;
         private SerDes serDes;
 
-        public Builder(
-                RetryStrategy retryStrategy, StepSemantics semantics, StepSemantics semanticsPerRetry, SerDes serDes) {
+        public Builder(RetryStrategy retryStrategy, StepSemantics semanticsPerRetry, SerDes serDes) {
             this.retryStrategy = retryStrategy;
-            this.semantics = semantics;
             this.semanticsPerRetry = semanticsPerRetry;
             this.serDes = serDes;
         }
@@ -91,23 +75,7 @@ public class StepConfig {
         }
 
         /**
-         * Sets the delivery semantics for the step.
-         *
-         * @param semantics the delivery semantics to use, defaults to AT_LEAST_ONCE_PER_RETRY if not specified
-         * @return this builder for method chaining
-         * @deprecated Use {@link #semanticsPerRetry(StepSemantics)} instead. This method has incorrect behavior where
-         *     AT_MOST_ONCE_PER_RETRY does not retry after step interruption.
-         */
-        @Deprecated(forRemoval = true)
-        public Builder semantics(StepSemantics semantics) {
-            this.semantics = semantics;
-            return this;
-        }
-
-        /**
          * Sets the delivery semantics per retry for the step.
-         *
-         * <p>If set, this takes precedence over {@link #semantics(StepSemantics)}.
          *
          * @param semanticsPerRetry the delivery semantics to use
          * @return this builder for method chaining

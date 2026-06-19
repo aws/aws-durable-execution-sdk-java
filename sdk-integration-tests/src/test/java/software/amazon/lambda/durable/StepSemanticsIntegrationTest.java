@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -16,29 +16,6 @@ class StepSemanticsIntegrationTest {
 
     @Test
     void testAtLeastOnceCompletesSuccessfully() {
-        var executionCount = new AtomicInteger(0);
-
-        var runner = LocalDurableTestRunner.create(
-                String.class,
-                (input, ctx) -> ctx.step(
-                        "my-step",
-                        String.class,
-                        stepCtx -> {
-                            executionCount.incrementAndGet();
-                            return "result";
-                        },
-                        StepConfig.builder()
-                                .semantics(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
-                                .build()));
-
-        var result = runner.run("test-input");
-
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(1, executionCount.get());
-    }
-
-    @Test
-    void testSemanticsPerRetry_atLeastOnceCompletesSuccessfully() {
         var executionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(
@@ -74,29 +51,6 @@ class StepSemanticsIntegrationTest {
                             return "result";
                         },
                         StepConfig.builder()
-                                .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
-                                .build()));
-
-        var result = runner.run("test-input");
-
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(1, executionCount.get());
-    }
-
-    @Test
-    void testSemanticsPerRetry_atMostOnceCompletesSuccessfully() {
-        var executionCount = new AtomicInteger(0);
-
-        var runner = LocalDurableTestRunner.create(
-                String.class,
-                (input, ctx) -> ctx.step(
-                        "my-step",
-                        String.class,
-                        stepCtx -> {
-                            executionCount.incrementAndGet();
-                            return "result";
-                        },
-                        StepConfig.builder()
                                 .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                                 .build()));
 
@@ -120,30 +74,6 @@ class StepSemanticsIntegrationTest {
                             throw new RuntimeException("Always fails");
                         },
                         StepConfig.builder()
-                                .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
-                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                                .build()));
-
-        var result = runner.run("test-input");
-
-        assertEquals(ExecutionStatus.FAILED, result.getStatus());
-        assertEquals(1, executionCount.get());
-    }
-
-    @Test
-    void testSemanticsPerRetry_atMostOnceNoRetryFailsImmediately() {
-        var executionCount = new AtomicInteger(0);
-
-        var runner = LocalDurableTestRunner.create(
-                String.class,
-                (input, ctx) -> ctx.step(
-                        "my-step",
-                        String.class,
-                        stepCtx -> {
-                            executionCount.incrementAndGet();
-                            throw new RuntimeException("Always fails");
-                        },
-                        StepConfig.builder()
                                 .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                                 .build()));
@@ -155,7 +85,7 @@ class StepSemanticsIntegrationTest {
     }
 
     @Test
-    void testDefaultSemanticsIsAtLeastOnce() {
+    void testDefaultSemanticsPerRetryIsAtLeastOnce() {
         var executionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(
@@ -175,46 +105,18 @@ class StepSemanticsIntegrationTest {
     void testAtLeastOnceReExecutesAfterCheckpointLoss() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            return context.step(
-                    "step",
-                    String.class,
-                    stepCtx -> {
-                        var count = executionCount.incrementAndGet();
-                        return "Executed " + count + " times";
-                    },
-                    StepConfig.builder()
-                            .semantics(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
-                            .build());
-        });
-
-        runner.run("test");
-        assertEquals(1, executionCount.get());
-
-        runner.simulateFireAndForgetCheckpointLoss("step");
-
-        var result = runner.run("test");
-
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(2, executionCount.get());
-    }
-
-    @Test
-    void testSemanticsPerRetry_atLeastOnceReExecutesAfterCheckpointLoss() {
-        var executionCount = new AtomicInteger(0);
-
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            return context.step(
-                    "step",
-                    String.class,
-                    stepCtx -> {
-                        var count = executionCount.incrementAndGet();
-                        return "Executed " + count + " times";
-                    },
-                    StepConfig.builder()
-                            .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
-                            .build());
-        });
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "step",
+                        String.class,
+                        stepCtx -> {
+                            var count = executionCount.incrementAndGet();
+                            return "Executed " + count + " times";
+                        },
+                        StepConfig.builder()
+                                .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
+                                .build()));
 
         runner.run("test");
         assertEquals(1, executionCount.get());
@@ -231,18 +133,18 @@ class StepSemanticsIntegrationTest {
     void testAtLeastOnceReExecutesAfterCheckpointFailure() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            return context.step(
-                    "step",
-                    String.class,
-                    stepCtx -> {
-                        var count = executionCount.incrementAndGet();
-                        return "Executed " + count + " times";
-                    },
-                    StepConfig.builder()
-                            .semantics(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
-                            .build());
-        });
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "step",
+                        String.class,
+                        stepCtx -> {
+                            var count = executionCount.incrementAndGet();
+                            return "Executed " + count + " times";
+                        },
+                        StepConfig.builder()
+                                .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
+                                .build()));
 
         runner.run("test");
         assertEquals(1, executionCount.get());
@@ -255,79 +157,21 @@ class StepSemanticsIntegrationTest {
     }
 
     @Test
-    void testSemanticsPerRetry_atLeastOnceReExecutesAfterCheckpointFailure() {
+    void testAtMostOnceRetriesAfterInterruption() {
         var executionCount = new AtomicInteger(0);
 
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            return context.step(
-                    "step",
-                    String.class,
-                    stepCtx -> {
-                        var count = executionCount.incrementAndGet();
-                        return "Executed " + count + " times";
-                    },
-                    StepConfig.builder()
-                            .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
-                            .build());
-        });
-
-        runner.run("test");
-        assertEquals(1, executionCount.get());
-
-        runner.resetCheckpointToStarted("step");
-        var result = runner.runUntilComplete("test");
-
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(2, executionCount.get());
-    }
-
-    // This behavior is incorrect (the step should retry after interruption), but is kept for backward
-    // compatibility. The deprecated StepConfig.semantics() method preserves this behavior.
-    // Use StepConfig.semanticsPerRetry() for the corrected behavior (see below test).
-    @Test
-    void testAtMostOnceThrowsExceptionAfterCheckpointFailure_deprecatedBackwardCompatibility() {
-        var executionCount = new AtomicInteger(0);
-
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            return context.step(
-                    "step",
-                    String.class,
-                    stepCtx -> {
-                        executionCount.incrementAndGet();
-                        return "Should not re-execute";
-                    },
-                    StepConfig.builder()
-                            .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
-                            .build());
-        });
-
-        runner.run("test");
-        assertEquals(1, executionCount.get());
-
-        runner.resetCheckpointToStarted("step");
-
-        var result = runner.run("test");
-
-        assertEquals(ExecutionStatus.FAILED, result.getStatus());
-        assertEquals(1, executionCount.get());
-    }
-
-    @Test
-    void testSemanticsPerRetry_atMostOnceRetriesAfterInterruption() {
-        var executionCount = new AtomicInteger(0);
-
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            return context.step(
-                    "step",
-                    String.class,
-                    stepCtx -> {
-                        executionCount.incrementAndGet();
-                        return "result";
-                    },
-                    StepConfig.builder()
-                            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
-                            .build());
-        });
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "step",
+                        String.class,
+                        stepCtx -> {
+                            executionCount.incrementAndGet();
+                            return "result";
+                        },
+                        StepConfig.builder()
+                                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                                .build()));
 
         runner.run("test");
         assertEquals(1, executionCount.get());

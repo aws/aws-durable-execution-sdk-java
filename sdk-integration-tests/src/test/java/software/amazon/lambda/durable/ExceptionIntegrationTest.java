@@ -166,7 +166,8 @@ class ExceptionIntegrationTest {
                         return "result";
                     },
                     StepConfig.builder()
-                            .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
         });
 
@@ -199,7 +200,8 @@ class ExceptionIntegrationTest {
                             return "payment-success";
                         },
                         StepConfig.builder()
-                                .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                                 .build());
             } catch (StepInterruptedException e) {
                 // Recovery: check external status and return verified result

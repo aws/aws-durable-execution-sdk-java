@@ -49,7 +49,7 @@ class WaitForCallbackConfigTest {
     void testBuilderWithBothConfigs() {
         var stepConfig = StepConfig.builder()
                 .retryStrategy(RetryStrategies.Presets.DEFAULT)
-                .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                 .build();
         var callbackConfig = CallbackConfig.builder()
                 .timeout(Duration.ofMinutes(5))
@@ -146,7 +146,7 @@ class WaitForCallbackConfigTest {
         var customSerDes = new JacksonSerDes();
         var stepConfig = StepConfig.builder()
                 .retryStrategy(RetryStrategies.Presets.DEFAULT)
-                .semantics(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                 .serDes(customSerDes)
                 .build();
         var callbackConfig = CallbackConfig.builder()
@@ -163,7 +163,7 @@ class WaitForCallbackConfigTest {
         assertEquals(stepConfig, config.stepConfig());
         assertEquals(callbackConfig, config.callbackConfig());
         assertEquals(RetryStrategies.Presets.DEFAULT, config.stepConfig().retryStrategy());
-        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.stepConfig().semantics());
+        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.stepConfig().semanticsPerRetry());
         assertEquals(Duration.ofMinutes(10), config.callbackConfig().timeout());
         assertEquals(Duration.ofMinutes(2), config.callbackConfig().heartbeatTimeout());
     }
@@ -174,7 +174,7 @@ class WaitForCallbackConfigTest {
 
         assertNotNull(config.stepConfig());
         assertEquals(RetryStrategies.Presets.DEFAULT, config.stepConfig().retryStrategy());
-        assertEquals(StepSemantics.AT_LEAST_ONCE_PER_RETRY, config.stepConfig().semantics());
+        assertEquals(StepSemantics.AT_LEAST_ONCE_PER_RETRY, config.stepConfig().semanticsPerRetry());
         assertNull(config.stepConfig().serDes());
     }
 
