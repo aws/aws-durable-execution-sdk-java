@@ -19,6 +19,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/build.yml'
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
@@ -28,6 +29,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/build.yml'
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
@@ -36,6 +38,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build:
@@ -76,12 +80,36 @@ jobs:
           folder: coverage-report/target/site/jacoco-aggregate
           target-folder: coverage
 
-      - name: Deploy javadoc to Github Pages
+      - name: Generate javadoc site
         if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
-        uses: MathieuSoysal/Javadoc-publisher.yml@fda475b197081ba1eca7a1dfadf0c017080a1623 # v3.0.2
+        run: mvn -B -pl sdk -am javadoc:javadoc
+
+      - name: Configure GitHub Pages
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        uses: actions/configure-pages@v5
+
+      - name: Prepare GitHub Pages artifact
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        run: |
+          mkdir -p github-pages/coverage github-pages/javadoc
+          cp -R coverage-report/target/site/jacoco-aggregate/. github-pages/coverage
+          cp -R sdk/target/site/apidocs/. github-pages/javadoc
+          touch github-pages/.nojekyll
+
+      - name: Upload GitHub Pages artifact
+        if: ${{ github.ref == 'refs/heads/main' && matrix.java == 17 }}
+        uses: actions/upload-pages-artifact@v4
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          javadoc-branch: docs
-          target-folder: javadoc
-          java-version: 17
-          project: maven
+          path: github-pages
+
+  deploy-pages:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

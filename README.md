@@ -87,6 +87,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 
 - [<u>AWS Documentation</u>](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html) – Official AWS Lambda durable functions guide
 - [<u>Best Practices</u>](https://docs.aws.amazon.com/lambda/latest/dg/durable-best-practices.html) – Patterns and recommendations
+- [<u>Javadoc</u>](https://aws.github.io/aws-durable-execution-sdk-java/javadoc/) - API reference for the Java SDK
 - [<u>SDK Design</u>](docs/design.md) – Details of SDK internal architecture
 
 **Core Operations**
