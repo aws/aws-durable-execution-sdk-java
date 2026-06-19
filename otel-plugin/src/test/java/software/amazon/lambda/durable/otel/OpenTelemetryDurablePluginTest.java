@@ -11,6 +11,7 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
 class OpenTelemetryDurablePluginTest {
@@ -416,5 +417,196 @@ class OpenTelemetryDurablePluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(expectedOtelTraceId, spans.get(0).getTraceId());
+    }
+
+    // ─── Cross-invocation continuation span tests ────────────────────────
+
+    @Test
+    void operationEnd_withoutMatchingStart_createsContinuationSpanWithLink() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        // onOperationEnd without a prior onOperationStart — operation completed between invocations
+        plugin.onOperationEnd(
+                new OperationEndInfo("op-wait-1", "my-wait", "WAIT", "Wait", null, Instant.now(), Instant.now(), null));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(2, spans.size());
+
+        var continuationSpan = spans.stream()
+                .filter(s -> s.getName().contains("wait"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("durable.wait:my-wait", continuationSpan.getName());
+        assertFalse(continuationSpan.getLinks().isEmpty(), "Continuation span should have a Link");
+    }
+
+    @Test
+    void operationEnd_withoutMatchingStart_withError_setsErrorStatus() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-cb-1",
+                "my-callback",
+                "CALLBACK",
+                "Callback",
+                null,
+                Instant.now(),
+                Instant.now(),
+                new RuntimeException("timed out")));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var continuationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("callback"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(StatusCode.ERROR, continuationSpan.getStatus().getStatusCode());
+        assertFalse(continuationSpan.getLinks().isEmpty());
+    }
+
+    // ─── SuspendExecutionException handling ──────────────────────────────
+
+    @Test
+    void userFunctionEnd_withSuspendException_setsOutcomePending() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        plugin.onUserFunctionStart(new UserFunctionStartInfo(
+                "op-1", "child-ctx", "CONTEXT", "RunInChildContext", null, Instant.now(), false, null));
+
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1",
+                "child-ctx",
+                "CONTEXT",
+                "RunInChildContext",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                null,
+                false,
+                new SuspendExecutionException()));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("child-ctx"))
+                .findFirst()
+                .orElseThrow();
+        // Should NOT have ERROR status — suspension is not an error
+        assertNotEquals(StatusCode.ERROR, attemptSpan.getStatus().getStatusCode());
+    }
+
+    // ─── Attempt span cleanup at invocation end ──────────────────────────
+
+    @Test
+    void attemptSpan_endedAtInvocationEnd_whenUserFunctionEndNotCalled() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        // Start attempt but never call onUserFunctionEnd (simulates crash before end hook)
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "running", "STEP", "Step", null, Instant.now(), false, 1));
+
+        // Invocation ends — attempt span should be cleaned up
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        var attemptSpan = spans.stream()
+                .filter(s -> s.getName().contains("running"))
+                .findFirst()
+                .orElseThrow();
+        assertNotNull(attemptSpan, "Attempt span should be exported even without onUserFunctionEnd");
+    }
+
+    // ─── Parent resolution with parentId ─────────────────────────────────
+
+    @Test
+    void childOperation_parentedToParentOperationSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        // Parent context operation
+        plugin.onOperationStart(new OperationInfo(
+                "op-parent", "my-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null));
+
+        // Child operation with parentId pointing to parent
+        plugin.onOperationStart(
+                new OperationInfo("op-child", "inner-step", "STEP", "Step", "op-parent", Instant.now(), null));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-child", "inner-step", "STEP", "Step", "op-parent", Instant.now(), Instant.now(), null));
+
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-parent", "my-context", "CONTEXT", "RunInChildContext", null, Instant.now(), Instant.now(), null));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+
+        var parentSpan = spans.stream()
+                .filter(s -> s.getName().contains("context"))
+                .findFirst()
+                .orElseThrow();
+        var childSpan = spans.stream()
+                .filter(s -> s.getName().contains("inner-step"))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(
+                parentSpan.getSpanId(),
+                childSpan.getParentSpanId(),
+                "Child operation should be parented to parent operation span");
+    }
+
+    // ─── Multi-invocation step-wait-step scenario ────────────────────────
+
+    @Test
+    void multiInvocation_stepWaitStep_producesCorrectSpans() {
+        var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
+
+        // Invocation 1: step completes, wait starts
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        plugin.onOperationStart(new OperationInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), null));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onOperationEnd(
+                new OperationEndInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-2", "pause", "WAIT", "Wait", null, Instant.now(), null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
+
+        // Invocation 1 should have: step op + step attempt + wait (PENDING) + invocation = 4
+        assertEquals(4, spanExporter.getFinishedSpanItems().size());
+        var inv1TraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
+
+        spanExporter.reset();
+
+        // Invocation 2: wait completed between invocations, new step runs
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false));
+        plugin.onOperationEnd(
+                new OperationEndInfo("op-2", "pause", "WAIT", "Wait", null, Instant.now(), Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), null));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-3", "step-B", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onOperationEnd(
+                new OperationEndInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), Instant.now(), null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
+
+        var inv2Spans = spanExporter.getFinishedSpanItems();
+        // wait continuation + step-B op + step-B attempt + invocation = 4
+        assertEquals(4, inv2Spans.size());
+
+        // Same trace ID across invocations
+        var inv2TraceId = inv2Spans.get(0).getTraceId();
+        assertEquals(inv1TraceId, inv2TraceId);
+
+        // Wait continuation should have a Link
+        var waitContinuation = inv2Spans.stream()
+                .filter(s -> s.getName().contains("wait"))
+                .findFirst()
+                .orElseThrow();
+        assertFalse(waitContinuation.getLinks().isEmpty());
     }
 }

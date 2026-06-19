@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -258,16 +259,45 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
     public void onOperationEnd(OperationEndInfo info) {
         if (info.id() == null) return;
 
-        // End the operation span that was started in onOperationStart
         var span = operationSpans.remove(info.id());
-        if (span == null) return;
 
-        if (info.error() != null) {
-            span.setStatus(StatusCode.ERROR, info.error().getMessage());
-            span.recordException(info.error());
+        if (span != null) {
+            // Operation was started in this invocation — end normally
+            if (info.error() != null) {
+                span.setStatus(StatusCode.ERROR, info.error().getMessage());
+                span.recordException(info.error());
+            }
+            span.end();
+        } else {
+            // Operation was started in a prior invocation — create a continuation span with Link
+            // to the deterministic span ID from the original invocation.
+            var deterministicSpanId = idGenerator.generateSpanIdForOperation(info.id());
+            var traceId = idGenerator.generateTraceId();
+            var linkedSpanContext =
+                    SpanContext.create(traceId, deterministicSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+
+            var parentContext = resolveParentContext(info.parentId());
+
+            var spanBuilder = tracer.spanBuilder(spanName(info.type(), info.subType(), info.name()))
+                    .setParent(parentContext)
+                    .addLink(linkedSpanContext)
+                    .setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn)
+                    .setAttribute(DURABLE_OPERATION_ID, info.id())
+                    .setAttribute(DURABLE_OPERATION_TYPE, info.type());
+
+            if (info.name() != null) {
+                spanBuilder.setAttribute(DURABLE_OPERATION_NAME, info.name());
+            }
+
+            var continuationSpan = spanBuilder.startSpan();
+
+            if (info.error() != null) {
+                continuationSpan.setStatus(StatusCode.ERROR, info.error().getMessage());
+                continuationSpan.recordException(info.error());
+            }
+
+            continuationSpan.end();
         }
-
-        span.end();
     }
 
     // ─── User function hooks ─────────────────────────────────────────────
@@ -327,8 +357,12 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
         span.setAttribute(DURABLE_ATTEMPT_OUTCOME, outcome);
 
         if (!info.succeeded() && info.error() != null) {
-            span.setStatus(StatusCode.ERROR, info.error().getMessage());
-            span.recordException(info.error());
+            if (info.error() instanceof SuspendExecutionException) {
+                span.setAttribute(DURABLE_ATTEMPT_OUTCOME, "pending");
+            } else {
+                span.setStatus(StatusCode.ERROR, info.error().getMessage());
+                span.recordException(info.error());
+            }
         }
 
         if (info.endTimestamp() != null) {

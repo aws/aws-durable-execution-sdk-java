@@ -127,7 +127,9 @@ public abstract class BaseDurableOperation {
      */
     public void execute() {
         if (isVirtual) {
-            // We never persist virtual operations, so always call start
+            // Virtual operations are not checkpointed, but we still fire plugin hooks
+            // so the OTel plugin can emit spans for map/parallel iterations.
+            fireOnOperationStart(null);
             start();
         } else {
             var existing = getOperation();
@@ -136,12 +138,17 @@ public abstract class BaseDurableOperation {
                 validateReplay(existing);
                 if (ExecutionManager.isTerminalStatus(existing.status())) {
                     replayCompletedOperation.set(true);
+                } else if (getType() == OperationType.STEP || getType() == OperationType.CONTEXT) {
+                    // Non-terminal STEP/CONTEXT operations are being re-executed (user code runs again).
+                    // Fire onOperationStart so the OTel plugin can create a parent span for attempt spans.
+                    fireOnOperationStart(existing);
                 }
-                // Fire onOperationStart plugin hook (including replay)
-                fireOnOperationStart(existing);
+                // WAIT/INVOKE/CALLBACK in non-terminal status just poll — no onOperationStart needed.
+                // They'll get a continuation span via onOperationEnd when they complete.
 
                 // Fire onOperationEnd for operations that completed during suspension (between invocations).
-                // This enables the OTel plugin to emit spans for operations that transitioned while Lambda was frozen.
+                // The OTel plugin handles the missing onOperationStart by creating a continuation span linked
+                // to the deterministic span ID from the original invocation.
                 if (replayCompletedOperation.get()
                         && executionManager.isOperationUpdatedSinceLastInvocation(getOperationId())) {
                     fireOnOperationEnd(existing, extractErrorFromOperation(existing));
@@ -290,12 +297,11 @@ public abstract class BaseDurableOperation {
                 pluginRunner.onUserFunctionEnd(
                         PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, true, null));
             } catch (Throwable throwable) {
-                // Fire onUserFunctionEnd for actual user function failures,
-                // not for SDK control flow signals (SuspendExecutionException)
-                if (!(throwable instanceof SuspendExecutionException)) {
-                    pluginRunner.onUserFunctionEnd(
-                            PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, false, throwable));
-                }
+                // Fire onUserFunctionEnd for all outcomes including suspension.
+                // For SuspendExecutionException, this allows the OTel plugin to mark the attempt span as PENDING
+                // rather than leaving it with no status at invocation cleanup.
+                pluginRunner.onUserFunctionEnd(
+                        PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, false, throwable));
 
                 // Operations always wrap the user's function and handles all possible exceptions except for
                 // SuspendExecutionException.
@@ -520,7 +526,7 @@ public abstract class BaseDurableOperation {
     }
 
     /** Fires onOperationEnd plugin hook when an operation reaches terminal status for the first time. */
-    private void fireOnOperationEnd(Operation operation, Throwable error) {
+    protected void fireOnOperationEnd(Operation operation, Throwable error) {
         var info = PluginInfoConverter.toOperationEndInfo(
                 operation, operationIdentifier, durableContext.getParentId(), error);
         getPluginRunner().onOperationEnd(info);
