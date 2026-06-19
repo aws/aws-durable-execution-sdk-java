@@ -139,6 +139,104 @@ class RetryStrategiesTest {
     }
 
     @Test
+    void linearBackoff_withCustomDelays_shouldIncreaseByIncrement() {
+        var strategy = RetryStrategies.linearBackoff(5, Duration.ofSeconds(2), Duration.ofSeconds(3));
+
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
+        var decision4 = strategy.makeRetryDecision(new RuntimeException("test"), 4);
+
+        assertTrue(decision1.shouldRetry());
+        assertEquals(Duration.ofSeconds(2), decision1.delay());
+
+        assertTrue(decision2.shouldRetry());
+        assertEquals(Duration.ofSeconds(5), decision2.delay());
+
+        assertTrue(decision3.shouldRetry());
+        assertEquals(Duration.ofSeconds(8), decision3.delay());
+
+        assertTrue(decision4.shouldRetry());
+        assertEquals(Duration.ofSeconds(11), decision4.delay());
+    }
+
+    @Test
+    void linearPreset_shouldUseOneThroughFiveSecondDelays() {
+        var strategy = RetryStrategies.Presets.LINEAR;
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            var decision = strategy.makeRetryDecision(new RuntimeException("test"), attempt);
+
+            assertTrue(decision.shouldRetry(), "Should retry on attempt " + attempt);
+            assertEquals(Duration.ofSeconds(attempt), decision.delay());
+        }
+
+        var finalDecision = strategy.makeRetryDecision(new RuntimeException("test"), 6);
+        assertFalse(finalDecision.shouldRetry());
+    }
+
+    @Test
+    void linearBackoff_shouldStopAtMaxAttempts() {
+        var strategy = RetryStrategies.linearBackoff(3, Duration.ofSeconds(1), Duration.ofSeconds(1));
+
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
+
+        assertTrue(decision1.shouldRetry());
+        assertTrue(decision2.shouldRetry());
+        assertFalse(decision3.shouldRetry());
+    }
+
+    @Test
+    void linearBackoff_withInvalidMaxAttempts_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.linearBackoff(0, Duration.ofSeconds(1), Duration.ofSeconds(1)));
+
+        assertTrue(exception.getMessage().contains("maxAttempts"));
+        assertTrue(exception.getMessage().contains("positive"));
+    }
+
+    @Test
+    void linearBackoff_withSubSecondInitialDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.linearBackoff(3, Duration.ofMillis(500), Duration.ofSeconds(1)));
+
+        assertTrue(exception.getMessage().contains("initialDelay"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void linearBackoff_withNullInitialDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class, () -> RetryStrategies.linearBackoff(3, null, Duration.ofSeconds(1)));
+
+        assertTrue(exception.getMessage().contains("initialDelay"));
+        assertTrue(exception.getMessage().contains("cannot be null"));
+    }
+
+    @Test
+    void linearBackoff_withSubSecondIncrement_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.linearBackoff(3, Duration.ofSeconds(1), Duration.ofMillis(500)));
+
+        assertTrue(exception.getMessage().contains("increment"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void linearBackoff_withNullIncrement_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class, () -> RetryStrategies.linearBackoff(3, Duration.ofSeconds(1), null));
+
+        assertTrue(exception.getMessage().contains("increment"));
+        assertTrue(exception.getMessage().contains("cannot be null"));
+    }
+
+    @Test
     void testInvalidParameters() {
         assertThrows(
                 IllegalArgumentException.class,

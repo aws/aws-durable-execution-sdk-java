@@ -28,6 +28,9 @@ public class RetryStrategies {
                 JitterStrategy.FULL // jitter
                 );
 
+        /** Linear retry strategy: 6 total attempts (1 initial + 5 retries) with 1s, 2s, 3s, 4s, and 5s delays. */
+        public static final RetryStrategy LINEAR = linearBackoff(6, Duration.ofSeconds(1), Duration.ofSeconds(1));
+
         /** No retry strategy - fails immediately on first error. Use this for operations that should not be retried. */
         public static final RetryStrategy NO_RETRY = (error, attempt) -> RetryDecision.fail();
     }
@@ -76,6 +79,33 @@ public class RetryStrategies {
             long finalDelaySeconds = Math.max(1, Math.round(delayWithJitter));
 
             return RetryDecision.retry(Duration.ofSeconds(finalDelaySeconds));
+        };
+    }
+
+    /**
+     * Creates a linear backoff retry strategy.
+     *
+     * <p>The delay calculation follows the formula: delay = initialDelay + increment × (attempt-1)
+     *
+     * @param maxAttempts Maximum number of attempts (including initial attempt)
+     * @param initialDelay Initial delay before first retry
+     * @param increment Amount to add to the delay after each retry attempt
+     * @return RetryStrategy implementing linear backoff
+     */
+    public static RetryStrategy linearBackoff(int maxAttempts, Duration initialDelay, Duration increment) {
+        if (maxAttempts <= 0) {
+            throw new IllegalArgumentException("maxAttempts must be positive");
+        }
+        ParameterValidator.validateDuration(initialDelay, "initialDelay");
+        ParameterValidator.validateDuration(increment, "increment");
+
+        return (error, attempt) -> {
+            if (attempt >= maxAttempts) {
+                return RetryDecision.fail();
+            }
+
+            var delay = initialDelay.plus(increment.multipliedBy(attempt - 1));
+            return RetryDecision.retry(delay);
         };
     }
 
