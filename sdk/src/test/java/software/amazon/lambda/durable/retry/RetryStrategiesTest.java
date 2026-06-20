@@ -161,6 +161,109 @@ class RetryStrategiesTest {
     }
 
     @Test
+    void linearBackoff_withOldOverload_shouldRemainUncappedAndDeterministic() {
+        var strategy = RetryStrategies.linearBackoff(5, Duration.ofSeconds(10), Duration.ofSeconds(10));
+
+        assertEquals(
+                Duration.ofSeconds(10),
+                strategy.makeRetryDecision(new RuntimeException("test"), 1).delay());
+        assertEquals(
+                Duration.ofSeconds(20),
+                strategy.makeRetryDecision(new RuntimeException("test"), 2).delay());
+        assertEquals(
+                Duration.ofSeconds(30),
+                strategy.makeRetryDecision(new RuntimeException("test"), 3).delay());
+        assertEquals(
+                Duration.ofSeconds(40),
+                strategy.makeRetryDecision(new RuntimeException("test"), 4).delay());
+    }
+
+    @Test
+    void linearBackoff_withMaxDelay_shouldCapDelay() {
+        var strategy = RetryStrategies.linearBackoff(
+                6, Duration.ofSeconds(2), Duration.ofSeconds(7), Duration.ofSeconds(3), JitterStrategy.NONE);
+
+        assertEquals(
+                Duration.ofSeconds(2),
+                strategy.makeRetryDecision(new RuntimeException("test"), 1).delay());
+        assertEquals(
+                Duration.ofSeconds(5),
+                strategy.makeRetryDecision(new RuntimeException("test"), 2).delay());
+        assertEquals(
+                Duration.ofSeconds(7),
+                strategy.makeRetryDecision(new RuntimeException("test"), 3).delay());
+        assertEquals(
+                Duration.ofSeconds(7),
+                strategy.makeRetryDecision(new RuntimeException("test"), 4).delay());
+    }
+
+    @Test
+    void linearBackoff_withMaxDelay_shouldCapBeforeOverflow() {
+        var strategy = RetryStrategies.linearBackoff(
+                Integer.MAX_VALUE,
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(5),
+                Duration.ofSeconds(Long.MAX_VALUE),
+                JitterStrategy.NONE);
+
+        var decision = assertDoesNotThrow(() -> strategy.makeRetryDecision(new RuntimeException("test"), 2));
+
+        assertTrue(decision.shouldRetry());
+        assertEquals(Duration.ofSeconds(5), decision.delay());
+    }
+
+    @Test
+    void linearBackoff_withNewOverload_shouldStopAtMaxAttempts() {
+        var strategy = RetryStrategies.linearBackoff(
+                3, Duration.ofSeconds(1), Duration.ofSeconds(5), Duration.ofSeconds(1), JitterStrategy.NONE);
+
+        var decision1 = strategy.makeRetryDecision(new RuntimeException("test"), 1);
+        var decision2 = strategy.makeRetryDecision(new RuntimeException("test"), 2);
+        var decision3 = strategy.makeRetryDecision(new RuntimeException("test"), 3);
+
+        assertTrue(decision1.shouldRetry());
+        assertEquals(Duration.ofSeconds(1), decision1.delay());
+        assertTrue(decision2.shouldRetry());
+        assertEquals(Duration.ofSeconds(2), decision2.delay());
+        assertFalse(decision3.shouldRetry());
+    }
+
+    @Test
+    void linearBackoff_withMaxDelayLessThanInitialDelay_shouldCapFirstRetry() {
+        var strategy = RetryStrategies.linearBackoff(
+                4, Duration.ofSeconds(10), Duration.ofSeconds(5), Duration.ofSeconds(3), JitterStrategy.NONE);
+
+        assertEquals(
+                Duration.ofSeconds(5),
+                strategy.makeRetryDecision(new RuntimeException("test"), 1).delay());
+        assertEquals(
+                Duration.ofSeconds(5),
+                strategy.makeRetryDecision(new RuntimeException("test"), 2).delay());
+    }
+
+    @Test
+    void linearBackoff_withJitter_shouldProduceDelayInExpectedRange() {
+        var fullStrategy = RetryStrategies.linearBackoff(
+                5, Duration.ofSeconds(10), Duration.ofSeconds(15), Duration.ofSeconds(10), JitterStrategy.FULL);
+        var halfStrategy = RetryStrategies.linearBackoff(
+                5, Duration.ofSeconds(10), Duration.ofSeconds(15), Duration.ofSeconds(10), JitterStrategy.HALF);
+
+        for (int i = 0; i < 10; i++) {
+            var fullDelay = fullStrategy
+                    .makeRetryDecision(new RuntimeException("test"), 2)
+                    .delay()
+                    .toSeconds();
+            assertTrue(fullDelay >= 1 && fullDelay <= 15);
+
+            var halfDelay = halfStrategy
+                    .makeRetryDecision(new RuntimeException("test"), 2)
+                    .delay()
+                    .toSeconds();
+            assertTrue(halfDelay >= 8 && halfDelay <= 15);
+        }
+    }
+
+    @Test
     void linearPreset_shouldUseOneThroughFiveSecondDelays() {
         var strategy = RetryStrategies.Presets.LINEAR;
 
@@ -233,6 +336,39 @@ class RetryStrategiesTest {
                 IllegalArgumentException.class, () -> RetryStrategies.linearBackoff(3, Duration.ofSeconds(1), null));
 
         assertTrue(exception.getMessage().contains("increment"));
+        assertTrue(exception.getMessage().contains("cannot be null"));
+    }
+
+    @Test
+    void linearBackoff_withSubSecondMaxDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.linearBackoff(
+                        3, Duration.ofSeconds(1), Duration.ofMillis(500), Duration.ofSeconds(1), JitterStrategy.NONE));
+
+        assertTrue(exception.getMessage().contains("maxDelay"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void linearBackoff_withNullMaxDelay_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.linearBackoff(
+                        3, Duration.ofSeconds(1), null, Duration.ofSeconds(1), JitterStrategy.NONE));
+
+        assertTrue(exception.getMessage().contains("maxDelay"));
+        assertTrue(exception.getMessage().contains("cannot be null"));
+    }
+
+    @Test
+    void linearBackoff_withNullJitter_shouldThrow() {
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> RetryStrategies.linearBackoff(
+                        3, Duration.ofSeconds(1), Duration.ofSeconds(5), Duration.ofSeconds(1), null));
+
+        assertTrue(exception.getMessage().contains("jitter"));
         assertTrue(exception.getMessage().contains("cannot be null"));
     }
 
