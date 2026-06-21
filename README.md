@@ -5,11 +5,11 @@
 [![Build](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/build.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/build.yml)
 [![Javadoc](https://img.shields.io/badge/JavaDoc-Online-green)](https://aws.github.io/aws-durable-execution-sdk-java/javadoc/)
 [![Maven](https://badges.mvnrepository.com/badge/software.amazon.lambda.durable/aws-durable-execution-sdk-java/badge.svg?label=Maven)](https://mvnrepository.com/artifact/software.amazon.lambda.durable/aws-durable-execution-sdk-java)
-[![Coverage](https://raw.githubusercontent.com/aws/aws-durable-execution-sdk-java/refs/heads/docs/coverage/jacoco.svg)](https://aws.github.io/aws-durable-execution-sdk-java/coverage/)
+[![Coverage](https://aws.github.io/aws-durable-execution-sdk-java/coverage/jacoco.svg)](https://aws.github.io/aws-durable-execution-sdk-java/coverage/)
 [![E2E Tests](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/e2e-tests.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/e2e-tests.yml)
 [![CodeQL](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/github-code-scanning/codeql)
 [![Spotless](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/check-spotless.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/check-spotless.yml)
-[![Roadmap](https://raw.githubusercontent.com/aws/aws-durable-execution-sdk-java/refs/heads/docs/milestone/badge.svg)](https://github.com/orgs/aws/projects/346/views/6)
+[![Roadmap](https://aws.github.io/aws-durable-execution-sdk-java/milestone/badge.svg)](https://github.com/orgs/aws/projects/346/views/6)
 
 Build resilient, long-running AWS Lambda functions that automatically checkpoint progress and resume after failures. Durable functions can run for up to one year while you pay only for active compute time.
 
@@ -110,6 +110,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 - [<u>Configuration</u>](docs/advanced/configuration.md) - Customize SDK behaviour
 - [<u>Error Handling</u>](docs/advanced/error-handling.md) - SDK exceptions for handling failures
 - [<u>Logging</u>](docs/advanced/logging.md) - How to use DurableLogger
+- [<u>Migrating from 1.x to 2.x</u>](docs/migration-1.x-to-2.x.md) - Upgrade guide for breaking changes since `v1.2.1`
 - [<u>Testing</u>](docs/advanced/testing.md) - Utilities for local development and cloud-based integration testing
 
 ## Related SDKs
