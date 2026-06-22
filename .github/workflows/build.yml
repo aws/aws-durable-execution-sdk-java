@@ -78,7 +78,7 @@ jobs:
 
       - name: Configure GitHub Pages
         if: ${{ matrix.java == 17 }}
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Prepare GitHub Pages artifact
         if: ${{ matrix.java == 17 }}
