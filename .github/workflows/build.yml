@@ -6,6 +6,7 @@
 # Triggers:
 #   - pull_request: when a PR targets main
 #   - push: when code is pushed to main
+#   - milestone: when milestone metadata changes
 #
 # Notes:
 #   Builds against Java 17, 21, and 25.
@@ -15,6 +16,8 @@ run-name: Build - ${{ github.event_name }}
 
 on:
   workflow_dispatch:
+  milestone:
+    types: [created, edited, closed, deleted]
   pull_request:
     branches:
       - main
@@ -38,6 +41,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
   pages: write
   id-token: write
 
@@ -54,6 +58,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'milestone' && github.event.repository.default_branch || github.ref }}
 
       - name: Setup Java ${{ matrix.java }}
         uses: actions/setup-java@v5
@@ -76,6 +82,27 @@ jobs:
         if: ${{ matrix.java == 17 }}
         run: mvn -B -pl sdk -am javadoc:javadoc
 
+      - name: Generate milestone badge
+        if: ${{ matrix.java == 17 }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TITLE=$(gh api repos/${{ github.repository }}/milestones \
+            --jq '[.[] | select(.state == "open" and .due_on != null)] | sort_by(.due_on) | .[0].title // empty')
+
+          if [ -z "$TITLE" ]; then
+            URL="https://img.shields.io/badge/Next%20Milestone-No%20milestone-lightgrey"
+          else
+            ENCODED=$(echo -n "$TITLE" | jq -sRr @uri | sed 's/-/--/g')
+            URL="https://img.shields.io/badge/Next%20Milestone-${ENCODED}-blue"
+          fi
+
+          mkdir -p milestone
+          curl -sfL "$URL" -o milestone/badge.svg
+          echo "Badge generated for: ${TITLE:-No milestone}"
+
       - name: Configure GitHub Pages
         if: ${{ matrix.java == 17 }}
         uses: actions/configure-pages@v6
@@ -83,9 +110,10 @@ jobs:
       - name: Prepare GitHub Pages artifact
         if: ${{ matrix.java == 17 }}
         run: |
-          mkdir -p github-pages/coverage github-pages/javadoc
+          mkdir -p github-pages/coverage github-pages/javadoc github-pages/milestone
           cp -R coverage-report/target/site/jacoco-aggregate/. github-pages/coverage
           cp -R sdk/target/reports/apidocs/. github-pages/javadoc
+          cp -R milestone/. github-pages/milestone
           touch github-pages/.nojekyll
 
       - name: Upload GitHub Pages artifact
@@ -95,7 +123,7 @@ jobs:
           path: github-pages
 
   deploy-pages:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'milestone' || github.ref == 'refs/heads/main' }}
     needs: build
     runs-on: ubuntu-latest
     environment:
