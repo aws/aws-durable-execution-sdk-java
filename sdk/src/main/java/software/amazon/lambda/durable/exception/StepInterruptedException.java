@@ -7,20 +7,23 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 
 /** Exception thrown when a step with AT_MOST_ONCE_PER_RETRY semantics was started but interrupted before completion. */
 public class StepInterruptedException extends StepException {
+    private static final String ERROR_TYPE = StepInterruptedException.class.getName();
+
     public StepInterruptedException(Operation operation) {
-        super(operation, toErrorObject(), formatMessage(operation));
+        super(operation, toErrorObject(operation), formatMessage(operation));
     }
 
     public static boolean isStepInterruptedException(ErrorObject errorObject) {
         if (errorObject == null) {
             return false;
         }
-        return StepInterruptedException.toErrorObject().errorType().equals(errorObject.errorType());
+        return ERROR_TYPE.equals(errorObject.errorType());
     }
 
-    private static ErrorObject toErrorObject() {
+    private static ErrorObject toErrorObject(Operation operation) {
         return ErrorObject.builder()
-                .errorType(StepInterruptedException.class.getName())
+                .errorType(ERROR_TYPE)
+                .errorMessage(formatMessage(operation))
                 .build();
     }
 
