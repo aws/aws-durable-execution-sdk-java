@@ -144,9 +144,11 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleStepSucceeded(T result) {
+        var serializedResult = serializeAndDeserializeResult(result);
+
         // Send SUCCEED
         var successUpdate =
-                OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializeResult(result));
+                OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized());
 
         // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
         // the context threads waiting for the result of this step operation will be wakened up and registered.

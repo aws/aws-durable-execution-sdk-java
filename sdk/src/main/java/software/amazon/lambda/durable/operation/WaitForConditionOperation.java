@@ -128,15 +128,15 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                     // Execute check function in user executor
                     WaitForConditionResult<T> result = checkFunc.apply(currentState, stepContext);
 
-                    // Serialize/deserialize round-trip on the value to ensure state is checkpoint-safe
-                    var serializedState = serializeResult(result.value());
-                    T deserializedValue = deserializeResult(serializedState);
+                    // Normalize the value through SerDes so first execution matches replay.
+                    var serializedState = serializeAndDeserializeResult(result.value());
+                    T deserializedValue = serializedState.deserialized();
 
                     if (result.isDone()) {
                         // Condition met — checkpoint SUCCEED
                         var successUpdate = OperationUpdate.builder()
                                 .action(OperationAction.SUCCEED)
-                                .payload(serializedState);
+                                .payload(serializedState.serialized());
                         sendOperationUpdate(successUpdate);
                     } else {
                         // Compute delay from strategy
@@ -145,7 +145,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                         // Checkpoint RETRY with delay
                         var retryUpdate = OperationUpdate.builder()
                                 .action(OperationAction.RETRY)
-                                .payload(serializedState)
+                                .payload(serializedState.serialized())
                                 .stepOptions(StepOptions.builder()
                                         .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
                                         .build());

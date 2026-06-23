@@ -185,6 +185,7 @@ assertThrows(IllegalStateException.class, future::get);
 What changes in practice:
 
 - Serialization problems now fail on first execution instead of surfacing later on replay.
+- Operation results can be returned after a SerDes round-trip so first execution matches replay.
 - Custom `SerDes` implementations must be able to deserialize SDK-managed values they serialize.
 - Child-context results are validated consistently, including virtual child-context paths.
 
@@ -192,20 +193,21 @@ This is usually a correctness improvement, but it can surface previously hidden 
 
 ### New opt-out configuration
 
-If your workload is very performance-sensitive and you need to skip the extra validation deserialize pass, you can opt out:
+If your workload is very performance-sensitive and you need to skip the extra deserialize pass, you can opt out:
 
 ```java
 @Override
 protected DurableConfig createConfiguration() {
     return DurableConfig.builder()
-            .withSerializationRoundTripValidation(false)
+            .withDeserializeAfterSerialization(false)
             .build();
 }
 ```
 
 Use that carefully:
 
-- Disabling validation can hide serialization bugs until replay.
+- Disabling this can hide serialization bugs until replay.
+- First execution may return the raw result shape instead of the replay result shape.
 - Custom `SerDes` implementations are still expected to be round-trip safe.
 
 ## Recommended Validation After Upgrading
@@ -226,6 +228,6 @@ Most upgrades are straightforward:
 - Logger metadata moves to `executionArn`, `operationId`, and `operationName`
 - Replay-sensitive logging becomes per-context, `isReplaying()` moves to `DurableContext`, and step logs are no longer replay-suppressed
 - Validation failures now throw `IllegalStateException`
-- Serialization round-trip problems surface earlier by default, with an opt-out via `withSerializationRoundTripValidation(false)`
+- Serialization round-trip problems surface earlier by default, with an opt-out via `withDeserializeAfterSerialization(false)`
 
 If you update those areas first, the `1.x` to `2.x` migration should be low risk.

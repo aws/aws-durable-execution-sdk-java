@@ -71,6 +71,19 @@ class SerializableDurableOperationTest {
         }
     }
 
+    private static final class NormalizingSerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return "\"serialized\"";
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return (T) "deserialized";
+        }
+    }
+
     private static final String OPERATION_ID = "1";
     private static final String CONTEXT_ID = "1-step";
     private static final String OPERATION_NAME = "name";
@@ -360,7 +373,7 @@ class SerializableDurableOperationTest {
 
                     @Override
                     public String get() {
-                        assertEquals("abc", deserializeResult(serializeResult("abc")));
+                        assertEquals("abc", deserializeResult(SER_DES.serialize("abc")));
                         assertEquals("", deserializeResult("\"\""));
                         assertThrows(SerDesException.class, () -> deserializeResult("x"));
                         return RESULT;
@@ -370,7 +383,7 @@ class SerializableDurableOperationTest {
     }
 
     @Test
-    void serializeResultValidatesRoundTrip() {
+    void serializeAndDeserializeResultDeserializesResult() {
         var serDes = new TrackingSerDes();
         SerializableDurableOperation<String> op =
                 new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
@@ -382,7 +395,9 @@ class SerializableDurableOperationTest {
 
                     @Override
                     public String get() {
-                        assertEquals("\"abc\"", serializeResult("abc"));
+                        var result = serializeAndDeserializeResult("abc");
+                        assertEquals("\"abc\"", result.serialized());
+                        assertEquals("abc", result.deserialized());
                         assertEquals(1, serDes.getDeserializeCount());
                         return RESULT;
                     }
@@ -392,7 +407,7 @@ class SerializableDurableOperationTest {
     }
 
     @Test
-    void serializeResultThrowsWhenRoundTripFails() {
+    void serializeAndDeserializeResultThrowsWhenDeserializeFails() {
         var serDes = new SerializationOnlySerDes();
         SerializableDurableOperation<String> op =
                 new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
@@ -404,7 +419,7 @@ class SerializableDurableOperationTest {
 
                     @Override
                     public String get() {
-                        var thrown = assertThrows(SerDesException.class, () -> serializeResult("abc"));
+                        var thrown = assertThrows(SerDesException.class, () -> serializeAndDeserializeResult("abc"));
                         assertEquals("cannot deserialize", thrown.getMessage());
                         return RESULT;
                     }
@@ -414,10 +429,10 @@ class SerializableDurableOperationTest {
     }
 
     @Test
-    void serializeResultSkipsRoundTripValidationWhenDisabled() {
-        when(durableContext.getDurableConfig()).thenReturn(configWithSerializationValidation(false));
+    void serializeAndDeserializeResultReturnsRawResultWhenDeserializationDisabled() {
+        when(durableContext.getDurableConfig()).thenReturn(configWithDeserializeAfterSerialization(false));
 
-        var serDes = new SerializationOnlySerDes();
+        var serDes = new NormalizingSerDes();
         SerializableDurableOperation<String> op =
                 new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
                     @Override
@@ -428,7 +443,32 @@ class SerializableDurableOperationTest {
 
                     @Override
                     public String get() {
-                        assertEquals("\"serialized\"", serializeResult("abc"));
+                        var result = serializeAndDeserializeResult("abc");
+                        assertEquals("\"serialized\"", result.serialized());
+                        assertEquals("abc", result.deserialized());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeAndDeserializeResultReturnsDeserializedValue() {
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(
+                        OPERATION_IDENTIFIER, RESULT_TYPE, new NormalizingSerDes(), durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var result = serializeAndDeserializeResult("raw");
+                        assertEquals("\"serialized\"", result.serialized());
+                        assertEquals("deserialized", result.deserialized());
                         return RESULT;
                     }
                 };
@@ -487,7 +527,7 @@ class SerializableDurableOperationTest {
 
     @Test
     void serializeExceptionSkipsRoundTripValidationWhenDisabled() {
-        when(durableContext.getDurableConfig()).thenReturn(configWithSerializationValidation(false));
+        when(durableContext.getDurableConfig()).thenReturn(configWithDeserializeAfterSerialization(false));
 
         var serDes = new SerializationOnlySerDes();
         SerializableDurableOperation<String> op =
@@ -555,10 +595,10 @@ class SerializableDurableOperationTest {
         verify(executionManager, times(1)).sendOperationUpdate(update.build());
     }
 
-    private DurableConfig configWithSerializationValidation(boolean validateSerializationRoundTrip) {
+    private DurableConfig configWithDeserializeAfterSerialization(boolean deserializeAfterSerialization) {
         return DurableConfig.builder()
                 .withDurableExecutionClient(mock(DurableExecutionClient.class))
-                .withSerializationRoundTripValidation(validateSerializationRoundTrip)
+                .withDeserializeAfterSerialization(deserializeAfterSerialization)
                 .build();
     }
 }

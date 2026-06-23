@@ -78,13 +78,15 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
         int skippedCount = items.size() - succeededCount - failedCount;
         cachedResult = new ParallelResult(
                 items.size(), succeededCount, failedCount, skippedCount, concurrencyCompletionStatus, statuses);
+        var serializedResult = serializeAndDeserializeResult(cachedResult);
+        cachedResult = serializedResult.deserialized();
 
         // Branches added after checkpoint will not exist in the checkpointed result, but they'll be in the returned
         // value from get() method.
         sendOperationUpdate(OperationUpdate.builder()
                 .action(OperationAction.SUCCEED)
                 .subType(getSubType().getValue())
-                .payload(serializeResult(cachedResult))
+                .payload(serializedResult.serialized())
                 .contextOptions(ContextOptions.builder().replayChildren(true).build()));
     }
 

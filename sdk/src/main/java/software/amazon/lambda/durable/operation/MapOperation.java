@@ -178,21 +178,22 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     @Override
     protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
         this.cachedResult = constructMapResult(concurrencyCompletionStatus);
-        var serialized = serializeResult(cachedResult);
-        var serializedBytes = serialized.getBytes(StandardCharsets.UTF_8);
+        var serializedResult = serializeAndDeserializeResult(cachedResult);
+        this.cachedResult = serializedResult.deserialized();
+        var serializedBytes = serializedResult.serialized().getBytes(StandardCharsets.UTF_8);
 
         if (serializedBytes.length < LARGE_RESULT_THRESHOLD) {
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .subType(getSubType().getValue())
-                    .payload(serialized));
+                    .payload(serializedResult.serialized()));
         } else {
             // Large result: checkpoint with stripped payload + replayChildren flag
-            var strippedResult = serializeResult(stripMapResult(cachedResult));
+            var strippedResult = serializeAndDeserializeResult(stripMapResult(cachedResult));
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .subType(getSubType().getValue())
-                    .payload(strippedResult)
+                    .payload(strippedResult.serialized())
                     .contextOptions(
                             ContextOptions.builder().replayChildren(true).build()));
         }

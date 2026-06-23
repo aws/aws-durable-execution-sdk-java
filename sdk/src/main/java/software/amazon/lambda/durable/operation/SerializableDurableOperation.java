@@ -34,6 +34,8 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 public abstract class SerializableDurableOperation<T> extends BaseDurableOperation implements DurableFuture<T> {
     private static final Logger logger = LoggerFactory.getLogger(SerializableDurableOperation.class);
 
+    protected record SerializedResult<T>(String serialized, T deserialized) {}
+
     private final TypeToken<T> resultTypeToken;
     private final SerDes resultSerDes;
 
@@ -95,17 +97,18 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
     }
 
     /**
-     * Serializes the result to a string.
+     * Serializes the result and returns the value that should be exposed to callers.
+     *
+     * <p>Use this for operations that cache a first-execution result instead of reading it back from checkpoint data.
+     * This keeps first execution consistent with replay when a SerDes normalizes or otherwise changes the value.
      *
      * @param result the result to serialize
-     * @return the serialized string
+     * @return the serialized string and the deserialized result
      */
-    protected String serializeResult(T result) {
+    protected SerializedResult<T> serializeAndDeserializeResult(T result) {
         var serialized = resultSerDes.serialize(result);
-        if (shouldValidateSerializationRoundTrip()) {
-            deserializeResult(serialized);
-        }
-        return serialized;
+        var deserialized = shouldDeserializeAfterSerialization() ? deserializeResult(serialized) : result;
+        return new SerializedResult<>(serialized, deserialized);
     }
 
     /**
@@ -117,15 +120,15 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
     @SuppressWarnings("ThrowableNotThrown")
     protected ErrorObject serializeException(Throwable throwable) {
         var error = ExceptionHelper.buildErrorObject(throwable, resultSerDes);
-        if (shouldValidateSerializationRoundTrip()) {
+        if (shouldDeserializeAfterSerialization()) {
             deserializeException(error);
         }
         return error;
     }
 
-    private boolean shouldValidateSerializationRoundTrip() {
+    private boolean shouldDeserializeAfterSerialization() {
         var config = getContext().getDurableConfig();
-        return config == null || config.shouldValidateSerializationRoundTrip();
+        return config == null || config.shouldDeserializeAfterSerialization();
     }
 
     /**

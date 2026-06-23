@@ -31,7 +31,7 @@ import software.amazon.lambda.durable.serde.SerDes;
  *   <li>Automatic region detection with fallback to us-east-1 for testing environments
  *   <li>Environment variable credentials provider
  *   <li>Custom SerDes with snake_case property naming
- *   <li>Optional round-trip validation toggle for performance-sensitive workloads
+ *   <li>Optional post-serialization deserialization toggle for performance-sensitive workloads
  * </ul>
  */
 public class CustomConfigExample extends DurableHandler<String, String> {
@@ -69,8 +69,8 @@ public class CustomConfigExample extends DurableHandler<String, String> {
         return DurableConfig.builder()
                 .withDurableExecutionClient(durableClient)
                 .withSerDes(customSerDes)
-                // Disable the extra deserialize pass if your workload is sensitive to the added validation cost.
-                .withSerializationRoundTripValidation(false)
+                // Disable the extra deserialize pass if your workload is sensitive to the added cost.
+                .withDeserializeAfterSerialization(false)
                 .build();
     }
 

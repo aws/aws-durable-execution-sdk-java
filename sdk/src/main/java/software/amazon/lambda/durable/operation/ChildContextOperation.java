@@ -149,7 +149,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextSuccess(T result) {
-        var serialized = serializeResult(result);
+        var serializedResult = serializeAndDeserializeResult(result);
 
         if (replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted()) {
             // Skip checkpointing if
@@ -158,13 +158,13 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // - replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
             // - nestingType is FLAT
             // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
-            cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
+            cachedOperationResult.set(DeserializedOperationResult.succeeded(serializedResult.deserialized()));
             if (isVirtual) {
                 fireOnOperationEnd(null, null);
             }
             markAlreadyCompleted();
         } else {
-            checkpointSuccess(result, serialized);
+            checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
         }
     }
 

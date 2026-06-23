@@ -48,6 +48,19 @@ class ChildContextOperationTest {
         }
     }
 
+    private static final class NormalizingSerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return "\"serialized\"";
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return (T) "deserialized";
+        }
+    }
+
     private static final JacksonSerDes SERDES = new JacksonSerDes();
 
     private DurableContextImpl durableContext;
@@ -66,10 +79,10 @@ class ChildContextOperationTest {
         return createConfig(true);
     }
 
-    private DurableConfig createConfig(boolean validateSerializationRoundTrip) {
+    private DurableConfig createConfig(boolean deserializeAfterSerialization) {
         return DurableConfig.builder()
                 .withExecutorService(Executors.newCachedThreadPool())
-                .withSerializationRoundTripValidation(validateSerializationRoundTrip)
+                .withDeserializeAfterSerialization(deserializeAfterSerialization)
                 .build();
     }
 
@@ -157,6 +170,15 @@ class ChildContextOperationTest {
 
         assertEquals("should-execute", result);
         assertTrue(functionCalled.get(), "Function should be called during SUCCEEDED replay");
+    }
+
+    @Test
+    void virtualChildReturnsDeserializedResult() {
+        var operation = createVirtualOperation(ctx -> "raw", new NormalizingSerDes());
+
+        operation.execute();
+
+        assertEquals("deserialized", operation.get());
     }
 
     // ===== FAILED replay =====
@@ -355,7 +377,7 @@ class ChildContextOperationTest {
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
     }
 
-    /** Virtual child can skip round-trip validation when disabled in DurableConfig. */
+    /** Virtual child can skip result deserialization when disabled in DurableConfig. */
     @Test
     void virtualChildSucceedsWhenResultValidationDisabled() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
