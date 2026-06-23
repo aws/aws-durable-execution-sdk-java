@@ -44,5 +44,6 @@ echo "=== Step 3: Deploy to Maven Central ==="
 
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk -P publishing -DskipTests --no-transfer-progress
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk-testing -P publishing -DskipTests --no-transfer-progress
+mvn clean deploy -s "${SETTINGS_FILE}" -pl otel-plugin -P publishing -DskipTests --no-transfer-progress
 
 echo "=== Release ${RELEASE_VERSION} published successfully! ==="
