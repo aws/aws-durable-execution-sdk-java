@@ -9,7 +9,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.otel.OpenTelemetryDurablePlugin;
+import software.amazon.lambda.durable.otel.OtelPlugin;
 
 /**
  * OTel + X-Ray example: nested child contexts with inner steps.
@@ -21,8 +21,8 @@ public class OtelXRayNestedContextExample extends DurableHandler<GreetingRequest
     @Override
     protected DurableConfig createConfiguration() {
         var otlpExporter = OtlpGrpcSpanExporter.getDefault();
-        var otelPlugin = new OpenTelemetryDurablePlugin(
-                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
+        var otelPlugin =
+                new OtelPlugin(SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
         return DurableConfig.builder().withPlugins(otelPlugin).build();
     }
 

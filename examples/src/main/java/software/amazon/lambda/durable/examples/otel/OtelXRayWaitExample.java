@@ -10,7 +10,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.otel.OpenTelemetryDurablePlugin;
+import software.amazon.lambda.durable.otel.OtelPlugin;
 
 /**
  * OTel + X-Ray example: step → wait → step pattern that forces multiple Lambda invocations.
@@ -51,8 +51,8 @@ public class OtelXRayWaitExample extends DurableHandler<GreetingRequest, String>
         // OTLP exporter sends spans to the ADOT collector (localhost:4317 by default)
         var otlpExporter = OtlpGrpcSpanExporter.getDefault();
 
-        var otelPlugin = new OpenTelemetryDurablePlugin(
-                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
+        var otelPlugin =
+                new OtelPlugin(SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
 
         return DurableConfig.builder().withPlugins(otelPlugin).build();
     }

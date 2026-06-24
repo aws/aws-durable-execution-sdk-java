@@ -14,16 +14,16 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
-class OpenTelemetryDurablePluginTest {
+class OtelPluginTest {
 
     private InMemorySpanExporter spanExporter;
-    private OpenTelemetryDurablePlugin plugin;
+    private OtelPlugin plugin;
 
     @BeforeEach
     void setUp() {
         spanExporter = InMemorySpanExporter.create();
 
-        plugin = new OpenTelemetryDurablePlugin(
+        plugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
@@ -213,7 +213,7 @@ class OpenTelemetryDurablePluginTest {
     @Test
     void sampling_disabled_producesNoSpans() {
         spanExporter = InMemorySpanExporter.create();
-        var sampledPlugin = new OpenTelemetryDurablePlugin(
+        var sampledPlugin = new OtelPlugin(
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
@@ -241,7 +241,7 @@ class OpenTelemetryDurablePluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OpenTelemetryDurablePlugin(
+        var xrayPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -260,7 +260,7 @@ class OpenTelemetryDurablePluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OpenTelemetryDurablePlugin(
+        var xrayPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -289,7 +289,7 @@ class OpenTelemetryDurablePluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, parentSpanId);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OpenTelemetryDurablePlugin(
+        var xrayPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -314,7 +314,7 @@ class OpenTelemetryDurablePluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OpenTelemetryDurablePlugin(
+        var xrayPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -344,7 +344,7 @@ class OpenTelemetryDurablePluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, "53995c3f42cd8ad8");
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OpenTelemetryDurablePlugin(
+        var xrayPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -376,7 +376,7 @@ class OpenTelemetryDurablePluginTest {
     @Test
     void xrayExtraction_nullExtractor_fallsBackToArnDerived() {
         spanExporter = InMemorySpanExporter.create();
-        var noXrayPlugin = new OpenTelemetryDurablePlugin(
+        var noXrayPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
@@ -407,7 +407,7 @@ class OpenTelemetryDurablePluginTest {
         // Now feed it through the plugin
         var extractedContext = new ExtractedContext(convertedId, null);
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OpenTelemetryDurablePlugin(
+        var xrayPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);

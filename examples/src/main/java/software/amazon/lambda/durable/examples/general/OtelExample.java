@@ -9,7 +9,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.otel.OpenTelemetryDurablePlugin;
+import software.amazon.lambda.durable.otel.OtelPlugin;
 
 /**
  * Example demonstrating OpenTelemetry instrumentation with the Durable Execution SDK.
@@ -39,7 +39,7 @@ public class OtelExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        var otelPlugin = new OpenTelemetryDurablePlugin(
+        var otelPlugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
 
         return DurableConfig.builder().withPlugins(otelPlugin).build();

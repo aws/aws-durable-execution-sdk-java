@@ -20,8 +20,8 @@ import org.slf4j.MDC;
  * </ul>
  *
  * <p>Usage: Call {@link #inject()} in {@code onUserFunctionStart} (after span is active) and {@link #clear()} in
- * {@code onUserFunctionEnd}. Or use the convenience plugin {@link OpenTelemetryDurablePlugin} which handles this
- * automatically when MDC enrichment is enabled.
+ * {@code onUserFunctionEnd}. Or use the convenience plugin {@link OtelPlugin} which handles this automatically when MDC
+ * enrichment is enabled.
  *
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */

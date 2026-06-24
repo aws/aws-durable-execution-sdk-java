@@ -63,9 +63,9 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
 @Deprecated
-public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
+public class OtelPlugin implements DurableExecutionPlugin {
 
-    private static final Logger logger = LoggerFactory.getLogger(OpenTelemetryDurablePlugin.class);
+    private static final Logger logger = LoggerFactory.getLogger(OtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
 
     private final SdkTracerProvider tracerProvider;
@@ -98,13 +98,13 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
      *
      * <pre>{@code
      * var otlpExporter = OtlpGrpcSpanExporter.getDefault(); // sends to localhost:4317
-     * var plugin = new OpenTelemetryDurablePlugin(
+     * var plugin = new OtelPlugin(
      *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
      * }</pre>
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
-    public OpenTelemetryDurablePlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
+    public OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
         this(tracerProviderBuilder, new XRayContextExtractor(), true);
     }
 
@@ -114,8 +114,7 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
      */
-    public OpenTelemetryDurablePlugin(
-            SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor) {
+    public OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor) {
         this(tracerProviderBuilder, contextExtractor, true);
     }
 
@@ -126,7 +125,7 @@ public class OpenTelemetryDurablePlugin implements DurableExecutionPlugin {
      * @param contextExtractor extracts parent trace context from the Lambda environment
      * @param enableMdc if true, injects trace_id/span_id into SLF4J MDC for log correlation
      */
-    public OpenTelemetryDurablePlugin(
+    public OtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
         this.idGenerator = new DeterministicIdGenerator();
         this.tracerProvider = tracerProviderBuilder.setIdGenerator(idGenerator).build();

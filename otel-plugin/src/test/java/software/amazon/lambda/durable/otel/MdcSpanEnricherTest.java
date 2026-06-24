@@ -55,7 +55,7 @@ class MdcSpanEnricherTest {
         // Test MDC through the full plugin lifecycle (where makeCurrent is called on same thread)
         var spanExporter = InMemorySpanExporter.create();
 
-        var plugin = new OpenTelemetryDurablePlugin(
+        var plugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 true);

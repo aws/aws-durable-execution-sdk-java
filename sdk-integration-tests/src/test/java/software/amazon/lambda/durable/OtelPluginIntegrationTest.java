@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
-import software.amazon.lambda.durable.otel.OpenTelemetryDurablePlugin;
+import software.amazon.lambda.durable.otel.OtelPlugin;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -33,7 +33,7 @@ class OtelPluginIntegrationTest {
     void setUp() {
         spanExporter = InMemorySpanExporter.create();
 
-        var plugin = new OpenTelemetryDurablePlugin(
+        var plugin = new OtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
@@ -306,7 +306,7 @@ class OtelPluginIntegrationTest {
     void sampling_off_producesNoSpans() {
         var sampledExporter = InMemorySpanExporter.create();
 
-        var noSamplePlugin = new OpenTelemetryDurablePlugin(
+        var noSamplePlugin = new OtelPlugin(
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter)),

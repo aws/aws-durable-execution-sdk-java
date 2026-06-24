@@ -41,7 +41,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 1. Add the ADOT Lambda Layer to your function and set `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler`
 2. Enable X-Ray Active Tracing on the function
-3. Register `OpenTelemetryDurablePlugin` in your handler's `DurableConfig`
+3. Register `OtelPlugin` in your handler's `DurableConfig`
 4. Grant X-Ray write permissions
 
 ### 1. ADOT Lambda Layer
@@ -144,7 +144,7 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.otel.OpenTelemetryDurablePlugin;
+import software.amazon.lambda.durable.otel.OtelPlugin;
 
 public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 
@@ -153,7 +153,7 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
         // OTLP exporter sends spans to the ADOT collector (localhost:4317 by default)
         var otlpExporter = OtlpGrpcSpanExporter.getDefault();
 
-        var otelPlugin = new OpenTelemetryDurablePlugin(
+        var otelPlugin = new OtelPlugin(
                 SdkTracerProvider.builder()
                         .addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
 
@@ -207,13 +207,13 @@ durable.invocation
 
 ```java
 // Default: X-Ray context extraction, MDC enabled
-new OpenTelemetryDurablePlugin(tracerProviderBuilder);
+new OtelPlugin(tracerProviderBuilder);
 
 // Custom context extractor, MDC enabled
-new OpenTelemetryDurablePlugin(tracerProviderBuilder, contextExtractor);
+new OtelPlugin(tracerProviderBuilder, contextExtractor);
 
 // Full configuration
-new OpenTelemetryDurablePlugin(tracerProviderBuilder, contextExtractor, enableMdc);
+new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 ```
 
 | Parameter | Description | Default |
@@ -262,21 +262,21 @@ For local testing, use a logging exporter to print spans to stdout:
 ```java
 import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 
-var otelPlugin = new OpenTelemetryDurablePlugin(
+var otelPlugin = new OtelPlugin(
         SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
 ```
 
 ## API Reference
 
-### `OpenTelemetryDurablePlugin`
+### `OtelPlugin`
 
 The main plugin class. Implements `DurableExecutionPlugin` from the core SDK.
 
 ```java
-new OpenTelemetryDurablePlugin(SdkTracerProviderBuilder tracerProviderBuilder)
-new OpenTelemetryDurablePlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor)
-new OpenTelemetryDurablePlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc)
+new OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder)
+new OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor)
+new OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc)
 ```
 
 ### `XRayContextExtractor`
