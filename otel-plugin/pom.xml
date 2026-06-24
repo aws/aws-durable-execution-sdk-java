@@ -10,7 +10,7 @@
         <version>1.2.2-SNAPSHOT</version>
     </parent>
 
-    <artifactId>aws-durable-execution-sdk-java-otel</artifactId>
+    <artifactId>aws-durable-execution-sdk-java-plugin-otel</artifactId>
     <name>AWS Lambda Durable Execution SDK OpenTelemetry Plugin</name>
     <description>OpenTelemetry instrumentation plugin for AWS Lambda Durable Execution SDK</description>
 

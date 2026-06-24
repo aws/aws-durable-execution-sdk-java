@@ -294,7 +294,7 @@ jobs:
           files: |
             sdk/target/aws-durable-execution-sdk-java-${{ github.event.inputs.release_version }}.jar
             sdk-testing/target/aws-durable-execution-sdk-java-testing-${{ github.event.inputs.release_version }}.jar
-            otel-plugin/target/aws-durable-execution-sdk-java-otel-${{ github.event.inputs.release_version }}.jar
+            otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${{ github.event.inputs.release_version }}.jar
       
       - name: Sign and publish
         run: bash .github/scripts/maven_publish.sh
