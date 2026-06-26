@@ -77,19 +77,25 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 
 | Example | Description |
 |---------|-------------|
-| [SimpleStepExample](src/main/java/com/amazonaws/lambda/durable/examples/SimpleStepExample.java) | Basic sequential steps |
-| [WaitExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitExample.java) | Suspend execution with `wait()` |
-| [RetryExample](src/main/java/com/amazonaws/lambda/durable/examples/RetryExample.java) | Configuring retry strategies |
-| [ErrorHandlingExample](src/main/java/com/amazonaws/lambda/durable/examples/ErrorHandlingExample.java) | Handling `StepFailedException` and `StepInterruptedException` |
-| [GenericTypesExample](src/main/java/com/amazonaws/lambda/durable/examples/GenericTypesExample.java) | Working with `List<T>` and `Map<K,V>` |
-| [CustomConfigExample](src/main/java/com/amazonaws/lambda/durable/examples/CustomConfigExample.java) | Custom Lambda client and SerDes |
-| [WaitAtLeastExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastExample.java) | Concurrent `stepAsync()` with `wait()` |
-| [WaitAsyncExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAsyncExample.java) | Non-blocking `waitAsync()` with concurrent step |
-| [RetryInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/RetryInProcessExample.java) | In-process retry with concurrent operations |
-| [WaitAtLeastInProcessExample](src/main/java/com/amazonaws/lambda/durable/examples/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
-| [ManyAsyncStepsExample](src/main/java/com/amazonaws/lambda/durable/examples/ManyAsyncStepsExample.java) | Performance test with 500 concurrent async steps |
-| [SimpleMapExample](src/main/java/com/amazonaws/lambda/durable/examples/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
-| [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
+| [SimpleStepExample](src/main/java/software/amazon/lambda/durable/examples/step/SimpleStepExample.java) | Basic sequential steps |
+| [WaitExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitExample.java) | Suspend execution with `wait()` |
+| [RetryExample](src/main/java/software/amazon/lambda/durable/examples/step/RetryExample.java) | Configuring retry strategies |
+| [ErrorHandlingExample](src/main/java/software/amazon/lambda/durable/examples/general/ErrorHandlingExample.java) | Handling `StepFailedException` and `StepInterruptedException` |
+| [GenericTypesExample](src/main/java/software/amazon/lambda/durable/examples/general/GenericTypesExample.java) | Working with `List<T>` and `Map<K,V>` |
+| [CustomConfigExample](src/main/java/software/amazon/lambda/durable/examples/general/CustomConfigExample.java) | Custom Lambda client and SerDes |
+| [WaitAtLeastExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitAtLeastExample.java) | Concurrent `stepAsync()` with `wait()` |
+| [WaitAsyncExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitAsyncExample.java) | Non-blocking `waitAsync()` with concurrent step |
+| [RetryInProcessExample](src/main/java/software/amazon/lambda/durable/examples/step/RetryInProcessExample.java) | In-process retry with concurrent operations |
+| [WaitAtLeastInProcessExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
+| [ManyAsyncStepsExample](src/main/java/software/amazon/lambda/durable/examples/step/ManyAsyncStepsExample.java) | Performance test with 500 concurrent async steps |
+| [SimpleMapExample](src/main/java/software/amazon/lambda/durable/examples/map/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
+| [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
+| [OtelExample](src/main/java/software/amazon/lambda/durable/examples/general/OtelExample.java) | OpenTelemetry instrumentation with logging span export |
+| [OtelXRayStepExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayStepExample.java) | Export step spans to X-Ray through the ADOT Lambda Layer |
+| [OtelXRayWaitExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayWaitExample.java) | Trace a step-wait-step workflow across Lambda invocations |
+| [OtelXRayMapExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayMapExample.java) | Trace concurrent map operations and item steps in X-Ray |
+| [OtelXRayParallelExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayParallelExample.java) | Trace parallel branches and branch steps in X-Ray |
+| [OtelXRayNestedContextExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayNestedContextExample.java) | Trace nested child contexts and inner steps in X-Ray |
 
 ## Cleanup
 
