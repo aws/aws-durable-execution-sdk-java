@@ -26,6 +26,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+      NEXT_VERSION: ${{ github.event.inputs.next_version }}
 
     steps:
       - name: Checkout
@@ -267,14 +270,16 @@ jobs:
           cache: maven
 
       - name: Set release version
-        run: mvn -q versions:set -DnewVersion=${{ github.event.inputs.release_version }} -DgenerateBackupPoms=false
+        run: mvn -q versions:set -DnewVersion="$RELEASE_VERSION" -DgenerateBackupPoms=false
 
       - name: Commit release version
+        env:
+          GIT_ACTOR: ${{ github.actor }}
         run: |
-          git config user.email "${{ github.actor }}+github-actions[bot]@users.noreply.github.com"
-          git config user.name "${{ github.actor }}+github-actions[bot]"
+          git config user.email "${GIT_ACTOR}+github-actions[bot]@users.noreply.github.com"
+          git config user.name "${GIT_ACTOR}+github-actions[bot]"
           git add .
-          git commit -m "chore: release version ${{ github.event.inputs.release_version }}"
+          git commit -m "chore: release version ${RELEASE_VERSION}"
       
       - name: Push changes
         uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c # master
@@ -299,19 +304,18 @@ jobs:
       - name: Sign and publish
         run: bash .github/scripts/maven_publish.sh
         env:
-          RELEASE_VERSION: ${{ github.event.inputs.release_version }}
           MVN_GPG_KEYS_GPGPRIVATEKEY: ${{ secrets.MVN_GPG_KEYS_GPGPRIVATEKEY }}
           MVN_GPG_KEYS_GPGPASSPHRASE: ${{ secrets.MVN_GPG_KEYS_GPGPASSPHRASE }}
           MVN_ACCOUNT_KEYS_USERNAME: ${{ secrets.MVN_ACCOUNT_KEYS_USERNAME }}
           MVN_ACCOUNT_KEYS_PASSWORD: ${{ secrets.MVN_ACCOUNT_KEYS_PASSWORD }}
 
       - name: Set next development version
-        run: mvn -q versions:set -DnewVersion=${{ github.event.inputs.next_version }} -DgenerateBackupPoms=false
+        run: mvn -q versions:set -DnewVersion="$NEXT_VERSION" -DgenerateBackupPoms=false
 
-      - name: Commit release version
+      - name: Commit next development version
         run: |
           git add .
-          git commit -m "chore: bump version to ${{ github.event.inputs.next_version }}"
+          git commit -m "chore: bump version to ${NEXT_VERSION}"
       
       - name: Push changes
         uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c # master
