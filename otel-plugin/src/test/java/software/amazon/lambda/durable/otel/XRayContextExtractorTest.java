@@ -22,6 +22,23 @@ class XRayContextExtractorTest {
     }
 
     @Test
+    void extract_readsFromSystemProperty_whenEnvVarMissing() {
+        // Simulate Lambda runtime setting the system property (env var not set in tests)
+        var traceHeader = "Root=1-6a43574f-2cf3140a69b0c8fe165f9503;Parent=53995c3f42cd8ad8;Sampled=1";
+        System.setProperty("com.amazonaws.xray.traceHeader", traceHeader);
+        try {
+            var extractor = new XRayContextExtractor();
+            var context = extractor.extract();
+
+            assertNotNull(context, "Should extract context from system property when env var is missing");
+            assertEquals("6a43574f2cf3140a69b0c8fe165f9503", context.traceId());
+            assertEquals("53995c3f42cd8ad8", context.parentSpanId());
+        } finally {
+            System.clearProperty("com.amazonaws.xray.traceHeader");
+        }
+    }
+
+    @Test
     void extract_implementsContextExtractor() {
         // Verify XRayContextExtractor implements the ContextExtractor interface
         ContextExtractor extractor = new XRayContextExtractor();

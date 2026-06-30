@@ -32,7 +32,8 @@ public final class PluginInfoConverter {
                 identifier.subType() != null ? identifier.subType().getValue() : null,
                 parentId,
                 operation != null ? operation.startTimestamp() : Instant.now(),
-                operation != null ? operation.endTimestamp() : null);
+                operation != null ? operation.endTimestamp() : null,
+                operation != null);
     }
 
     /**

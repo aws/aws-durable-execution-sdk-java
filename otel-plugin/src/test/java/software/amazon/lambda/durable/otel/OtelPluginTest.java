@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -44,8 +45,58 @@ class OtelPluginTest {
         assertEquals(1, spans.size());
 
         var span = spans.get(0);
-        assertEquals("durable.invocation", span.getName());
+        assertEquals("invocation", span.getName());
         assertEquals(StatusCode.UNSET, span.getStatus().getStatusCode());
+    }
+
+    @Test
+    void invocationSpan_hasServerKind_forSeparateXRayNode() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var span = spanExporter.getFinishedSpanItems().get(0);
+        assertEquals(
+                SpanKind.SERVER,
+                span.getKind(),
+                "Invocation span must be SERVER kind so X-Ray creates a separate service node");
+    }
+
+    @Test
+    void operationSpanName_usesOperationName_withoutPrefix() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onOperationStart(
+                new OperationInfo("op-1", "create-greeting", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "create-greeting", "STEP", "Step", null, Instant.now(), Instant.now(), null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().equals("create-greeting"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                "create-greeting",
+                operationSpan.getName(),
+                "Operation span should use the operation name directly without 'durable.' prefix");
+    }
+
+    @Test
+    void attemptSpanName_usesOperationNameWithAttemptNumber() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("attempt"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                "process-order attempt 1",
+                attemptSpan.getName(),
+                "Attempt span should be 'name attempt N' without brackets or prefix");
     }
 
     @Test
@@ -67,7 +118,7 @@ class OtelPluginTest {
         var end = Instant.parse("2026-06-01T10:00:05Z");
 
         // Operation span created at start
-        plugin.onOperationStart(new OperationInfo("op-hash-1", "my-step", "STEP", "Step", null, start, null));
+        plugin.onOperationStart(new OperationInfo("op-hash-1", "my-step", "STEP", "Step", null, start, null, false));
 
         // Operation span ended at completion
         plugin.onOperationEnd(new OperationEndInfo("op-hash-1", "my-step", "STEP", "Step", null, start, end, null));
@@ -81,7 +132,7 @@ class OtelPluginTest {
                 .filter(s -> s.getName().contains("step"))
                 .findFirst()
                 .orElseThrow();
-        assertEquals("durable.step:my-step", operationSpan.getName());
+        assertEquals("my-step", operationSpan.getName());
     }
 
     @Test
@@ -142,7 +193,7 @@ class OtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
 
         // Step 1: operation starts, user function runs, operation completes
-        plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -151,7 +202,7 @@ class OtelPluginTest {
                 new OperationEndInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), null));
 
         // Step 2: operation starts, user function runs, operation completes
-        plugin.onOperationStart(new OperationInfo("op-2", "step-b", "STEP", "Step", null, Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-2", "step-b", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-2", "step-b", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -194,7 +245,7 @@ class OtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
 
         // Operation starts but never completes (e.g., wait operation, invocation suspends)
-        plugin.onOperationStart(new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, false));
 
         // Invocation ends without onOperationEnd being called
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
@@ -207,7 +258,7 @@ class OtelPluginTest {
                 .filter(s -> s.getName().contains("wait"))
                 .findFirst()
                 .orElseThrow();
-        assertEquals("durable.wait:my-wait", operationSpan.getName());
+        assertEquals("my-wait", operationSpan.getName());
     }
 
     @Test
@@ -266,7 +317,8 @@ class OtelPluginTest {
                 false);
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
-        xrayPlugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null));
+        xrayPlugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
         xrayPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -351,14 +403,16 @@ class OtelPluginTest {
 
         // First invocation
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
-        xrayPlugin.onOperationStart(new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null));
+        xrayPlugin.onOperationStart(
+                new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onOperationEnd(
                 new OperationEndInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), Instant.now(), null));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
 
         // Second invocation (same execution, same X-Ray Root from backend)
         xrayPlugin.onInvocationStart(new InvocationInfo("req-2", "arn:exec1", false));
-        xrayPlugin.onOperationStart(new OperationInfo("op-2", "step-2", "STEP", "Step", null, Instant.now(), null));
+        xrayPlugin.onOperationStart(
+                new OperationInfo("op-2", "step-2", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onOperationEnd(
                 new OperationEndInfo("op-2", "step-2", "STEP", "Step", null, Instant.now(), Instant.now(), null));
         xrayPlugin.onInvocationEnd(
@@ -438,7 +492,7 @@ class OtelPluginTest {
                 .filter(s -> s.getName().contains("wait"))
                 .findFirst()
                 .orElseThrow();
-        assertEquals("durable.wait:my-wait", continuationSpan.getName());
+        assertEquals("my-wait", continuationSpan.getName());
         assertFalse(continuationSpan.getLinks().isEmpty(), "Continuation span should have a Link");
     }
 
@@ -527,11 +581,11 @@ class OtelPluginTest {
 
         // Parent context operation
         plugin.onOperationStart(new OperationInfo(
-                "op-parent", "my-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null));
+                "op-parent", "my-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null, false));
 
         // Child operation with parentId pointing to parent
         plugin.onOperationStart(
-                new OperationInfo("op-child", "inner-step", "STEP", "Step", "op-parent", Instant.now(), null));
+                new OperationInfo("op-child", "inner-step", "STEP", "Step", "op-parent", Instant.now(), null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-child", "inner-step", "STEP", "Step", "op-parent", Instant.now(), Instant.now(), null));
 
@@ -565,14 +619,14 @@ class OtelPluginTest {
 
         // Invocation 1: step completes, wait starts
         plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
-        plugin.onOperationStart(new OperationInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         plugin.onOperationEnd(
                 new OperationEndInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), null));
-        plugin.onOperationStart(new OperationInfo("op-2", "pause", "WAIT", "Wait", null, Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-2", "pause", "WAIT", "Wait", null, Instant.now(), null, false));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
 
         // Invocation 1 should have: step op + step attempt + wait (PENDING) + invocation = 4
@@ -585,7 +639,7 @@ class OtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-2", arn, false));
         plugin.onOperationEnd(
                 new OperationEndInfo("op-2", "pause", "WAIT", "Wait", null, Instant.now(), Instant.now(), null));
-        plugin.onOperationStart(new OperationInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), null));
+        plugin.onOperationStart(new OperationInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -604,9 +658,110 @@ class OtelPluginTest {
 
         // Wait continuation should have a Link
         var waitContinuation = inv2Spans.stream()
-                .filter(s -> s.getName().contains("wait"))
+                .filter(s -> s.getName().contains("pause"))
                 .findFirst()
                 .orElseThrow();
         assertFalse(waitContinuation.getLinks().isEmpty());
+    }
+
+    // ─── Cross-invocation step retry scenario ────────────────────────────
+
+    @Test
+    void crossInvocation_stepRetry_attemptsParentedToRespectiveInvocations() {
+        var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
+
+        // Invocation 1: step starts, attempt 1 fails, invocation suspended during retry poll
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        plugin.onOperationStart(
+                new OperationInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1",
+                "process-payment",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                false,
+                new RuntimeException("payment failed")));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
+
+        var inv1Spans = spanExporter.getFinishedSpanItems();
+        // operation span (PENDING) + attempt 1 span + invocation span = 3
+        assertEquals(3, inv1Spans.size());
+
+        var inv1OperationSpan = inv1Spans.stream()
+                .filter(s ->
+                        s.getName().contains("process-payment") && !s.getName().contains("attempt"))
+                .findFirst()
+                .orElseThrow();
+        var attempt1Span = inv1Spans.stream()
+                .filter(s -> s.getName().contains("attempt 1"))
+                .findFirst()
+                .orElseThrow();
+
+        // Attempt 1 should be parented to invocation 1's operation span
+        assertEquals(
+                inv1OperationSpan.getSpanId(),
+                attempt1Span.getParentSpanId(),
+                "Attempt 1 should be parented to invocation 1's operation span");
+
+        spanExporter.reset();
+
+        // Invocation 2: step is replayed (continuation), attempt 2 executes and succeeds
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false));
+        // isContinuation=true: this operation was already started in a prior invocation
+        plugin.onOperationStart(
+                new OperationInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), null, true));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), false, 2));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "process-payment", "STEP", "Step", null, Instant.now(), Instant.now(), false, 2, true, null));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "process-payment", "STEP", "Step", null, Instant.now(), Instant.now(), null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
+
+        var inv2Spans = spanExporter.getFinishedSpanItems();
+        // operation span + attempt 2 span + invocation span = 3
+        assertEquals(3, inv2Spans.size());
+
+        var inv2OperationSpan = inv2Spans.stream()
+                .filter(s ->
+                        s.getName().contains("process-payment") && !s.getName().contains("attempt"))
+                .findFirst()
+                .orElseThrow();
+        var attempt2Span = inv2Spans.stream()
+                .filter(s -> s.getName().contains("attempt 2"))
+                .findFirst()
+                .orElseThrow();
+
+        // Attempt 2 should be parented to invocation 2's operation span
+        assertEquals(
+                inv2OperationSpan.getSpanId(),
+                attempt2Span.getParentSpanId(),
+                "Attempt 2 should be parented to invocation 2's operation span");
+
+        // The two operation spans must have DIFFERENT span IDs (the bug was they were the same)
+        assertNotEquals(
+                inv1OperationSpan.getSpanId(),
+                inv2OperationSpan.getSpanId(),
+                "Continuation operation span must have a different span ID from the original");
+
+        // The continuation operation span should have a Link to the original for correlation
+        assertFalse(
+                inv2OperationSpan.getLinks().isEmpty(),
+                "Continuation operation span should have a Link to the original");
+
+        // All spans share the same trace ID
+        var allSpans = new java.util.ArrayList<>(inv1Spans);
+        allSpans.addAll(inv2Spans);
+        var traceId = allSpans.get(0).getTraceId();
+        assertTrue(
+                allSpans.stream().allMatch(s -> s.getTraceId().equals(traceId)),
+                "All spans across invocations should share the same trace ID");
     }
 }

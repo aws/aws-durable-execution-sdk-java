@@ -25,14 +25,21 @@ public class XRayContextExtractor implements ContextExtractor {
 
     private static final Logger logger = LoggerFactory.getLogger(XRayContextExtractor.class);
     private static final String XRAY_ENV_VAR = "_X_AMZN_TRACE_ID";
+    private static final String XRAY_SYSTEM_PROPERTY = "com.amazonaws.xray.traceHeader";
     private static final Pattern HEX_32 = Pattern.compile("[0-9a-f]{32}");
     private static final Pattern HEX_16 = Pattern.compile("[0-9a-f]{16}");
 
     @Override
     public ExtractedContext extract() {
-        var traceHeader = System.getenv(XRAY_ENV_VAR);
+        // Try system property first — Lambda runtime updates this per invocation
+        // and it avoids JVM environment variable caching issues.
+        var traceHeader = System.getProperty(XRAY_SYSTEM_PROPERTY);
         if (traceHeader == null || traceHeader.isEmpty()) {
-            logger.debug("No X-Ray trace header found in environment");
+            // Fallback to environment variable
+            traceHeader = System.getenv(XRAY_ENV_VAR);
+        }
+        if (traceHeader == null || traceHeader.isEmpty()) {
+            logger.debug("No X-Ray trace header found in environment or system properties");
             return null;
         }
 
