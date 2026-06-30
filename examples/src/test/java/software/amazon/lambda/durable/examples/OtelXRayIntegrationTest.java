@@ -144,14 +144,13 @@ class OtelXRayIntegrationTest {
 
         // Find the trace that contains our durable spans
         var durableTrace = allTraces.stream()
-                .filter(trace ->
-                        trace.segments().stream().anyMatch(seg -> segmentContains(seg, "durable.step:create-greeting")))
+                .filter(trace -> trace.segments().stream().anyMatch(seg -> segmentContains(seg, "create-greeting")))
                 .findFirst()
                 .orElse(null);
 
         assertNotNull(
                 durableTrace,
-                "Expected to find a trace with durable.step:create-greeting segment. " + "Found " + traces.size()
+                "Expected to find a trace with create-greeting segment. " + "Found " + traces.size()
                         + " traces in the time window. Segment names: "
                         + allTraces.stream()
                                 .flatMap(t -> t.segments().stream())
@@ -165,12 +164,10 @@ class OtelXRayIntegrationTest {
 
         // Verify expected span names appear in the trace
         assertTrue(
-                allSegmentText.contains("durable.invocation"),
-                "Expected durable.invocation span in trace. Segments: " + summarizeSegments(segmentDocuments));
-        assertTrue(
-                allSegmentText.contains("durable.step:create-greeting"),
-                "Expected durable.step:create-greeting span in trace");
-        assertTrue(allSegmentText.contains("durable.step:transform"), "Expected durable.step:transform span in trace");
+                allSegmentText.contains("invocation"),
+                "Expected invocation span in trace. Segments: " + summarizeSegments(segmentDocuments));
+        assertTrue(allSegmentText.contains("create-greeting"), "Expected create-greeting span in trace");
+        assertTrue(allSegmentText.contains("transform"), "Expected transform span in trace");
 
         // Verify all segments share the same trace ID (single unified trace)
         var uniqueTraceIds =
@@ -218,14 +215,13 @@ class OtelXRayIntegrationTest {
 
         // Find the trace containing our durable spans
         var durableTrace = allTraces.stream()
-                .filter(trace ->
-                        trace.segments().stream().anyMatch(seg -> segmentContains(seg, "durable.step:before-wait")))
+                .filter(trace -> trace.segments().stream().anyMatch(seg -> segmentContains(seg, "before-wait")))
                 .findFirst()
                 .orElse(null);
 
         assertNotNull(
                 durableTrace,
-                "Expected to find a trace with durable.step:before-wait segment. " + "Found " + traces.size()
+                "Expected to find a trace with before-wait segment. " + "Found " + traces.size()
                         + " traces in the time window.");
 
         // 4. Verify multi-invocation trace structure
@@ -234,14 +230,12 @@ class OtelXRayIntegrationTest {
         var allSegmentText = String.join("\n", segmentDocuments);
 
         // Verify spans from BOTH invocations appear in the same trace
-        assertTrue(
-                allSegmentText.contains("durable.step:before-wait"), "Expected before-wait span from first invocation");
-        assertTrue(
-                allSegmentText.contains("durable.step:after-wait"), "Expected after-wait span from second invocation");
-        assertTrue(allSegmentText.contains("durable.wait:pause"), "Expected wait:pause span in trace");
+        assertTrue(allSegmentText.contains("before-wait"), "Expected before-wait span from first invocation");
+        assertTrue(allSegmentText.contains("after-wait"), "Expected after-wait span from second invocation");
+        assertTrue(allSegmentText.contains("pause"), "Expected wait:pause span in trace");
 
         // Verify multiple invocation spans (one per Lambda invocation)
-        var invocationCount = countOccurrences(allSegmentText, "durable.invocation");
+        var invocationCount = countOccurrences(allSegmentText, "invocation");
         assertTrue(
                 invocationCount >= 2,
                 "Expected at least 2 invocation spans (multi-invocation), got " + invocationCount);
@@ -264,7 +258,9 @@ class OtelXRayIntegrationTest {
             throws InterruptedException {
         // Query by durable.invocation service — our spans are in a separate trace from Lambda's
         // built-in X-Ray segment (durable backend propagates its own trace root)
-        var filterExpression = "service(\"durable.invocation\")";
+        // Filter by the Lambda function's service name — each function has a unique one.
+        // This avoids picking up traces from other durable functions that share service.name="invocation".
+        var filterExpression = "service(\"" + functionName + functionNameSuffix + "\")";
         for (int attempt = 0; attempt < XRAY_QUERY_RETRIES; attempt++) {
             var response = xrayClient.getTraceSummaries(GetTraceSummariesRequest.builder()
                     .startTime(startTime)

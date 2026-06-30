@@ -151,7 +151,7 @@ public abstract class BaseDurableOperation {
                 // to the deterministic span ID from the original invocation.
                 if (replayCompletedOperation.get()
                         && executionManager.isOperationUpdatedSinceLastInvocation(getOperationId())) {
-                    fireOnOperationEnd(existing, extractErrorFromOperation(existing));
+                    fireOnOperationEnd(existing, extractErrorFromOperation(existing), true);
                 }
 
                 replay(existing);
@@ -362,7 +362,7 @@ public abstract class BaseDurableOperation {
 
             // Fire onOperationEnd plugin hook — operation reached terminal status for the first time (not replay)
             if (!replayCompletedOperation.get()) {
-                fireOnOperationEnd(operation, extractErrorFromOperation(operation));
+                fireOnOperationEnd(operation, extractErrorFromOperation(operation), false);
             }
 
             markCompletionFutureCompleted();
@@ -524,10 +524,10 @@ public abstract class BaseDurableOperation {
         getPluginRunner().onOperationStart(info);
     }
 
-    /** Fires onOperationEnd plugin hook when an operation reaches terminal status for the first time. */
-    protected void fireOnOperationEnd(Operation operation, Throwable error) {
+    /** Fires onOperationEnd plugin hook when an operation reaches terminal status. */
+    protected void fireOnOperationEnd(Operation operation, Throwable error, boolean isReplay) {
         var info = PluginInfoConverter.toOperationEndInfo(
-                operation, operationIdentifier, durableContext.getParentId(), error);
+                operation, operationIdentifier, durableContext.getParentId(), isReplay, error);
         getPluginRunner().onOperationEnd(info);
     }
 

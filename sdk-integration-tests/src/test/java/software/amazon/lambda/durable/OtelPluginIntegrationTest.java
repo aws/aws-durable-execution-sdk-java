@@ -55,9 +55,9 @@ class OtelPluginIntegrationTest {
         assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
 
         // Verify span names
-        assertSpanExists(spans, "durable.invocation");
-        assertSpanExists(spans, "durable.step:greet");
-        assertSpanExists(spans, "durable.step:greet [attempt 1]");
+        assertSpanExists(spans, "invocation");
+        assertSpanExists(spans, "greet");
+        assertSpanExists(spans, "greet attempt 1");
 
         // All spans share the same trace ID
         var traceId = spans.get(0).getTraceId();
@@ -84,12 +84,12 @@ class OtelPluginIntegrationTest {
         // 1 invocation + 3 operations + 3 attempts = 7
         assertTrue(spans.size() >= 7, "Expected at least 7 spans, got " + spans.size());
 
-        assertSpanExists(spans, "durable.step:step-a");
-        assertSpanExists(spans, "durable.step:step-b");
-        assertSpanExists(spans, "durable.step:step-c");
-        assertSpanExists(spans, "durable.step:step-a [attempt 1]");
-        assertSpanExists(spans, "durable.step:step-b [attempt 1]");
-        assertSpanExists(spans, "durable.step:step-c [attempt 1]");
+        assertSpanExists(spans, "step-a");
+        assertSpanExists(spans, "step-b");
+        assertSpanExists(spans, "step-c");
+        assertSpanExists(spans, "step-a attempt 1");
+        assertSpanExists(spans, "step-b attempt 1");
+        assertSpanExists(spans, "step-c attempt 1");
     }
 
     @Test
@@ -153,9 +153,8 @@ class OtelPluginIntegrationTest {
         assertTrue(allSpans.size() > spansAfterFirstInvocation, "Second invocation should produce additional spans");
 
         // Verify both invocations produced invocation spans
-        var invocationSpans = allSpans.stream()
-                .filter(s -> s.getName().equals("durable.invocation"))
-                .toList();
+        var invocationSpans =
+                allSpans.stream().filter(s -> s.getName().equals("invocation")).toList();
         assertEquals(2, invocationSpans.size(), "Should have 2 invocation spans (one per run)");
     }
 
@@ -178,7 +177,7 @@ class OtelPluginIntegrationTest {
         // The wait operation span should be open (ended with PENDING status at invocation end)
         var spansAfterFirst = spanExporter.getFinishedSpanItems();
         var waitSpansAfterFirst = spansAfterFirst.stream()
-                .filter(s -> s.getName().equals("durable.wait:pause"))
+                .filter(s -> s.getName().equals("pause"))
                 .toList();
         assertEquals(1, waitSpansAfterFirst.size(), "Wait span should exist after first invocation (ended as PENDING)");
 
@@ -190,9 +189,8 @@ class OtelPluginIntegrationTest {
         // After second invocation, the wait should have a second operation span
         // (fired by onOperationEnd via updatedOperationIds) showing it completed
         var allSpans = spanExporter.getFinishedSpanItems();
-        var waitSpansTotal = allSpans.stream()
-                .filter(s -> s.getName().equals("durable.wait:pause"))
-                .toList();
+        var waitSpansTotal =
+                allSpans.stream().filter(s -> s.getName().equals("pause")).toList();
         assertEquals(
                 2,
                 waitSpansTotal.size(),
@@ -267,8 +265,8 @@ class OtelPluginIntegrationTest {
         //            + inner step operation + inner step attempt = 5
         assertTrue(spans.size() >= 5, "Should have at least 5 spans for child context, got " + spans.size());
 
-        assertSpanExists(spans, "durable.runinchildcontext:child");
-        assertSpanExists(spans, "durable.step:inner");
+        assertSpanExists(spans, "child");
+        assertSpanExists(spans, "inner");
     }
 
     @Test
@@ -293,7 +291,7 @@ class OtelPluginIntegrationTest {
 
         // Invocation span should have error status
         var invocationSpan = spans.stream()
-                .filter(s -> s.getName().equals("durable.invocation"))
+                .filter(s -> s.getName().equals("invocation"))
                 .findFirst()
                 .orElseThrow();
         assertEquals(
@@ -420,8 +418,8 @@ class OtelPluginIntegrationTest {
                 spans.stream().anyMatch(s -> s.getName().contains("fan-out")),
                 "Should have parallel operation span. Got: "
                         + spans.stream().map(SpanData::getName).toList());
-        assertSpanExists(spans, "durable.step:step-A");
-        assertSpanExists(spans, "durable.step:step-B");
+        assertSpanExists(spans, "step-A");
+        assertSpanExists(spans, "step-B");
     }
 
     @Test
@@ -440,9 +438,9 @@ class OtelPluginIntegrationTest {
 
         var spans = spanExporter.getFinishedSpanItems();
 
-        assertSpanExists(spans, "durable.runinchildcontext:outer");
-        assertSpanExists(spans, "durable.runinchildcontext:inner");
-        assertSpanExists(spans, "durable.step:deep-step");
+        assertSpanExists(spans, "outer");
+        assertSpanExists(spans, "inner");
+        assertSpanExists(spans, "deep-step");
     }
 
     @Test
@@ -475,16 +473,13 @@ class OtelPluginIntegrationTest {
         var allSpans = spanExporter.getFinishedSpanItems();
 
         // Should have 3 invocation spans
-        var invocationSpans = allSpans.stream()
-                .filter(s -> s.getName().equals("durable.invocation"))
-                .toList();
+        var invocationSpans =
+                allSpans.stream().filter(s -> s.getName().equals("invocation")).toList();
         assertEquals(3, invocationSpans.size(), "Should have 3 invocation spans");
 
         // Should have wait-A and wait-B spans
-        assertTrue(
-                allSpans.stream().anyMatch(s -> s.getName().equals("durable.wait:wait-A")), "Should have wait-A span");
-        assertTrue(
-                allSpans.stream().anyMatch(s -> s.getName().equals("durable.wait:wait-B")), "Should have wait-B span");
+        assertTrue(allSpans.stream().anyMatch(s -> s.getName().equals("wait-A")), "Should have wait-A span");
+        assertTrue(allSpans.stream().anyMatch(s -> s.getName().equals("wait-B")), "Should have wait-B span");
     }
 
     @Test

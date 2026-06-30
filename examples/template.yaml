@@ -370,9 +370,6 @@ Resources:
         - !Sub
           - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${AdotArch}-ver-1-32-0:6
           - AdotArch: amd64
-      Environment:
-        Variables:
-          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler
 
   OtelXRayWaitExampleFunction:
     Type: AWS::Serverless::Function
@@ -389,9 +386,6 @@ Resources:
         - !Sub
           - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${AdotArch}-ver-1-32-0:6
           - AdotArch: amd64
-      Environment:
-        Variables:
-          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler
 
   RetryInvokeExampleFunction:
     Type: AWS::Serverless::Function
