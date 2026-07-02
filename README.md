@@ -30,7 +30,7 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 - `ctx.wait()` – Suspend execution without compute charges
 - `ctx.createCallback()` – Wait for external events (approvals, webhooks)
 - `ctx.waitForCallback()` – Simplify callback handling by combining callback creation and submission in one operation
-- `ctx.invoke()` – Invoke another Lambda function and wait for the result
+- `ctx.invoke()` – Invoke another Lambda function, durable or standard, and wait for the result
 - `ctx.runInChildContext()` – Run an isolated child context with its own checkpoint log
 - `ctx.map()` – Apply a function to each item in a collection concurrently
 - `ctx.parallel()` - Run multiple operations concurrently with optional concurrency control
@@ -96,7 +96,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 - [<u>Steps</u>](docs/core/steps.md) – Execute code with automatic checkpointing and retry support
 - [<u>Wait</u>](docs/core/wait.md) - Pause execution without blocking Lambda resources
 - [<u>Callbacks</u>](docs/core/callbacks.md) - Wait for external systems to respond
-- [<u>Invoke</u>](docs/core/invoke.md) - Call other durable functions
+- [<u>Invoke</u>](docs/core/invoke.md) - Call durable functions or standard Lambda functions
 - [<u>Child Contexts</u>](docs/core/child-contexts.md) - Organize complex workflows into isolated units
 - [<u>Map</u>](docs/core/map.md) - Apply a function across a collection concurrently
 - [<u>Parallel</u>](docs/core/parallel.md) - Run multiple operations concurrently with optional concurrency control
