@@ -55,16 +55,16 @@ Do not include the checkpoint token or raw user payload in the context.
 
 Payload offloading implementations should live outside the core SDK artifact when they target a specific storage mechanism.
 
-Use the `aws-durable-execution-sdk-java-extra-xxx` artifact pattern:
+Use the `aws-durable-execution-sdk-java-extra-xxx` artifact pattern. The filesystem payload package name depends on which approach is chosen; the repository should not publish both a filesystem SerDes package and a filesystem offloader package for the same feature.
 
 | Feature | Artifact ID | Java package |
 |---------|-------------|--------------|
-| Filesystem SerDes | `aws-durable-execution-sdk-java-extra-filesystem-serdes` | `software.amazon.lambda.durable.extra.filesystem` |
-| Filesystem offloader | `aws-durable-execution-sdk-java-extra-filesystem-offloader` | `software.amazon.lambda.durable.extra.filesystem` |
+| Filesystem payload storage, Approach A | `aws-durable-execution-sdk-java-extra-filesystem-serdes` | `software.amazon.lambda.durable.extra.filesystem` |
+| Filesystem payload storage, Approach B | `aws-durable-execution-sdk-java-extra-filesystem-offloader` | `software.amazon.lambda.durable.extra.filesystem` |
 | Event deserialization helpers | `aws-durable-execution-sdk-java-extra-event-deserialization` | `software.amazon.lambda.durable.extra.eventdeserialization` |
 | Virtual thread executor helpers | `aws-durable-execution-sdk-java-extra-virtual-thread-pool` | `software.amazon.lambda.durable.extra.virtualthreads` |
 
-Extra modules should be independently documented, tested, and versioned with the repository release. They may depend on the core SDK and normal support libraries, but the core SDK should expose stable extension points without knowing about any specific extra package.
+Extra modules should be independently documented, tested, and versioned with the repository release. They may depend on the core SDK and normal support libraries, but the core SDK should expose stable extension points without knowing about any specific extra package. For filesystem payload storage, create exactly one extra module after choosing Approach A or Approach B.
 
 ### Protocol SerDes boundary
 
@@ -465,7 +465,7 @@ Reasoning:
 - The problem being solved is payload storage, not serialization. A dedicated offloader keeps the domain boundary clean.
 - The SDK already needs to touch every payload path for context, caching, threading, exceptions, and root input/output. Once that plumbing exists, composing SerDes plus offloader is a more durable shape than putting storage behavior inside SerDes.
 - Java customers are more likely to have custom Jackson/ObjectMapper SerDes implementations. Approach B lets them keep those and add offloading independently.
-- Both approaches use optional extra packages for filesystem-specific code; that is not a differentiator. The differentiator is that Approach B gives future storage extras such as S3 or DynamoDB offload the same focused core offloader contract instead of encoding storage behavior as more SerDes implementations.
+- Both approaches use one optional extra package for filesystem-specific code; that is not a differentiator. The package would be either filesystem SerDes or filesystem offloader depending on the chosen approach. The differentiator is that Approach B gives future storage extras such as S3 or DynamoDB offload the same focused core offloader contract instead of encoding storage behavior as more SerDes implementations.
 - SDK-owned envelopes and two-layer caching make replay behavior easier to test and reason about.
 
 The main reason to choose Approach A is schedule and parity: it is smaller and maps directly to the JavaScript feature request. If the team needs to satisfy #463 quickly with minimal public API design, Approach A is a reasonable incremental step, but it should be documented as payload offloading implemented through SerDes rather than as the long-term ideal boundary.
