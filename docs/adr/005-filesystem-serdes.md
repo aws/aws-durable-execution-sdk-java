@@ -25,55 +25,6 @@ There are a few Java-specific constraints:
 - Filesystem-backed storage is optional and storage-specific. It should not add filesystem-oriented public surface area to the core SDK artifact.
 - Filesystem persistence is not automatically durable. Lambda `/tmp` is not valid for replay across environments. Mounted S3 Files may have delayed synchronization and can lose recent writes if the runtime crashes before the mount flushes. EFS or an explicitly accepted S3 Files durability tradeoff should be required for production use.
 
-## Shared Design Constraints
-
-These constraints apply to both approaches below.
-
-### Stable payload identity
-
-Both approaches need a stable payload identity that can be used to address external storage. The identity must include the durable execution ARN, operation identity, payload kind, and enough operation metadata to distinguish result, input, callback, wait-for-condition state, and exception payloads.
-
-`entityId` is the primary stable key for external storage. It must be unique within a durable execution and include the payload kind so one operation can safely store multiple values:
-
-| Payload | Example entity ID |
-|---------|-------------------|
-| Root input | `execution/<execution-operation-id>/input` |
-| Root output | `execution/<execution-operation-id>/output` |
-| Root exception | `execution/<execution-operation-id>/exception` |
-| Step result | `operation/<operation-id>/result` |
-| Step exception | `operation/<operation-id>/exception` |
-| Invoke payload | `operation/<operation-id>/invoke-payload` |
-| Invoke result | `operation/<operation-id>/result` |
-| Callback result | `operation/<operation-id>/result` |
-| Child context result | `operation/<operation-id>/result` |
-| Map result | `operation/<operation-id>/result` |
-| WaitForCondition state | `operation/<operation-id>/state` |
-
-Do not include the checkpoint token or raw user payload in the context.
-
-### Extra package pattern
-
-Payload offloading implementations should live outside the core SDK artifact when they target a specific storage mechanism.
-
-Use the `aws-durable-execution-sdk-java-extra-xxx` artifact pattern. The filesystem payload package name depends on which approach is chosen; the repository should not publish both a filesystem SerDes package and a filesystem offloader package for the same feature.
-
-| Feature | Artifact ID | Java package |
-|---------|-------------|--------------|
-| Filesystem payload storage, Approach A | `aws-durable-execution-sdk-java-extra-filesystem-serdes` | `software.amazon.lambda.durable.extra.filesystem` |
-| Filesystem payload storage, Approach B | `aws-durable-execution-sdk-java-extra-filesystem-offloader` | `software.amazon.lambda.durable.extra.filesystem` |
-| Event deserialization helpers | `aws-durable-execution-sdk-java-extra-event-deserialization` | `software.amazon.lambda.durable.extra.eventdeserialization` |
-| Virtual thread executor helpers | `aws-durable-execution-sdk-java-extra-virtual-thread-pool` | `software.amazon.lambda.durable.extra.virtualthreads` |
-
-Extra modules should be independently documented, tested, and versioned with the repository release. They may depend on the core SDK and normal support libraries, but the core SDK should expose stable extension points without knowing about any specific extra package. For filesystem payload storage, create exactly one extra module after choosing Approach A or Approach B.
-
-### Protocol SerDes boundary
-
-Do not make `DurableInputOutputSerDes` customizable as part of this ADR. It serializes the Lambda Durable Functions backend protocol envelope, not user payloads. Routing that envelope through external payload storage would risk storing checkpoint tokens or protocol data externally and would require the backend to understand file pointers.
-
-User input and output payloads should still use the configured user payload mechanism when they are extracted from or written to the execution operation. The internal `DurableExecutionInput` and `DurableExecutionOutput` envelope remains handled by `DurableInputOutputSerDes`.
-
-If protocol customization is needed later, introduce a separate `ProtocolSerDes` configuration surface with a clear warning that it must produce the exact backend wire format. Do not reuse the user payload `SerDes` for that purpose.
-
 ## Approach A: Reuse SerDes for Offload
 
 ### Summary
@@ -532,3 +483,52 @@ Deferred:
 - A fully async Java SerDes or payload pipeline contract.
 - A separate, explicitly dangerous protocol-envelope customization API.
 - File cleanup, retention policies, and lifecycle management for offloaded payloads.
+
+## Shared Design Constraints
+
+These constraints apply to both approaches above.
+
+### Stable payload identity
+
+Both approaches need a stable payload identity that can be used to address external storage. The identity must include the durable execution ARN, operation identity, payload kind, and enough operation metadata to distinguish result, input, callback, wait-for-condition state, and exception payloads.
+
+`entityId` is the primary stable key for external storage. It must be unique within a durable execution and include the payload kind so one operation can safely store multiple values:
+
+| Payload | Example entity ID |
+|---------|-------------------|
+| Root input | `execution/<execution-operation-id>/input` |
+| Root output | `execution/<execution-operation-id>/output` |
+| Root exception | `execution/<execution-operation-id>/exception` |
+| Step result | `operation/<operation-id>/result` |
+| Step exception | `operation/<operation-id>/exception` |
+| Invoke payload | `operation/<operation-id>/invoke-payload` |
+| Invoke result | `operation/<operation-id>/result` |
+| Callback result | `operation/<operation-id>/result` |
+| Child context result | `operation/<operation-id>/result` |
+| Map result | `operation/<operation-id>/result` |
+| WaitForCondition state | `operation/<operation-id>/state` |
+
+Do not include the checkpoint token or raw user payload in the context.
+
+### Extra package pattern
+
+Payload offloading implementations should live outside the core SDK artifact when they target a specific storage mechanism.
+
+Use the `aws-durable-execution-sdk-java-extra-xxx` artifact pattern. The filesystem payload package name depends on which approach is chosen; the repository should not publish both a filesystem SerDes package and a filesystem offloader package for the same feature.
+
+| Feature | Artifact ID | Java package |
+|---------|-------------|--------------|
+| Filesystem payload storage, Approach A | `aws-durable-execution-sdk-java-extra-filesystem-serdes` | `software.amazon.lambda.durable.extra.filesystem` |
+| Filesystem payload storage, Approach B | `aws-durable-execution-sdk-java-extra-filesystem-offloader` | `software.amazon.lambda.durable.extra.filesystem` |
+| Event deserialization helpers | `aws-durable-execution-sdk-java-extra-event-deserialization` | `software.amazon.lambda.durable.extra.eventdeserialization` |
+| Virtual thread executor helpers | `aws-durable-execution-sdk-java-extra-virtual-thread-pool` | `software.amazon.lambda.durable.extra.virtualthreads` |
+
+Extra modules should be independently documented, tested, and versioned with the repository release. They may depend on the core SDK and normal support libraries, but the core SDK should expose stable extension points without knowing about any specific extra package. For filesystem payload storage, create exactly one extra module after choosing Approach A or Approach B.
+
+### Protocol SerDes boundary
+
+Do not make `DurableInputOutputSerDes` customizable as part of this ADR. It serializes the Lambda Durable Functions backend protocol envelope, not user payloads. Routing that envelope through external payload storage would risk storing checkpoint tokens or protocol data externally and would require the backend to understand file pointers.
+
+User input and output payloads should still use the configured user payload mechanism when they are extracted from or written to the execution operation. The internal `DurableExecutionInput` and `DurableExecutionOutput` envelope remains handled by `DurableInputOutputSerDes`.
+
+If protocol customization is needed later, introduce a separate `ProtocolSerDes` configuration surface with a clear warning that it must produce the exact backend wire format. Do not reuse the user payload `SerDes` for that purpose.
