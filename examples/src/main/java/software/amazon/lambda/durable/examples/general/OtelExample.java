@@ -18,7 +18,7 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *
  * <ul>
  *   <li>Deterministic trace/span IDs (all invocations of the same execution share one trace)
- *   <li>MDC log enrichment (trace_id and span_id in every log line)
+ *   <li>MDC log enrichment (traceId, spanId, traceSampled in every log line)
  *   <li>Logging exporter (spans printed to stdout → CloudWatch Logs)
  * </ul>
  *
@@ -47,7 +47,7 @@ public class OtelExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
-        // Log with MDC — trace_id and span_id will be in the JSON output
+        // Log with MDC — traceId and spanId will be in the JSON output
         context.getLogger().info("Starting OTel example for {}", input.getName());
 
         var greeting = context.step("create-greeting", String.class, stepCtx -> {

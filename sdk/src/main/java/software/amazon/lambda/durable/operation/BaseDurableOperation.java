@@ -297,8 +297,8 @@ public abstract class BaseDurableOperation {
                         PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, true, null));
             } catch (Throwable throwable) {
                 // Fire onUserFunctionEnd for all outcomes including suspension.
-                // For SuspendExecutionException, this allows the OTel plugin to mark the attempt span as PENDING
-                // rather than leaving it with no status at invocation cleanup.
+                // This allows plugins (e.g., OTel) to properly end the attempt span and record
+                // errors, rather than leaving orphaned spans that only get cleaned up at invocation end.
                 pluginRunner.onUserFunctionEnd(
                         PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, false, throwable));
 

@@ -26,8 +26,7 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *
  * <ul>
  *   <li>{@code Tracing: Active} on the Lambda function
- *   <li>ADOT Lambda Layer added to the function
- *   <li>{@code AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler} environment variable
+ *   <li>ADOT Lambda Layer added to the function (for the OTLP collector)
  * </ul>
  *
  * <p>Expected trace structure in X-Ray (all under one trace ID — backend propagates same Root):

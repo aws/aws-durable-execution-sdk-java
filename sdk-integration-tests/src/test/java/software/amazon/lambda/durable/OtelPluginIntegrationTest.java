@@ -261,9 +261,9 @@ class OtelPluginIntegrationTest {
 
         var spans = spanExporter.getFinishedSpanItems();
 
-        // Should have: invocation + child context operation + child context attempt (fn)
-        //            + inner step operation + inner step attempt = 5
-        assertTrue(spans.size() >= 5, "Should have at least 5 spans for child context, got " + spans.size());
+        // Should have: invocation + child context operation + inner step operation + inner step attempt = 4
+        // (no attempt span for CONTEXT operations — they are a scoping construct)
+        assertTrue(spans.size() >= 4, "Should have at least 4 spans for child context, got " + spans.size());
 
         assertSpanExists(spans, "child");
         assertSpanExists(spans, "inner");

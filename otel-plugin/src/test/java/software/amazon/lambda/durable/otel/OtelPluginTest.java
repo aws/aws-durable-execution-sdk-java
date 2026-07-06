@@ -532,11 +532,15 @@ class OtelPluginTest {
         assertFalse(continuationSpan.getLinks().isEmpty());
     }
 
-    // ─── SuspendExecutionException handling ──────────────────────────────
+    // ─── CONTEXT operation handling ─────────────────────────────────────
 
     @Test
-    void userFunctionEnd_withSuspendException_setsOutcomePending() {
+    void contextOperation_doesNotCreateAttemptSpan() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        // Create operation span first so the CONTEXT user function has a parent
+        plugin.onOperationStart(new OperationInfo(
+                "op-1", "child-ctx", "CONTEXT", "RunInChildContext", null, Instant.now(), null, false));
 
         plugin.onUserFunctionStart(new UserFunctionStartInfo(
                 "op-1", "child-ctx", "CONTEXT", "RunInChildContext", null, Instant.now(), false, null));
@@ -556,12 +560,11 @@ class OtelPluginTest {
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
 
-        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
-                .filter(s -> s.getName().contains("child-ctx"))
-                .findFirst()
-                .orElseThrow();
-        // Should NOT have ERROR status — suspension is not an error
-        assertNotEquals(StatusCode.ERROR, attemptSpan.getStatus().getStatusCode());
+        // Should only have the operation span + invocation span — no attempt span
+        var spans = spanExporter.getFinishedSpanItems();
+        var attemptSpans =
+                spans.stream().filter(s -> s.getName().contains("attempt")).toList();
+        assertTrue(attemptSpans.isEmpty(), "CONTEXT operations should not produce attempt spans");
     }
 
     // ─── Attempt span cleanup at invocation end ──────────────────────────

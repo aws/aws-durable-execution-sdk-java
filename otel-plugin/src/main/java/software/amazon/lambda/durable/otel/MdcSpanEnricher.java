@@ -14,9 +14,9 @@ import org.slf4j.MDC;
  * <p>MDC keys injected:
  *
  * <ul>
- *   <li>{@code trace_id} — the W3C trace ID (32 hex chars)
- *   <li>{@code span_id} — the current span ID (16 hex chars)
- *   <li>{@code durable.execution.arn} — the execution ARN
+ *   <li>{@code traceId} — the W3C trace ID (32 hex chars)
+ *   <li>{@code spanId} — the current span ID (16 hex chars)
+ *   <li>{@code traceSampled} — whether the trace is sampled (true/false)
  * </ul>
  *
  * <p>Usage: Call {@link #inject()} in {@code onUserFunctionStart} (after span is active) and {@link #clear()} in
@@ -28,25 +28,19 @@ import org.slf4j.MDC;
 @Deprecated
 public final class MdcSpanEnricher {
 
-    public static final String MDC_TRACE_ID = "trace_id";
-    public static final String MDC_SPAN_ID = "span_id";
-    public static final String MDC_EXECUTION_ARN = "durable.execution.arn";
+    public static final String MDC_TRACE_ID = "traceId";
+    public static final String MDC_SPAN_ID = "spanId";
+    public static final String MDC_TRACE_SAMPLED = "traceSampled";
 
     private MdcSpanEnricher() {}
 
-    /**
-     * Injects the current span's trace ID and span ID into MDC.
-     *
-     * @param durableExecutionArn the durable execution ARN (may be null)
-     */
-    public static void inject(String durableExecutionArn) {
+    /** Injects the current span's trace ID, span ID, and sampling flag into MDC. */
+    public static void inject() {
         var span = Span.current();
         if (span.getSpanContext().isValid()) {
             MDC.put(MDC_TRACE_ID, span.getSpanContext().getTraceId());
             MDC.put(MDC_SPAN_ID, span.getSpanContext().getSpanId());
-        }
-        if (durableExecutionArn != null) {
-            MDC.put(MDC_EXECUTION_ARN, durableExecutionArn);
+            MDC.put(MDC_TRACE_SAMPLED, String.valueOf(span.getSpanContext().isSampled()));
         }
     }
 
@@ -54,6 +48,6 @@ public final class MdcSpanEnricher {
     public static void clear() {
         MDC.remove(MDC_TRACE_ID);
         MDC.remove(MDC_SPAN_ID);
-        MDC.remove(MDC_EXECUTION_ARN);
+        MDC.remove(MDC_TRACE_SAMPLED);
     }
 }

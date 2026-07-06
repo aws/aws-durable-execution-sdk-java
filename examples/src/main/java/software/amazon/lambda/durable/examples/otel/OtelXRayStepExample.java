@@ -18,18 +18,17 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *
  * <ul>
  *   <li>{@code Tracing: Active} on the Lambda function
- *   <li>ADOT Lambda Layer added to the function
- *   <li>{@code AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler} environment variable
+ *   <li>ADOT Lambda Layer added to the function (for the OTLP collector)
  * </ul>
  *
  * <p>Expected trace structure in X-Ray:
  *
  * <pre>
- * durable.invocation
- * ├── durable.step:create-greeting
- * │   └── durable.step:create-greeting [attempt 1]
- * └── durable.step:transform
- *     └── durable.step:transform [attempt 1]
+ * invocation
+ * ├── create-greeting
+ * │   └── create-greeting attempt 1
+ * └── transform
+ *     └── transform attempt 1
  * </pre>
  */
 public class OtelXRayStepExample extends DurableHandler<GreetingRequest, String> {

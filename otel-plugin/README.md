@@ -9,7 +9,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **Deterministic Trace IDs**: All invocations of the same durable execution share a single trace, derived from the X-Ray trace header or execution ARN
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
-- **Log Correlation**: Injects `trace_id` and `span_id` into SLF4J MDC for end-to-end observability
+- **Log Correlation**: Injects `traceId`, `spanId`, and `traceSampled` into SLF4J MDC for end-to-end observability
 - **Self-Contained Setup**: No manual TracerProvider configuration required beyond the exporter
 
 ## Installation
@@ -18,7 +18,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 <dependency>
     <groupId>software.amazon.lambda.durable</groupId>
     <artifactId>aws-durable-execution-sdk-java-plugin-otel</artifactId>
-    <version>0.1.0</version>
+    <version>${durable.sdk.version}</version>
 </dependency>
 ```
 
@@ -39,37 +39,21 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ## Quick Start using X-Ray/CloudWatch Tracing
 
-1. Add the ADOT Lambda Layer to your function and set `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler`
+1. Add the ADOT Lambda Layer to your function
 2. Enable X-Ray Active Tracing on the function
 3. Register `OtelPlugin` in your handler's `DurableConfig`
 4. Grant X-Ray write permissions
 
 ### 1. ADOT Lambda Layer
 
-This plugin requires the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) to export traces from your Lambda function.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. The layer provides an OTLP collector that receives spans from the plugin and exports them to X-Ray.
+
+> **Note:** Do NOT set `AWS_LAMBDA_EXEC_WRAPPER`. The ADOT layer's collector extension runs independently as a Lambda External Extension. The wrapper would attach the auto-instrumentation agent which creates a competing TracerProvider, causing disconnected service nodes in the X-Ray trace map.
 
 The layer ARN follows the format:
 
 ```
-arn:aws:lambda:<region>:<account-id>:layer:AWSOpenTelemetryDistroJava:<version>
-```
-
-The account ID varies by region. Refer to the [ADOT Lambda Layer ARNs](https://aws-otel.github.io/docs/getting-started/lambda#aws-lambda-layer-for-opentelemetry-arns) page for region-specific ARNs, account IDs, and the latest version number.
-
-**AWS CLI:**
-
-```bash
-aws lambda update-function-configuration \
-  --function-name your-function-name \
-  --layers "arn:aws:lambda:<region>:<account-id>:layer:AWSOpenTelemetryDistroJava:<version>"
-```
-
-You must also set the `AWS_LAMBDA_EXEC_WRAPPER` environment variable:
-
-```bash
-aws lambda update-function-configuration \
-  --function-name your-function-name \
-  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler}"
+arn:aws:lambda:<region>:901920570463:layer:aws-otel-java-agent-<arch>-ver-1-32-0:6
 ```
 
 **CloudFormation / SAM:**
@@ -78,29 +62,19 @@ aws lambda update-function-configuration \
 MyFunction:
   Type: AWS::Serverless::Function
   Properties:
+    Tracing: Active
     Layers:
-      - !Sub arn:aws:lambda:${AWS::Region}:<account-id>:layer:AWSOpenTelemetryDistroJava:<version>
-    Environment:
-      Variables:
-        AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler
+      - !Sub
+        - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${Arch}-ver-1-32-0:6
+        - Arch: amd64
 ```
 
-**CDK (Java):**
+**AWS CLI:**
 
-```java
-import software.amazon.awscdk.services.lambda.*;
-
-var adotLayer = LayerVersion.fromLayerVersionArn(this, "AdotLayer",
-        String.format("arn:aws:lambda:%s:<account-id>:layer:AWSOpenTelemetryDistroJava:<version>",
-                this.getRegion()));
-
-Function.Builder.create(this, "MyFunction")
-        .runtime(Runtime.JAVA_17)
-        .handler("com.example.MyHandler::handleRequest")
-        .code(Code.fromAsset("target/my-function.jar"))
-        .layers(List.of(adotLayer))
-        .environment(Map.of("AWS_LAMBDA_EXEC_WRAPPER", "/opt/otel-handler"))
-        .build();
+```bash
+aws lambda update-function-configuration \
+  --function-name your-function-name \
+  --layers "arn:aws:lambda:<region>:901920570463:layer:aws-otel-java-agent-amd64-ver-1-32-0:6"
 ```
 
 ### 2. AWS X-Ray Active Tracing
@@ -127,14 +101,6 @@ MyFunction:
       Mode: Active
 ```
 
-**CDK (Java):**
-
-```java
-Function.Builder.create(this, "MyFunction")
-        .tracing(Tracing.ACTIVE)
-        .build();
-```
-
 ### 3. In Your Lambda Handler
 
 ```java
@@ -150,7 +116,6 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        // OTLP exporter sends spans to the ADOT collector (localhost:4317 by default)
         var otlpExporter = OtlpGrpcSpanExporter.getDefault();
 
         var otelPlugin = new OtelPlugin(
@@ -178,8 +143,6 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 }
 ```
 
-That's it. The plugin handles TracerProvider setup, deterministic ID generation, and span lifecycle internally.
-
 ### 4. Grant Permissions
 
 The function's execution role needs the `AWSXRayDaemonWriteAccess` managed policy (or equivalent permissions) to write traces to X-Ray.
@@ -189,17 +152,62 @@ The function's execution role needs the `AWSXRayDaemonWriteAccess` managed polic
 The plugin creates spans at three levels:
 
 ```
-durable.invocation
-├── durable.step:fetch-data
-│   └── durable.step:fetch-data [attempt 1]
-├── durable.wait:cool-down
-└── durable.step:process
-    └── durable.step:process [attempt 1]
+invocation
+├── fetch-data
+│   └── fetch-data attempt 1
+├── cool-down
+└── process
+    └── process attempt 1
 ```
 
-- **Invocation span** — one per Lambda invocation, covers the entire invocation lifecycle
+- **Invocation span** (`SpanKind.SERVER`) — one per Lambda invocation, creates a distinct X-Ray service node
 - **Operation span** — one per durable operation, named after your step/wait names
 - **Attempt span** — one per user function execution (retries produce additional attempt spans)
+
+## Span Attributes
+
+### Invocation Span
+
+| Attribute | Description |
+|-----------|-------------|
+| `durable.execution.arn` | The durable execution ARN |
+| `durable.invocation.status` | SUCCEEDED, FAILED, PENDING, or RETRYING |
+| `durable.invocation.first` | Whether this is the first invocation of the execution |
+| `faas.invocation_id` | Lambda request ID |
+
+### Operation Span
+
+| Attribute | Description |
+|-----------|-------------|
+| `durable.execution.arn` | The durable execution ARN |
+| `durable.operation.id` | Unique operation ID |
+| `durable.operation.type` | STEP, WAIT, CONTEXT, CHAINED_INVOKE, CALLBACK |
+| `durable.operation.name` | Human-readable name (if provided) |
+| `durable.operation.subtype` | Map, Parallel, WaitForCondition, etc. |
+| `durable.operation.status` | Backend status: SUCCEEDED, FAILED, PENDING, TIMED_OUT, etc. |
+
+### Attempt Span (not emitted for CONTEXT operations)
+
+| Attribute | Description |
+|-----------|-------------|
+| `durable.execution.arn` | The durable execution ARN |
+| `durable.operation.id` | Parent operation ID |
+| `durable.operation.type` | Parent operation type |
+| `durable.operation.name` | Parent operation name |
+| `durable.attempt.number` | 1-based attempt number |
+| `durable.attempt.outcome` | SUCCEEDED or FAILED |
+
+## Log Correlation (MDC)
+
+When `enableMdc` is true (default), the plugin injects these fields into SLF4J MDC during user function execution:
+
+| MDC Key | Description |
+|---------|-------------|
+| `traceId` | W3C trace ID (32 hex chars) |
+| `spanId` | Current span ID (16 hex chars) |
+| `traceSampled` | Whether the trace is sampled (true/false) |
+
+These appear automatically in structured log output (Log4j2 JSON, Logback JSON) for log-trace correlation.
 
 ## Configuration
 
@@ -220,16 +228,7 @@ new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 |-----------|-------------|---------|
 | `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Required |
 | `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
-| `enableMdc` | If true, injects `trace_id`/`span_id` into SLF4J MDC | `true` |
-
-### Environment Variables for ADOT Layer
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint for the OTLP exporter | Set by ADOT layer |
-| `AWS_LAMBDA_EXEC_WRAPPER` | Set to `/opt/otel-handler` for ADOT layer instrumentation | — |
-| `OTEL_TRACES_SAMPLER` | Sampler to use (e.g., `traceidratio` for ratio-based sampling) | `always_on` |
-| `OTEL_TRACES_SAMPLER_ARG` | Argument for the sampler (e.g., `0.3` to sample 30%) | — |
+| `enableMdc` | If true, injects `traceId`/`spanId`/`traceSampled` into SLF4J MDC | `true` |
 
 ## Verification
 
@@ -242,18 +241,19 @@ After deploying your function with the plugin configured:
    - Child spans for each durable operation (named after your step names)
    - All invocations of the same execution grouped under one trace ID
 
-3. **Check log correlation** — Verify that your logs include `trace_id` and `span_id` fields matching the spans in the trace view.
-
-4. **Confirm sampling** — If you set `OTEL_TRACES_SAMPLER=traceidratio` with an arg less than 1.0, verify that only the expected proportion of traces appear.
+3. **Check log correlation** — Verify that your logs include `traceId` and `spanId` fields matching the spans in the trace view.
 
 ### Troubleshooting
 
 | Symptom | Likely Cause |
 |---------|-------------|
-| No traces appear | ADOT layer not configured, or `AWS_LAMBDA_EXEC_WRAPPER` not set |
+| No traces appear | ADOT layer not added to the function |
 | Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
-| Missing spans for some operations | `OTEL_TRACES_SAMPLER_ARG` set below 1.0 |
+| Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
+| Two service nodes in trace map | `AWS_LAMBDA_EXEC_WRAPPER` is set — remove it (see note above) |
+
+> **Note on ADOT wrapper:** Do not set `AWS_LAMBDA_EXEC_WRAPPER`. The wrapper attaches the auto-instrumentation agent which creates a separate TracerProvider. Since the plugin needs its own TracerProvider (for deterministic ID generation), having two providers causes X-Ray to render disconnected service nodes.
 
 ## Local Development
 
@@ -267,31 +267,11 @@ var otelPlugin = new OtelPlugin(
                 .addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
 ```
 
-## API Reference
-
-### `OtelPlugin`
-
-The main plugin class. Implements `DurableExecutionPlugin` from the core SDK.
-
-```java
-new OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder)
-new OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor)
-new OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc)
-```
-
-### `XRayContextExtractor`
-
-Default context extractor. Reads the `_X_AMZN_TRACE_ID` environment variable to derive trace context.
-
-### `ContextExtractor`
-
-Interface for custom context extractor implementations.
-
 ## Requirements
 
 - Java 17+
-- AWS Durable Execution SDK for Java 1.2.1+
-- OpenTelemetry SDK 1.20.0+
+- AWS Durable Execution SDK for Java 2.0.0+
+- OpenTelemetry SDK 1.30.0+
 
 ## License
 

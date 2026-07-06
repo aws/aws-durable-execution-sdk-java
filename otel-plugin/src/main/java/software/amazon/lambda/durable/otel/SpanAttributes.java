@@ -19,8 +19,7 @@ final class SpanAttributes {
     static final AttributeKey<String> DURABLE_OPERATION_TYPE = AttributeKey.stringKey("durable.operation.type");
     static final AttributeKey<String> DURABLE_OPERATION_NAME = AttributeKey.stringKey("durable.operation.name");
     static final AttributeKey<String> DURABLE_OPERATION_SUBTYPE = AttributeKey.stringKey("durable.operation.subtype");
-    static final AttributeKey<String> DURABLE_OPERATION_PARENT_ID =
-            AttributeKey.stringKey("durable.operation.parent_id");
+    static final AttributeKey<String> DURABLE_OPERATION_STATUS = AttributeKey.stringKey("durable.operation.status");
     static final AttributeKey<Long> DURABLE_ATTEMPT_NUMBER = AttributeKey.longKey("durable.attempt.number");
     static final AttributeKey<String> DURABLE_ATTEMPT_OUTCOME = AttributeKey.stringKey("durable.attempt.outcome");
     static final AttributeKey<String> DURABLE_INVOCATION_STATUS = AttributeKey.stringKey("durable.invocation.status");

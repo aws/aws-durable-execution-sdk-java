@@ -24,35 +24,26 @@ class MdcSpanEnricherTest {
     void clear_removesAllMdcKeys() {
         MDC.put(MdcSpanEnricher.MDC_TRACE_ID, "abc123");
         MDC.put(MdcSpanEnricher.MDC_SPAN_ID, "def456");
-        MDC.put(MdcSpanEnricher.MDC_EXECUTION_ARN, "arn:test");
+        MDC.put(MdcSpanEnricher.MDC_TRACE_SAMPLED, "true");
 
         MdcSpanEnricher.clear();
 
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
         assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
-        assertNull(MDC.get(MdcSpanEnricher.MDC_EXECUTION_ARN));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
     }
 
     @Test
-    void inject_withNoActiveSpan_doesNotSetTraceIds() {
-        MdcSpanEnricher.inject("arn:test");
+    void inject_withNoActiveSpan_doesNotSetMdcFields() {
+        MdcSpanEnricher.inject();
 
-        // No active span → no trace/span IDs, but ARN is still set
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
         assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
-        assertEquals("arn:test", MDC.get(MdcSpanEnricher.MDC_EXECUTION_ARN));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
     }
 
     @Test
-    void inject_withNullArn_doesNotSetArn() {
-        MdcSpanEnricher.inject(null);
-
-        assertNull(MDC.get(MdcSpanEnricher.MDC_EXECUTION_ARN));
-    }
-
-    @Test
-    void plugin_withMdcEnabled_setsArnInMdc() {
-        // Test MDC through the full plugin lifecycle (where makeCurrent is called on same thread)
+    void plugin_withMdcEnabled_setsFieldsInMdc() {
         var spanExporter = InMemorySpanExporter.create();
 
         var plugin = new OtelPlugin(
@@ -62,19 +53,21 @@ class MdcSpanEnricherTest {
 
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-mdc-test", true));
 
-        // Simulate onUserFunctionStart on this thread (same as production — hooks fire on user code thread)
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1));
 
-        // MDC should have execution ARN after onUserFunctionStart
-        assertEquals("arn:exec-mdc-test", MDC.get(MdcSpanEnricher.MDC_EXECUTION_ARN));
+        // MDC should have trace fields after onUserFunctionStart
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
 
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
 
         // MDC should be cleared after onUserFunctionEnd
-        assertNull(MDC.get(MdcSpanEnricher.MDC_EXECUTION_ARN));
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
 
         plugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec-mdc-test", true, InvocationStatus.SUCCEEDED, null));

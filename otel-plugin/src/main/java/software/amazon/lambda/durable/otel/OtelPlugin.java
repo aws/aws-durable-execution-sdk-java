@@ -23,7 +23,6 @@ import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -56,10 +55,12 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Requires the ADOT Lambda Layer for trace export. Configure with:
  *
  * <ul>
- *   <li>Lambda Layer: {@code aws-otel-java-agent} (ADOT Java auto-instrumentation layer)
- *   <li>Env var: {@code AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler}
+ *   <li>Lambda Layer: {@code aws-otel-java-agent} (provides the OTLP collector extension)
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
  * </ul>
+ *
+ * <p>Note: Do NOT set {@code AWS_LAMBDA_EXEC_WRAPPER}. The collector extension runs independently. The wrapper would
+ * attach the auto-instrumentation agent which creates a competing TracerProvider.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
@@ -127,7 +128,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
-     * @param enableMdc if true, injects trace_id/span_id into SLF4J MDC for log correlation
+     * @param enableMdc if true, injects traceId/spanId/traceSampled into SLF4J MDC for log correlation
      */
     public OtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
@@ -199,13 +200,13 @@ public class OtelPlugin implements DurableExecutionPlugin {
         // End any operation spans that are still open (operations that didn't complete in this invocation)
         for (var entry : operationSpans.entrySet()) {
             var span = entry.getValue();
-            span.setAttribute(AttributeKey.stringKey("durable.operation.status"), "PENDING");
+            span.setAttribute(DURABLE_OPERATION_STATUS, "PENDING");
             span.end();
         }
         operationSpans.clear();
         operationContexts.clear();
 
-        // End any attempt spans that are still open (e.g., SuspendExecutionException skipped onUserFunctionEnd)
+        // End any attempt spans that are still open (e.g., crash before onUserFunctionEnd)
         for (var entry : attemptScopes.entrySet()) {
             entry.getValue().close();
         }
@@ -267,9 +268,6 @@ public class OtelPlugin implements DurableExecutionPlugin {
         if (info.subType() != null) {
             spanBuilder.setAttribute(DURABLE_OPERATION_SUBTYPE, info.subType());
         }
-        if (info.parentId() != null) {
-            spanBuilder.setAttribute(DURABLE_OPERATION_PARENT_ID, info.parentId());
-        }
 
         var span = spanBuilder.startSpan();
 
@@ -286,6 +284,9 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
         if (span != null) {
             // Operation was started in this invocation — end normally
+            if (info.status() != null) {
+                span.setAttribute(DURABLE_OPERATION_STATUS, info.status());
+            }
             if (info.error() != null) {
                 span.setStatus(StatusCode.ERROR, info.error().getMessage());
                 span.recordException(info.error());
@@ -314,6 +315,9 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
             var continuationSpan = spanBuilder.startSpan();
 
+            if (info.status() != null) {
+                continuationSpan.setAttribute(DURABLE_OPERATION_STATUS, info.status());
+            }
             if (info.error() != null) {
                 continuationSpan.setStatus(StatusCode.ERROR, info.error().getMessage());
                 continuationSpan.recordException(info.error());
@@ -327,6 +331,23 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionStart(UserFunctionStartInfo info) {
+        // Skip attempt spans for CONTEXT operations — they are a scoping construct, not a
+        // retriable unit of work, so attempt number/outcome attributes don't apply.
+        // The operation span itself provides parent context for auto-instrumented calls.
+        if ("CONTEXT".equals(info.type())) {
+            // Still set the operation span as current so auto-instrumented calls become children
+            var operationSpan = operationSpans.get(info.id());
+            if (operationSpan != null) {
+                var scope = operationSpan.makeCurrent();
+                var key = attemptKey(info.id(), info.attempt());
+                attemptScopes.put(key, scope);
+            }
+            if (enableMdc) {
+                MdcSpanEnricher.inject();
+            }
+            return;
+        }
+
         var key = attemptKey(info.id(), info.attempt());
 
         // Use the operation span as parent for the attempt span
@@ -358,7 +379,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
         // Inject trace context into MDC for log-trace correlation
         if (enableMdc) {
-            MdcSpanEnricher.inject(durableExecutionArn);
+            MdcSpanEnricher.inject();
         }
     }
 
@@ -372,31 +393,31 @@ public class OtelPlugin implements DurableExecutionPlugin {
             scope.close();
         }
 
+        // Clear MDC after user function completes
+        if (enableMdc) {
+            MdcSpanEnricher.clear();
+        }
+
+        // CONTEXT operations don't have attempt spans — scope cleanup is all we need
+        if ("CONTEXT".equals(info.type())) {
+            return;
+        }
+
         var span = attemptSpans.remove(key);
         if (span == null) return;
 
-        // Set outcome
-        var outcome = info.succeeded() ? "succeeded" : (info.error() != null ? "failed" : "unknown");
+        var outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
         span.setAttribute(DURABLE_ATTEMPT_OUTCOME, outcome);
 
         if (!info.succeeded() && info.error() != null) {
-            if (info.error() instanceof SuspendExecutionException) {
-                span.setAttribute(DURABLE_ATTEMPT_OUTCOME, "pending");
-            } else {
-                span.setStatus(StatusCode.ERROR, info.error().getMessage());
-                span.recordException(info.error());
-            }
+            span.setStatus(StatusCode.ERROR, info.error().getMessage());
+            span.recordException(info.error());
         }
 
         if (info.endTimestamp() != null) {
             span.end(info.endTimestamp());
         } else {
             span.end();
-        }
-
-        // Clear MDC after user function completes
-        if (enableMdc) {
-            MdcSpanEnricher.clear();
         }
     }
 
