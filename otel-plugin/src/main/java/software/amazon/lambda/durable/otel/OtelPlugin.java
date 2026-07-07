@@ -5,16 +5,20 @@ package software.amazon.lambda.durable.otel;
 import static software.amazon.lambda.durable.otel.SpanAttributes.*;
 
 import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
+import io.opentelemetry.semconv.ServiceAttributes;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
@@ -128,6 +132,12 @@ public class OtelPlugin implements DurableExecutionPlugin {
     public OtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
         this.idGenerator = new DeterministicIdGenerator();
+
+        // Set service.name to "invocation" — X-Ray uses this as the display name for SERVER spans,
+        // creating a separate service node in the trace map labeled "invocation".
+        var resource = Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, "invocation"));
+        tracerProviderBuilder.addResource(resource);
+
         this.tracerProvider = tracerProviderBuilder.setIdGenerator(idGenerator).build();
         this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
         this.contextExtractor = contextExtractor;
@@ -152,10 +162,11 @@ public class OtelPlugin implements DurableExecutionPlugin {
         }
         // If no extracted context, idGenerator falls back to ARN-derived trace ID
 
-        // Determine parent context for the invocation span
+        // Determine parent context for the invocation span.
         Context parentContext;
         if (extractedContext != null && extractedContext.parentSpanId() != null) {
-            // Create a remote parent span context from the X-Ray Parent field
+            // X-Ray header has parent — create the invocation span as a child of that segment.
+            // This connects our OTLP-exported spans to the Lambda service's X-Ray segments.
             var parentSpanContext = SpanContext.createFromRemoteParent(
                     extractedContext.traceId(),
                     extractedContext.parentSpanId(),
@@ -166,8 +177,10 @@ public class OtelPlugin implements DurableExecutionPlugin {
             parentContext = Context.root();
         }
 
-        // Create invocation span as child of Lambda's X-Ray segment (via Parent field)
-        var spanBuilder = tracer.spanBuilder("durable.invocation")
+        // Create a SERVER span to establish a separate X-Ray service node.
+        // X-Ray uses service.name for the segment display name.
+        var spanBuilder = tracer.spanBuilder("invocation")
+                .setSpanKind(SpanKind.SERVER)
                 .setParent(parentContext)
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
                 .setAttribute(DURABLE_FIRST_INVOCATION, info.isFirstInvocation());
@@ -227,8 +240,6 @@ public class OtelPlugin implements DurableExecutionPlugin {
     public void onOperationStart(OperationInfo info) {
         if (info.id() == null) return;
 
-        idGenerator.setNextSpanOperationId(info.id());
-
         var parentContext = resolveParentContext(info.parentId());
 
         var spanBuilder = tracer.spanBuilder(spanName(info.type(), info.subType(), info.name()))
@@ -236,6 +247,19 @@ public class OtelPlugin implements DurableExecutionPlugin {
                 .setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn)
                 .setAttribute(DURABLE_OPERATION_ID, info.id())
                 .setAttribute(DURABLE_OPERATION_TYPE, info.type());
+
+        if (info.isReplay()) {
+            // Operation was already started in a prior invocation — use a random span ID
+            // and add a Link to the deterministic span from the original invocation for correlation.
+            var deterministicSpanId = idGenerator.generateSpanIdForOperation(info.id());
+            var traceId = idGenerator.generateTraceId();
+            var linkedSpanContext =
+                    SpanContext.create(traceId, deterministicSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+            spanBuilder.addLink(linkedSpanContext);
+        } else {
+            // First execution — use deterministic span ID so continuations can link back
+            idGenerator.setNextSpanOperationId(info.id());
+        }
 
         if (info.name() != null) {
             spanBuilder.setAttribute(DURABLE_OPERATION_NAME, info.name());
@@ -400,17 +424,17 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
     private static String spanName(String type, String subType, String name) {
         if (name != null) {
-            return "durable." + (subType != null ? subType.toLowerCase() : type.toLowerCase()) + ":" + name;
+            return name;
         }
-        return "durable." + (subType != null ? subType.toLowerCase() : type.toLowerCase());
+        return subType != null ? subType.toLowerCase() : type.toLowerCase();
     }
 
     private static String attemptSpanName(String type, String subType, String name, Integer attempt) {
         var base = spanName(type, subType, name);
         if (attempt != null) {
-            return base + " [attempt " + attempt + "]";
+            return base + " attempt " + attempt;
         }
-        return base + " [fn]";
+        return base;
     }
 
     private static String attemptKey(String operationId, Integer attempt) {

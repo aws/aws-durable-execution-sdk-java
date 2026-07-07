@@ -32,7 +32,8 @@ public final class PluginInfoConverter {
                 identifier.subType() != null ? identifier.subType().getValue() : null,
                 parentId,
                 operation != null ? operation.startTimestamp() : Instant.now(),
-                operation != null ? operation.endTimestamp() : null);
+                operation != null ? operation.endTimestamp() : null,
+                operation != null);
     }
 
     /**
@@ -46,7 +47,7 @@ public final class PluginInfoConverter {
      * @return an OperationEndInfo record
      */
     public static OperationEndInfo toOperationEndInfo(
-            Operation operation, OperationIdentifier identifier, String parentId, Throwable error) {
+            Operation operation, OperationIdentifier identifier, String parentId, boolean isReplay, Throwable error) {
         return new OperationEndInfo(
                 identifier.operationId(),
                 identifier.name(),
@@ -55,6 +56,10 @@ public final class PluginInfoConverter {
                 parentId,
                 operation != null ? operation.startTimestamp() : null,
                 operation != null ? operation.endTimestamp() : null,
+                operation != null && operation.status() != null
+                        ? operation.status().toString()
+                        : null,
+                isReplay,
                 error);
     }
 

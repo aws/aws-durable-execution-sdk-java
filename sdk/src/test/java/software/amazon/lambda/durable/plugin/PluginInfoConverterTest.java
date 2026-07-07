@@ -68,7 +68,7 @@ class PluginInfoConverterTest {
                 Operation.builder().startTimestamp(START).endTimestamp(END).build();
         var error = new RuntimeException("step failed");
 
-        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, PARENT_ID, error);
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, PARENT_ID, true, error);
 
         assertEquals(OPERATION_ID, info.id());
         assertEquals(OPERATION_NAME, info.name());
@@ -85,7 +85,7 @@ class PluginInfoConverterTest {
         var operation =
                 Operation.builder().startTimestamp(START).endTimestamp(END).build();
 
-        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, null);
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
 
         assertNull(info.error());
     }

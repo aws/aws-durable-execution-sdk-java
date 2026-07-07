@@ -160,7 +160,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
             cachedOperationResult.set(DeserializedOperationResult.succeeded(serializedResult.deserialized()));
             if (isVirtual) {
-                fireOnOperationEnd(null, null);
+                fireOnOperationEnd(null, null, false);
             }
             markAlreadyCompleted();
         } else {
@@ -211,7 +211,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         // - this child is not a direct child of a parent context (i.e. nestingType == FLAT), such as a parallel branch.
         if ((parentOperation != null && parentOperation.isOperationCompleted()) || isVirtual) {
             if (isVirtual) {
-                fireOnOperationEnd(null, exception);
+                fireOnOperationEnd(null, exception, false);
             }
             markAlreadyCompleted();
             return;

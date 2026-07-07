@@ -14,6 +14,8 @@ import java.time.Instant;
  * @param parentId parent operation ID (null for root-level operations)
  * @param startTimestamp when the operation started
  * @param endTimestamp when the operation ended
+ * @param status the operation's terminal status (e.g., SUCCEEDED, FAILED, TIMED_OUT) — may be null for virtual ops
+ * @param isReplay true if this operation already existed in the execution state (completed in a prior invocation)
  * @param error non-null if the operation failed
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
@@ -26,4 +28,6 @@ public record OperationEndInfo(
         String parentId,
         Instant startTimestamp,
         Instant endTimestamp,
+        String status,
+        boolean isReplay,
         Throwable error) {}

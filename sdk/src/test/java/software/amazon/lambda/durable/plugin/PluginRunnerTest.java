@@ -142,11 +142,12 @@ class PluginRunnerTest {
     }
 
     private static OperationInfo operationInfo() {
-        return new OperationInfo("op-1", "test-step", "STEP", null, null, Instant.now(), null);
+        return new OperationInfo("op-1", "test-step", "STEP", null, null, Instant.now(), null, false);
     }
 
     private static OperationEndInfo operationEndInfo() {
-        return new OperationEndInfo("op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), null);
+        return new OperationEndInfo(
+                "op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), "SUCCEEDED", false, null);
     }
 
     private static UserFunctionStartInfo attemptInfo() {

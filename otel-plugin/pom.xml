@@ -48,6 +48,13 @@
             <version>${opentelemetry.version}</version>
         </dependency>
 
+        <!-- OpenTelemetry Semantic Conventions (for ServiceAttributes.SERVICE_NAME) -->
+        <dependency>
+            <groupId>io.opentelemetry.semconv</groupId>
+            <artifactId>opentelemetry-semconv</artifactId>
+            <version>1.32.0</version>
+        </dependency>
+
         <!-- SLF4J for logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
