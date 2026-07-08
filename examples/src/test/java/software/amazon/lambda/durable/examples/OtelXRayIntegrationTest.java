@@ -59,7 +59,7 @@ class OtelXRayIntegrationTest {
 
     private static String account;
     private static String region;
-    private static String functionNameSuffix;
+    private static String functionNamePrefix;
     private static LambdaClient lambdaClient;
     private static XRayClient xrayClient;
 
@@ -81,7 +81,7 @@ class OtelXRayIntegrationTest {
 
         account = System.getProperty("test.aws.account");
         region = System.getProperty("test.aws.region");
-        functionNameSuffix = System.getProperty("test.function.name.suffix", "-java17-runtime");
+        functionNamePrefix = System.getProperty("test.function.name.prefix", "");
 
         if (account == null || region == null) {
             try (var sts = StsClient.create()) {
@@ -105,7 +105,7 @@ class OtelXRayIntegrationTest {
     }
 
     private static String arn(String functionName) {
-        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionName + functionNameSuffix
+        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionNamePrefix + functionName
                 + ":$LATEST";
     }
 
@@ -260,7 +260,7 @@ class OtelXRayIntegrationTest {
         // built-in X-Ray segment (durable backend propagates its own trace root)
         // Filter by the Lambda function's service name — each function has a unique one.
         // This avoids picking up traces from other durable functions that share service.name="invocation".
-        var filterExpression = "service(\"" + functionName + functionNameSuffix + "\")";
+        var filterExpression = "service(\"" + functionNamePrefix + functionName + "\")";
         for (int attempt = 0; attempt < XRAY_QUERY_RETRIES; attempt++) {
             var response = xrayClient.getTraceSummaries(GetTraceSummariesRequest.builder()
                     .startTime(startTime)

@@ -41,7 +41,7 @@ class CloudBasedIntegrationTest {
 
     private static String account;
     private static String region;
-    private static String functionNameSuffix;
+    private static String functionNamePrefix;
     private static LambdaClient lambdaClient;
 
     static boolean isEnabled() {
@@ -62,7 +62,7 @@ class CloudBasedIntegrationTest {
 
         account = System.getProperty("test.aws.account");
         region = System.getProperty("test.aws.region");
-        functionNameSuffix = System.getProperty("test.function.name.suffix", "-java17-runtime");
+        functionNamePrefix = System.getProperty("test.function.name.prefix", "");
 
         if (account == null || region == null) {
             try (var sts = StsClient.create()) {
@@ -81,7 +81,7 @@ class CloudBasedIntegrationTest {
     }
 
     private static String arn(String functionName) {
-        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionName + functionNameSuffix
+        return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionNamePrefix + functionName
                 + ":$LATEST";
     }
 
@@ -142,7 +142,7 @@ class CloudBasedIntegrationTest {
     void testSimpleInvokeExample() {
         var runner = CloudDurableTestRunner.create(
                 arn("simple-invoke-example"), new TypeToken<Map<String, String>>() {}, get(String.class), lambdaClient);
-        var result = runner.run(Map.of("name", functionNameSuffix));
+        var result = runner.run(Map.of("name", "test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertNotNull(result.getResult());
@@ -722,9 +722,7 @@ class CloudBasedIntegrationTest {
     void testRetryInvokeExample() {
         var runner = CloudDurableTestRunner.create(
                 arn("retry-invoke-example"), GreetingRequest.class, String.class, lambdaClient);
-        // The handler invokes "simple-step-example" + input.getName() + ":$LATEST",
-        // so passing the functionNameSuffix as the name targets the deployed simple-step-example function
-        var result = runner.run(new GreetingRequest(functionNameSuffix));
+        var result = runner.run(new GreetingRequest("test"));
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertNotNull(result.getResult());

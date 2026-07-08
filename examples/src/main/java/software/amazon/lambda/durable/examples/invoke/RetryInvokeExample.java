@@ -24,13 +24,12 @@ public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> 
 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
+        var targetFunctionName =
+                System.getenv().getOrDefault("FUNCTION_NAME_PREFIX", "") + "simple-step-example:$LATEST";
+
         return context.withRetry(
                 null,
-                (attempt, ctx) -> ctx.invoke(
-                        "call-greeting-" + attempt,
-                        "simple-step-example" + input.getName() + ":$LATEST",
-                        input,
-                        String.class),
+                (attempt, ctx) -> ctx.invoke("call-greeting-" + attempt, targetFunctionName, input, String.class),
                 WithRetryConfig.builder()
                         .retryStrategy((error, attempt) -> attempt < MAX_ATTEMPTS
                                 ? RetryDecision.retry(Duration.ofSeconds(2))

@@ -14,6 +14,10 @@ Parameters:
     Type: String
     Default: 'java17'
     Description: Java runtime version
+  FunctionNamePrefix:
+    Type: String
+    Default: ''
+    Description: Optional prefix for Lambda function names
   RoleArn:
     Type: String
     Description: IAM Role ARN for Lambda function execution
@@ -34,16 +38,18 @@ Globals:
       ExecutionTimeout: 300
       RetentionPeriodInDays: 7
     Runtime: !Ref JavaVersion
+    Environment:
+      Variables:
+        FUNCTION_NAME_PREFIX: !Ref FunctionNamePrefix
 
 Resources:
   NoopExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - noop-example
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - noop-example
       Handler: "software.amazon.lambda.durable.examples.general.NoopExample"
       Role: !Ref RoleArn
 
@@ -51,10 +57,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - simple-step-example
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - simple-step-example
       Handler: "software.amazon.lambda.durable.examples.step.SimpleStepExample"
       Role: !Ref RoleArn
 
@@ -62,10 +67,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'simple-invoke-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - simple-invoke-example
       Handler: "software.amazon.lambda.durable.examples.invoke.SimpleInvokeExample"
       Role: !Ref RoleArn
 
@@ -73,10 +77,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'wait-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - wait-example
       Handler: "software.amazon.lambda.durable.examples.wait.WaitExample"
       Role: !Ref RoleArn
 
@@ -84,10 +87,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'retry-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - retry-example
       Handler: "software.amazon.lambda.durable.examples.step.RetryExample"
       Role: !Ref RoleArn
 
@@ -95,10 +97,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'wait-at-least-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - wait-at-least-example
       Handler: "software.amazon.lambda.durable.examples.wait.WaitAtLeastExample"
       Role: !Ref RoleArn
 
@@ -106,10 +107,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'wait-at-least-in-process-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - wait-at-least-in-process-example
       Handler: "software.amazon.lambda.durable.examples.wait.WaitAtLeastInProcessExample"
       Role: !Ref RoleArn
 
@@ -117,10 +117,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'retry-in-process-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - retry-in-process-example
       Handler: "software.amazon.lambda.durable.examples.step.RetryInProcessExample"
       Role: !Ref RoleArn
 
@@ -128,10 +127,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'generic-types-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - generic-types-example
       Handler: "software.amazon.lambda.durable.examples.general.GenericTypesExample"
       Role: !Ref RoleArn
 
@@ -139,10 +137,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'generic-input-output-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - generic-input-output-example
       Handler: "software.amazon.lambda.durable.examples.general.GenericInputOutputExample"
       Role: !Ref RoleArn
 
@@ -150,10 +147,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'custom-config-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - custom-config-example
       Handler: "software.amazon.lambda.durable.examples.general.CustomConfigExample"
       Role: !Ref RoleArn
 
@@ -161,10 +157,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'logging-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - logging-example
       Handler: "software.amazon.lambda.durable.examples.general.LoggingExample"
       Role: !Ref RoleArn
 
@@ -172,10 +167,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'error-handling-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - error-handling-example
       Handler: "software.amazon.lambda.durable.examples.general.ErrorHandlingExample"
       Role: !Ref RoleArn
 
@@ -183,10 +177,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'callback-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - callback-example
       Handler: "software.amazon.lambda.durable.examples.callback.CallbackExample"
       Role: !Ref RoleArn
 
@@ -194,10 +187,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'many-async-steps-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - many-async-steps-example
       Handler: "software.amazon.lambda.durable.examples.step.ManyAsyncStepsExample"
       Role: !Ref RoleArn
 
@@ -205,10 +197,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'child-context-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - child-context-example
       Handler: "software.amazon.lambda.durable.examples.child.ChildContextExample"
       Role: !Ref RoleArn
 
@@ -216,10 +207,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'virtual-child-context-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - virtual-child-context-example
       Handler: "software.amazon.lambda.durable.examples.child.VirtualChildContextExample"
       Role: !Ref RoleArn
 
@@ -227,10 +217,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'wait-async-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - wait-async-example
       Handler: "software.amazon.lambda.durable.examples.wait.WaitAsyncExample"
       Role: !Ref RoleArn
 
@@ -238,10 +227,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'many-async-child-context-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - many-async-child-context-example
       Handler: "software.amazon.lambda.durable.examples.child.ManyAsyncChildContextExample"
       Role: !Ref RoleArn
 
@@ -249,10 +237,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'simple-map-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - simple-map-example
       Handler: "software.amazon.lambda.durable.examples.map.SimpleMapExample"
       Role: !Ref RoleArn
 
@@ -260,10 +247,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'complex-map-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - complex-map-example
       Handler: "software.amazon.lambda.durable.examples.map.ComplexMapExample"
       Role: !Ref RoleArn
 
@@ -271,10 +257,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'complex-flat-map-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - complex-flat-map-example
       Handler: "software.amazon.lambda.durable.examples.map.ComplexFlatMapExample"
       Role: !Ref RoleArn
 
@@ -282,10 +267,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'wait-for-condition-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - wait-for-condition-example
       Handler: "software.amazon.lambda.durable.examples.wait.WaitForConditionExample"
       Role: !Ref RoleArn
 
@@ -293,10 +277,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'concurrent-wait-for-condition-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - concurrent-wait-for-condition-example
       Handler: "software.amazon.lambda.durable.examples.wait.ConcurrentWaitForConditionExample"
       Role: !Ref RoleArn
 
@@ -304,10 +287,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'retry-wait-for-callback-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - retry-wait-for-callback-example
       Handler: "software.amazon.lambda.durable.examples.callback.RetryWaitForCallbackExample"
       Role: !Ref RoleArn
 
@@ -315,10 +297,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'wait-for-callback-failed-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - wait-for-callback-failed-example
       Handler: "software.amazon.lambda.durable.examples.callback.WaitForCallbackFailedExample"
       Role: !Ref RoleArn
 
@@ -326,10 +307,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'custom-polling-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - custom-polling-example
       Handler: "software.amazon.lambda.durable.examples.general.CustomPollingExample"
       Role: !Ref RoleArn
 
@@ -337,10 +317,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'plugin-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - plugin-example
       Handler: "software.amazon.lambda.durable.examples.general.PluginExample"
       Role: !Ref RoleArn
 
@@ -348,10 +327,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'otel-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - otel-example
       Handler: "software.amazon.lambda.durable.examples.general.OtelExample"
       Role: !Ref RoleArn
 
@@ -359,10 +337,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'otel-xray-step-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - otel-xray-step-example
       Handler: "software.amazon.lambda.durable.examples.otel.OtelXRayStepExample"
       Role: !Ref RoleArn
       Tracing: Active
@@ -375,10 +352,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'otel-xray-wait-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - otel-xray-wait-example
       Handler: "software.amazon.lambda.durable.examples.otel.OtelXRayWaitExample"
       Role: !Ref RoleArn
       Tracing: Active
@@ -391,10 +367,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'retry-invoke-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - retry-invoke-example
       Handler: "software.amazon.lambda.durable.examples.invoke.RetryInvokeExample"
       Role: !Ref RoleArn
 
@@ -402,10 +377,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'deserialization-failed-map-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - deserialization-failed-map-example
       Handler: "software.amazon.lambda.durable.examples.map.DeserializationFailedMapExample"
       Role: !Ref RoleArn
 
@@ -413,10 +387,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'parallel-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - parallel-example
       Handler: "software.amazon.lambda.durable.examples.parallel.ParallelExample"
       Role: !Ref RoleArn
 
@@ -424,10 +397,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'parallel-failure-tolerance-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - parallel-failure-tolerance-example
       Handler: "software.amazon.lambda.durable.examples.parallel.ParallelFailureToleranceExample"
       Role: !Ref RoleArn
 
@@ -435,10 +407,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'parallel-with-wait-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - parallel-with-wait-example
       Handler: "software.amazon.lambda.durable.examples.parallel.ParallelWithWaitExample"
       Role: !Ref RoleArn
 
@@ -446,10 +417,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'deserialization-failed-parallel-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - deserialization-failed-parallel-example
       Handler: "software.amazon.lambda.durable.examples.parallel.DeserializationFailedParallelExample"
       Role: !Ref RoleArn
 
@@ -457,10 +427,9 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'deserialization-failure-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - deserialization-failure-example
       Handler: "software.amazon.lambda.durable.examples.step.DeserializationFailureExample"
       Role: !Ref RoleArn
 
@@ -469,10 +438,9 @@ Resources:
     Condition: IsJava21OrLater
     Properties:
       FunctionName: !Join
-        - '-'
-        - - 'many-async-steps-virtual-thread-pool-example'
-          - !Ref JavaVersion
-          - runtime
+        - ''
+        - - !Ref FunctionNamePrefix
+          - many-async-steps-virtual-thread-pool-example
       Handler: "software.amazon.lambda.durable.examples.vt.ManyAsyncStepsVirtualThreadPoolExample"
       Role: !Ref RoleArn
 

@@ -16,16 +16,19 @@ public class SimpleInvokeExample extends DurableHandler<GreetingRequest, String>
 
     @Override
     public String handleRequest(GreetingRequest input, DurableContext context) {
+        var targetFunctionName =
+                System.getenv().getOrDefault("FUNCTION_NAME_PREFIX", "") + "simple-step-example:$LATEST";
+
         // Invoke the `simple-step-example` function.
         var future = context.invokeAsync(
                 "call-greeting1",
-                "simple-step-example" + input.getName() + ":$LATEST",
+                targetFunctionName,
                 input,
                 String.class,
                 InvokeConfig.builder().build());
         var result2 = context.invoke(
                 "call-greeting2",
-                "simple-step-example" + input.getName() + ":$LATEST",
+                targetFunctionName,
                 input,
                 String.class,
                 InvokeConfig.builder().build());
