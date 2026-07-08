@@ -55,9 +55,10 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
         with:
-          role-to-assume: "${{ secrets.ACTIONS_INTEGRATION_ROLE_NAME }}"
+          role-to-assume: "${{ secrets.TEST_ROLE_ARN }}"
           role-session-name: java-language-sdk-test
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
       - name: Setup Java ${{ matrix.java }}
         uses: actions/setup-java@v5
         with:
@@ -69,14 +70,14 @@ jobs:
       - name: sam build
         run: | # add --no-cached  if debugging sam build
           sam build --debug --parameter-overrides \
-            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=RoleArn,ParameterValue=${{ secrets.DURABLE_INTEGRATION_TEST_ROLE_ARN }}'
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=RoleArn,ParameterValue=${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}'
         working-directory: ./examples
       - name: sam deploy
         run: | 
           sam deploy --stack-name JavaSDKCloudBasedIntegrationTestStack-Java${{ matrix.java }}Runtime \
             --resolve-image-repos --resolve-s3 --parameter-overrides \
-            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=RoleArn,ParameterValue=${{ secrets.DURABLE_INTEGRATION_TEST_ROLE_ARN }}'
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=RoleArn,ParameterValue=${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}'
         working-directory: ./examples
       - name: Cloud Based Integration Tests
-        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest="CloudBasedIntegrationTest,OtelXRayIntegrationTest" -Dtest.function.name.suffix='-java${{ matrix.java }}-runtime'
+        run: mvn clean test -B -Dtest.cloud.enabled=true -Dtest.aws.account='${{ secrets.TEST_ACCOUNT_ID }}' -Dtest="CloudBasedIntegrationTest,OtelXRayIntegrationTest" -Dtest.function.name.suffix='-java${{ matrix.java }}-runtime'
         working-directory: ./examples
