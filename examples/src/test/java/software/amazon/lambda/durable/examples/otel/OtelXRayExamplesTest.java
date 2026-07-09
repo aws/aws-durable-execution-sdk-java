@@ -10,16 +10,15 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 /**
- * Cloud-like tests for OTel examples using LocalDurableTestRunner.
+ * Local tests for OTel examples using LocalDurableTestRunner.
  *
- * <p>These verify that the OTel plugin doesn't break execution for various scenarios. When deployed to Lambda with
- * CloudDurableTestRunner, these same scenarios validate that flush/export works correctly under real concurrency.
+ * <p>These verify that the OTel plugin doesn't break execution for map, parallel, and nested context scenarios.
  */
-class OtelXRayCloudTest {
+class OtelXRayExamplesTest {
 
     @Test
     void mapExample_executesSuccessfully() {
-        var handler = new OtelXRayMapExample();
+        var handler = new OtelXRayExamples.MapExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 
         var result = runner.runUntilComplete(new GreetingRequest("test"));
@@ -30,7 +29,7 @@ class OtelXRayCloudTest {
 
     @Test
     void parallelExample_executesSuccessfully() {
-        var handler = new OtelXRayParallelExample();
+        var handler = new OtelXRayExamples.ParallelExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 
         var result = runner.runUntilComplete(new GreetingRequest("test"));
@@ -41,7 +40,7 @@ class OtelXRayCloudTest {
 
     @Test
     void nestedContextExample_executesSuccessfully() {
-        var handler = new OtelXRayNestedContextExample();
+        var handler = new OtelXRayExamples.NestedContextExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 
         var result = runner.runUntilComplete(new GreetingRequest("World"));

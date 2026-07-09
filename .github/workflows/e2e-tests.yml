@@ -86,7 +86,7 @@ jobs:
           mvn clean test -B \
             -Dtest.cloud.enabled=true \
             -Dtest.aws.account='${{ secrets.TEST_ACCOUNT_ID }}' \
-            -Dtest="CloudBasedIntegrationTest,OtelXRayIntegrationTest" \
+            -Dtest="CloudBasedIntegrationTest,CloudBasedOtelIntegrationTest" \
             -Dtest.function.name.prefix='Java${{ matrix.java }}-' \
             -Djunit.jupiter.execution.parallel.enabled=true \
             -Djunit.jupiter.execution.parallel.mode.default=concurrent \

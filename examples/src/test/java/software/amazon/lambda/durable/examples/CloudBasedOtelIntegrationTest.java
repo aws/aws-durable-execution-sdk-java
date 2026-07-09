@@ -50,7 +50,7 @@ import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
  * <p>Enable with: {@code -Dtest.cloud.enabled=true}
  */
 @EnabledIf("isEnabled")
-class OtelXRayIntegrationTest {
+class CloudBasedOtelIntegrationTest {
 
     private static final Duration XRAY_INGESTION_DELAY = Duration.ofSeconds(20);
     private static final int XRAY_QUERY_RETRIES = 3;
