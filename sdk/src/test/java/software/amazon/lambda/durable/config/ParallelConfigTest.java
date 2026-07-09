@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 
 class ParallelConfigTest {
 
@@ -44,5 +45,16 @@ class ParallelConfigTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> ParallelConfig.builder().maxConcurrency(0).build());
+    }
+
+    @Test
+    void customShouldCompleteAllowed() {
+        var completionConfig = CompletionConfig.shouldComplete(status -> status.completedCount() >= 1
+                ? CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.CUSTOM_COMPLETION_SUCCEEDED)
+                : CompletionConfig.CompletionDecision.continueExecution());
+
+        var config = ParallelConfig.builder().completionConfig(completionConfig).build();
+
+        assertEquals(completionConfig, config.completionConfig());
     }
 }

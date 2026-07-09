@@ -1092,6 +1092,82 @@ class ParallelIntegrationTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testParallelWithShouldComplete_earlyTermination(NestingType nestingType, int events) {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = ParallelConfig.builder()
+                    .maxConcurrency(1)
+                    .completionConfig(CompletionConfig.shouldComplete(status -> status.successCount() >= 2
+                            ? CompletionConfig.CompletionDecision.complete(
+                                    ConcurrencyCompletionStatus.CUSTOM_COMPLETION_SUCCEEDED)
+                            : CompletionConfig.CompletionDecision.continueExecution()))
+                    .nestingType(nestingType)
+                    .build();
+            var futures = new ArrayList<DurableFuture<String>>();
+            ParallelDurableFuture parallel = context.parallel("custom-complete", config);
+
+            try (parallel) {
+                for (var item : List.of("a", "b", "c", "d")) {
+                    futures.add(parallel.branch("branch-" + item, String.class, ctx -> item.toUpperCase()));
+                }
+            }
+
+            var result = parallel.get();
+            assertEquals(ConcurrencyCompletionStatus.CUSTOM_COMPLETION_SUCCEEDED, result.completionStatus());
+            assertTrue(result.completionStatus().isSucceeded());
+            assertTrue(result.size() >= 2 && result.size() <= 4);
+            assertEquals(2, result.succeeded());
+            assertEquals(0, result.failed());
+            assertEquals("A", futures.get(0).get());
+            assertEquals("B", futures.get(1).get());
+
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testParallelWithShouldCompleteDecision_canCompleteAsFailed(NestingType nestingType, int events) {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = ParallelConfig.builder()
+                    .maxConcurrency(1)
+                    .completionConfig(CompletionConfig.shouldComplete(status -> status.completedCount() >= 2
+                            ? CompletionConfig.CompletionDecision.complete(
+                                    ConcurrencyCompletionStatus.CUSTOM_COMPLETION_FAILED)
+                            : CompletionConfig.CompletionDecision.continueExecution()))
+                    .nestingType(nestingType)
+                    .build();
+            var futures = new ArrayList<DurableFuture<String>>();
+            ParallelDurableFuture parallel = context.parallel("custom-failed-complete", config);
+
+            try (parallel) {
+                for (var item : List.of("a", "b", "c", "d")) {
+                    futures.add(parallel.branch("branch-" + item, String.class, ctx -> item.toUpperCase()));
+                }
+            }
+
+            var result = parallel.get();
+            assertEquals(ConcurrencyCompletionStatus.CUSTOM_COMPLETION_FAILED, result.completionStatus());
+            assertFalse(result.completionStatus().isSucceeded());
+            assertTrue(result.size() >= 2 && result.size() <= 4);
+            assertEquals(2, result.succeeded());
+            assertEquals(0, result.failed());
+            assertEquals("A", futures.get(0).get());
+            assertEquals("B", futures.get(1).get());
+
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
     @CsvSource({"FLAT, 2", "NESTED, 8"})
     void testParallelWithMinSuccessful_earlyTermination_consistentResult(NestingType nestingType, int events) {
         var executionCount = new AtomicInteger(0);

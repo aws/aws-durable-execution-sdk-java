@@ -81,7 +81,9 @@ public class ParallelConfig {
          * @return this builder for method chaining
          */
         public Builder completionConfig(CompletionConfig completionConfig) {
-            if (completionConfig != null && completionConfig.toleratedFailurePercentage() != null) {
+            if (completionConfig != null
+                    && !completionConfig.hasCustomShouldComplete()
+                    && completionConfig.toleratedFailurePercentage() != null) {
                 throw new IllegalArgumentException("ParallelConfig does not support toleratedFailurePercentage");
             }
             this.completionConfig = completionConfig;

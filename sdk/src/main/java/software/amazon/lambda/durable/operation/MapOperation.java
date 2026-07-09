@@ -17,7 +17,6 @@ import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
-import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -58,10 +57,10 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 config.serDes(),
                 durableContext,
                 config.maxConcurrency(),
-                config.completionConfig().minSuccessful(),
-                getToleratedFailureCount(config.completionConfig(), items.size()),
+                config.completionConfig().completionDecisionFunction(),
                 config.nestingType());
-        if (config.completionConfig().minSuccessful() != null
+        if (!config.completionConfig().hasCustomShouldComplete()
+                && config.completionConfig().minSuccessful() != null
                 && config.completionConfig().minSuccessful() > items.size()) {
             throw new IllegalArgumentException("minSuccessful cannot be greater than total items: "
                     + config.completionConfig().minSuccessful() + " > " + items.size());
@@ -96,25 +95,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                     OperationSubType.MAP_ITERATION,
                     skip);
         }
-    }
-
-    private static Integer getToleratedFailureCount(CompletionConfig completionConfig, int totalItems) {
-        if (completionConfig == null
-                || (completionConfig.toleratedFailureCount() == null
-                        && completionConfig.toleratedFailurePercentage() == null)) {
-            // neither toleratedFailureCount nor toleratedFailurePercentage is specified.
-            return null;
-        }
-        int toleratedFailureCount = completionConfig.toleratedFailureCount() != null
-                ? completionConfig.toleratedFailureCount()
-                : Integer.MAX_VALUE;
-
-        // convert percentage to count
-        int toleratedFailureCountFromPercentage = completionConfig.toleratedFailurePercentage() != null
-                ? (int) Math.floor(totalItems * completionConfig.toleratedFailurePercentage())
-                : Integer.MAX_VALUE;
-        // minimum of two if both count and percentage is specified
-        return Math.min(toleratedFailureCount, toleratedFailureCountFromPercentage);
     }
 
     @Override
@@ -155,7 +135,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                     var expected = new ExpectedCompletionStatus(
                             deserializedResult.succeeded().size()
                                     + deserializedResult.failed().size(),
-                            deserializedResult.completionReason());
+                            CompletionConfig.CompletionDecision.complete(deserializedResult.completionReason()));
                     executeItems(expected);
                 } else {
                     // Small result: MapResult is in the payload, skip child replay
@@ -176,8 +156,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     }
 
     @Override
-    protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
-        this.cachedResult = constructMapResult(concurrencyCompletionStatus);
+    protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {
+        this.cachedResult = constructMapResult(completionDecision);
         var serializedResult = serializeAndDeserializeResult(cachedResult);
         this.cachedResult = serializedResult.deserialized();
         var serializedBytes = serializedResult.serialized().getBytes(StandardCharsets.UTF_8);
@@ -208,7 +188,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     }
 
     @SuppressWarnings("unchecked")
-    private MapResult<O> constructMapResult(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+    private MapResult<O> constructMapResult(CompletionConfig.CompletionDecision completionDecision) {
         var children = getBranches();
         var resultItems = new ArrayList<MapResult.MapResultItem<O>>(Collections.nCopies(items.size(), null));
 
@@ -234,7 +214,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 }
             }
         }
-        return new MapResult<>(resultItems, concurrencyCompletionStatus);
+        return new MapResult<>(resultItems, completionDecision.completionStatus());
     }
 
     @Override

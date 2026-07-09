@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -18,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -25,7 +27,6 @@ import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionExc
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -42,8 +43,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * <ul>
  *   <li>Does NOT register its own thread — child context threads handle all suspension
  *   <li>Uses a pending queue + running counter for concurrency control
- *   <li>Completion is determined by subclass-specific logic via abstract {@code canComplete()} and
- *       {@code validateItemCount()}
+ *   <li>Completion is determined by {@link CompletionConfig#completionDecisionFunction()}
  *   <li>When a child suspends, the running count is NOT decremented
  * </ul>
  *
@@ -51,13 +51,12 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  */
 public abstract class ConcurrencyOperation<T> extends SerializableDurableOperation<T> {
 
-    protected record ExpectedCompletionStatus(int completed, ConcurrencyCompletionStatus completionStatus) {}
+    protected record ExpectedCompletionStatus(int completed, CompletionConfig.CompletionDecision completionDecision) {}
 
     private static final Logger logger = LoggerFactory.getLogger(ConcurrencyOperation.class);
 
     private final int maxConcurrency;
-    private final Integer minSuccessful;
-    private final Integer toleratedFailureCount;
+    private final Function<CompletionConfig.CompletionStatus, CompletionConfig.CompletionDecision> shouldComplete;
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl rootContext;
     private final NestingType nestingType;
@@ -80,13 +79,11 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             SerDes resultSerDes,
             DurableContextImpl durableContext,
             int maxConcurrency,
-            Integer minSuccessful,
-            Integer toleratedFailureCount,
+            Function<CompletionConfig.CompletionStatus, CompletionConfig.CompletionDecision> shouldComplete,
             NestingType nestingType) {
         super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
         this.maxConcurrency = maxConcurrency;
-        this.minSuccessful = minSuccessful;
-        this.toleratedFailureCount = toleratedFailureCount;
+        this.shouldComplete = Objects.requireNonNull(shouldComplete, "shouldComplete cannot be null");
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
         // root context of the concurrency operation is always non-virtual
         this.rootContext = durableContext.createChildContext(getOperationId(), getName(), false);
@@ -127,7 +124,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     }
 
     /** Called when the concurrency operation completes. Subclasses define checkpointing behavior. */
-    protected abstract void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus);
+    protected abstract void handleCompletion(CompletionConfig.CompletionDecision completionDecision);
 
     // ========== Concurrency control ==========
 
@@ -190,10 +187,9 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                     if (isOperationCompleted()) {
                         return;
                     }
-                    var completionStatus =
-                            canComplete(succeededCount, failedCount, runningChildren, expectedCompletionStatus);
-                    if (completionStatus != null) {
-                        handleCompletion(completionStatus);
+                    var completionDecision = canComplete(succeededCount, failedCount, expectedCompletionStatus);
+                    if (completionDecision != null) {
+                        handleCompletion(completionDecision);
                         return;
                     }
 
@@ -257,8 +253,8 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             if (isOperationCompleted()) {
                 return null;
             }
-            var completionStatus = canComplete(succeededCount, failedCount, runningChildren, expectedCompletionStatus);
-            if (completionStatus != null) {
+            var completionDecision = canComplete(succeededCount, failedCount, expectedCompletionStatus);
+            if (completionDecision != null) {
                 return null;
             }
             ArrayList<CompletableFuture<BaseDurableOperation>> futures;
@@ -317,41 +313,35 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
      *
      * @return the completion status if the operation is complete, or null if it should continue
      */
-    private ConcurrencyCompletionStatus canComplete(
+    private CompletionConfig.CompletionDecision canComplete(
             AtomicInteger succeededCount,
             AtomicInteger failedCount,
-            Set<BaseDurableOperation> runningChildren,
             ExpectedCompletionStatus expectedCompletionStatus) {
         int succeeded = succeededCount.get();
         int failed = failedCount.get();
 
         if (expectedCompletionStatus != null) {
             if (succeeded + failed >= expectedCompletionStatus.completed) {
-                return expectedCompletionStatus.completionStatus;
+                return expectedCompletionStatus.completionDecision;
             }
 
             // if expected completion status is not null, we always complete all the children previously completed
             return null;
         }
 
-        // If we've met the minimum successful count, we're done
-        if (minSuccessful != null && succeeded >= minSuccessful) {
-            return ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-        }
+        var decision = Objects.requireNonNull(
+                shouldComplete.apply(completionStatus(succeeded, failed)),
+                "shouldComplete must return a completion decision");
+        return decision.shouldComplete() ? decision : null;
+    }
 
-        // If we've exceeded the failure tolerance, we're done
-        if (toleratedFailureCount != null && failed > toleratedFailureCount) {
-            return ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED;
-        }
+    private CompletionConfig.CompletionStatus completionStatus(int succeeded, int failed) {
+        return new CompletionConfig.CompletionStatus(
+                succeeded, failed, succeeded + failed, branches.size(), allItemsRegistered());
+    }
 
-        // All items finished — complete
-        // This condition relies on isJoined, so the consumer will wake up and check this again when
-        // isJoined is set to true.
-        if (isJoined.get() && pendingQueue.isEmpty() && runningChildren.isEmpty()) {
-            return ConcurrencyCompletionStatus.ALL_COMPLETED;
-        }
-
-        return null;
+    private boolean allItemsRegistered() {
+        return isJoined.get();
     }
 
     /**
@@ -359,10 +349,6 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
      * zero-branch case, then delegates to {@code waitForOperationCompletion()} from BaseDurableOperation.
      */
     protected void join() {
-        if (minSuccessful != null && minSuccessful > branches.size()) {
-            throw new IllegalStateException("minSuccessful (" + minSuccessful
-                    + ") exceeds the number of registered items (" + branches.size() + ")");
-        }
         isJoined.set(true);
 
         // Notify the consumer thread this concurrency operation is joined. Consumer thread need to check the

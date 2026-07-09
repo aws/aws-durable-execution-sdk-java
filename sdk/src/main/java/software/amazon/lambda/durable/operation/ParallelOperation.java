@@ -12,11 +12,11 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.ParallelResult;
@@ -60,13 +60,12 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 resultSerDes,
                 durableContext,
                 config.maxConcurrency(),
-                config.completionConfig().minSuccessful(),
-                config.completionConfig().toleratedFailureCount(),
+                config.completionConfig().completionDecisionFunction(),
                 config.nestingType());
     }
 
     @Override
-    protected void handleCompletion(ConcurrencyCompletionStatus concurrencyCompletionStatus) {
+    protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {
 
         var items = List.copyOf(getBranches());
         var statuses = items.stream().map(this::getParallelItemStatus).toList();
@@ -77,7 +76,12 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 statuses.stream().filter(s -> s == ParallelResult.Status.FAILED).count());
         int skippedCount = items.size() - succeededCount - failedCount;
         cachedResult = new ParallelResult(
-                items.size(), succeededCount, failedCount, skippedCount, concurrencyCompletionStatus, statuses);
+                items.size(),
+                succeededCount,
+                failedCount,
+                skippedCount,
+                completionDecision.completionStatus(),
+                statuses);
         var serializedResult = serializeAndDeserializeResult(cachedResult);
         cachedResult = serializedResult.deserialized();
 
@@ -135,7 +139,8 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                     : null;
             if (partialResult != null) {
                 var expected = new ExpectedCompletionStatus(
-                        partialResult.succeeded() + partialResult.failed(), partialResult.completionStatus());
+                        partialResult.succeeded() + partialResult.failed(),
+                        CompletionConfig.CompletionDecision.complete(partialResult.completionStatus()));
                 executeItems(expected);
                 return;
             }

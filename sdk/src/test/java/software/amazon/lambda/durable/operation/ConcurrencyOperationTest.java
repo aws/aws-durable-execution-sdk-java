@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,7 +29,6 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
-import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -98,6 +98,29 @@ class ConcurrencyOperationTest {
         Field field = ConcurrencyOperation.class.getDeclaredField("operationIdGenerator");
         field.setAccessible(true);
         field.set(op, mockGenerator);
+    }
+
+    private CompletionConfig.CompletionDecision canComplete(
+            ConcurrencyOperation<?> op, int succeededCount, int failedCount) throws Exception {
+        var method = ConcurrencyOperation.class.getDeclaredMethod(
+                "canComplete",
+                AtomicInteger.class,
+                AtomicInteger.class,
+                ConcurrencyOperation.ExpectedCompletionStatus.class);
+        method.setAccessible(true);
+        try {
+            return (CompletionConfig.CompletionDecision)
+                    method.invoke(op, new AtomicInteger(succeededCount), new AtomicInteger(failedCount), null);
+        } catch (InvocationTargetException e) {
+            var cause = e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw e;
+        }
     }
 
     // ===== Callback cycle tests =====
@@ -252,6 +275,15 @@ class ConcurrencyOperationTest {
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
     }
 
+    @Test
+    void canComplete_whenShouldCompleteReturnsNull_shouldThrow() throws Exception {
+        var op = createOperation(CompletionConfig.shouldComplete(status -> null));
+
+        var exception = assertThrows(NullPointerException.class, () -> canComplete(op, 0, 0));
+
+        assertEquals("shouldComplete must return a completion decision", exception.getMessage());
+    }
+
     // ===== Test subclass =====
 
     static class TestConcurrencyOperation extends ConcurrencyOperation<Void> {
@@ -274,13 +306,12 @@ class ConcurrencyOperationTest {
                     resultSerDes,
                     durableContext,
                     maxConcurrency,
-                    completionConfig.minSuccessful(),
-                    completionConfig.toleratedFailureCount(),
+                    completionConfig.completionDecisionFunction(),
                     NestingType.NESTED);
         }
 
         @Override
-        protected void handleCompletion(ConcurrencyCompletionStatus completionStatus) {
+        protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {
             successHandled = true;
             // Simulate the checkpoint ACK that a real subclass would receive after sendOperationUpdate.
             // This drives completionFuture to completion so waitForOperationCompletion() unblocks.

@@ -243,6 +243,16 @@ Resources:
       Handler: "software.amazon.lambda.durable.examples.map.SimpleMapExample"
       Role: !Ref RoleArn
 
+  CustomShouldCompleteMapExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Join
+        - ''
+        - - !Ref FunctionNamePrefix
+          - custom-should-complete-map-example
+      Handler: "software.amazon.lambda.durable.examples.map.CustomShouldCompleteMapExample"
+      Role: !Ref RoleArn
+
   ComplexMapExampleFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -524,6 +534,10 @@ Outputs:
   SimpleMapExampleFunction:
     Description: Simple Map Example Function ARN
     Value: !GetAtt SimpleMapExampleFunction.Arn
+
+  CustomShouldCompleteMapExampleFunction:
+    Description: Custom Should Complete Map Example Function ARN
+    Value: !GetAtt CustomShouldCompleteMapExampleFunction.Arn
 
   ComplexMapExampleFunction:
     Description: Complex Map Example Function ARN

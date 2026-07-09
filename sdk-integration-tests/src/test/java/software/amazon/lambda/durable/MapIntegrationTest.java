@@ -376,6 +376,74 @@ class MapIntegrationTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testMapWithShouldComplete_earlyTermination(NestingType nestingType, int events) {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var items = List.of("a", "b", "c", "d");
+            var config = MapConfig.builder()
+                    .maxConcurrency(1)
+                    .completionConfig(CompletionConfig.shouldComplete(status -> status.successCount() >= 2
+                            ? CompletionConfig.CompletionDecision.complete(
+                                    ConcurrencyCompletionStatus.CUSTOM_COMPLETION_SUCCEEDED)
+                            : CompletionConfig.CompletionDecision.continueExecution()))
+                    .nestingType(nestingType)
+                    .build();
+            var result = context.map(
+                    "custom-complete", items, String.class, (item, index, ctx) -> item.toUpperCase(), config);
+
+            assertEquals(ConcurrencyCompletionStatus.CUSTOM_COMPLETION_SUCCEEDED, result.completionReason());
+            assertTrue(result.completionReason().isSucceeded());
+            assertEquals(4, result.size());
+            assertEquals("A", result.getResult(0));
+            assertEquals("B", result.getResult(1));
+            assertEquals(
+                    MapResult.MapResultItem.Status.SKIPPED, result.getItem(2).status());
+            assertEquals(
+                    MapResult.MapResultItem.Status.SKIPPED, result.getItem(3).status());
+
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 6"})
+    void testMapWithShouldCompleteDecision_canCompleteAsFailed(NestingType nestingType, int events) {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var items = List.of("a", "b", "c", "d");
+            var config = MapConfig.builder()
+                    .maxConcurrency(1)
+                    .completionConfig(CompletionConfig.shouldComplete(status -> status.completedCount() >= 2
+                            ? CompletionConfig.CompletionDecision.complete(
+                                    ConcurrencyCompletionStatus.CUSTOM_COMPLETION_FAILED)
+                            : CompletionConfig.CompletionDecision.continueExecution()))
+                    .nestingType(nestingType)
+                    .build();
+            var result = context.map(
+                    "custom-failed-complete", items, String.class, (item, index, ctx) -> item.toUpperCase(), config);
+
+            assertEquals(ConcurrencyCompletionStatus.CUSTOM_COMPLETION_FAILED, result.completionReason());
+            assertFalse(result.completionReason().isSucceeded());
+            assertEquals(4, result.size());
+            assertEquals("A", result.getResult(0));
+            assertEquals("B", result.getResult(1));
+            assertEquals(
+                    MapResult.MapResultItem.Status.SKIPPED, result.getItem(2).status());
+            assertEquals(
+                    MapResult.MapResultItem.Status.SKIPPED, result.getItem(3).status());
+
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
     @CsvSource({"FLAT, 2", "NESTED, 8"})
     void testMapReplayAfterInterruption_cachedResultsUsed(NestingType nestingType, int events) {
         var executionCounts = new AtomicInteger(0);

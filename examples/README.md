@@ -89,6 +89,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [WaitAtLeastInProcessExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitAtLeastInProcessExample.java) | Wait completes before async step (no suspension) |
 | [ManyAsyncStepsExample](src/main/java/software/amazon/lambda/durable/examples/step/ManyAsyncStepsExample.java) | Performance test with 500 concurrent async steps |
 | [SimpleMapExample](src/main/java/software/amazon/lambda/durable/examples/map/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
+| [CustomShouldCompleteMapExample](src/main/java/software/amazon/lambda/durable/examples/map/CustomShouldCompleteMapExample.java) | Custom map completion with `shouldComplete` decisions |
 | [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
 | [OtelExample](src/main/java/software/amazon/lambda/durable/examples/general/OtelExample.java) | OpenTelemetry instrumentation with logging span export |
 | [OtelXRayStepExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayStepExample.java) | Export step spans to X-Ray through the ADOT Lambda Layer |

@@ -3,9 +3,17 @@
 package software.amazon.lambda.durable.model;
 
 public enum ConcurrencyCompletionStatus {
-    ALL_COMPLETED,
-    MIN_SUCCESSFUL_REACHED,
-    FAILURE_TOLERANCE_EXCEEDED;
+    ALL_COMPLETED(true),
+    MIN_SUCCESSFUL_REACHED(true),
+    FAILURE_TOLERANCE_EXCEEDED(false),
+    CUSTOM_COMPLETION_SUCCEEDED(true),
+    CUSTOM_COMPLETION_FAILED(false);
+
+    private final boolean succeeded;
+
+    ConcurrencyCompletionStatus(boolean succeeded) {
+        this.succeeded = succeeded;
+    }
 
     @Override
     public String toString() {
@@ -13,6 +21,6 @@ public enum ConcurrencyCompletionStatus {
     }
 
     public boolean isSucceeded() {
-        return this == ALL_COMPLETED || this == MIN_SUCCESSFUL_REACHED;
+        return succeeded;
     }
 }
