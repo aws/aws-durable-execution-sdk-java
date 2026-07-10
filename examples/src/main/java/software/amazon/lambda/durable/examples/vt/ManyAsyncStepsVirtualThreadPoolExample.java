@@ -10,6 +10,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.examples.ExampleTemplate;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
 
@@ -24,6 +25,7 @@ import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
  *   <li>All results are collected using {@link DurableFuture#allOf}
  * </ul>
  */
+@ExampleTemplate(condition = "IsJava21OrLater")
 public class ManyAsyncStepsVirtualThreadPoolExample extends DurableHandler<ManyAsyncStepsInput, ManyAsyncStepsOutput> {
 
     @Override

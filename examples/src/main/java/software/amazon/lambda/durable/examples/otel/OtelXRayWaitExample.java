@@ -9,6 +9,7 @@ import java.time.Duration;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.examples.ExampleTemplate;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.otel.OtelPlugin;
 
@@ -43,6 +44,7 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *         └── durable.step:after-wait [attempt 1]
  * </pre>
  */
+@ExampleTemplate(tracing = true)
 public class OtelXRayWaitExample extends DurableHandler<GreetingRequest, String> {
 
     @Override

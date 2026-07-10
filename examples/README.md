@@ -33,6 +33,7 @@ The local runner executes in-memory and skips wait durations—ideal for fast it
 ```bash
 cd examples
 mvn clean package
+python3 generate-template.py
 sam build
 sam deploy --guided
 ```
@@ -45,7 +46,10 @@ sam deploy
 
 The SAM template configures:
 - `DurableConfig` with `ExecutionTimeout` and `RetentionPeriodInDays`
+- CloudWatch log groups for Lambda functions with 7 days of retention
 - IAM permissions for `lambda:CheckpointDurableExecutions` and `lambda:GetDurableExecutionState`
+
+`template.yaml` is generated from the Java example handlers and is intentionally not checked in. Re-run `python3 generate-template.py` after adding or removing a deployable example handler.
 
 ## Invoke Deployed Functions
 
@@ -102,4 +106,11 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 
 ```bash
 sam delete
+```
+
+If an existing e2e test stack has Lambda-created log groups that predate the managed log group resources, clean them up before redeploying:
+
+```bash
+../.github/scripts/cleanup_e2e_unmanaged_log_groups.sh --stack-name Java17-JavaSDKCloudBasedIntegrationTestStack
+../.github/scripts/cleanup_e2e_unmanaged_log_groups.sh --execute --stack-name Java17-JavaSDKCloudBasedIntegrationTestStack
 ```

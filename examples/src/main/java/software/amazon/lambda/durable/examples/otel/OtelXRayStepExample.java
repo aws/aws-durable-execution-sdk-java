@@ -8,6 +8,7 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.examples.ExampleTemplate;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.otel.OtelPlugin;
 
@@ -31,6 +32,7 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *     └── transform attempt 1
  * </pre>
  */
+@ExampleTemplate(tracing = true)
 public class OtelXRayStepExample extends DurableHandler<GreetingRequest, String> {
 
     @Override

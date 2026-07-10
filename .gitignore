@@ -33,6 +33,7 @@ buildNumber.properties
 Thumbs.db
 
 # Build artifacts
+__pycache__/
 *.jar
 *.war
 *.ear
@@ -40,6 +41,7 @@ Thumbs.db
 
 # SAM
 .aws-sam/
+examples/template.yaml
 samconfig.toml
 samconfig.toml.bak
 
