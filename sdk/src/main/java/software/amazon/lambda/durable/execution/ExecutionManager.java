@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.execution;
 
+import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,6 +28,7 @@ import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionExc
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 
 /**
  * Central manager for durable execution coordination.
@@ -57,6 +59,7 @@ public class ExecutionManager implements SafeCloseable {
     private final Map<String, Operation> operationStorage;
     private final Operation executionOp;
     private final String durableExecutionArn;
+    private final Context lambdaContext;
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
@@ -70,9 +73,10 @@ public class ExecutionManager implements SafeCloseable {
     // ===== Checkpoint Batching =====
     private final CheckpointManager checkpointManager;
 
-    public ExecutionManager(DurableExecutionInput input, DurableConfig config) {
+    public ExecutionManager(DurableExecutionInput input, DurableConfig config, Context lambdaContext) {
         durableConfig = config;
         this.durableExecutionArn = input.durableExecutionArn();
+        this.lambdaContext = lambdaContext;
 
         // Store the set of operation IDs updated since the last successful invocation
         this.updatedOperationIdsSinceLastInvocation =
@@ -136,7 +140,13 @@ public class ExecutionManager implements SafeCloseable {
     // ===== Checkpoint Completion Handler =====
     /** Called by CheckpointManager when a checkpoint completes. Updates operationStorage and notify operations . */
     private void onCheckpointComplete(List<Operation> newOperations) {
+        var updatedOperations = new ArrayList<Operation>();
         newOperations.forEach(op -> {
+            // Detect a status change against the previously stored operation
+            var previous = operationStorage.get(op.id());
+            if (previous == null || previous.status() != op.status()) {
+                updatedOperations.add(op);
+            }
             // Update operation storage
             operationStorage.put(op.id(), op);
             // call registered operation's onCheckpointComplete method for completed operations
@@ -145,6 +155,15 @@ public class ExecutionManager implements SafeCloseable {
                 return operation;
             });
         });
+
+        // Fire onOperationChange when a checkpoint response changed one or more operations
+        if (!updatedOperations.isEmpty()) {
+            var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
+            durableConfig
+                    .getPluginRunner()
+                    .onOperationChange(PluginInfoConverter.toOperationChangeInfo(
+                            requestId, durableExecutionArn, updatedOperations, operationStorage.values()));
+        }
     }
 
     /**

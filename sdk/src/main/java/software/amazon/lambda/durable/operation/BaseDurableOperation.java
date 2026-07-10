@@ -535,7 +535,7 @@ public abstract class BaseDurableOperation {
      * Extracts the error from a terminal operation as a Throwable. Returns null if the operation succeeded or has no
      * error details.
      */
-    private Throwable extractErrorFromOperation(Operation operation) {
+    public static Throwable extractErrorFromOperation(Operation operation) {
         if (operation.status() != OperationStatus.FAILED
                 && operation.status() != OperationStatus.TIMED_OUT
                 && operation.status() != OperationStatus.STOPPED) {
@@ -549,7 +549,7 @@ public abstract class BaseDurableOperation {
     }
 
     /** Extracts the ErrorObject from an operation based on its type. */
-    private static ErrorObject getErrorObject(Operation operation) {
+    public static ErrorObject getErrorObject(Operation operation) {
         if (operation.type() == null) {
             return null;
         }

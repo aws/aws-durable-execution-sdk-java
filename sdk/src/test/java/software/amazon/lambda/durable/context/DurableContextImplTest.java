@@ -43,7 +43,8 @@ class DurableContextImplTest {
                                 + EXECUTION_NAME + "/" + INVOCATION_ID,
                         "test-token",
                         initialState),
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
         // Simulate the root thread context as the executor would set it
         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
         rootContext = DurableContextImpl.createRootContext(

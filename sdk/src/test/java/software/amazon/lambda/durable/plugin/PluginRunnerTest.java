@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class PluginRunnerTest {
@@ -73,6 +74,7 @@ class PluginRunnerTest {
         runner.onInvocationEnd(invocationEndInfo());
         runner.onOperationStart(operationInfo());
         runner.onOperationEnd(operationEndInfo());
+        runner.onOperationChange(operationChangeInfo());
         runner.onUserFunctionStart(attemptInfo());
         runner.onUserFunctionEnd(attemptEndInfo());
 
@@ -82,6 +84,7 @@ class PluginRunnerTest {
                         "p:onInvocationEnd",
                         "p:onOperationStart",
                         "p:onOperationEnd",
+                        "p:onOperationChange",
                         "p:onUserFunctionStart",
                         "p:onUserFunctionEnd"),
                 calls);
@@ -150,6 +153,11 @@ class PluginRunnerTest {
                 "op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), "SUCCEEDED", false, null);
     }
 
+    private static OperationChangeInfo operationChangeInfo() {
+        return new OperationChangeInfo(
+                "req-123", "arn:aws:lambda:us-east-1:123456789012:function:test", Map.of(), Map.of());
+    }
+
     private static UserFunctionStartInfo attemptInfo() {
         return new UserFunctionStartInfo("op-1", "test-step", "STEP", null, null, Instant.now(), false, 1);
     }
@@ -189,6 +197,11 @@ class PluginRunnerTest {
         @Override
         public void onOperationEnd(OperationEndInfo info) {
             calls.add(name + ":onOperationEnd");
+        }
+
+        @Override
+        public void onOperationChange(OperationChangeInfo info) {
+            calls.add(name + ":onOperationChange");
         }
 
         @Override

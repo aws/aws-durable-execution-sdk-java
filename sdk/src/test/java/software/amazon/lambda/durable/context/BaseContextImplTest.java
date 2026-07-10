@@ -45,7 +45,8 @@ class BaseContextImplTest {
                                 + EXECUTION_NAME + "/" + INVOCATION_ID,
                         "test-token",
                         initialState),
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
     }
 
     @Test

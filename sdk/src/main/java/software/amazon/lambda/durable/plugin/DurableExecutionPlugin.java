@@ -51,6 +51,13 @@ public interface DurableExecutionPlugin {
      */
     default void onOperationEnd(OperationEndInfo info) {}
 
+    /**
+     * Called when a checkpoint response changes the status of one or more operations.
+     *
+     * <p>Receives the operations that changed and a snapshot of all operations.
+     */
+    default void onOperationChange(OperationChangeInfo info) {}
+
     // ─── User function hooks ─────────────────────────────────────────────
 
     /**

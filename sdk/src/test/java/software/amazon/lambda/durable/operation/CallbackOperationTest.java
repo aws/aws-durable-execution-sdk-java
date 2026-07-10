@@ -95,7 +95,8 @@ class CallbackOperationTest {
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
         executionManager.setCurrentThreadContext(new ThreadContext("Root", ThreadType.CONTEXT));
         return executionManager;
     }

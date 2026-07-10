@@ -44,7 +44,8 @@ class ReplayValidationTest {
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialExecutionState),
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
         var context = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
         executionManager.setCurrentThreadContext(new ThreadContext(EXECUTION_OP_ID + "-execution", ThreadType.CONTEXT));

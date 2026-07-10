@@ -33,7 +33,8 @@ class ExecutionManagerTest {
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         return new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
     }
 
     private Operation executionOp() {
@@ -134,7 +135,8 @@ class ExecutionManagerTest {
                 .build();
         var executionManager = new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
 
         assertNotNull(executionManager.getExecutionOperation());
         assertEquals(EXECUTION_OP_ID, executionManager.getExecutionOperation().id());
@@ -159,7 +161,8 @@ class ExecutionManagerTest {
         var input = new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState, List.of("1"));
         var manager = new ExecutionManager(
                 input,
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
 
         assertTrue(manager.isOperationUpdatedSinceLastInvocation("1"));
     }
@@ -173,7 +176,8 @@ class ExecutionManagerTest {
         var input = new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState, List.of("2"));
         var manager = new ExecutionManager(
                 input,
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
 
         assertFalse(manager.isOperationUpdatedSinceLastInvocation("1"));
     }
@@ -187,7 +191,8 @@ class ExecutionManagerTest {
         var input = new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState, List.of("1", "2", "3"));
         var manager = new ExecutionManager(
                 input,
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
 
         assertTrue(manager.isOperationUpdatedSinceLastInvocation("1"));
         assertTrue(manager.isOperationUpdatedSinceLastInvocation("2"));

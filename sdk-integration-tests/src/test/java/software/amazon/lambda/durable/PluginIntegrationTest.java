@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -330,6 +331,63 @@ class PluginIntegrationTest {
         assertNull(stepEnd.error(), "error should be null for successful step");
     }
 
+    // ─── Operation change hook ───────────────────────────────────────────
+
+    @Test
+    void plugin_receivesOperationChange_forStep() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("my-step", String.class, stepCtx -> "result"), config);
+
+        runner.runUntilComplete("input");
+
+        // A checkpoint response that reports the step at a new status should fire onOperationChange
+        assertFalse(
+                plugin.operationChanges.isEmpty(), "onOperationChange should fire when an operation changes status");
+
+        var changeWithStep = plugin.operationChanges.stream()
+                .filter(info -> info.updatedOperations().values().stream().anyMatch(op -> "my-step".equals(op.name())))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(changeWithStep, "onOperationChange should include the 'my-step' operation that changed status");
+        assertNotNull(changeWithStep.durableExecutionArn());
+        assertFalse(changeWithStep.operations().isEmpty(), "snapshot of all operations should be present");
+    }
+
+    @Test
+    void plugin_operationChange_includesErrorAndStatus_whenStepFails() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "failing-step",
+                        String.class,
+                        stepCtx -> {
+                            throw new RuntimeException("step exploded");
+                        },
+                        StepConfig.builder()
+                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                                .build()),
+                config);
+
+        var result = runner.run("input");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // The failing step transitions through several statuses; find the one reporting FAILED
+        var failedItem = plugin.operationChanges.stream()
+                .flatMap(info -> info.updatedOperations().values().stream())
+                .filter(op -> "failing-step".equals(op.name()) && op.status() == OperationStatus.FAILED)
+                .findFirst()
+                .orElse(null);
+        assertNotNull(failedItem, "onOperationChange should report 'failing-step' with FAILED status");
+        assertNotNull(failedItem.error(), "error should be propagated for the failed step");
+        assertTrue(failedItem.error().getMessage().contains("step exploded"));
+    }
+
     // ─── User function hooks ─────────────────────────────────────────────
 
     @Test
@@ -522,6 +580,7 @@ class PluginIntegrationTest {
         final List<OperationEndInfo> operationEnds = Collections.synchronizedList(new ArrayList<>());
         final List<UserFunctionStartInfo> userFunctionStarts = Collections.synchronizedList(new ArrayList<>());
         final List<UserFunctionEndInfo> userFunctionEnds = Collections.synchronizedList(new ArrayList<>());
+        final List<OperationChangeInfo> operationChanges = Collections.synchronizedList(new ArrayList<>());
 
         @Override
         public void onInvocationStart(InvocationInfo info) {
@@ -551,6 +610,11 @@ class PluginIntegrationTest {
         @Override
         public void onUserFunctionEnd(UserFunctionEndInfo info) {
             userFunctionEnds.add(info);
+        }
+
+        @Override
+        public void onOperationChange(OperationChangeInfo info) {
+            operationChanges.add(info);
         }
     }
 
@@ -583,6 +647,11 @@ class PluginIntegrationTest {
 
         @Override
         public void onUserFunctionEnd(UserFunctionEndInfo info) {
+            throw new RuntimeException("plugin error");
+        }
+
+        @Override
+        public void onOperationChange(OperationChangeInfo info) {
             throw new RuntimeException("plugin error");
         }
     }

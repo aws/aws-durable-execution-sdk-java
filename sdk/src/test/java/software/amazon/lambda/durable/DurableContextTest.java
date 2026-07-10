@@ -46,7 +46,8 @@ class DurableContextTest {
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var executionManager = new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialExecutionState),
-                DurableConfig.builder().withDurableExecutionClient(client).build());
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
         var root = DurableContextImpl.createRootContext(
                 executionManager,
                 software.amazon.lambda.durable.DurableConfig.builder().build(),

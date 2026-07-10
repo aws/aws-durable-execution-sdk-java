@@ -3,8 +3,11 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
  * Utility methods for converting SDK internal types to plugin info records.
@@ -107,5 +110,44 @@ public final class PluginInfoConverter {
                 startInfo.attempt(),
                 succeeded,
                 error);
+    }
+
+    /**
+     * Creates an {@link OperationChangeInfo} from the durable operations whose status changed in a checkpoint response
+     * and a snapshot of all operations tracked for the execution.
+     *
+     * @param requestId the Lambda request ID for the invocation
+     * @param durableExecutionArn the durable execution ARN
+     * @param updatedOperations the durable operations whose status changed in this checkpoint response
+     * @param allOperations all durable operations tracked for the execution after this response
+     * @return an OperationChangeInfo record
+     */
+    public static OperationChangeInfo toOperationChangeInfo(
+            String requestId,
+            String durableExecutionArn,
+            Collection<Operation> updatedOperations,
+            Collection<Operation> allOperations) {
+        return new OperationChangeInfo(
+                requestId,
+                durableExecutionArn,
+                updatedOperations.stream()
+                        .collect(Collectors.toUnmodifiableMap(
+                                Operation::id, PluginInfoConverter::toOperationChangeItemInfo)),
+                allOperations.stream()
+                        .collect(Collectors.toUnmodifiableMap(
+                                Operation::id, PluginInfoConverter::toOperationChangeItemInfo)));
+    }
+
+    private static OperationChangeItemInfo toOperationChangeItemInfo(Operation operation) {
+        return new OperationChangeItemInfo(
+                operation.id(),
+                operation.name(),
+                operation.typeAsString(),
+                operation.subType(),
+                operation.parentId(),
+                operation.startTimestamp(),
+                operation.endTimestamp(),
+                BaseDurableOperation.extractErrorFromOperation(operation),
+                operation.status());
     }
 }

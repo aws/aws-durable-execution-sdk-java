@@ -78,6 +78,10 @@ public class PluginRunner {
         run(p -> p.onOperationEnd(info));
     }
 
+    public void onOperationChange(OperationChangeInfo info) {
+        run(p -> p.onOperationChange(info));
+    }
+
     public void onUserFunctionStart(UserFunctionStartInfo info) {
         run(p -> p.onUserFunctionStart(info));
     }
