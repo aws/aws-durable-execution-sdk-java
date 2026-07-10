@@ -28,6 +28,10 @@ class ExampleFunction:
         return f"{self.class_name}Function"
 
     @property
+    def log_group_logical_id(self) -> str:
+        return f"{self.logical_id}LogGroup"
+
+    @property
     def handler(self) -> str:
         return f"{self.package_name}.{self.class_name}"
 
@@ -105,6 +109,7 @@ def emit_function(lines: list[str], example: ExampleFunction) -> None:
     )
     if example.condition:
         lines.append(f"    Condition: {example.condition}")
+    lines.append(f"    DependsOn: {example.log_group_logical_id}")
     lines.extend(
         [
             "    Properties:",
@@ -129,7 +134,7 @@ def emit_function(lines: list[str], example: ExampleFunction) -> None:
 def emit_log_group(lines: list[str], example: ExampleFunction) -> None:
     lines.extend(
         [
-            f"  {example.logical_id}LogGroup:",
+            f"  {example.log_group_logical_id}:",
             "    Type: AWS::Logs::LogGroup",
         ]
     )
@@ -196,8 +201,8 @@ def render_template(examples: list[ExampleFunction]) -> str:
     ]
 
     for example in examples:
-        emit_function(lines, example)
         emit_log_group(lines, example)
+        emit_function(lines, example)
 
     lines.append("Outputs:")
     for index, example in enumerate(examples):
