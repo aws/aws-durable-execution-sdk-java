@@ -1,22 +1,25 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable;
+package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
-import software.amazon.lambda.durable.otel.OtelPlugin;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -135,7 +138,7 @@ class OtelPluginIntegrationTest {
                 },
                 otelConfig);
 
-        // First invocation: step + wait → suspend
+        // First invocation: step + wait, then suspend
         var result1 = runner.run("input");
         assertEquals(ExecutionStatus.PENDING, result1.getStatus());
 
@@ -222,7 +225,7 @@ class OtelPluginIntegrationTest {
         // Target fails while Lambda is frozen
         runner.failChainedInvoke(
                 "call-target",
-                software.amazon.awssdk.services.lambda.model.ErrorObject.builder()
+                ErrorObject.builder()
                         .errorType("TargetError")
                         .errorMessage("target function failed")
                         .build());
@@ -240,7 +243,7 @@ class OtelPluginIntegrationTest {
 
         // The span from the second invocation should be marked as error
         var errorSpan = invokeSpans.stream()
-                .filter(s -> s.getStatus().getStatusCode() == io.opentelemetry.api.trace.StatusCode.ERROR)
+                .filter(s -> s.getStatus().getStatusCode() == StatusCode.ERROR)
                 .findFirst();
         assertTrue(
                 errorSpan.isPresent(),
@@ -295,7 +298,7 @@ class OtelPluginIntegrationTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(
-                io.opentelemetry.api.trace.StatusCode.ERROR,
+                StatusCode.ERROR,
                 invocationSpan.getStatus().getStatusCode(),
                 "Invocation span should have ERROR status");
     }
@@ -306,7 +309,7 @@ class OtelPluginIntegrationTest {
 
         var noSamplePlugin = new OtelPlugin(
                 SdkTracerProvider.builder()
-                        .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
+                        .setSampler(Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter)),
                 () -> null,
                 false);
@@ -322,7 +325,7 @@ class OtelPluginIntegrationTest {
         assertTrue(sampledExporter.getFinishedSpanItems().isEmpty(), "0% sampling should produce no spans");
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────
+    // Helpers
 
     private static void assertSpanExists(List<SpanData> spans, String expectedName) {
         assertTrue(
@@ -331,7 +334,7 @@ class OtelPluginIntegrationTest {
                         + spans.stream().map(SpanData::getName).toList());
     }
 
-    // ─── Additional scenario tests ──────────────────────────────────────
+    // Additional scenario tests
 
     @Test
     void callback_producesSpansInFirstInvocation() {
