@@ -52,7 +52,7 @@
         <dependency>
             <groupId>io.opentelemetry.semconv</groupId>
             <artifactId>opentelemetry-semconv</artifactId>
-            <version>1.32.0</version>
+            <version>1.43.0</version>
         </dependency>
 
         <!-- SLF4J for logging -->
