@@ -12,8 +12,8 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
 /**
  * OTel + X-Ray example that uses the no-arg plugin constructor.
  *
- * <p>{@link OtelPlugin#OtelPlugin()} exports through the ADOT collector layer by creating the default OTLP exporter
- * from the application classpath.
+ * <p>{@link OtelPlugin#OtelPlugin()} copies the SDK provider initialized by the ADOT Java wrapper, then installs the
+ * durable deterministic ID generator for the plugin's provider.
  */
 @ExampleTemplate(tracing = true)
 public class OtelXRayDefaultConstructorExample extends DurableHandler<GreetingRequest, String> {

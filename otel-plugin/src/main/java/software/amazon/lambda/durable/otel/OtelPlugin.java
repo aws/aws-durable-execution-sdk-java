@@ -504,7 +504,8 @@ public class OtelPlugin implements DurableExecutionPlugin {
             return globalBuilder;
         }
 
-        logger.info("OtelPlugin initialized with a new default OTLP tracer provider");
+        logger.info(
+                "OtelPlugin initialized with a new default OTLP tracer provider; ensure an OTLP collector is reachable");
         return SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(createDefaultOtlpExporter()));
     }
 

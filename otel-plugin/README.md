@@ -46,7 +46,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` uses a global SDK provider when one exists; otherwise it creates the default OTLP gRPC exporter and sends spans to the ADOT collector layer.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` uses the global SDK provider initialized by the ADOT Java wrapper when one exists; otherwise it creates the default OTLP gRPC exporter and sends spans to a reachable OTLP collector.
 
 The layer ARN follows the format:
 
@@ -63,6 +63,9 @@ MyFunction:
     Tracing: Active
     Layers:
       - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15
+    Environment:
+      Variables:
+        AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
 ```
 
 **AWS CLI:**
@@ -70,7 +73,8 @@ MyFunction:
 ```bash
 aws lambda update-function-configuration \
   --function-name your-function-name \
-  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15"
+  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15" \
+  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument}"
 ```
 
 ### 2. AWS X-Ray Active Tracing
@@ -241,9 +245,9 @@ After deploying your function with the plugin configured:
 | Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
-| Plugin spans missing but Lambda/runtime spans appear | `opentelemetry-exporter-otlp` is missing from the application, or the exporter cannot reach the ADOT collector |
+| Plugin spans missing but Lambda/runtime spans appear | The ADOT wrapper did not initialize the global SDK provider, or the fallback OTLP exporter cannot reach a collector |
 
-> **Note on ADOT wrapper:** Do not set `AWS_LAMBDA_EXEC_WRAPPER` for these examples. The plugin owns a provider with a deterministic durable ID generator and exports through the default OTLP exporter when no global SDK provider exists.
+> **Note on ADOT wrapper:** Use `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument` with the `AWSOpenTelemetryDistroJava` layer. The older `/opt/otel-handler` path is not valid for this layer and can fail before the Java handler starts.
 
 ## Local Development
 

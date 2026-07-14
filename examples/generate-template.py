@@ -124,6 +124,9 @@ def emit_function(lines: list[str], example: ExampleFunction) -> None:
                 "      Tracing: Active",
                 "      Layers:",
                 "        - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15",
+                "      Environment:",
+                "        Variables:",
+                "          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument",
             ]
         )
     lines.append("")
