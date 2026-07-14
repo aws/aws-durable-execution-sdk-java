@@ -302,8 +302,9 @@ class CloudBasedOtelIntegrationTest {
     // ─── Helpers ─────────────────────────────────────────────────────────
 
     private static void assertExecutionSucceeded(TestResult<?> result) {
-        assertTrue(result.isSucceeded() && result.getError().isEmpty(), () -> "Execution failed:\n"
-                + summarizeExecutionHistory(result));
+        assertTrue(
+                result.isSucceeded() && result.getError().isEmpty(),
+                () -> "Execution failed:\n" + summarizeExecutionHistory(result));
     }
 
     private static String summarizeExecutionHistory(TestResult<?> result) {
@@ -317,9 +318,10 @@ class CloudBasedOtelIntegrationTest {
 
         return result.getError()
                 .map(error -> "Execution error: " + formatError(error))
-                .orElseGet(() -> "Events: " + result.getHistoryEvents().stream()
-                        .map(event -> event.eventId() + ":" + event.eventType())
-                        .collect(Collectors.joining(", ")));
+                .orElseGet(() -> "Events: "
+                        + result.getHistoryEvents().stream()
+                                .map(event -> event.eventId() + ":" + event.eventType())
+                                .collect(Collectors.joining(", ")));
     }
 
     private static String formatFailureEvent(Event event) {
