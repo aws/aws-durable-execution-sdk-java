@@ -513,7 +513,10 @@ public class OtelPlugin implements DurableExecutionPlugin {
         try {
             return getGlobalTracerProviderBuilder();
         } catch (IllegalStateException e) {
-            logger.debug("GlobalOpenTelemetry is not backed by an SDK tracer provider; using default OTLP exporter", e);
+            logger.warn(
+                    "OtelPlugin could not initialize from GlobalOpenTelemetry; using default OTLP exporter. Cause: {}",
+                    e.getMessage(),
+                    e);
             return null;
         }
     }
@@ -566,6 +569,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
     }
 
     private static SdkTracerProvider unobfuscateSdkTracerProvider(TracerProvider tracerProvider) {
+        var providerClassName = tracerProvider.getClass().getName();
         try {
             var unobfuscate = tracerProvider.getClass().getDeclaredMethod("unobfuscate");
             unobfuscate.setAccessible(true);
@@ -573,14 +577,16 @@ public class OtelPlugin implements DurableExecutionPlugin {
             if (sdkTracerProvider instanceof SdkTracerProvider result) {
                 return result;
             }
-            throw new IllegalStateException("GlobalOpenTelemetry is not backed by an SdkTracerProvider");
+            throw new IllegalStateException(
+                    "GlobalOpenTelemetry provider " + providerClassName + " is not backed by an SdkTracerProvider");
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
-                    "OtelPlugin() requires GlobalOpenTelemetry to be backed by the OpenTelemetry SDK. "
-                            + "Use OtelPlugin(SdkTracerProviderBuilder) when the global provider cannot be copied.",
+                    "GlobalOpenTelemetry provider " + providerClassName + " does not expose unobfuscate(); "
+                            + "ADOT Java instrumentation may not have initialized an SDK provider.",
                     e);
         } catch (IllegalAccessException | InvocationTargetException e) {
-            throw new IllegalStateException("Unable to copy the global OpenTelemetry tracer provider", e);
+            throw new IllegalStateException(
+                    "Unable to invoke unobfuscate() on GlobalOpenTelemetry provider " + providerClassName, e);
         }
     }
 
