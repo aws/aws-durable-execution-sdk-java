@@ -48,11 +48,12 @@ The SAM template configures:
 - `DurableConfig` with `ExecutionTimeout` and `RetentionPeriodInDays`
 - CloudWatch log groups for Lambda functions with 7 days of retention
 - IAM permissions for `lambda:CheckpointDurableExecutions` and `lambda:GetDurableExecutionState`
-- ADOT tracing examples with `AWS_LAMBDA_EXEC_WRAPPER` and `OTEL_JAVAAGENT_EXTENSIONS` so the OTel plugin SPI is loaded by the Java agent
+- ADOT tracing examples with active X-Ray tracing and the ADOT Lambda layer
+- The default-constructor OTel example with `AWS_LAMBDA_EXEC_WRAPPER` and `OTEL_JAVAAGENT_EXTENSIONS` so the OTel plugin SPI is loaded by the Java agent
 
 `template.yaml` is generated from the Java example handlers and is intentionally not checked in. Re-run `python3 generate-template.py` after adding or removing a deployable example handler.
 
-The examples package copies the OTel plugin jar into `lib/` so the ADOT Java agent can load it as an extension from the generated `OTEL_JAVAAGENT_EXTENSIONS` path.
+The examples package copies the OTel plugin jar into `lib/` so the ADOT Java agent can load it as an extension for examples that enable `OTEL_JAVAAGENT_EXTENSIONS`.
 
 ## Invoke Deployed Functions
 

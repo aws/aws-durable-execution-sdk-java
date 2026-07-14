@@ -15,7 +15,7 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  * <p>{@link OtelPlugin#OtelPlugin()} uses the global provider initialized by the ADOT Java agent with deterministic
  * span ID generation installed by the plugin's OpenTelemetry autoconfigure SPI.
  */
-@ExampleTemplate(tracing = true)
+@ExampleTemplate(tracing = true, javaAgent = true)
 public class OtelXRayDefaultConstructorExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
