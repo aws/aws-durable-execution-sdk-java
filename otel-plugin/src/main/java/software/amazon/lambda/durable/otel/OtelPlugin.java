@@ -67,10 +67,11 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <ul>
  *   <li>Lambda Layer: {@code AWSOpenTelemetryDistroJava} (provides the OTLP collector extension)
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
+ *   <li>Wrapper: {@code AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler} when using {@link #OtelPlugin()}
  * </ul>
  *
- * <p>Note: Do NOT set {@code AWS_LAMBDA_EXEC_WRAPPER}. The collector extension runs independently. The wrapper would
- * attach the auto-instrumentation agent which creates a competing TracerProvider.
+ * <p>When using {@link #OtelPlugin()}, ADOT auto-instrumentation owns {@code GlobalOpenTelemetry}; do not manually
+ * register another global provider.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
@@ -170,6 +171,9 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
         // Extract trace context from environment (X-Ray header)
         var extractedContext = contextExtractor.extract();
+        if (extractedContext == null) {
+            extractedContext = extractCurrentSpanContext();
+        }
 
         if (extractedContext != null) {
             // Use the X-Ray trace ID — backend propagates same Root across all invocations
@@ -474,6 +478,14 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
     private static String attemptKey(String operationId, Integer attempt) {
         return operationId + "-" + (attempt != null ? attempt : "ctx");
+    }
+
+    private static ExtractedContext extractCurrentSpanContext() {
+        var spanContext = Span.current().getSpanContext();
+        if (!spanContext.isValid()) {
+            return null;
+        }
+        return new ExtractedContext(spanContext.getTraceId(), spanContext.getSpanId());
     }
 
     private static SdkTracerProviderBuilder getDefaultTracerProviderBuilder() {

@@ -5,8 +5,12 @@ package software.amazon.lambda.durable.otel;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -62,6 +66,26 @@ class OtelPluginTest {
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
         var traceId = spans.get(0).getTraceId();
         assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(traceId)));
+    }
+
+    @Test
+    void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
+        var traceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var parentSpanContext =
+                SpanContext.create(traceId, parentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+
+        try (var ignored = Span.wrap(parentSpanContext).makeCurrent()) {
+            plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var invocationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(span -> span.getName().equals("invocation"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(traceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
     }
 
     @Test

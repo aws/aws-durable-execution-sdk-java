@@ -46,9 +46,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. The layer provides an OTLP collector that receives spans from the plugin and exports them to X-Ray.
-
-> **Note:** Do NOT set `AWS_LAMBDA_EXEC_WRAPPER`. The ADOT layer's collector extension runs independently as a Lambda External Extension. The wrapper would attach the auto-instrumentation agent which creates a competing TracerProvider, causing disconnected service nodes in the X-Ray trace map.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. When using the no-arg `OtelPlugin()` constructor, enable ADOT auto-instrumentation so the layer initializes `GlobalOpenTelemetry`; the plugin copies that provider's export pipeline and joins the current Lambda span context.
 
 The layer ARN follows the format:
 
@@ -65,6 +63,9 @@ MyFunction:
     Tracing: Active
     Layers:
       - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15
+    Environment:
+      Variables:
+        AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler
 ```
 
 **AWS CLI:**
@@ -72,7 +73,8 @@ MyFunction:
 ```bash
 aws lambda update-function-configuration \
   --function-name your-function-name \
-  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15"
+  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15" \
+  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler}"
 ```
 
 ### 2. AWS X-Ray Active Tracing
@@ -249,9 +251,9 @@ After deploying your function with the plugin configured:
 | Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
-| Two service nodes in trace map | `AWS_LAMBDA_EXEC_WRAPPER` is set — remove it (see note above) |
+| Plugin spans missing but Lambda/runtime spans appear | `OtelPlugin()` is not joining the current ADOT span context, or `GlobalOpenTelemetry` was manually initialized instead of using the ADOT-managed provider |
 
-> **Note on ADOT wrapper:** Do not set `AWS_LAMBDA_EXEC_WRAPPER`. The wrapper attaches the auto-instrumentation agent which creates a separate TracerProvider. Since the plugin needs its own TracerProvider (for deterministic ID generation), having two providers causes X-Ray to render disconnected service nodes.
+> **Note on ADOT wrapper:** When `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler` is set, use the no-arg `OtelPlugin()` constructor and do not manually call `GlobalOpenTelemetry.set` / `buildAndRegisterGlobal`. ADOT owns the global provider in this mode; the plugin copies its export pipeline and uses a plugin-owned provider for deterministic durable span IDs.
 
 ## Local Development
 
