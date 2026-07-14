@@ -186,6 +186,9 @@ public class OtelPlugin implements DurableExecutionPlugin {
             this.tracer = sdkTracerProvider.get(INSTRUMENTATION_NAME);
         } else {
             this.sdkTracerProvider = defaultTracerProvider.sdkTracerProvider();
+            if (sdkTracerProvider != null) {
+                overrideIdGenerator(sdkTracerProvider, idGenerator);
+            }
             this.tracer = defaultTracerProvider.tracerProvider().get(INSTRUMENTATION_NAME);
         }
 
@@ -533,10 +536,9 @@ public class OtelPlugin implements DurableExecutionPlugin {
             var globalTracerProvider = GlobalOpenTelemetry.getTracerProvider();
             if (isJavaAgentTracerProvider(globalTracerProvider)) {
                 var sdkTracerProvider = getJavaAgentSdkTracerProvider(globalTracerProvider);
-                overrideIdGenerator(sdkTracerProvider, idGenerator);
                 logger.info(
                         "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}; "
-                                + "deterministic span IDs installed through reflection. Cause: {}",
+                                + "deterministic span IDs will be installed through reflection. Cause: {}",
                         globalTracerProvider.getClass().getName(),
                         e.getMessage());
                 return DefaultTracerProvider.fromTracerProvider(globalTracerProvider, sdkTracerProvider, idGenerator);
