@@ -23,6 +23,8 @@ import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.semconv.ServiceAttributes;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -538,7 +540,33 @@ public class OtelPlugin implements DurableExecutionPlugin {
         throw new IllegalStateException(
                 "OtelPlugin() requires OtelPluginAutoConfigurationCustomizerProvider to be installed by the "
                         + "OpenTelemetry Java agent. Package this plugin jar as an agent extension and set "
-                        + "OTEL_JAVAAGENT_EXTENSIONS to that jar before constructing OtelPlugin().");
+                        + "OTEL_JAVAAGENT_EXTENSIONS or -Dotel.javaagent.extensions to that jar before constructing "
+                        + "OtelPlugin(). "
+                        + javaAgentExtensionsDiagnostic());
+    }
+
+    private static String javaAgentExtensionsDiagnostic() {
+        var propertyValue = System.getProperty("otel.javaagent.extensions");
+        var environmentValue = System.getenv("OTEL_JAVAAGENT_EXTENSIONS");
+        var configuredPath = propertyValue != null ? propertyValue : environmentValue;
+        return "otel.javaagent.extensions="
+                + valueOrUnset(propertyValue)
+                + ", OTEL_JAVAAGENT_EXTENSIONS="
+                + valueOrUnset(environmentValue)
+                + ", configured extension path exists="
+                + extensionPathExists(configuredPath);
+    }
+
+    private static String valueOrUnset(String value) {
+        return value != null ? value : "<unset>";
+    }
+
+    private static boolean extensionPathExists(String configuredPath) {
+        if (configuredPath == null || configuredPath.isBlank()) {
+            return false;
+        }
+        var firstPath = configuredPath.split(",", 2)[0];
+        return Files.exists(Path.of(firstPath));
     }
 
     private static SdkTracerProvider getGlobalSdkTracerProvider(TracerProvider tracerProvider) {

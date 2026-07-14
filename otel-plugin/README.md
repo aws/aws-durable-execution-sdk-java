@@ -78,7 +78,7 @@ aws lambda update-function-configuration \
   --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument,OTEL_JAVAAGENT_EXTENSIONS=/var/task/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar}"
 ```
 
-Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed jar that contains this plugin's `META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider` entry. If you shade the plugin into your application jar, point the variable to that shaded jar instead.
+Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed OTel plugin jar that contains this plugin's `META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider` entry. Prefer the standalone plugin dependency jar under `/var/task/lib` so the Java agent loads the extension against its own OpenTelemetry SPI classes.
 
 ### 2. AWS X-Ray Active Tracing
 

@@ -40,11 +40,12 @@
             <version>${opentelemetry.version}</version>
             <scope>provided</scope>
         </dependency>
-        <!-- Required at runtime because this artifact contains the Java agent autoconfigure SPI provider class. -->
+        <!-- OpenTelemetry Java agent supplies this SPI when loading OTEL_JAVAAGENT_EXTENSIONS. -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk-extension-autoconfigure-spi</artifactId>
             <version>${opentelemetry.version}</version>
+            <scope>provided</scope>
         </dependency>
 
         <!-- OpenTelemetry Context (transitive from API, but explicit for clarity) -->

@@ -18,10 +18,21 @@ public final class OtelPluginAutoConfigurationCustomizerProvider implements Auto
     @Override
     public void customize(AutoConfigurationCustomizer autoConfiguration) {
         OtelPluginAutoConfigurationState.markInstalled();
+        System.err.println("OtelPluginAutoConfigurationCustomizerProvider installed from " + codeSourceLocation());
         autoConfiguration.addTracerProviderCustomizer((builder, config) -> builder.setIdGenerator(ID_GENERATOR));
     }
 
     static DeterministicIdGenerator idGenerator() {
         return ID_GENERATOR;
+    }
+
+    private static String codeSourceLocation() {
+        var codeSource = OtelPluginAutoConfigurationCustomizerProvider.class
+                .getProtectionDomain()
+                .getCodeSource();
+        if (codeSource == null || codeSource.getLocation() == null) {
+            return "unknown location";
+        }
+        return codeSource.getLocation().toString();
     }
 }
