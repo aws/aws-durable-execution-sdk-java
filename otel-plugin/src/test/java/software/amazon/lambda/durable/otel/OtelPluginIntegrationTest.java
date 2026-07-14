@@ -115,29 +115,6 @@ class OtelPluginIntegrationTest {
     }
 
     @Test
-    void defaultConstructor_usesDefaultOtlpExporter_whenGlobalProviderIsNotSdk() {
-        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
-        OtlpGrpcSpanExporter.reset();
-
-        var defaultConfig =
-                DurableConfig.builder().withPlugins(new OtelPlugin()).build();
-        var runner = LocalDurableTestRunner.create(
-                String.class,
-                (input, ctx) -> ctx.step("default-otlp-step", String.class, stepCtx -> "Hello " + input),
-                defaultConfig);
-
-        var result = runner.runUntilComplete("World");
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-
-        var spans = OtlpGrpcSpanExporter.getFinishedSpanItems();
-        assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
-        assertSpanExists(spans, "invocation");
-        assertSpanExists(spans, "default-otlp-step");
-        assertSpanExists(spans, "default-otlp-step attempt 1");
-    }
-
-    @Test
     void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withAutoConfiguredIdGenerator() {
         OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();

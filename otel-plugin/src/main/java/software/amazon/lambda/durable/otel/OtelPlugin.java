@@ -20,12 +20,9 @@ import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
-import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
-import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.semconv.ServiceAttributes;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -67,9 +64,8 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
  * </ul>
  *
- * <p>When using {@link #OtelPlugin()}, the plugin uses the global provider directly when one exists and assumes the
- * deterministic ID generator was installed by {@link OtelPluginAutoConfigurationCustomizerProvider}. Otherwise it
- * creates a default OTLP exporter from the application classpath.
+ * <p>When using {@link #OtelPlugin()}, the plugin requires {@link OtelPluginAutoConfigurationCustomizerProvider} to
+ * have been installed by the OpenTelemetry Java agent and uses the global provider directly.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
@@ -123,14 +119,13 @@ public class OtelPlugin implements DurableExecutionPlugin {
     }
 
     /**
-     * Creates an OTel plugin with default settings: X-Ray context extraction, MDC enabled, and default OTLP export.
+     * Creates an OTel plugin with default settings: X-Ray context extraction and MDC enabled.
      *
-     * <p>If {@code GlobalOpenTelemetry} is configured, the plugin uses that provider directly and assumes deterministic
-     * ID generation was installed by {@link OtelPluginAutoConfigurationCustomizerProvider}. Otherwise, the plugin
-     * creates {@code OtlpGrpcSpanExporter.getDefault()} from the application classpath.
+     * <p>Uses {@code GlobalOpenTelemetry} directly and assumes deterministic ID generation was installed by
+     * {@link OtelPluginAutoConfigurationCustomizerProvider}.
      */
     public OtelPlugin() {
-        this(getDefaultTracerProvider());
+        this(getDefaultTracerProvider(), OtelPluginAutoConfigurationCustomizerProvider.idGenerator());
     }
 
     /**
@@ -152,40 +147,27 @@ public class OtelPlugin implements DurableExecutionPlugin {
      */
     public OtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
-        this(
-                DefaultTracerProvider.fromSdkBuilder(tracerProviderBuilder, new DeterministicIdGenerator()),
-                contextExtractor,
-                enableMdc);
-    }
+        this.idGenerator = new DeterministicIdGenerator();
 
-    private OtelPlugin(DefaultTracerProvider defaultTracerProvider) {
-        this(defaultTracerProvider, new XRayContextExtractor(), true);
-    }
+        // Set service.name to "invocation" — X-Ray uses this as the display name for SERVER spans,
+        // creating a separate service node in the trace map labeled "invocation".
+        var resource = Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, "invocation"));
+        tracerProviderBuilder.addResource(resource);
 
-    private OtelPlugin(
-            DefaultTracerProvider defaultTracerProvider, ContextExtractor contextExtractor, boolean enableMdc) {
-        this.idGenerator = defaultTracerProvider.idGenerator();
-
-        if (defaultTracerProvider.sdkBuilder() != null) {
-            // Set service.name to "invocation" — X-Ray uses this as the display name for SERVER spans,
-            // creating a separate service node in the trace map labeled "invocation".
-            var resource = Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, "invocation"));
-            defaultTracerProvider.sdkBuilder().addResource(resource);
-
-            var sdkBuilder = defaultTracerProvider.sdkBuilder();
-            if (defaultTracerProvider.installIdGenerator()) {
-                sdkBuilder.setIdGenerator(idGenerator);
-            }
-
-            this.sdkTracerProvider = sdkBuilder.build();
-            this.tracer = sdkTracerProvider.get(INSTRUMENTATION_NAME);
-        } else {
-            this.sdkTracerProvider = defaultTracerProvider.sdkTracerProvider();
-            this.tracer = defaultTracerProvider.tracerProvider().get(INSTRUMENTATION_NAME);
-        }
-
+        this.sdkTracerProvider =
+                tracerProviderBuilder.setIdGenerator(idGenerator).build();
+        this.tracer = sdkTracerProvider.get(INSTRUMENTATION_NAME);
         this.contextExtractor = contextExtractor;
         this.enableMdc = enableMdc;
+    }
+
+    private OtelPlugin(TracerProvider tracerProvider, DeterministicIdGenerator idGenerator) {
+        this.idGenerator = idGenerator;
+        this.sdkTracerProvider = getSdkTracerProviderForFlush(tracerProvider);
+        this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
+
+        this.contextExtractor = new XRayContextExtractor();
+        this.enableMdc = true;
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────
@@ -520,35 +502,33 @@ public class OtelPlugin implements DurableExecutionPlugin {
         return new ExtractedContext(spanContext.getTraceId(), spanContext.getSpanId());
     }
 
-    private static DefaultTracerProvider getDefaultTracerProvider() {
+    private static TracerProvider getDefaultTracerProvider() {
         validateAutoConfigurationCustomizerProviderInstalled();
 
-        var idGenerator = new DeterministicIdGenerator();
+        var idGenerator = OtelPluginAutoConfigurationCustomizerProvider.idGenerator();
         var globalTracerProvider = GlobalOpenTelemetry.getTracerProvider();
         try {
             var sdkTracerProvider = getGlobalSdkTracerProvider(globalTracerProvider);
             logger.info("OtelPlugin initialized from existing GlobalOpenTelemetry SDK tracer provider; assuming "
                     + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider");
-            return DefaultTracerProvider.fromTracerProvider(globalTracerProvider, sdkTracerProvider, idGenerator);
+            if (!hasIdGenerator(sdkTracerProvider, idGenerator)) {
+                logger.warn("OtelPlugin initialized from existing GlobalOpenTelemetry SDK tracer provider, but the "
+                        + "provider is not using the durable execution ID generator. Configure this plugin "
+                        + "jar with OTEL_JAVAAGENT_EXTENSIONS so AutoConfigurationCustomizerProvider can "
+                        + "install deterministic span IDs.");
+            }
+            return globalTracerProvider;
         } catch (IllegalStateException e) {
             if (isJavaAgentTracerProvider(globalTracerProvider)) {
                 var sdkTracerProvider = getJavaAgentSdkTracerProvider(globalTracerProvider);
                 var javaAgentIdGenerator = OtelPluginAutoConfigurationCustomizerProvider.idGenerator();
                 logJavaAgentInitialization(globalTracerProvider, sdkTracerProvider, javaAgentIdGenerator, e);
-                return DefaultTracerProvider.fromTracerProvider(globalTracerProvider, sdkTracerProvider, idGenerator);
-            } else {
-                logger.warn(
-                        "OtelPlugin could not initialize from GlobalOpenTelemetry; using default OTLP exporter. "
-                                + "Cause: {}",
-                        e.getMessage(),
-                        e);
+                return globalTracerProvider;
             }
-
-            var fallbackBuilder = SdkTracerProvider.builder()
-                    .addSpanProcessor(SimpleSpanProcessor.create(createDefaultOtlpExporter()));
-            logger.info("OtelPlugin initialized with a new default OTLP tracer provider without overriding its ID "
-                    + "generator; ensure an OTLP collector is reachable");
-            return DefaultTracerProvider.fromSdkBuilderWithoutIdGenerator(fallbackBuilder, idGenerator);
+            throw new IllegalStateException(
+                    "OtelPlugin() requires GlobalOpenTelemetry to be initialized by "
+                            + "OtelPluginAutoConfigurationCustomizerProvider through the OpenTelemetry Java agent.",
+                    e);
         }
     }
 
@@ -562,33 +542,6 @@ public class OtelPlugin implements DurableExecutionPlugin {
                         + "OTEL_JAVAAGENT_EXTENSIONS to that jar before constructing OtelPlugin().");
     }
 
-    private static SpanExporter createDefaultOtlpExporter() {
-        try {
-            var exporterClass = Class.forName("io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter");
-            var getDefault = exporterClass.getMethod("getDefault");
-            return asSpanExporter(getDefault);
-        } catch (ClassNotFoundException e) {
-            throw new IllegalStateException(
-                    "OtelPlugin() requires either GlobalOpenTelemetry backed by the OpenTelemetry SDK or "
-                            + "opentelemetry-exporter-otlp on the application classpath.",
-                    e);
-        } catch (NoSuchMethodException e) {
-            throw new IllegalStateException("Unable to create default OTLP exporter", e);
-        }
-    }
-
-    private static SpanExporter asSpanExporter(Method getDefault) {
-        try {
-            var exporter = getDefault.invoke(null);
-            if (exporter instanceof SpanExporter spanExporter) {
-                return spanExporter;
-            }
-            throw new IllegalStateException("Default OTLP exporter is not an OpenTelemetry SpanExporter");
-        } catch (IllegalAccessException | InvocationTargetException e) {
-            throw new IllegalStateException("Unable to create default OTLP exporter", e);
-        }
-    }
-
     private static SdkTracerProvider getGlobalSdkTracerProvider(TracerProvider tracerProvider) {
         if (tracerProvider instanceof SdkTracerProvider sdkTracerProvider) {
             return sdkTracerProvider;
@@ -598,6 +551,21 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
     private static boolean isJavaAgentTracerProvider(TracerProvider tracerProvider) {
         return tracerProvider.getClass().getName().startsWith("io.opentelemetry.javaagent.");
+    }
+
+    private static SdkTracerProvider getSdkTracerProviderForFlush(TracerProvider tracerProvider) {
+        try {
+            if (isJavaAgentTracerProvider(tracerProvider)) {
+                return getJavaAgentSdkTracerProvider(tracerProvider);
+            }
+            return getGlobalSdkTracerProvider(tracerProvider);
+        } catch (IllegalStateException e) {
+            logger.warn(
+                    "OtelPlugin could not inspect SDK tracer provider for forceFlush; spans will rely on the global "
+                            + "provider's own flushing.",
+                    e);
+            return null;
+        }
     }
 
     private static SdkTracerProvider getJavaAgentSdkTracerProvider(TracerProvider tracerProvider) {
@@ -718,30 +686,5 @@ public class OtelPlugin implements DurableExecutionPlugin {
             }
         }
         throw new NoSuchFieldException(fieldName);
-    }
-
-    private record DefaultTracerProvider(
-            SdkTracerProviderBuilder sdkBuilder,
-            TracerProvider tracerProvider,
-            SdkTracerProvider sdkTracerProvider,
-            DeterministicIdGenerator idGenerator,
-            boolean installIdGenerator) {
-
-        private static DefaultTracerProvider fromSdkBuilder(
-                SdkTracerProviderBuilder sdkBuilder, DeterministicIdGenerator idGenerator) {
-            return new DefaultTracerProvider(sdkBuilder, null, null, idGenerator, true);
-        }
-
-        private static DefaultTracerProvider fromSdkBuilderWithoutIdGenerator(
-                SdkTracerProviderBuilder sdkBuilder, DeterministicIdGenerator idGenerator) {
-            return new DefaultTracerProvider(sdkBuilder, null, null, idGenerator, false);
-        }
-
-        private static DefaultTracerProvider fromTracerProvider(
-                TracerProvider tracerProvider,
-                SdkTracerProvider sdkTracerProvider,
-                DeterministicIdGenerator idGenerator) {
-            return new DefaultTracerProvider(null, tracerProvider, sdkTracerProvider, idGenerator, false);
-        }
     }
 }

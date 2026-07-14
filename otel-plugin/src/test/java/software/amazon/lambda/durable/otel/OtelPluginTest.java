@@ -76,6 +76,17 @@ class OtelPluginTest {
     }
 
     @Test
+    void defaultConstructor_throwsWhenGlobalOpenTelemetryIsNotInitializedBySpi() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+
+        var error = assertThrows(IllegalStateException.class, OtelPlugin::new);
+
+        assertTrue(error.getMessage().contains("GlobalOpenTelemetry"));
+        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
+    }
+
+    @Test
     void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
         OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();
@@ -128,27 +139,6 @@ class OtelPluginTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals("0000000000000002", stepSpan.getSpanId());
-    }
-
-    @Test
-    void defaultConstructor_usesDefaultOtlpExporter_whenGlobalProviderIsNotSdk() {
-        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
-        OtlpGrpcSpanExporter.reset();
-
-        var defaultPlugin = new OtelPlugin();
-        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
-        defaultPlugin.onOperationStart(
-                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
-        defaultPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
-        defaultPlugin.onInvocationEnd(
-                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
-
-        var spans = OtlpGrpcSpanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size());
-        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("invocation")));
-        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
     }
 
     @Test
