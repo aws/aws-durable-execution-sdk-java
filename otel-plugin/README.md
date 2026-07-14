@@ -46,7 +46,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. When using the no-arg `OtelPlugin()` constructor, enable ADOT auto-instrumentation so the layer initializes `GlobalOpenTelemetry`; the plugin copies that provider's export pipeline and joins the current Lambda span context.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. Configure an OpenTelemetry SDK provider with an OTLP exporter; `OtelPlugin()` copies that provider's export pipeline from `GlobalOpenTelemetry`.
 
 The layer ARN follows the format:
 
@@ -63,9 +63,6 @@ MyFunction:
     Tracing: Active
     Layers:
       - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15
-    Environment:
-      Variables:
-        AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler
 ```
 
 **AWS CLI:**
@@ -73,8 +70,7 @@ MyFunction:
 ```bash
 aws lambda update-function-configuration \
   --function-name your-function-name \
-  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15" \
-  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler}"
+  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15"
 ```
 
 ### 2. AWS X-Ray Active Tracing
@@ -251,9 +247,9 @@ After deploying your function with the plugin configured:
 | Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
-| Plugin spans missing but Lambda/runtime spans appear | `OtelPlugin()` is not joining the current ADOT span context, or `GlobalOpenTelemetry` was manually initialized instead of using the ADOT-managed provider |
+| Plugin spans missing but Lambda/runtime spans appear | `GlobalOpenTelemetry` was not initialized with an SDK provider and OTLP exporter, or the exporter cannot reach the ADOT collector |
 
-> **Note on ADOT wrapper:** When `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler` is set, use the no-arg `OtelPlugin()` constructor and do not manually call `GlobalOpenTelemetry.set` / `buildAndRegisterGlobal`. ADOT owns the global provider in this mode; the plugin copies its export pipeline and uses a plugin-owned provider for deterministic durable span IDs.
+> **Note on ADOT wrapper:** Do not set `AWS_LAMBDA_EXEC_WRAPPER` for these examples. The plugin owns a provider with a deterministic durable ID generator and exports through the SDK provider configured by your application.
 
 ## Local Development
 

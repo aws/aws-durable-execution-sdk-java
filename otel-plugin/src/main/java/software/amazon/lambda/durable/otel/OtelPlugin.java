@@ -67,11 +67,10 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <ul>
  *   <li>Lambda Layer: {@code AWSOpenTelemetryDistroJava} (provides the OTLP collector extension)
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
- *   <li>Wrapper: {@code AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-handler} when using {@link #OtelPlugin()}
  * </ul>
  *
- * <p>When using {@link #OtelPlugin()}, ADOT auto-instrumentation owns {@code GlobalOpenTelemetry}; do not manually
- * register another global provider.
+ * <p>When using {@link #OtelPlugin()}, initialize {@code GlobalOpenTelemetry} with an SDK provider and OTLP exporter
+ * before creating the plugin.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
