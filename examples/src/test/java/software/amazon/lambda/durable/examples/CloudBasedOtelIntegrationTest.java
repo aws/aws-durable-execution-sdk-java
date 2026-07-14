@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -22,6 +23,7 @@ import software.amazon.awssdk.services.xray.model.BatchGetTracesRequest;
 import software.amazon.awssdk.services.xray.model.GetTraceSummariesRequest;
 import software.amazon.awssdk.services.xray.model.Segment;
 import software.amazon.awssdk.services.xray.model.TimeRangeType;
+import software.amazon.awssdk.services.xray.model.Trace;
 import software.amazon.awssdk.services.xray.model.TraceSummary;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -251,7 +253,61 @@ class CloudBasedOtelIntegrationTest {
                         + invocationCount + " invocations in trace " + durableTrace.id());
     }
 
+    @Test
+    void defaultConstructorWithAdotJavaAgent_producesDurableSpansInXRay() throws Exception {
+        var startTime = Instant.now();
+
+        var runner = CloudDurableTestRunner.create(
+                arn("otel-xray-default-constructor-example"), GreetingRequest.class, String.class, lambdaClient);
+        var uniqueInput = "Default-" + System.currentTimeMillis();
+        var result = runner.run(new GreetingRequest(uniqueInput));
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus(), "Execution failed: " + result);
+        assertEquals("HELLO, " + uniqueInput.toUpperCase() + "!", result.getResult());
+
+        Thread.sleep(XRAY_INGESTION_DELAY.toMillis());
+
+        var traces = queryTracesWithRetry(startTime, Instant.now(), "otel-xray-default-constructor-example");
+        assertFalse(traces.isEmpty(), "Expected at least one trace in X-Ray after execution");
+
+        var allTraces = getFullTraces(traces);
+        var durableTrace = allTraces.stream()
+                .filter(trace -> trace.segments().stream()
+                        .anyMatch(seg -> segmentContains(seg, "default-create-greeting")))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(
+                durableTrace,
+                "Expected to find a trace with default-create-greeting segment. Segment names: "
+                        + allTraces.stream()
+                                .flatMap(t -> t.segments().stream())
+                                .map(CloudBasedOtelIntegrationTest::getSegmentName)
+                                .collect(Collectors.joining(", ")));
+
+        var segmentDocuments =
+                durableTrace.segments().stream().map(Segment::document).toList();
+        var allSegmentText = String.join("\n", segmentDocuments);
+
+        assertTrue(allSegmentText.contains("invocation"), "Expected invocation span in trace");
+        assertTrue(
+                allSegmentText.contains("default-create-greeting"), "Expected default-create-greeting span in trace");
+        assertTrue(allSegmentText.contains("default-transform"), "Expected default-transform span in trace");
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────
+
+    private List<Trace> getFullTraces(List<TraceSummary> traces) {
+        var traceIds = traces.stream().map(TraceSummary::id).toList();
+        var allTraces = new ArrayList<Trace>();
+        for (int i = 0; i < traceIds.size(); i += 5) {
+            var batch = traceIds.subList(i, Math.min(i + 5, traceIds.size()));
+            var batchResult = xrayClient.batchGetTraces(
+                    BatchGetTracesRequest.builder().traceIds(batch).build());
+            allTraces.addAll(batchResult.traces());
+        }
+        return allTraces;
+    }
 
     /** Queries X-Ray for traces with retry logic to handle eventual consistency. */
     private List<TraceSummary> queryTracesWithRetry(Instant startTime, Instant endTime, String functionName)

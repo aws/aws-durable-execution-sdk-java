@@ -22,6 +22,7 @@ class ExampleFunction:
     suffix: str
     condition: str | None
     tracing: bool
+    adot_java_agent: bool
 
     @property
     def logical_id(self) -> str:
@@ -58,24 +59,26 @@ def is_top_level_durable_handler(source: str, class_name: str) -> bool:
     return bool(match and "extends DurableHandler" in match.group("header"))
 
 
-def read_template_annotation(source: str, class_name: str) -> tuple[str | None, bool]:
+def read_template_annotation(source: str, class_name: str) -> tuple[str | None, bool, bool]:
     class_match = re.search(rf"public\s+(?:final\s+)?class\s+{class_name}\b", source)
     if not class_match:
-        return None, False
+        return None, False, False
 
     prefix = source[: class_match.start()]
     matches = list(
         re.finditer(rf"@(?:[A-Za-z_][\w.]*\.)?{TEMPLATE_ANNOTATION}\s*(?:\((?P<body>.*?)\))?", prefix, re.DOTALL)
     )
     if not matches:
-        return None, False
+        return None, False, False
 
     body = matches[-1].group("body") or ""
     condition_match = re.search(r'condition\s*=\s*"([^"]+)"', body)
     tracing_match = re.search(r"tracing\s*=\s*(true|false)", body)
     condition = condition_match.group(1) if condition_match else None
     tracing = tracing_match.group(1) == "true" if tracing_match else False
-    return condition, tracing
+    adot_java_agent_match = re.search(r"adotJavaAgent\s*=\s*(true|false)", body)
+    adot_java_agent = adot_java_agent_match.group(1) == "true" if adot_java_agent_match else False
+    return condition, tracing, adot_java_agent
 
 
 def discover_examples() -> list[ExampleFunction]:
@@ -86,7 +89,7 @@ def discover_examples() -> list[ExampleFunction]:
         if not is_top_level_durable_handler(source, class_name):
             continue
 
-        condition, tracing = read_template_annotation(source, class_name)
+        condition, tracing, adot_java_agent = read_template_annotation(source, class_name)
         package_name = read_package(source, path)
         examples.append(
             ExampleFunction(
@@ -95,6 +98,7 @@ def discover_examples() -> list[ExampleFunction]:
                 suffix=kebab_case(class_name),
                 condition=condition,
                 tracing=tracing,
+                adot_java_agent=adot_java_agent,
             )
         )
     return examples
@@ -126,6 +130,16 @@ def emit_function(lines: list[str], example: ExampleFunction) -> None:
                 "        - !Sub",
                 "          - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${AdotArch}-ver-1-32-0:6",
                 "          - AdotArch: amd64",
+            ]
+        )
+    if example.adot_java_agent:
+        lines.extend(
+            [
+                "      Environment:",
+                "        Variables:",
+                "          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-handler",
+                "          OTEL_METRICS_EXPORTER: none",
+                "          OTEL_LOGS_EXPORTER: none",
             ]
         )
     lines.append("")
