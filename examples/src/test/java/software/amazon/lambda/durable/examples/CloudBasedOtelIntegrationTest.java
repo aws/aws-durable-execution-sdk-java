@@ -272,8 +272,8 @@ class CloudBasedOtelIntegrationTest {
 
         var allTraces = getFullTraces(traces);
         var durableTrace = allTraces.stream()
-                .filter(trace -> trace.segments().stream()
-                        .anyMatch(seg -> segmentContains(seg, "default-create-greeting")))
+                .filter(trace ->
+                        trace.segments().stream().anyMatch(seg -> segmentContains(seg, "default-create-greeting")))
                 .findFirst()
                 .orElse(null);
 
