@@ -260,7 +260,8 @@ class CloudBasedOtelIntegrationTest {
         var runner = CloudDurableTestRunner.create(
                 arn("otel-xray-default-constructor-example"), GreetingRequest.class, String.class, lambdaClient);
         var uniqueInput = "Default-" + System.currentTimeMillis();
-        var result = runner.run(new GreetingRequest(uniqueInput));
+        var execution = runner.startAsync(new GreetingRequest(uniqueInput));
+        var result = execution.pollUntilComplete();
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus(), "Execution failed: " + result);
         assertEquals("HELLO, " + uniqueInput.toUpperCase() + "!", result.getResult());
