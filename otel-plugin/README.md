@@ -46,7 +46,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` uses the global SDK provider initialized by the ADOT Java wrapper when one exists; otherwise it creates the default OTLP gRPC exporter and sends spans to a reachable OTLP collector.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` uses the global provider initialized by the ADOT Java wrapper when one exists; otherwise it creates the default OTLP gRPC exporter and sends spans to a reachable OTLP collector.
 
 The layer ARN follows the format:
 
@@ -220,7 +220,7 @@ new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Copies global SDK provider when present, otherwise uses default OTLP exporter |
+| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Uses global provider when present, otherwise uses default OTLP exporter |
 | `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
 | `enableMdc` | If true, injects `traceId`/`spanId`/`traceSampled` into SLF4J MDC | `true` |
 
@@ -245,7 +245,7 @@ After deploying your function with the plugin configured:
 | Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
-| Plugin spans missing but Lambda/runtime spans appear | The ADOT wrapper did not initialize the global SDK provider, or the fallback OTLP exporter cannot reach a collector |
+| Plugin spans missing but Lambda/runtime spans appear | The ADOT wrapper did not initialize `GlobalOpenTelemetry`, or the fallback OTLP exporter cannot reach a collector |
 
 > **Note on ADOT wrapper:** Use `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument` with the `AWSOpenTelemetryDistroJava` layer. The older `/opt/otel-handler` path is not valid for this layer and can fail before the Java handler starts.
 

@@ -5,13 +5,16 @@ package software.amazon.lambda.durable.otel;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.javaagent.testing.FakeJavaAgentTracerProvider;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -88,6 +91,43 @@ class OtelPluginTest {
         assertEquals(2, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("invocation")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+    }
+
+    @Test
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_whenSdkCannotBeCopied() {
+        GlobalOpenTelemetry.resetForTest();
+        OtlpGrpcSpanExporter.reset();
+        var globalExporter = InMemorySpanExporter.create();
+        var sdkTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
+        GlobalOpenTelemetry.set(new OpenTelemetry() {
+            @Override
+            public io.opentelemetry.api.trace.TracerProvider getTracerProvider() {
+                return javaAgentTracerProvider;
+            }
+
+            @Override
+            public ContextPropagators getPropagators() {
+                return ContextPropagators.noop();
+            }
+        });
+
+        var defaultPlugin = new OtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        defaultPlugin.onOperationStart(
+                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertEquals(2, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("invocation")));
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+        assertTrue(OtlpGrpcSpanExporter.getFinishedSpanItems().isEmpty());
     }
 
     @Test

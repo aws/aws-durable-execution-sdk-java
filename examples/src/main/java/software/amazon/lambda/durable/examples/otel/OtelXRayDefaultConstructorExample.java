@@ -12,8 +12,7 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
 /**
  * OTel + X-Ray example that uses the no-arg plugin constructor.
  *
- * <p>{@link OtelPlugin#OtelPlugin()} copies the SDK provider initialized by the ADOT Java wrapper, then installs the
- * durable deterministic ID generator for the plugin's provider.
+ * <p>{@link OtelPlugin#OtelPlugin()} uses the global provider initialized by the ADOT Java wrapper.
  */
 @ExampleTemplate(tracing = true)
 public class OtelXRayDefaultConstructorExample extends DurableHandler<GreetingRequest, String> {

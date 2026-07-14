@@ -5,8 +5,11 @@ package software.amazon.lambda.durable.otel;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.javaagent.testing.FakeJavaAgentTracerProvider;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -126,6 +129,45 @@ class OtelPluginIntegrationTest {
         assertSpanExists(spans, "invocation");
         assertSpanExists(spans, "default-otlp-step");
         assertSpanExists(spans, "default-otlp-step attempt 1");
+    }
+
+    @Test
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_whenSdkCannotBeCopied() {
+        GlobalOpenTelemetry.resetForTest();
+        OtlpGrpcSpanExporter.reset();
+        var globalExporter = InMemorySpanExporter.create();
+        var sdkTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
+        GlobalOpenTelemetry.set(new OpenTelemetry() {
+            @Override
+            public io.opentelemetry.api.trace.TracerProvider getTracerProvider() {
+                return javaAgentTracerProvider;
+            }
+
+            @Override
+            public ContextPropagators getPropagators() {
+                return ContextPropagators.noop();
+            }
+        });
+
+        var defaultConfig =
+                DurableConfig.builder().withPlugins(new OtelPlugin()).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> ctx.step("javaagent-step", String.class, stepCtx -> "Hello " + input),
+                defaultConfig);
+
+        var result = runner.runUntilComplete("World");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
+        assertSpanExists(spans, "invocation");
+        assertSpanExists(spans, "javaagent-step");
+        assertSpanExists(spans, "javaagent-step attempt 1");
+        assertTrue(OtlpGrpcSpanExporter.getFinishedSpanItems().isEmpty());
     }
 
     @Test
