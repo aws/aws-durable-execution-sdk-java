@@ -202,9 +202,9 @@ class OtelPluginTest {
         var customizer = ArgumentCaptor.forClass(BiFunction.class);
         verify(autoConfiguration).addTracerProviderCustomizer(customizer.capture());
 
-        var idGenerator = OtelPluginAutoConfigurationCustomizerProvider.idGenerator();
-        idGenerator.setDurableExecutionArn("arn:spi");
-        idGenerator.setNextSpanOperationId("op-spi");
+        var pluginGenerator = new DeterministicIdGenerator();
+        pluginGenerator.setDurableExecutionArn("arn:spi");
+        pluginGenerator.setNextSpanOperationId("op-spi");
 
         @SuppressWarnings("unchecked")
         var tracerProviderCustomizer =
@@ -221,7 +221,8 @@ class OtelPluginTest {
         var spans = exporter.getFinishedSpanItems();
         assertEquals(1, spans.size());
         assertEquals(
-                idGenerator.generateSpanIdForOperation("op-spi"), spans.get(0).getSpanId());
+                pluginGenerator.generateSpanIdForOperation("op-spi"),
+                spans.get(0).getSpanId());
     }
 
     private static final class CountingIdGenerator implements IdGenerator {
