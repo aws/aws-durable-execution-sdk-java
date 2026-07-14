@@ -3,6 +3,10 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.OpenTelemetry;
@@ -16,13 +20,21 @@ import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.javaagent.testing.FakeJavaAgentTracerProvider;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizer;
+import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider;
+import io.opentelemetry.sdk.autoconfigure.spi.ConfigProperties;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import java.util.ServiceLoader;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
@@ -94,11 +106,12 @@ class OtelPluginTest {
     }
 
     @Test
-    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_andOverridesIdGenerator() {
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withAutoConfiguredIdGenerator() {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();
         var sdkTracerProvider = SdkTracerProvider.builder()
+                .setIdGenerator(OtelPluginAutoConfigurationCustomizerProvider.idGenerator())
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
@@ -135,6 +148,46 @@ class OtelPluginTest {
                 .orElseThrow();
         assertEquals(expectedIds.generateSpanIdForOperation("op-1"), stepSpan.getSpanId());
         assertTrue(OtlpGrpcSpanExporter.getFinishedSpanItems().isEmpty());
+    }
+
+    @Test
+    void autoConfigurationCustomizerProvider_installsSharedDeterministicIdGenerator() {
+        var exporter = InMemorySpanExporter.create();
+        var autoConfiguration = mock(AutoConfigurationCustomizer.class);
+        when(autoConfiguration.addTracerProviderCustomizer(any())).thenReturn(autoConfiguration);
+
+        new OtelPluginAutoConfigurationCustomizerProvider().customize(autoConfiguration);
+
+        @SuppressWarnings("unchecked")
+        var customizer = ArgumentCaptor.forClass(BiFunction.class);
+        verify(autoConfiguration).addTracerProviderCustomizer(customizer.capture());
+
+        var idGenerator = OtelPluginAutoConfigurationCustomizerProvider.idGenerator();
+        idGenerator.setDurableExecutionArn("arn:spi");
+        idGenerator.setNextSpanOperationId("op-spi");
+
+        @SuppressWarnings("unchecked")
+        var tracerProviderCustomizer =
+                (BiFunction<SdkTracerProviderBuilder, ConfigProperties, SdkTracerProviderBuilder>)
+                        customizer.getValue();
+        var tracerProvider = tracerProviderCustomizer
+                .apply(SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)), null)
+                .build();
+
+        var span = tracerProvider.get("test").spanBuilder("step").startSpan();
+        span.end();
+        tracerProvider.forceFlush().join(5, TimeUnit.SECONDS);
+
+        var spans = exporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+        assertEquals(
+                idGenerator.generateSpanIdForOperation("op-spi"), spans.get(0).getSpanId());
+    }
+
+    @Test
+    void autoConfigurationCustomizerProvider_isRegisteredAsServiceProvider() {
+        assertTrue(ServiceLoader.load(AutoConfigurationCustomizerProvider.class).stream()
+                .anyMatch(provider -> provider.type().equals(OtelPluginAutoConfigurationCustomizerProvider.class)));
     }
 
     @Test

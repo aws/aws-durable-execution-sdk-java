@@ -46,7 +46,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` copies a global SDK provider when possible, or uses the ADOT Java agent provider directly after installing deterministic span ID generation. If no usable global provider exists, it creates the default OTLP gRPC exporter and sends spans to a reachable OTLP collector.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` copies a global SDK provider when possible, or uses the ADOT Java agent provider directly with deterministic span ID generation installed through the OpenTelemetry `AutoConfigurationCustomizerProvider` SPI. If no usable global provider exists, it creates the default OTLP gRPC exporter and sends spans to a reachable OTLP collector.
 
 The layer ARN follows the format:
 
@@ -66,6 +66,7 @@ MyFunction:
     Environment:
       Variables:
         AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+        OTEL_JAVAAGENT_EXTENSIONS: /var/task/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar
 ```
 
 **AWS CLI:**
@@ -74,8 +75,10 @@ MyFunction:
 aws lambda update-function-configuration \
   --function-name your-function-name \
   --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15" \
-  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument}"
+  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument,OTEL_JAVAAGENT_EXTENSIONS=/var/task/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar}"
 ```
+
+Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed jar that contains this plugin's `META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider` entry. If you shade the plugin into your application jar, point the variable to that shaded jar instead.
 
 ### 2. AWS X-Ray Active Tracing
 
@@ -220,7 +223,7 @@ new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Copies global SDK provider when possible, or uses the ADOT Java agent provider directly |
+| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Copies global SDK provider when possible, or uses the ADOT Java agent provider configured by the plugin SPI |
 | `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
 | `enableMdc` | If true, injects `traceId`/`spanId`/`traceSampled` into SLF4J MDC | `true` |
 
@@ -245,7 +248,7 @@ After deploying your function with the plugin configured:
 | Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
-| Plugin spans missing but Lambda/runtime spans appear | The ADOT wrapper did not initialize `GlobalOpenTelemetry`, or the fallback OTLP exporter cannot reach a collector |
+| Plugin spans missing but Lambda/runtime spans appear | The ADOT wrapper did not initialize `GlobalOpenTelemetry`, the plugin jar was not configured in `OTEL_JAVAAGENT_EXTENSIONS`, or the fallback OTLP exporter cannot reach a collector |
 
 > **Note on ADOT wrapper:** Use `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument` with the `AWSOpenTelemetryDistroJava` layer. The older `/opt/otel-handler` path is not valid for this layer and can fail before the Java handler starts.
 

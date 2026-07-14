@@ -40,6 +40,12 @@
             <version>${opentelemetry.version}</version>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-extension-autoconfigure-spi</artifactId>
+            <version>${opentelemetry.version}</version>
+            <scope>provided</scope>
+        </dependency>
 
         <!-- OpenTelemetry Context (transitive from API, but explicit for clarity) -->
         <dependency>

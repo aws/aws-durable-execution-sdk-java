@@ -132,11 +132,12 @@ class OtelPluginIntegrationTest {
     }
 
     @Test
-    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_andOverridesIdGenerator() {
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withAutoConfiguredIdGenerator() {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();
         var sdkTracerProvider = SdkTracerProvider.builder()
+                .setIdGenerator(OtelPluginAutoConfigurationCustomizerProvider.idGenerator())
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
