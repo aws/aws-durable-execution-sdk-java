@@ -254,7 +254,7 @@ class CloudBasedOtelIntegrationTest {
     }
 
     @Test
-    void defaultConstructorWithAdotJavaAgent_producesDurableSpansInXRay() throws Exception {
+    void defaultConstructorWithGlobalProvider_producesDurableSpansInXRay() throws Exception {
         var startTime = Instant.now();
 
         var runner = CloudDurableTestRunner.create(

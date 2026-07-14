@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.otel;
 
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
@@ -10,13 +14,21 @@ import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.otel.OtelPlugin;
 
 /**
- * OTel + X-Ray example that uses the no-arg plugin constructor with the ADOT Java agent.
+ * OTel + X-Ray example that uses the no-arg plugin constructor with a global SDK provider.
  *
- * <p>The ADOT Java agent registers the global OpenTelemetry SDK provider. {@link OtelPlugin#OtelPlugin()} copies that
- * provider's export pipeline, then installs the durable deterministic ID generator.
+ * <p>The global provider exports through the ADOT collector layer. {@link OtelPlugin#OtelPlugin()} copies that
+ * provider's export pipeline, then installs the durable deterministic ID generator for the plugin's provider.
  */
-@ExampleTemplate(tracing = true, adotJavaAgent = true)
+@ExampleTemplate(tracing = true)
 public class OtelXRayDefaultConstructorExample extends DurableHandler<GreetingRequest, String> {
+
+    static {
+        var otlpExporter = OtlpGrpcSpanExporter.getDefault();
+        var tracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(otlpExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(tracerProvider).buildAndRegisterGlobal();
+    }
 
     @Override
     protected DurableConfig createConfiguration() {

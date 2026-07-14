@@ -14,6 +14,4 @@ public @interface ExampleTemplate {
     String condition() default "";
 
     boolean tracing() default false;
-
-    boolean adotJavaAgent() default false;
 }
