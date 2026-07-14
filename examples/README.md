@@ -52,6 +52,8 @@ The SAM template configures:
 
 `template.yaml` is generated from the Java example handlers and is intentionally not checked in. Re-run `python3 generate-template.py` after adding or removing a deployable example handler.
 
+The examples package copies the OTel plugin jar into `lib/` so the ADOT Java agent can load it as an extension from the generated `OTEL_JAVAAGENT_EXTENSIONS` path.
+
 ## Invoke Deployed Functions
 
 ```bash
