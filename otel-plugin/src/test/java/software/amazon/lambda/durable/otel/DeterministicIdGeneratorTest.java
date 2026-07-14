@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +14,13 @@ class DeterministicIdGeneratorTest {
 
     @BeforeEach
     void setUp() {
+        DeterministicIdGenerator.clearSharedStateForTest();
         generator = new DeterministicIdGenerator();
+    }
+
+    @AfterEach
+    void tearDown() {
+        DeterministicIdGenerator.clearSharedStateForTest();
     }
 
     @Test
@@ -118,6 +125,18 @@ class DeterministicIdGeneratorTest {
         var id2 = generator.generateSpanIdForOperation("op-1");
 
         assertEquals(id1, id2);
+    }
+
+    @Test
+    void generatedIds_areSharedAcrossGeneratorInstances() {
+        var pluginGenerator = new DeterministicIdGenerator();
+        var agentGenerator = new DeterministicIdGenerator();
+
+        pluginGenerator.setDurableExecutionArn("arn:exec1");
+        pluginGenerator.setNextSpanOperationId("op-1");
+
+        assertEquals(pluginGenerator.generateTraceId(), agentGenerator.generateTraceId());
+        assertEquals(pluginGenerator.generateSpanIdForOperation("op-1"), agentGenerator.generateSpanId());
     }
 
     @Test

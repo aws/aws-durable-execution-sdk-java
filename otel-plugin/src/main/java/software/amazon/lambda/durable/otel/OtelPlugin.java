@@ -211,6 +211,8 @@ public class OtelPlugin implements DurableExecutionPlugin {
         if (extractedContext != null) {
             // Use the X-Ray trace ID — backend propagates same Root across all invocations
             idGenerator.setExtractedTraceId(extractedContext.traceId());
+        } else {
+            idGenerator.setExtractedTraceId(null);
         }
         // If no extracted context, idGenerator falls back to ARN-derived trace ID
 
@@ -605,14 +607,37 @@ public class OtelPlugin implements DurableExecutionPlugin {
     }
 
     private static SdkTracerProvider getJavaAgentSdkTracerProvider(TracerProvider tracerProvider) {
-        var agentTracerProvider = getField(tracerProvider, "agentTracerProvider", Object.class);
+        Object agentTracerProvider;
+        try {
+            agentTracerProvider = getField(tracerProvider, "agentTracerProvider", Object.class);
+        } catch (IllegalStateException e) {
+            logger.warn(
+                    "OtelPlugin could not inspect Java agent tracer provider {}; using the global provider directly.",
+                    tracerProvider.getClass().getName(),
+                    e);
+            return null;
+        }
+
         if (agentTracerProvider instanceof SdkTracerProvider sdkTracerProvider) {
             return sdkTracerProvider;
         }
         if (agentTracerProvider instanceof TracerProvider nestedTracerProvider) {
-            return unobfuscateSdkTracerProvider(nestedTracerProvider);
+            try {
+                return unobfuscateSdkTracerProvider(nestedTracerProvider);
+            } catch (IllegalStateException e) {
+                logger.warn(
+                        "OtelPlugin could not inspect nested Java agent SDK tracer provider {}; using the global "
+                                + "provider directly.",
+                        nestedTracerProvider.getClass().getName(),
+                        e);
+                return null;
+            }
         }
-        throw new IllegalStateException("Java agent tracer provider field agentTracerProvider is not a TracerProvider");
+        logger.info(
+                "OtelPlugin could not inspect Java agent SDK tracer provider because field agentTracerProvider has "
+                        + "type {}; using the global provider directly.",
+                agentTracerProvider != null ? agentTracerProvider.getClass().getName() : "null");
+        return null;
     }
 
     private static void logJavaAgentInitialization(
@@ -620,6 +645,16 @@ public class OtelPlugin implements DurableExecutionPlugin {
             SdkTracerProvider sdkTracerProvider,
             DeterministicIdGenerator idGenerator,
             IllegalStateException cause) {
+        if (sdkTracerProvider == null) {
+            logger.info(
+                    "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}, but the "
+                            + "agent SDK provider is not visible to the application class loader, so deterministic "
+                            + "ID generator installation cannot be verified. If durable operation span IDs are not "
+                            + "deterministic, configure this plugin jar with OTEL_JAVAAGENT_EXTENSIONS. Cause: {}",
+                    globalTracerProvider.getClass().getName(),
+                    cause.getMessage());
+            return;
+        }
         if (hasIdGenerator(sdkTracerProvider, idGenerator)) {
             logger.info(
                     "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}; "
@@ -638,8 +673,13 @@ public class OtelPlugin implements DurableExecutionPlugin {
     }
 
     private static boolean hasIdGenerator(SdkTracerProvider sdkTracerProvider, DeterministicIdGenerator idGenerator) {
-        var sharedState = getField(sdkTracerProvider, "sharedState", Object.class);
-        return getField(sharedState, "idGenerator", Object.class) == idGenerator;
+        try {
+            var sharedState = getField(sdkTracerProvider, "sharedState", Object.class);
+            return getField(sharedState, "idGenerator", Object.class) == idGenerator;
+        } catch (IllegalStateException e) {
+            logger.warn("OtelPlugin could not verify the Java agent SDK ID generator", e);
+            return false;
+        }
     }
 
     private static SdkTracerProvider unobfuscateSdkTracerProvider(TracerProvider tracerProvider) {

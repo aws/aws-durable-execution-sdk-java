@@ -45,6 +45,7 @@ class OtelPluginTest {
 
     @BeforeEach
     void setUp() {
+        DeterministicIdGenerator.clearSharedStateForTest();
         spanExporter = InMemorySpanExporter.create();
 
         plugin = new OtelPlugin(
@@ -57,6 +58,7 @@ class OtelPluginTest {
     void tearDown() {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
+        DeterministicIdGenerator.clearSharedStateForTest();
     }
 
     @Test
@@ -110,11 +112,12 @@ class OtelPluginTest {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();
+        var javaAgentIdGenerator = new DeterministicIdGenerator();
         var sdkTracerProvider = SdkTracerProvider.builder()
-                .setIdGenerator(OtelPluginAutoConfigurationCustomizerProvider.idGenerator())
+                .setIdGenerator(javaAgentIdGenerator)
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
-        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
+        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(new Object(), sdkTracerProvider);
         GlobalOpenTelemetry.set(new OpenTelemetry() {
             @Override
             public io.opentelemetry.api.trace.TracerProvider getTracerProvider() {
