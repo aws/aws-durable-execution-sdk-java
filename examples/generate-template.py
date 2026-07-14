@@ -123,9 +123,7 @@ def emit_function(lines: list[str], example: ExampleFunction) -> None:
             [
                 "      Tracing: Active",
                 "      Layers:",
-                "        - !Sub",
-                "          - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${AdotArch}-ver-1-32-0:6",
-                "          - AdotArch: amd64",
+                "        - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15",
             ]
         )
     lines.append("")

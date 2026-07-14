@@ -65,7 +65,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Requires the ADOT Lambda Layer for trace export. Configure with:
  *
  * <ul>
- *   <li>Lambda Layer: {@code aws-otel-java-agent} (provides the OTLP collector extension)
+ *   <li>Lambda Layer: {@code AWSOpenTelemetryDistroJava} (provides the OTLP collector extension)
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
  * </ul>
  *

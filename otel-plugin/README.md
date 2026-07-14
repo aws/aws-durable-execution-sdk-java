@@ -53,7 +53,7 @@ This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://
 The layer ARN follows the format:
 
 ```
-arn:aws:lambda:<region>:901920570463:layer:aws-otel-java-agent-<arch>-ver-1-32-0:6
+arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15
 ```
 
 **CloudFormation / SAM:**
@@ -64,9 +64,7 @@ MyFunction:
   Properties:
     Tracing: Active
     Layers:
-      - !Sub
-        - arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-java-agent-${Arch}-ver-1-32-0:6
-        - Arch: amd64
+      - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15
 ```
 
 **AWS CLI:**
@@ -74,7 +72,7 @@ MyFunction:
 ```bash
 aws lambda update-function-configuration \
   --function-name your-function-name \
-  --layers "arn:aws:lambda:<region>:901920570463:layer:aws-otel-java-agent-amd64-ver-1-32-0:6"
+  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15"
 ```
 
 ### 2. AWS X-Ray Active Tracing
