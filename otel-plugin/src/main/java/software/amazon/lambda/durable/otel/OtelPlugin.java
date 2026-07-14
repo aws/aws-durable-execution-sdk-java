@@ -64,7 +64,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
  * </ul>
  *
- * <p>When using {@link #OtelPlugin()}, the plugin requires {@link OtelPluginAutoConfigurationCustomizerProvider} to
+ * <p>When using {@link #OtelPlugin()}, the plugin requires {@code OtelPluginAutoConfigurationCustomizerProvider} to
  * have been installed by the OpenTelemetry Java agent and uses the global provider directly.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
@@ -122,10 +122,10 @@ public class OtelPlugin implements DurableExecutionPlugin {
      * Creates an OTel plugin with default settings: X-Ray context extraction and MDC enabled.
      *
      * <p>Uses {@code GlobalOpenTelemetry} directly and assumes deterministic ID generation was installed by
-     * {@link OtelPluginAutoConfigurationCustomizerProvider}.
+     * {@code OtelPluginAutoConfigurationCustomizerProvider}.
      */
     public OtelPlugin() {
-        this(getDefaultTracerProvider(), OtelPluginAutoConfigurationCustomizerProvider.idGenerator());
+        this(getDefaultTracerProvider(), createDefaultIdGenerator());
     }
 
     /**
@@ -505,24 +505,16 @@ public class OtelPlugin implements DurableExecutionPlugin {
     private static TracerProvider getDefaultTracerProvider() {
         validateAutoConfigurationCustomizerProviderInstalled();
 
-        var idGenerator = OtelPluginAutoConfigurationCustomizerProvider.idGenerator();
         var globalTracerProvider = GlobalOpenTelemetry.getTracerProvider();
         try {
-            var sdkTracerProvider = getGlobalSdkTracerProvider(globalTracerProvider);
+            getGlobalSdkTracerProvider(globalTracerProvider);
             logger.info("OtelPlugin initialized from existing GlobalOpenTelemetry SDK tracer provider; assuming "
                     + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider");
-            if (!hasIdGenerator(sdkTracerProvider, idGenerator)) {
-                logger.warn("OtelPlugin initialized from existing GlobalOpenTelemetry SDK tracer provider, but the "
-                        + "provider is not using the durable execution ID generator. Configure this plugin "
-                        + "jar with OTEL_JAVAAGENT_EXTENSIONS so AutoConfigurationCustomizerProvider can "
-                        + "install deterministic span IDs.");
-            }
             return globalTracerProvider;
         } catch (IllegalStateException e) {
             if (isJavaAgentTracerProvider(globalTracerProvider)) {
                 var sdkTracerProvider = getJavaAgentSdkTracerProvider(globalTracerProvider);
-                var javaAgentIdGenerator = OtelPluginAutoConfigurationCustomizerProvider.idGenerator();
-                logJavaAgentInitialization(globalTracerProvider, sdkTracerProvider, javaAgentIdGenerator, e);
+                logJavaAgentInitialization(globalTracerProvider, sdkTracerProvider, e);
                 return globalTracerProvider;
             }
             throw new IllegalStateException(
@@ -532,8 +524,15 @@ public class OtelPlugin implements DurableExecutionPlugin {
         }
     }
 
+    private static DeterministicIdGenerator createDefaultIdGenerator() {
+        // This is intentionally a separate instance from the SPI provider's generator. The Java agent extension and
+        // application may load this plugin in different class loaders, so DeterministicIdGenerator bridges invocation
+        // state through system properties that the SPI-installed generator can read when spans are started.
+        return new DeterministicIdGenerator();
+    }
+
     private static void validateAutoConfigurationCustomizerProviderInstalled() {
-        if (OtelPluginAutoConfigurationCustomizerProvider.isInstalled()) {
+        if (OtelPluginAutoConfigurationState.isInstalled()) {
             return;
         }
         throw new IllegalStateException(
@@ -603,45 +602,22 @@ public class OtelPlugin implements DurableExecutionPlugin {
     }
 
     private static void logJavaAgentInitialization(
-            TracerProvider globalTracerProvider,
-            SdkTracerProvider sdkTracerProvider,
-            DeterministicIdGenerator idGenerator,
-            IllegalStateException cause) {
+            TracerProvider globalTracerProvider, SdkTracerProvider sdkTracerProvider, IllegalStateException cause) {
         if (sdkTracerProvider == null) {
             logger.info(
                     "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}, but the "
-                            + "agent SDK provider is not visible to the application class loader, so deterministic "
-                            + "ID generator installation cannot be verified. If durable operation span IDs are not "
-                            + "deterministic, configure this plugin jar with OTEL_JAVAAGENT_EXTENSIONS. Cause: {}",
+                            + "agent SDK provider is not visible to the application class loader. Assuming "
+                            + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider. "
+                            + "Cause: {}",
                     globalTracerProvider.getClass().getName(),
                     cause.getMessage());
             return;
         }
-        if (hasIdGenerator(sdkTracerProvider, idGenerator)) {
-            logger.info(
-                    "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}; "
-                            + "deterministic span IDs installed through AutoConfigurationCustomizerProvider. Cause: {}",
-                    globalTracerProvider.getClass().getName(),
-                    cause.getMessage());
-            return;
-        }
-        logger.warn(
-                "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}, but the "
-                        + "agent SDK provider is not using the durable execution ID generator. Configure this plugin "
-                        + "jar with OTEL_JAVAAGENT_EXTENSIONS so AutoConfigurationCustomizerProvider can install "
-                        + "deterministic span IDs. Cause: {}",
+        logger.info(
+                "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}; assuming "
+                        + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider. Cause: {}",
                 globalTracerProvider.getClass().getName(),
                 cause.getMessage());
-    }
-
-    private static boolean hasIdGenerator(SdkTracerProvider sdkTracerProvider, DeterministicIdGenerator idGenerator) {
-        try {
-            var sharedState = getField(sdkTracerProvider, "sharedState", Object.class);
-            return getField(sharedState, "idGenerator", Object.class) == idGenerator;
-        } catch (IllegalStateException e) {
-            logger.warn("OtelPlugin could not verify the Java agent SDK ID generator", e);
-            return false;
-        }
     }
 
     private static SdkTracerProvider unobfuscateSdkTracerProvider(TracerProvider tracerProvider) {
