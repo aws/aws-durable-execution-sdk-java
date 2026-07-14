@@ -8,24 +8,24 @@ import io.opentelemetry.api.trace.TracerProvider;
 
 public final class FakeJavaAgentTracerProvider implements TracerProvider {
 
-    private final TracerProvider delegate;
+    private final TracerProvider agentTracerProvider;
 
-    public FakeJavaAgentTracerProvider(TracerProvider delegate) {
-        this.delegate = delegate;
+    public FakeJavaAgentTracerProvider(TracerProvider agentTracerProvider) {
+        this.agentTracerProvider = agentTracerProvider;
     }
 
     @Override
     public Tracer get(String instrumentationName) {
-        return delegate.get(instrumentationName);
+        return agentTracerProvider.get(instrumentationName);
     }
 
     @Override
     public Tracer get(String instrumentationName, String instrumentationVersion) {
-        return delegate.get(instrumentationName, instrumentationVersion);
+        return agentTracerProvider.get(instrumentationName, instrumentationVersion);
     }
 
     @Override
     public TracerBuilder tracerBuilder(String instrumentationScopeName) {
-        return delegate.tracerBuilder(instrumentationScopeName);
+        return agentTracerProvider.tracerBuilder(instrumentationScopeName);
     }
 }

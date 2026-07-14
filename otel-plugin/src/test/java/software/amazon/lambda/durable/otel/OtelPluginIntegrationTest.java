@@ -132,7 +132,7 @@ class OtelPluginIntegrationTest {
     }
 
     @Test
-    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_whenSdkCannotBeCopied() {
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_andOverridesIdGenerator() {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();

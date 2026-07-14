@@ -46,7 +46,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` uses the global provider initialized by the ADOT Java wrapper when one exists; otherwise it creates the default OTLP gRPC exporter and sends spans to a reachable OTLP collector.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` copies a global SDK provider when possible, or uses the ADOT Java agent provider directly after installing deterministic span ID generation. If no usable global provider exists, it creates the default OTLP gRPC exporter and sends spans to a reachable OTLP collector.
 
 The layer ARN follows the format:
 
@@ -220,7 +220,7 @@ new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Uses global provider when present, otherwise uses default OTLP exporter |
+| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Copies global SDK provider when possible, or uses the ADOT Java agent provider directly |
 | `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
 | `enableMdc` | If true, injects `traceId`/`spanId`/`traceSampled` into SLF4J MDC | `true` |
 

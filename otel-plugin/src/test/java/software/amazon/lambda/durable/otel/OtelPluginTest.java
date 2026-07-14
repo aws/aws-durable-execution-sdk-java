@@ -94,7 +94,7 @@ class OtelPluginTest {
     }
 
     @Test
-    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_whenSdkCannotBeCopied() {
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_andOverridesIdGenerator() {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();
@@ -127,6 +127,13 @@ class OtelPluginTest {
         assertEquals(2, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("invocation")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+        var expectedIds = new DeterministicIdGenerator();
+        expectedIds.setDurableExecutionArn("arn:exec1");
+        var stepSpan = spans.stream()
+                .filter(span -> span.getName().equals("step"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(expectedIds.generateSpanIdForOperation("op-1"), stepSpan.getSpanId());
         assertTrue(OtlpGrpcSpanExporter.getFinishedSpanItems().isEmpty());
     }
 
