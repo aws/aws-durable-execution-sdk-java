@@ -4,7 +4,9 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.SpanData;
@@ -13,6 +15,7 @@ import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -44,6 +47,11 @@ class OtelPluginIntegrationTest {
         otelConfig = DurableConfig.builder().withPlugins(plugin).build();
     }
 
+    @AfterEach
+    void tearDown() {
+        GlobalOpenTelemetry.resetForTest();
+    }
+
     @Test
     void simpleStep_producesInvocationAndOperationAndAttemptSpans() {
         var runner = LocalDurableTestRunner.create(
@@ -65,6 +73,35 @@ class OtelPluginIntegrationTest {
         // All spans share the same trace ID
         var traceId = spans.get(0).getTraceId();
         assertTrue(spans.stream().allMatch(s -> s.getTraceId().equals(traceId)));
+    }
+
+    @Test
+    void defaultConstructor_copiesGlobalSdkTracerProviderPipeline() {
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
+        var defaultConfig =
+                DurableConfig.builder().withPlugins(new OtelPlugin()).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> ctx.step("global-step", String.class, stepCtx -> "Hello " + input),
+                defaultConfig);
+
+        var result = runner.runUntilComplete("World");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
+        assertSpanExists(spans, "invocation");
+        assertSpanExists(spans, "global-step");
+        assertSpanExists(spans, "global-step attempt 1");
+
+        var traceId = spans.get(0).getTraceId();
+        assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(traceId)));
     }
 
     @Test

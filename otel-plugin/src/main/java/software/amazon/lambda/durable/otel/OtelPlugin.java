@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.otel;
 
 import static software.amazon.lambda.durable.otel.SpanAttributes.*;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
@@ -13,14 +14,23 @@ import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.common.Clock;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
+import io.opentelemetry.sdk.trace.SpanLimits;
+import io.opentelemetry.sdk.trace.SpanProcessor;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.semconv.ServiceAttributes;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
@@ -111,6 +121,10 @@ public class OtelPlugin implements DurableExecutionPlugin {
      */
     public OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
         this(tracerProviderBuilder, new XRayContextExtractor(), true);
+    }
+
+    public OtelPlugin() {
+        this(getDefaultTracerProviderBuilder());
     }
 
     /**
@@ -229,7 +243,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
         invocationSpan = null;
 
         // Flush spans before Lambda freezes
-        var flushResult = tracerProvider.forceFlush().join(5, java.util.concurrent.TimeUnit.SECONDS);
+        var flushResult = tracerProvider.forceFlush().join(5, TimeUnit.SECONDS);
         if (!flushResult.isSuccess()) {
             logger.warn("OTel span flush failed or timed out — some spans may be lost");
         }
@@ -460,5 +474,71 @@ public class OtelPlugin implements DurableExecutionPlugin {
 
     private static String attemptKey(String operationId, Integer attempt) {
         return operationId + "-" + (attempt != null ? attempt : "ctx");
+    }
+
+    private static SdkTracerProviderBuilder getDefaultTracerProviderBuilder() {
+        var sdkTracerProvider = getGlobalSdkTracerProvider();
+        var sharedState = getField(sdkTracerProvider, "sharedState", Object.class);
+
+        return SdkTracerProvider.builder()
+                .setClock(getField(sharedState, "clock", Clock.class))
+                .setResource(getField(sharedState, "resource", Resource.class))
+                .setSpanLimits(getSpanLimitsSupplier(sharedState))
+                .setSampler(getField(sharedState, "sampler", Sampler.class))
+                .addSpanProcessor(getField(sharedState, "activeSpanProcessor", SpanProcessor.class));
+    }
+
+    private static SdkTracerProvider getGlobalSdkTracerProvider() {
+        var tracerProvider = GlobalOpenTelemetry.getTracerProvider();
+        if (tracerProvider instanceof SdkTracerProvider sdkTracerProvider) {
+            return sdkTracerProvider;
+        }
+        return unobfuscateSdkTracerProvider(tracerProvider);
+    }
+
+    private static SdkTracerProvider unobfuscateSdkTracerProvider(TracerProvider tracerProvider) {
+        try {
+            var unobfuscate = tracerProvider.getClass().getDeclaredMethod("unobfuscate");
+            unobfuscate.setAccessible(true);
+            var sdkTracerProvider = unobfuscate.invoke(tracerProvider);
+            if (sdkTracerProvider instanceof SdkTracerProvider result) {
+                return result;
+            }
+            throw new IllegalStateException("GlobalOpenTelemetry is not backed by an SdkTracerProvider");
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(
+                    "OtelPlugin() requires GlobalOpenTelemetry to be backed by the OpenTelemetry SDK. "
+                            + "Use OtelPlugin(SdkTracerProviderBuilder) when the global provider cannot be copied.",
+                    e);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new IllegalStateException("Unable to copy the global OpenTelemetry tracer provider", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Supplier<SpanLimits> getSpanLimitsSupplier(Object sharedState) {
+        return (Supplier<SpanLimits>) getField(sharedState, "spanLimitsSupplier", Supplier.class);
+    }
+
+    private static <T> T getField(Object target, String fieldName, Class<T> fieldType) {
+        try {
+            var field = findField(target.getClass(), fieldName);
+            field.setAccessible(true);
+            return fieldType.cast(field.get(target));
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new IllegalStateException("Unable to copy OpenTelemetry SDK field: " + fieldName, e);
+        }
+    }
+
+    private static Field findField(Class<?> type, String fieldName) throws NoSuchFieldException {
+        var current = type;
+        while (current != null) {
+            try {
+                return current.getDeclaredField(fieldName);
+            } catch (NoSuchFieldException e) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException(fieldName);
     }
 }

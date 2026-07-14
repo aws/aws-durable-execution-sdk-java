@@ -4,12 +4,15 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
@@ -28,6 +31,37 @@ class OtelPluginTest {
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
+    }
+
+    @AfterEach
+    void tearDown() {
+        GlobalOpenTelemetry.resetForTest();
+    }
+
+    @Test
+    void defaultConstructor_copiesGlobalSdkTracerProviderPipeline() {
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
+        var defaultPlugin = new OtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        defaultPlugin.onOperationStart(
+                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertEquals(2, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("invocation")));
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+        var traceId = spans.get(0).getTraceId();
+        assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(traceId)));
     }
 
     @Test
