@@ -24,12 +24,14 @@ import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizer;
 import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider;
 import io.opentelemetry.sdk.autoconfigure.spi.ConfigProperties;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +48,7 @@ class OtelPluginTest {
     @BeforeEach
     void setUp() {
         DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationCustomizerProvider.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
         plugin = new OtelPlugin(
@@ -59,10 +62,22 @@ class OtelPluginTest {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationCustomizerProvider.resetInstalledForTest();
     }
 
     @Test
-    void defaultConstructor_copiesGlobalSdkTracerProviderPipeline() {
+    void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
+        GlobalOpenTelemetry.resetForTest();
+
+        var error = assertThrows(IllegalStateException.class, OtelPlugin::new);
+
+        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
+        assertTrue(error.getMessage().contains("OTEL_JAVAAGENT_EXTENSIONS"));
+    }
+
+    @Test
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var globalTracerProvider = SdkTracerProvider.builder()
@@ -88,7 +103,36 @@ class OtelPluginTest {
     }
 
     @Test
+    void defaultConstructor_doesNotReplaceGlobalSdkTracerProviderIdGenerator() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var idGenerator = new CountingIdGenerator();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .setIdGenerator(idGenerator)
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
+        var defaultPlugin = new OtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        defaultPlugin.onOperationStart(
+                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var stepSpan = globalExporter.getFinishedSpanItems().stream()
+                .filter(span -> span.getName().equals("step"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("0000000000000002", stepSpan.getSpanId());
+    }
+
+    @Test
     void defaultConstructor_usesDefaultOtlpExporter_whenGlobalProviderIsNotSdk() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
 
@@ -109,6 +153,7 @@ class OtelPluginTest {
 
     @Test
     void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withAutoConfiguredIdGenerator() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();
@@ -155,11 +200,13 @@ class OtelPluginTest {
 
     @Test
     void autoConfigurationCustomizerProvider_installsSharedDeterministicIdGenerator() {
+        OtelPluginAutoConfigurationCustomizerProvider.resetInstalledForTest();
         var exporter = InMemorySpanExporter.create();
         var autoConfiguration = mock(AutoConfigurationCustomizer.class);
         when(autoConfiguration.addTracerProviderCustomizer(any())).thenReturn(autoConfiguration);
 
         new OtelPluginAutoConfigurationCustomizerProvider().customize(autoConfiguration);
+        assertTrue(OtelPluginAutoConfigurationCustomizerProvider.isInstalled());
 
         @SuppressWarnings("unchecked")
         var customizer = ArgumentCaptor.forClass(BiFunction.class);
@@ -185,6 +232,22 @@ class OtelPluginTest {
         assertEquals(1, spans.size());
         assertEquals(
                 idGenerator.generateSpanIdForOperation("op-spi"), spans.get(0).getSpanId());
+    }
+
+    private static final class CountingIdGenerator implements IdGenerator {
+
+        private final AtomicInteger traceIds = new AtomicInteger();
+        private final AtomicInteger spanIds = new AtomicInteger();
+
+        @Override
+        public String generateTraceId() {
+            return String.format("%032x", traceIds.incrementAndGet());
+        }
+
+        @Override
+        public String generateSpanId() {
+            return String.format("%016x", spanIds.incrementAndGet());
+        }
     }
 
     @Test

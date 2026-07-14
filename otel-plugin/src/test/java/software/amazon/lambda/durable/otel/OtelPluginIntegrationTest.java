@@ -42,6 +42,7 @@ class OtelPluginIntegrationTest {
     @BeforeEach
     void setUp() {
         DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationCustomizerProvider.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
         var plugin = new OtelPlugin(
@@ -57,6 +58,7 @@ class OtelPluginIntegrationTest {
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationCustomizerProvider.resetInstalledForTest();
     }
 
     @Test
@@ -83,7 +85,8 @@ class OtelPluginIntegrationTest {
     }
 
     @Test
-    void defaultConstructor_copiesGlobalSdkTracerProviderPipeline() {
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var globalTracerProvider = SdkTracerProvider.builder()
@@ -113,6 +116,7 @@ class OtelPluginIntegrationTest {
 
     @Test
     void defaultConstructor_usesDefaultOtlpExporter_whenGlobalProviderIsNotSdk() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
 
@@ -135,6 +139,7 @@ class OtelPluginIntegrationTest {
 
     @Test
     void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withAutoConfiguredIdGenerator() {
+        OtelPluginAutoConfigurationCustomizerProvider.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();

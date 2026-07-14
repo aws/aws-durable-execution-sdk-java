@@ -13,14 +13,29 @@ import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvide
 @Deprecated
 public final class OtelPluginAutoConfigurationCustomizerProvider implements AutoConfigurationCustomizerProvider {
 
+    private static final String INSTALLED_PROPERTY =
+            "software.amazon.lambda.durable.otel.autoConfigurationCustomizerProviderInstalled";
     private static final DeterministicIdGenerator ID_GENERATOR = new DeterministicIdGenerator();
 
     @Override
     public void customize(AutoConfigurationCustomizer autoConfiguration) {
+        markInstalled();
         autoConfiguration.addTracerProviderCustomizer((builder, config) -> builder.setIdGenerator(ID_GENERATOR));
     }
 
     static DeterministicIdGenerator idGenerator() {
         return ID_GENERATOR;
+    }
+
+    static boolean isInstalled() {
+        return Boolean.getBoolean(INSTALLED_PROPERTY);
+    }
+
+    static void markInstalled() {
+        System.setProperty(INSTALLED_PROPERTY, Boolean.TRUE.toString());
+    }
+
+    static void resetInstalledForTest() {
+        System.clearProperty(INSTALLED_PROPERTY);
     }
 }
