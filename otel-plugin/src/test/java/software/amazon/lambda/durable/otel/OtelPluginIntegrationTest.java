@@ -8,7 +8,6 @@ import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.propagation.ContextPropagators;
-import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.javaagent.testing.FakeJavaAgentTracerProvider;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
@@ -56,7 +55,6 @@ class OtelPluginIntegrationTest {
     @AfterEach
     void tearDown() {
         GlobalOpenTelemetry.resetForTest();
-        OtlpGrpcSpanExporter.reset();
         DeterministicIdGenerator.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
@@ -118,14 +116,13 @@ class OtelPluginIntegrationTest {
     void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withSeparateAutoConfiguredIdGenerator() {
         OtelPluginAutoConfigurationState.markInstalled();
         GlobalOpenTelemetry.resetForTest();
-        OtlpGrpcSpanExporter.reset();
         var globalExporter = InMemorySpanExporter.create();
         var javaAgentIdGenerator = new DeterministicIdGenerator();
         var sdkTracerProvider = SdkTracerProvider.builder()
                 .setIdGenerator(javaAgentIdGenerator)
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
-        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(new Object(), sdkTracerProvider);
+        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
         GlobalOpenTelemetry.set(new OpenTelemetry() {
             @Override
             public io.opentelemetry.api.trace.TracerProvider getTracerProvider() {
@@ -153,7 +150,6 @@ class OtelPluginIntegrationTest {
         assertSpanExists(spans, "invocation");
         assertSpanExists(spans, "javaagent-step");
         assertSpanExists(spans, "javaagent-step attempt 1");
-        assertTrue(OtlpGrpcSpanExporter.getFinishedSpanItems().isEmpty());
     }
 
     @Test

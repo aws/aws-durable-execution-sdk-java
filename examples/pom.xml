@@ -50,18 +50,6 @@
             <version>1.63.0</version>
         </dependency>
 
-        <!-- OTLP gRPC exporter (sends spans to ADOT collector layer at localhost:4317) -->
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-exporter-otlp</artifactId>
-            <version>1.64.0</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-netty-shaded</artifactId>
-            <version>1.82.1</version>
-        </dependency>
-
         <!-- AWS Lambda Java Core -->
         <dependency>
             <groupId>com.amazonaws</groupId>

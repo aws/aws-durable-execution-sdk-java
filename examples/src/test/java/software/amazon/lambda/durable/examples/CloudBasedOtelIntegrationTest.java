@@ -38,8 +38,8 @@ import software.amazon.lambda.durable.testing.TestResult;
  * <p>These tests deploy Lambda functions configured with:
  *
  * <ul>
- *   <li>OpenTelemetry Durable Plugin with OTLP gRPC exporter
- *   <li>ADOT collector layer (OTLP receiver → X-Ray exporter)
+ *   <li>OpenTelemetry Durable Plugin using the ADOT Java agent global provider
+ *   <li>ADOT Java agent layer with the plugin jar loaded through {@code OTEL_JAVAAGENT_EXTENSIONS}
  *   <li>Active X-Ray tracing
  * </ul>
  *
@@ -257,7 +257,7 @@ class CloudBasedOtelIntegrationTest {
     }
 
     @Test
-    void defaultConstructorWithGlobalProvider_producesDurableSpansInXRay() throws Exception {
+    void defaultConstructorWithAdotJavaAgent_producesDurableSpansInXRay() throws Exception {
         var startTime = Instant.now();
 
         var runner = CloudDurableTestRunner.create(

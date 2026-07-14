@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.otel;
 
-import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.util.List;
@@ -20,10 +20,9 @@ public final class OtelXRayExamples {
 
     private OtelXRayExamples() {}
 
-    private static DurableConfig otelConfig() {
-        var otlpExporter = OtlpGrpcSpanExporter.getDefault();
-        var otelPlugin =
-                new OtelPlugin(SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
+    private static DurableConfig localOtelConfig() {
+        var otelPlugin = new OtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
         return DurableConfig.builder().withPlugins(otelPlugin).build();
     }
 
@@ -32,7 +31,7 @@ public final class OtelXRayExamples {
 
         @Override
         protected DurableConfig createConfiguration() {
-            return otelConfig();
+            return localOtelConfig();
         }
 
         @Override
@@ -56,7 +55,7 @@ public final class OtelXRayExamples {
 
         @Override
         protected DurableConfig createConfiguration() {
-            return otelConfig();
+            return localOtelConfig();
         }
 
         @Override
@@ -85,7 +84,7 @@ public final class OtelXRayExamples {
 
         @Override
         protected DurableConfig createConfiguration() {
-            return otelConfig();
+            return localOtelConfig();
         }
 
         @Override

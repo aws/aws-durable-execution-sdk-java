@@ -22,8 +22,7 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *   <li>Logging exporter (spans printed to stdout → CloudWatch Logs)
  * </ul>
  *
- * <p>In production, replace {@code LoggingSpanExporter} with {@code OtlpGrpcSpanExporter} to send spans to an OTLP
- * collector (X-Ray, Datadog, etc.).
+ * <p>In production, replace {@code LoggingSpanExporter} with the exporter for your observability backend.
  *
  * <p>Expected trace structure:
  *

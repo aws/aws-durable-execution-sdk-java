@@ -21,8 +21,6 @@ import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.semconv.ServiceAttributes;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -62,7 +60,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Requires the ADOT Lambda Layer for trace export. Configure with:
  *
  * <ul>
- *   <li>Lambda Layer: {@code AWSOpenTelemetryDistroJava} (provides the OTLP collector extension)
+ *   <li>Lambda Layer: {@code AWSOpenTelemetryDistroJava} (provides the ADOT Java agent and export pipeline)
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
  * </ul>
  *
@@ -106,12 +104,13 @@ public class OtelPlugin implements DurableExecutionPlugin {
      * <p>Uses the provided tracer provider builder. Customers configure exporters and span processors on the builder —
      * the plugin handles ID generation.
      *
-     * <p>For ADOT layer usage, configure with an OTLP exporter:
+     * <p>For ADOT Java agent usage, prefer {@link #OtelPlugin()} with the plugin jar configured through
+     * {@code OTEL_JAVAAGENT_EXTENSIONS}. Use this builder constructor when you want to own the exporter pipeline:
      *
      * <pre>{@code
-     * var otlpExporter = OtlpGrpcSpanExporter.getDefault(); // sends to localhost:4317
+     * var exporter = LoggingSpanExporter.create();
      * var plugin = new OtelPlugin(
-     *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
+     *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)));
      * }</pre>
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
@@ -199,7 +198,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
         Context parentContext;
         if (extractedContext != null && extractedContext.parentSpanId() != null) {
             // X-Ray header has parent — create the invocation span as a child of that segment.
-            // This connects our OTLP-exported spans to the Lambda service's X-Ray segments.
+            // This connects plugin spans to the Lambda service's X-Ray segments.
             var parentSpanContext = SpanContext.createFromRemoteParent(
                     extractedContext.traceId(),
                     extractedContext.parentSpanId(),
@@ -508,22 +507,15 @@ public class OtelPlugin implements DurableExecutionPlugin {
         validateAutoConfigurationCustomizerProviderInstalled();
 
         var globalTracerProvider = GlobalOpenTelemetry.getTracerProvider();
-        try {
-            getGlobalSdkTracerProvider(globalTracerProvider);
-            logger.info("OtelPlugin initialized from existing GlobalOpenTelemetry SDK tracer provider; assuming "
-                    + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider");
-            return globalTracerProvider;
-        } catch (IllegalStateException e) {
-            if (isJavaAgentTracerProvider(globalTracerProvider)) {
-                var sdkTracerProvider = getJavaAgentSdkTracerProvider(globalTracerProvider);
-                logJavaAgentInitialization(globalTracerProvider, sdkTracerProvider, e);
-                return globalTracerProvider;
-            }
-            throw new IllegalStateException(
-                    "OtelPlugin() requires GlobalOpenTelemetry to be initialized by "
-                            + "OtelPluginAutoConfigurationCustomizerProvider through the OpenTelemetry Java agent.",
-                    e);
+        if (globalTracerProvider == TracerProvider.noop()) {
+            throw new IllegalStateException("OtelPlugin() requires GlobalOpenTelemetry to be initialized by "
+                    + "OtelPluginAutoConfigurationCustomizerProvider through the OpenTelemetry Java agent.");
         }
+        logger.info(
+                "OtelPlugin initialized from existing GlobalOpenTelemetry tracer provider {}; assuming deterministic "
+                        + "span IDs were installed through AutoConfigurationCustomizerProvider",
+                globalTracerProvider.getClass().getName());
+        return globalTracerProvider;
     }
 
     private static DeterministicIdGenerator createDefaultIdGenerator() {
@@ -569,126 +561,15 @@ public class OtelPlugin implements DurableExecutionPlugin {
         return Files.exists(Path.of(firstPath));
     }
 
-    private static SdkTracerProvider getGlobalSdkTracerProvider(TracerProvider tracerProvider) {
+    private static SdkTracerProvider getSdkTracerProviderForFlush(TracerProvider tracerProvider) {
         if (tracerProvider instanceof SdkTracerProvider sdkTracerProvider) {
             return sdkTracerProvider;
         }
-        return unobfuscateSdkTracerProvider(tracerProvider);
-    }
-
-    private static boolean isJavaAgentTracerProvider(TracerProvider tracerProvider) {
-        return tracerProvider.getClass().getName().startsWith("io.opentelemetry.javaagent.");
-    }
-
-    private static SdkTracerProvider getSdkTracerProviderForFlush(TracerProvider tracerProvider) {
-        try {
-            if (isJavaAgentTracerProvider(tracerProvider)) {
-                return getJavaAgentSdkTracerProvider(tracerProvider);
-            }
-            return getGlobalSdkTracerProvider(tracerProvider);
-        } catch (IllegalStateException e) {
-            logger.warn(
-                    "OtelPlugin could not inspect SDK tracer provider for forceFlush; spans will rely on the global "
-                            + "provider's own flushing.",
-                    e);
-            return null;
-        }
-    }
-
-    private static SdkTracerProvider getJavaAgentSdkTracerProvider(TracerProvider tracerProvider) {
-        Object agentTracerProvider;
-        try {
-            agentTracerProvider = getField(tracerProvider, "agentTracerProvider", Object.class);
-        } catch (IllegalStateException e) {
-            logger.warn(
-                    "OtelPlugin could not inspect Java agent tracer provider {}; using the global provider directly.",
-                    tracerProvider.getClass().getName(),
-                    e);
-            return null;
-        }
-
-        if (agentTracerProvider instanceof SdkTracerProvider sdkTracerProvider) {
-            return sdkTracerProvider;
-        }
-        if (agentTracerProvider instanceof TracerProvider nestedTracerProvider) {
-            try {
-                return unobfuscateSdkTracerProvider(nestedTracerProvider);
-            } catch (IllegalStateException e) {
-                logger.warn(
-                        "OtelPlugin could not inspect nested Java agent SDK tracer provider {}; using the global "
-                                + "provider directly.",
-                        nestedTracerProvider.getClass().getName(),
-                        e);
-                return null;
-            }
-        }
         logger.info(
-                "OtelPlugin could not inspect Java agent SDK tracer provider because field agentTracerProvider has "
-                        + "type {}; using the global provider directly.",
-                agentTracerProvider != null ? agentTracerProvider.getClass().getName() : "null");
+                "OtelPlugin forceFlush is not available because GlobalOpenTelemetry provider {} is not an "
+                        + "SdkTracerProvider visible to the application class loader; spans will rely on the "
+                        + "provider's own flushing.",
+                tracerProvider.getClass().getName());
         return null;
-    }
-
-    private static void logJavaAgentInitialization(
-            TracerProvider globalTracerProvider, SdkTracerProvider sdkTracerProvider, IllegalStateException cause) {
-        if (sdkTracerProvider == null) {
-            logger.info(
-                    "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}, but the "
-                            + "agent SDK provider is not visible to the application class loader. Assuming "
-                            + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider. "
-                            + "Cause: {}",
-                    globalTracerProvider.getClass().getName(),
-                    cause.getMessage());
-            return;
-        }
-        logger.info(
-                "OtelPlugin initialized from existing GlobalOpenTelemetry Java agent tracer provider {}; assuming "
-                        + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider. Cause: {}",
-                globalTracerProvider.getClass().getName(),
-                cause.getMessage());
-    }
-
-    private static SdkTracerProvider unobfuscateSdkTracerProvider(TracerProvider tracerProvider) {
-        var providerClassName = tracerProvider.getClass().getName();
-        try {
-            var unobfuscate = tracerProvider.getClass().getDeclaredMethod("unobfuscate");
-            unobfuscate.setAccessible(true);
-            var sdkTracerProvider = unobfuscate.invoke(tracerProvider);
-            if (sdkTracerProvider instanceof SdkTracerProvider result) {
-                return result;
-            }
-            throw new IllegalStateException(
-                    "GlobalOpenTelemetry provider " + providerClassName + " is not backed by an SdkTracerProvider");
-        } catch (NoSuchMethodException e) {
-            throw new IllegalStateException(
-                    "GlobalOpenTelemetry provider " + providerClassName + " does not expose unobfuscate(); "
-                            + "ADOT Java instrumentation may not have initialized an SDK provider.",
-                    e);
-        } catch (IllegalAccessException | InvocationTargetException e) {
-            throw new IllegalStateException(
-                    "Unable to invoke unobfuscate() on GlobalOpenTelemetry provider " + providerClassName, e);
-        }
-    }
-
-    private static <T> T getField(Object target, String fieldName, Class<T> fieldType) {
-        try {
-            var field = findField(target.getClass(), fieldName);
-            field.setAccessible(true);
-            return fieldType.cast(field.get(target));
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new IllegalStateException("Unable to copy OpenTelemetry SDK field: " + fieldName, e);
-        }
-    }
-
-    private static Field findField(Class<?> type, String fieldName) throws NoSuchFieldException {
-        var current = type;
-        while (current != null) {
-            try {
-                return current.getDeclaredField(fieldName);
-            } catch (NoSuchFieldException e) {
-                current = current.getSuperclass();
-            }
-        }
-        throw new NoSuchFieldException(fieldName);
     }
 }

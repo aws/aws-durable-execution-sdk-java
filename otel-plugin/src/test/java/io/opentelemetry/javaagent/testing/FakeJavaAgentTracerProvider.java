@@ -8,16 +8,10 @@ import io.opentelemetry.api.trace.TracerProvider;
 
 public final class FakeJavaAgentTracerProvider implements TracerProvider {
 
-    private final Object agentTracerProvider;
     private final TracerProvider delegate;
 
     public FakeJavaAgentTracerProvider(TracerProvider agentTracerProvider) {
-        this(agentTracerProvider, agentTracerProvider);
-    }
-
-    public FakeJavaAgentTracerProvider(Object agentTracerProvider, TracerProvider delegate) {
-        this.agentTracerProvider = agentTracerProvider;
-        this.delegate = delegate;
+        this.delegate = agentTracerProvider;
     }
 
     @Override

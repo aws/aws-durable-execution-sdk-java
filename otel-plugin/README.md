@@ -10,7 +10,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
 - **Log Correlation**: Injects `traceId`, `spanId`, and `traceSampled` into SLF4J MDC for end-to-end observability
-- **Self-Contained Setup**: `new OtelPlugin()` can export to the ADOT collector without handler-side OpenTelemetry initialization
+- **ADOT Java Agent Setup**: `new OtelPlugin()` uses the ADOT Java agent global OpenTelemetry provider without handler-side initialization
 
 ## Installation
 
@@ -22,7 +22,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 </dependency>
 ```
 
-You also need the OpenTelemetry SDK and an exporter:
+If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK and an exporter:
 
 ```xml
 <dependency>
@@ -32,10 +32,13 @@ You also need the OpenTelemetry SDK and an exporter:
 </dependency>
 <dependency>
     <groupId>io.opentelemetry</groupId>
-    <artifactId>opentelemetry-exporter-otlp</artifactId>
+    <artifactId>opentelemetry-exporter-logging</artifactId>
     <version>1.63.0</version>
 </dependency>
 ```
+
+For `new OtelPlugin()` on Lambda, use the ADOT Java agent setup below instead of initializing an exporter in your
+handler.
 
 ## Quick Start using X-Ray/CloudWatch Tracing
 
@@ -208,7 +211,7 @@ These appear automatically in structured log output (Log4j2 JSON, Logback JSON) 
 ### Constructor Options
 
 ```java
-// Default: X-Ray context extraction, MDC enabled, default OTLP export
+// Default: X-Ray context extraction, MDC enabled, ADOT Java agent global provider
 new OtelPlugin();
 
 // Custom tracer provider pipeline
@@ -223,7 +226,7 @@ new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Copies global SDK provider when possible, or uses the ADOT Java agent provider configured by the plugin SPI |
+| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Not used by `new OtelPlugin()`; the default constructor uses the ADOT Java agent provider configured by the plugin SPI |
 | `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
 | `enableMdc` | If true, injects `traceId`/`spanId`/`traceSampled` into SLF4J MDC | `true` |
 

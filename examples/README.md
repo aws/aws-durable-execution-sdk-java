@@ -49,7 +49,7 @@ The SAM template configures:
 - CloudWatch log groups for Lambda functions with 7 days of retention
 - IAM permissions for `lambda:CheckpointDurableExecutions` and `lambda:GetDurableExecutionState`
 - ADOT tracing examples with active X-Ray tracing and the ADOT Lambda layer
-- The default-constructor OTel example with `AWS_LAMBDA_EXEC_WRAPPER` and `OTEL_JAVAAGENT_EXTENSIONS` so the OTel plugin SPI is loaded by the Java agent
+- OTel examples that use `new OtelPlugin()` with `AWS_LAMBDA_EXEC_WRAPPER` and `OTEL_JAVAAGENT_EXTENSIONS` so the OTel plugin SPI is loaded by the Java agent
 
 `template.yaml` is generated from the Java example handlers and is intentionally not checked in. Re-run `python3 generate-template.py` after adding or removing a deployable example handler.
 
