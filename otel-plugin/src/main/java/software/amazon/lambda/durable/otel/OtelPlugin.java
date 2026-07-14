@@ -500,9 +500,11 @@ public class OtelPlugin implements DurableExecutionPlugin {
     private static SdkTracerProviderBuilder getDefaultTracerProviderBuilder() {
         var globalBuilder = copyGlobalTracerProviderBuilder();
         if (globalBuilder != null) {
+            logger.info("OtelPlugin initialized from existing GlobalOpenTelemetry SDK tracer provider");
             return globalBuilder;
         }
 
+        logger.info("OtelPlugin initialized with a new default OTLP tracer provider");
         return SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(createDefaultOtlpExporter()));
     }
 
