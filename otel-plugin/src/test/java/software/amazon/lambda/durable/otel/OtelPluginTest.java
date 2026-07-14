@@ -11,6 +11,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -40,6 +41,7 @@ class OtelPluginTest {
     @AfterEach
     void tearDown() {
         GlobalOpenTelemetry.resetForTest();
+        OtlpGrpcSpanExporter.reset();
     }
 
     @Test
@@ -66,6 +68,26 @@ class OtelPluginTest {
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
         var traceId = spans.get(0).getTraceId();
         assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(traceId)));
+    }
+
+    @Test
+    void defaultConstructor_usesDefaultOtlpExporter_whenGlobalProviderIsNotSdk() {
+        GlobalOpenTelemetry.resetForTest();
+        OtlpGrpcSpanExporter.reset();
+
+        var defaultPlugin = new OtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        defaultPlugin.onOperationStart(
+                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = OtlpGrpcSpanExporter.getFinishedSpanItems();
+        assertEquals(2, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("invocation")));
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
     }
 
     @Test

@@ -23,10 +23,13 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.SpanLimits;
 import io.opentelemetry.sdk.trace.SpanProcessor;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.semconv.ServiceAttributes;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -69,8 +72,8 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
  * </ul>
  *
- * <p>When using {@link #OtelPlugin()}, initialize {@code GlobalOpenTelemetry} with an SDK provider and OTLP exporter
- * before creating the plugin.
+ * <p>When using {@link #OtelPlugin()}, the plugin copies a global SDK provider when one exists; otherwise it creates a
+ * default OTLP exporter from the application classpath.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
@@ -123,6 +126,13 @@ public class OtelPlugin implements DurableExecutionPlugin {
         this(tracerProviderBuilder, new XRayContextExtractor(), true);
     }
 
+    /**
+     * Creates an OTel plugin with default settings: X-Ray context extraction, MDC enabled, and default OTLP export.
+     *
+     * <p>If {@code GlobalOpenTelemetry} is backed by the SDK, the plugin copies that provider's export pipeline.
+     * Otherwise, the plugin creates {@code OtlpGrpcSpanExporter.getDefault()} from the application classpath, which
+     * sends to the ADOT collector layer's default OTLP endpoint.
+     */
     public OtelPlugin() {
         this(getDefaultTracerProviderBuilder());
     }
@@ -488,6 +498,24 @@ public class OtelPlugin implements DurableExecutionPlugin {
     }
 
     private static SdkTracerProviderBuilder getDefaultTracerProviderBuilder() {
+        var globalBuilder = copyGlobalTracerProviderBuilder();
+        if (globalBuilder != null) {
+            return globalBuilder;
+        }
+
+        return SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(createDefaultOtlpExporter()));
+    }
+
+    private static SdkTracerProviderBuilder copyGlobalTracerProviderBuilder() {
+        try {
+            return getGlobalTracerProviderBuilder();
+        } catch (IllegalStateException e) {
+            logger.debug("GlobalOpenTelemetry is not backed by an SDK tracer provider; using default OTLP exporter", e);
+            return null;
+        }
+    }
+
+    private static SdkTracerProviderBuilder getGlobalTracerProviderBuilder() {
         var sdkTracerProvider = getGlobalSdkTracerProvider();
         var sharedState = getField(sdkTracerProvider, "sharedState", Object.class);
 
@@ -497,6 +525,33 @@ public class OtelPlugin implements DurableExecutionPlugin {
                 .setSpanLimits(getSpanLimitsSupplier(sharedState))
                 .setSampler(getField(sharedState, "sampler", Sampler.class))
                 .addSpanProcessor(getField(sharedState, "activeSpanProcessor", SpanProcessor.class));
+    }
+
+    private static SpanExporter createDefaultOtlpExporter() {
+        try {
+            var exporterClass = Class.forName("io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter");
+            var getDefault = exporterClass.getMethod("getDefault");
+            return asSpanExporter(getDefault);
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException(
+                    "OtelPlugin() requires either GlobalOpenTelemetry backed by the OpenTelemetry SDK or "
+                            + "opentelemetry-exporter-otlp on the application classpath.",
+                    e);
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException("Unable to create default OTLP exporter", e);
+        }
+    }
+
+    private static SpanExporter asSpanExporter(Method getDefault) {
+        try {
+            var exporter = getDefault.invoke(null);
+            if (exporter instanceof SpanExporter spanExporter) {
+                return spanExporter;
+            }
+            throw new IllegalStateException("Default OTLP exporter is not an OpenTelemetry SpanExporter");
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new IllegalStateException("Unable to create default OTLP exporter", e);
+        }
     }
 
     private static SdkTracerProvider getGlobalSdkTracerProvider() {

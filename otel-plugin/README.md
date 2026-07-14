@@ -10,7 +10,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
 - **Log Correlation**: Injects `traceId`, `spanId`, and `traceSampled` into SLF4J MDC for end-to-end observability
-- **Self-Contained Setup**: No manual TracerProvider configuration required beyond the exporter
+- **Self-Contained Setup**: `new OtelPlugin()` can export to the ADOT collector without handler-side OpenTelemetry initialization
 
 ## Installation
 
@@ -46,7 +46,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. Configure an OpenTelemetry SDK provider with an OTLP exporter; `OtelPlugin()` copies that provider's export pipeline from `GlobalOpenTelemetry`.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `OtelPlugin()` uses a global SDK provider when one exists; otherwise it creates the default OTLP gRPC exporter and sends spans to the ADOT collector layer.
 
 The layer ARN follows the format:
 
@@ -100,9 +100,6 @@ MyFunction:
 ### 3. In Your Lambda Handler
 
 ```java
-import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
-import io.opentelemetry.sdk.trace.SdkTracerProvider;
-import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
@@ -112,13 +109,7 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        var otlpExporter = OtlpGrpcSpanExporter.getDefault();
-
-        var otelPlugin = new OtelPlugin(
-                SdkTracerProvider.builder()
-                        .addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
-
-        return DurableConfig.builder().withPlugins(otelPlugin).build();
+        return DurableConfig.builder().withPlugins(new OtelPlugin()).build();
     }
 
     @Override
@@ -210,7 +201,10 @@ These appear automatically in structured log output (Log4j2 JSON, Logback JSON) 
 ### Constructor Options
 
 ```java
-// Default: X-Ray context extraction, MDC enabled
+// Default: X-Ray context extraction, MDC enabled, default OTLP export
+new OtelPlugin();
+
+// Custom tracer provider pipeline
 new OtelPlugin(tracerProviderBuilder);
 
 // Custom context extractor, MDC enabled
@@ -222,7 +216,7 @@ new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Required |
+| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Copies global SDK provider when present, otherwise uses default OTLP exporter |
 | `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
 | `enableMdc` | If true, injects `traceId`/`spanId`/`traceSampled` into SLF4J MDC | `true` |
 
@@ -247,9 +241,9 @@ After deploying your function with the plugin configured:
 | Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
-| Plugin spans missing but Lambda/runtime spans appear | `GlobalOpenTelemetry` was not initialized with an SDK provider and OTLP exporter, or the exporter cannot reach the ADOT collector |
+| Plugin spans missing but Lambda/runtime spans appear | `opentelemetry-exporter-otlp` is missing from the application, or the exporter cannot reach the ADOT collector |
 
-> **Note on ADOT wrapper:** Do not set `AWS_LAMBDA_EXEC_WRAPPER` for these examples. The plugin owns a provider with a deterministic durable ID generator and exports through the SDK provider configured by your application.
+> **Note on ADOT wrapper:** Do not set `AWS_LAMBDA_EXEC_WRAPPER` for these examples. The plugin owns a provider with a deterministic durable ID generator and exports through the default OTLP exporter when no global SDK provider exists.
 
 ## Local Development
 

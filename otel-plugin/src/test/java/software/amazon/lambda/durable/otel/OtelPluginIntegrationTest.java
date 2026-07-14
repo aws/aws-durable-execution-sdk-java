@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -50,6 +51,7 @@ class OtelPluginIntegrationTest {
     @AfterEach
     void tearDown() {
         GlobalOpenTelemetry.resetForTest();
+        OtlpGrpcSpanExporter.reset();
     }
 
     @Test
@@ -102,6 +104,28 @@ class OtelPluginIntegrationTest {
 
         var traceId = spans.get(0).getTraceId();
         assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(traceId)));
+    }
+
+    @Test
+    void defaultConstructor_usesDefaultOtlpExporter_whenGlobalProviderIsNotSdk() {
+        GlobalOpenTelemetry.resetForTest();
+        OtlpGrpcSpanExporter.reset();
+
+        var defaultConfig =
+                DurableConfig.builder().withPlugins(new OtelPlugin()).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> ctx.step("default-otlp-step", String.class, stepCtx -> "Hello " + input),
+                defaultConfig);
+
+        var result = runner.runUntilComplete("World");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var spans = OtlpGrpcSpanExporter.getFinishedSpanItems();
+        assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
+        assertSpanExists(spans, "invocation");
+        assertSpanExists(spans, "default-otlp-step");
+        assertSpanExists(spans, "default-otlp-step attempt 1");
     }
 
     @Test

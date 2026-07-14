@@ -96,7 +96,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [CustomShouldCompleteMapExample](src/main/java/software/amazon/lambda/durable/examples/map/CustomShouldCompleteMapExample.java) | Custom map completion with `shouldComplete` decisions |
 | [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
 | [OtelExample](src/main/java/software/amazon/lambda/durable/examples/general/OtelExample.java) | OpenTelemetry instrumentation with logging span export |
-| [OtelXRayDefaultConstructorExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayDefaultConstructorExample.java) | Export spans to X-Ray with a global SDK provider and `new OtelPlugin()` |
+| [OtelXRayDefaultConstructorExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayDefaultConstructorExample.java) | Export spans to X-Ray with `new OtelPlugin()` and no handler-side OpenTelemetry initialization |
 | [OtelXRayStepExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayStepExample.java) | Export step spans to X-Ray through the ADOT Lambda Layer |
 | [OtelXRayWaitExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayWaitExample.java) | Trace a step-wait-step workflow across Lambda invocations |
 | [OtelXRayMapExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayMapExample.java) | Trace concurrent map operations and item steps in X-Ray |
