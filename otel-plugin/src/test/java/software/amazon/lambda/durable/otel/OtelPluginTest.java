@@ -740,6 +740,30 @@ class OtelPluginTest {
     }
 
     @Test
+    void operationEnd_withoutMatchingStart_usesOperationStartTimestamp() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        var operationStart = Instant.parse("2026-01-15T08:30:00Z");
+        var operationEnd = Instant.parse("2026-01-15T09:00:00Z");
+
+        // onOperationEnd without a prior onOperationStart — continuation span
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-wait-1", "my-wait", "WAIT", "Wait", null, operationStart, operationEnd, "SUCCEEDED", false, null));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var continuationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("wait"))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(
+                operationStart.toEpochMilli(),
+                continuationSpan.getStartEpochNanos() / 1_000_000,
+                "Continuation span should use the operation's startTimestamp");
+    }
+
+    @Test
     void operationEnd_withoutMatchingStart_withError_setsErrorStatus() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
 

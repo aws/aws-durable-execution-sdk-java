@@ -342,6 +342,10 @@ public class OtelPlugin implements DurableExecutionPlugin {
                     .setAttribute(DURABLE_OPERATION_ID, info.id())
                     .setAttribute(DURABLE_OPERATION_TYPE, info.type());
 
+            if (info.startTimestamp() != null) {
+                spanBuilder.setStartTimestamp(info.startTimestamp());
+            }
+
             if (info.name() != null) {
                 spanBuilder.setAttribute(DURABLE_OPERATION_NAME, info.name());
             }
