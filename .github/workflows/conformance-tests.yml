@@ -10,6 +10,8 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "sdk/**"
+      - "pom.xml"
       - "conformance-tests/**"
       - ".github/workflows/conformance-tests.yml"
   workflow_dispatch:
