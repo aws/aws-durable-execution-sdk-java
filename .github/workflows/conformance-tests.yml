@@ -100,13 +100,19 @@ jobs:
             --template template_${{ matrix.suite }}.yaml \
             --role-arn "$ROLE_ARN"
 
+      - name: Compute stack-safe suite slug
+        run: |
+          # CloudFormation stack names allow only [a-zA-Z][-a-zA-Z0-9]*;
+          # suite names like wait_for_condition contain underscores.
+          echo "SUITE_SLUG=$(echo '${{ matrix.suite }}' | tr '_' '-')" >> "$GITHUB_ENV"
+
       - name: Run conformance suite
         run: |
           python -m aws_durable_execution_conformance_tests.app \
             --template template_${{ matrix.suite }}.yaml \
             --language java \
             --suite ${{ matrix.suite }} \
-            --name conformance-java-${{ matrix.suite }}-${{ github.run_id }} \
+            --name conformance-java-${SUITE_SLUG}-${{ github.run_id }} \
             --region ${{ env.AWS_REGION }} \
             --history-dir history-${{ matrix.suite }} \
             --report console junit \
