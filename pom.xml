@@ -44,6 +44,7 @@
         <module>sdk-integration-tests</module>
         <module>otel-plugin</module>
         <module>examples</module>
+        <module>conformance-tests</module>
         <module>coverage-report</module>
     </modules>
 

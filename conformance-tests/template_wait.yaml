@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Durable Execution Conformance Test Examples - Java (Wait)
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  JavaVersion:
+    Type: String
+    Default: 'java21'
+    Description: Java runtime version
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime:
+      Ref: JavaVersion
+    Architectures:
+      - Ref: Architecture
+
+Resources:
+  DurableFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: DurableExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:CheckpointDurableExecution
+            - lambda:GetDurableExecutionState
+            Resource: '*'
+
+  WaitBasic:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["2-1"]
+    Properties:
+      CodeUri: .
+      Handler: wait.WaitBasic
+      Description: Wait basic
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitWithName:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["2-2"]
+    Properties:
+      CodeUri: .
+      Handler: wait.WaitWithName
+      Description: Wait with explicit name parameter
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitMultipleSequential:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["2-3"]
+    Properties:
+      CodeUri: .
+      Handler: wait.WaitMultipleSequential
+      Description: Multiple sequential waits
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitDurationUnits:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["2-4"]
+    Properties:
+      CodeUri: .
+      Handler: wait.WaitDurationUnits
+      Description: Wait with different duration units (minutes)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 3700
+
+  WaitLongDuration:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["2-5"]
+    Properties:
+      CodeUri: .
+      Handler: wait.WaitLongDuration
+      Description: Wait with long duration (1 hour)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 7200
