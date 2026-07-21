@@ -54,8 +54,10 @@ This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://
 The layer ARN follows the format:
 
 ```
-arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15
+arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:16
 ```
+
+> **Note:** This layer is regional — the account ID and version vary by region. Use the ARN for your deployment region; find the current per-region ARN in the [ADOT Java instrumentation releases](https://github.com/aws-observability/aws-otel-java-instrumentation/releases/latest).
 
 **CloudFormation / SAM:**
 
@@ -65,7 +67,7 @@ MyFunction:
   Properties:
     Tracing: Active
     Layers:
-      - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15
+      - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:16
     Environment:
       Variables:
         AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
@@ -77,7 +79,7 @@ MyFunction:
 ```bash
 aws lambda update-function-configuration \
   --function-name your-function-name \
-  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:15" \
+  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:16" \
   --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument,OTEL_JAVAAGENT_EXTENSIONS=/var/task/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar}"
 ```
 

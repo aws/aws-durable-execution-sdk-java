@@ -32,14 +32,14 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *
  * <pre>
  * Trace (single trace ID across both invocations)
- * ├── durable.invocation (invocation 1)
- * │   ├── durable.step:before-wait
- * │   │   └── durable.step:before-wait [attempt 1]
- * │   └── durable.wait:pause (ended as PENDING)
- * └── durable.invocation (invocation 2)
- *     ├── durable.wait:pause (completed)
- *     └── durable.step:after-wait
- *         └── durable.step:after-wait [attempt 1]
+ * ├── invocation (invocation 1)
+ * │   ├── before-wait
+ * │   │   └── before-wait attempt 1
+ * │   └── pause (ended as PENDING)
+ * └── invocation (invocation 2)
+ *     ├── pause (completed)
+ *     └── after-wait
+ *         └── after-wait attempt 1
  * </pre>
  */
 @ExampleTemplate(tracing = true, javaAgent = true)

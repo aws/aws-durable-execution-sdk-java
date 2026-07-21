@@ -139,7 +139,7 @@ def emit_function(lines: list[str], example: ExampleFunction, java_agent_extensi
             [
                 "      Tracing: Active",
                 "      Layers:",
-                "        - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:15",
+                "        - !Ref AdotLayerArn",
             ]
         )
     if example.java_agent:
@@ -201,6 +201,14 @@ def render_template(examples: list[ExampleFunction]) -> str:
         "  RoleArn:",
         "    Type: String",
         "    Description: IAM Role ARN for Lambda function execution",
+        "  AdotLayerArn:",
+        "    Type: String",
+        "    Default: arn:aws:lambda:us-west-2:615299751070:layer:AWSOpenTelemetryDistroJava:16",
+        "    Description: >-",
+        "      ARN of the ADOT (AWS Distro for OpenTelemetry) Lambda layer used by the tracing examples.",
+        "      The layer is regional: its account ID and version vary by region, so override this per",
+        "      deployment region. The default targets us-west-2 (the region used by e2e tests); CI",
+        "      resolves the latest ARN for its region.",
         "",
         "Conditions:",
         "  IsJava21OrLater:",

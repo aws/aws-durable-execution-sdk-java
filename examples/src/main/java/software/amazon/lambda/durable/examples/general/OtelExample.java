@@ -27,11 +27,11 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  * <p>Expected trace structure:
  *
  * <pre>
- * durable.invocation
- * ├── durable.step:create-greeting [attempt 1]
- * ├── durable.step:create-greeting (operation, backfilled)
- * ├── durable.step:transform [attempt 1]
- * └── durable.step:transform (operation, backfilled)
+ * invocation
+ * ├── create-greeting
+ * │   └── create-greeting attempt 1
+ * └── transform
+ *     └── transform attempt 1
  * </pre>
  */
 public class OtelExample extends DurableHandler<GreetingRequest, String> {

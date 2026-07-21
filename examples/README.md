@@ -55,6 +55,19 @@ The SAM template configures:
 
 The examples package copies the OTel plugin jar into `lib/` so the ADOT Java agent can load it as an extension for examples that enable `OTEL_JAVAAGENT_EXTENSIONS`.
 
+### ADOT layer region
+
+The ADOT layer is regional — its account ID and version vary by region — so the template exposes it as the `AdotLayerArn` parameter. The default targets `us-west-2` (the region used by the e2e tests), and the e2e workflow resolves the current ARN for its region automatically.
+
+If you deploy the tracing examples to any other region, override the parameter with that region's ARN, otherwise the deploy fails CloudFormation's `ResourceExistenceCheck` on a cross-region layer:
+
+```bash
+sam deploy --parameter-overrides \
+  AdotLayerArn=arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroJava:16
+```
+
+Find the current ARN for your region in the [ADOT Java instrumentation releases](https://github.com/aws-observability/aws-otel-java-instrumentation/releases/latest). You can also persist the override in your (git-ignored) `samconfig.toml` under `parameter_overrides`.
+
 ## Invoke Deployed Functions
 
 ```bash
