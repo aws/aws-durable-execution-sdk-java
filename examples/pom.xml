@@ -47,7 +47,7 @@
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-exporter-logging</artifactId>
-            <version>1.63.0</version>
+            <version>1.64.0</version>
         </dependency>
 
         <!-- OTLP gRPC exporter (sends spans to ADOT collector layer at localhost:4317) -->
