@@ -1,0 +1,486 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Durable Execution Conformance Test Examples - Java (Invoke)
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  JavaVersion:
+    Type: String
+    Default: 'java21'
+    Description: Java runtime version
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime:
+      Ref: JavaVersion
+    Architectures:
+      - Ref: Architecture
+
+Resources:
+  DurableFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: DurableExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:CheckpointDurableExecution
+            - lambda:GetDurableExecutionState
+            - lambda:InvokeFunction
+            Resource: '*'
+
+  # Target Functions
+
+  TargetEcho:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: invoke.TargetEcho
+      Description: Echo target function — returns whatever it receives
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  TargetEchoTenant:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: invoke.TargetEcho
+      Description: Echo target function with tenancy enabled
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      TenancyConfig:
+        TenantIsolationMode: PER_TENANT
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  TargetError:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: invoke.TargetError
+      Description: Target function that throws an error
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  TargetSlow:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: invoke.TargetSlow
+      Description: Target function that exceeds timeout
+      Timeout: 120
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 5
+
+  TargetNonDurable:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: invoke.TargetNonDurable::handleRequest
+      Description: Non-durable target function
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+
+  # Invoke Test Handlers
+
+  InvokeBasic:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-1"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeBasic
+      Description: Invoke basic (target function succeeds)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeWithName:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-2"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeWithName
+      Description: Invoke with explicit name parameter
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeComplexObject:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-3"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeComplexObject
+      Description: Invoke returning complex object
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeNullResult:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-4"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeNullResult
+      Description: Invoke returning null
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeTargetFails:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-5"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeTargetFails
+      Description: Invoke target fails (execution fails)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetError.Arn}:$LATEST"
+
+  InvokeTargetFailsCaught:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-6"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeTargetFailsCaught
+      Description: Invoke target fails, caught
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetError.Arn}:$LATEST"
+
+  InvokeTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: [] # ["5-17"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeTimeout
+      Description: Invoke timeout (target takes too long)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetSlow.Arn}:$LATEST"
+
+  InvokeTimeoutCaught:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: [] # ["5-18"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeTimeoutCaught
+      Description: Invoke timeout, caught
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetSlow.Arn}:$LATEST"
+
+  InvokeReplaySkips:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-9"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeReplaySkips
+      Description: Invoke replay skips (cached result)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeReplayRethrows:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-10"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeReplayRethrows
+      Description: Invoke replay re-throws (cached error)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetError.Arn}:$LATEST"
+
+  StepThenInvoke:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-11"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.StepThenInvoke
+      Description: Step then invoke (sequential)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeThenStep:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-12"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeThenStep
+      Description: Invoke then step
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeInChildContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-13"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeInChildContext
+      Description: Invoke inside child context
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeMultipleSequential:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-14"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeMultipleSequential
+      Description: Multiple sequential invokes
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME_1:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+          TARGET_FUNCTION_NAME_2:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeCustomPayloadSerdes:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-15"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeCustomPayloadSerdes
+      Description: Invoke with custom payload serdes
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeCustomResultSerdes:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-16"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeCustomResultSerdes
+      Description: Invoke with custom result serdes
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeLargePayload:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-7"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeLargePayload
+      Description: Invoke large payload
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  InvokeWithTenantId:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["5-8"]
+    Properties:
+      CodeUri: .
+      Handler: invoke.InvokeWithTenantId
+      Description: Invoke with tenantId
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEchoTenant.Arn}:$LATEST"

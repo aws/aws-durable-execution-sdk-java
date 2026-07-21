@@ -1,0 +1,365 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Durable Execution Conformance Test Examples - Java (Child)
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  JavaVersion:
+    Type: String
+    Default: 'java21'
+    Description: Java runtime version
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime:
+      Ref: JavaVersion
+    Architectures:
+      - Ref: Architecture
+
+Resources:
+  DurableFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: DurableExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:CheckpointDurableExecution
+            - lambda:GetDurableExecutionState
+            Resource: '*'
+      - PolicyName: DynamoDBPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            Resource:
+              Fn::GetAtt:
+              - JavaChildAttemptsTable
+              - Arn
+
+  JavaChildAttemptsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: executionId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: executionId
+        KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  ChildBasic:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-1"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildBasic
+      Description: Child context basic (single step inside)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildWithName:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-2"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildWithName
+      Description: Child context with name
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildMultipleSteps:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-3"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildMultipleSteps
+      Description: Child context with multiple sequential steps
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildWithError:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-4"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildWithError
+      Description: Child context error (step fails, execution fails)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildErrorCaught:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-5"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildErrorCaught
+      Description: Child context error caught (try/catch, execution succeeds)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildNested:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-6"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildNested
+      Description: Nested child contexts
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildWithRetry:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-7"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildWithRetry
+      Description: Child context with step retry (fails then succeeds)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildRetryExhaustion:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-8"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildRetryExhaustion
+      Description: Child context with step retry exhaustion (child fails)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildReplay:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-9"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildReplay
+      Description: Child context replay (returns cached result)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildStepAndWait:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-10"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildStepAndWait
+      Description: Child context with step and wait inside
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildLargePayload:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-11"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildLargePayload
+      Description: Child context large payload (ReplayChildren mode)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildInterrupted:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-12"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildInterrupted
+      Description: Child context interrupted and re-executed
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      Environment:
+        Variables:
+          ATTEMPTS_TABLE_NAME:
+            Ref: JavaChildAttemptsTable
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildWaitReplay:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-13"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildWaitReplay
+      Description: Child context with wait inside - verify replay
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildCustomSerdes:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-14"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildCustomSerdes
+      Description: Child context with custom serdes (succeed)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildErrorNoStep:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-15"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildErrorNoStep
+      Description: Child context error without step (error thrown directly in child body)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildNullResult:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-16"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildNullResult
+      Description: Child context returning null
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildPrintOnly:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-17"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildPrintOnly
+      Description: Child context with print only (verify no re-execution on replay)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  ChildStepWaitAfter:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["3-18"]
+    Properties:
+      CodeUri: .
+      Handler: child.ChildStepWaitAfter
+      Description: Child context with step and wait inside, step and wait after
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300

@@ -1,0 +1,289 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Durable Execution Conformance Test Examples - Java (WaitForCallback)
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  JavaVersion:
+    Type: String
+    Default: 'java21'
+    Description: Java runtime version
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime:
+      Ref: JavaVersion
+    Architectures:
+      - Ref: Architecture
+
+Resources:
+  DurableFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: DurableExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:CheckpointDurableExecution
+            - lambda:GetDurableExecutionState
+            Resource: '*'
+
+  WaitForCallbackBasic:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-1"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackBasic
+      Description: Wait-for-callback basic (success via external callback)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackExplicitName:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-2"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackExplicitName
+      Description: Wait-for-callback with explicit static name
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackAnonymous:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-3"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackAnonymous
+      Description: Wait-for-callback with anonymous submitter (no name)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackExternalFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-4"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackExternalFailure
+      Description: Wait-for-callback external failure (uncaught)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-5"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackTimeout
+      Description: Wait-for-callback timeout (no external completion)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackFailureCaught:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-6"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackFailureCaught
+      Description: Wait-for-callback external failure caught (recovers)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackSubmitterRetryExhaustion:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-7"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackSubmitterRetryExhaustion
+      Description: Wait-for-callback submitter retry exhaustion
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackInChildContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-8"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackInChildContext
+      Description: Wait-for-callback inside a child context
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackTwoSequential:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-9"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackTwoSequential
+      Description: Multiple sequential wait-for-callback operations
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackMixedOps:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-10"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackMixedOps
+      Description: Wait-for-callback mixed with wait and step
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackJsonResult:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-11"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackJsonResult
+      Description: Wait-for-callback with structured (JSON) result deserialization
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackHeartbeatTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-12"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackHeartbeatTimeout
+      Description: Wait-for-callback heartbeat timeout (no heartbeat sent)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackHeartbeatThenSuccess:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-13"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackHeartbeatThenSuccess
+      Description: Wait-for-callback with heartbeat then success
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackTimeoutCaught:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-14"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackTimeoutCaught
+      Description: Wait-for-callback timeout caught (recovers)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  WaitForCallbackNullResult:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["7-15"]
+    Properties:
+      CodeUri: .
+      Handler: wait_for_callback.WaitForCallbackNullResult
+      Description: Wait-for-callback success with empty (null) payload
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300

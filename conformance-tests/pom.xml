@@ -37,6 +37,14 @@
             <artifactId>aws-lambda-java-core</artifactId>
         </dependency>
 
+        <!-- DynamoDB: attempt tracking for the interrupted-child test (3-12),
+             where the built-in step attempt cannot survive a crash without a
+             FAIL/RETRY checkpoint -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb</artifactId>
+        </dependency>
+
         <!-- Log4j2 for logging with MDC support -->
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>

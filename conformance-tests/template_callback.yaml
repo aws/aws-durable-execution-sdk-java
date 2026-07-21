@@ -1,0 +1,314 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Durable Execution Conformance Test Examples - Java (Callback)
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    AllowedValues: [x86_64, arm64]
+  JavaVersion:
+    Type: String
+    Default: 'java21'
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime:
+      Ref: JavaVersion
+    Architectures:
+      - Ref: Architecture
+
+Resources:
+  DurableFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DurableExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:CheckpointDurableExecution
+                  - lambda:GetDurableExecutionState
+                  - lambda:SendDurableExecutionCallbackSuccess
+                  - lambda:SendDurableExecutionCallbackFailure
+                  - lambda:SendDurableExecutionCallbackHeartbeat
+                Resource: '*'
+
+  CallbackBasic:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-1"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackBasic
+      Description: Callback basic - anonymous, success
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackWithName:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-2"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackWithName
+      Description: Callback with explicit name
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-3"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackTimeout
+      Description: Callback general timeout
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackHeartbeatTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-4"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackHeartbeatTimeout
+      Description: Callback heartbeat timeout
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackHeartbeatSuccess:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-5"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackHeartbeatSuccess
+      Description: Callback with heartbeat then success
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-6"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackFailure
+      Description: Callback failure
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackStepFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-7"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackStepFailure
+      Description: Callback + Step + failure
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackStepTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-8"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackStepTimeout
+      Description: Callback + Step + timeout
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackWaitSuccess:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-9"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackWaitSuccess
+      Description: Callback + Wait + success
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackWaitFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-10"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackWaitFailure
+      Description: Callback + Wait + failure
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackWaitTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-11"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackWaitTimeout
+      Description: Callback + Wait + timeout
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackReplayWithWait:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-12"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackReplayWithWait
+      Description: Callback success then wait
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackReplayFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-13"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackReplayFailure
+      Description: Callback failure caught then wait
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackReplayTimeout:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-14"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackReplayTimeout
+      Description: Callback timeout caught then wait
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackSerdesHappy:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-15"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackSerdesHappy
+      Description: Custom serdes (Date roundtrip)
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackSerdesNumeric:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-16"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackSerdesNumeric
+      Description: Custom serdes (numeric)
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackTwoSequential:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-17"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackTwoSequential
+      Description: Two callbacks - sequential create and wait
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackTwoParallel:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-18"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackTwoParallel
+      Description: Two callbacks - create both then wait in order
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  CallbackTwoParallelReverse:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["4-19"]
+    Properties:
+      CodeUri: .
+      Handler: callback.CallbackTwoParallelReverse
+      Description: Two callbacks - create both then wait in reverse order
+      Role:
+        Fn::GetAtt: [DurableFunctionRole, Arn]
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
