@@ -52,12 +52,9 @@ Resources:
     TestingMetadata:
       TestDescription: ["9-1"]
       # Declared intentional gaps: reported as NOT_IMPLEMENTED (non-blocking,
-      # reason tracked) instead of UNCOVERED. 9-4 is a known SDK divergence;
-      # the rest are Java SDK API limitations. Attached here because
-      # CloudFormation rejects unknown top-level sections.
+      # reason tracked) instead of UNCOVERED -- Java SDK API limitations.
+      # Attached here because CloudFormation rejects unknown top-level sections.
       NotImplemented:
-      - id: "9-4"
-        reason: "known divergence: empty-items map emits InvocationCompleted without ContextStarted; handler withheld until the SDK behavior is fixed"
       - id: "9-2"
         reason: "items-only form (no name): every Java context.map overload requires a name argument"
       - id: "9-6"
