@@ -17,8 +17,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.head_ref || github.ref_name || github.run_id }}-conformance
-  cancel-in-progress: true
+  # Runs share fixed per-suite stack names, so serialize the whole workflow
+  # (queue, don't cancel) to avoid concurrent CloudFormation updates on the
+  # same stack -- mirrors e2e-tests.yml.
+  group: conformance-tests
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -33,8 +36,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # map is excluded until its handlers land (9-4 divergence + new
-        # uncovered requirements under discussion).
         suite:
           - step
           - wait
@@ -44,6 +45,7 @@ jobs:
           - parallel
           - wait_for_callback
           - wait_for_condition
+          - map
     defaults:
       run:
         working-directory: conformance-tests
@@ -108,11 +110,15 @@ jobs:
 
       - name: Run conformance suite
         run: |
+          # Stable per-suite stack name (no run-id suffix) + --no-cleanup:
+          # each run updates the same stack in place instead of creating and
+          # deleting a fresh one, which is faster and keeps resources warm.
           python -m aws_durable_execution_conformance_tests.app \
             --template template_${{ matrix.suite }}.yaml \
             --language java \
             --suite ${{ matrix.suite }} \
-            --name conformance-java-${SUITE_SLUG}-${{ github.run_id }} \
+            --name conformance-java-${SUITE_SLUG} \
+            --no-cleanup \
             --region ${{ env.AWS_REGION }} \
             --history-dir history-${{ matrix.suite }} \
             --report console junit \
