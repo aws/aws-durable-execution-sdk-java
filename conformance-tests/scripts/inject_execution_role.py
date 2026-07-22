@@ -69,8 +69,15 @@ CfnDumper.add_representer(CfnTag, _represent_cfn_tag)
 
 def inject(template_path: str, role_arn: str) -> int:
     """Rewrite template_path in place; return the number of functions updated."""
+    # CfnLoader extends yaml.SafeLoader (same construction rules as
+    # yaml.safe_load, plus opaque CFN tag wrapping). Instantiate it directly
+    # rather than via yaml.load so the safe-loading intent is explicit.
     with open(template_path, encoding="utf-8") as f:
-        doc = yaml.load(f, Loader=CfnLoader)  # noqa: S506 - CfnLoader extends SafeLoader
+        loader = CfnLoader(f)
+        try:
+            doc = loader.get_single_data()
+        finally:
+            loader.dispose()
 
     resources = doc.get("Resources")
     if not isinstance(resources, dict):
