@@ -11,12 +11,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  approve_external:
-    name: Approve external PR review
+  approve_review:
+    name: Approve AI PR review
     if: >-
-      !github.event.pull_request.draft &&
       github.actor != 'dependabot[bot]' &&
-      github.event.pull_request.author_association != 'MEMBER'
+      (
+        github.event.pull_request.draft ||
+        github.event.pull_request.author_association != 'MEMBER'
+      )
     runs-on: ubuntu-latest
     environment: ai-pr-review
     permissions: {}
@@ -26,14 +28,16 @@ jobs:
 
   claude-review:
     name: Claude review
-    needs: approve_external
+    needs: approve_review
     if: >-
       always() &&
-      !github.event.pull_request.draft &&
       github.actor != 'dependabot[bot]' &&
       (
-        github.event.pull_request.author_association == 'MEMBER' ||
-        needs.approve_external.result == 'success'
+        (
+          !github.event.pull_request.draft &&
+          github.event.pull_request.author_association == 'MEMBER'
+        ) ||
+        needs.approve_review.result == 'success'
       )
     runs-on: ubuntu-latest
     environment: ai-pr-review-runtime
@@ -164,14 +168,16 @@ jobs:
 
   codex-review:
     name: Codex review
-    needs: approve_external
+    needs: approve_review
     if: >-
       always() &&
-      !github.event.pull_request.draft &&
       github.actor != 'dependabot[bot]' &&
       (
-        github.event.pull_request.author_association == 'MEMBER' ||
-        needs.approve_external.result == 'success'
+        (
+          !github.event.pull_request.draft &&
+          github.event.pull_request.author_association == 'MEMBER'
+        ) ||
+        needs.approve_review.result == 'success'
       )
     runs-on: ubuntu-latest
     environment: ai-pr-review-runtime
