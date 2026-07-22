@@ -95,6 +95,22 @@ Resources:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
 
+  MapEmpty:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["9-4"]
+    Properties:
+      CodeUri: .
+      Handler: map.MapEmpty
+      Description: Map with an empty items list
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
   MapFailFast:
     Type: AWS::Serverless::Function
     TestingMetadata:
