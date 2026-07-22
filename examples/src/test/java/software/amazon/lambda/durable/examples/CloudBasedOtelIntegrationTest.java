@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -16,16 +17,20 @@ import org.junit.jupiter.api.condition.EnabledIf;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Event;
+import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.xray.XRayClient;
 import software.amazon.awssdk.services.xray.model.BatchGetTracesRequest;
 import software.amazon.awssdk.services.xray.model.GetTraceSummariesRequest;
 import software.amazon.awssdk.services.xray.model.Segment;
 import software.amazon.awssdk.services.xray.model.TimeRangeType;
+import software.amazon.awssdk.services.xray.model.Trace;
 import software.amazon.awssdk.services.xray.model.TraceSummary;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
+import software.amazon.lambda.durable.testing.TestResult;
 
 /**
  * Integration tests that verify OTel spans exported via ADOT appear correctly in AWS X-Ray.
@@ -33,8 +38,8 @@ import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
  * <p>These tests deploy Lambda functions configured with:
  *
  * <ul>
- *   <li>OpenTelemetry Durable Plugin with OTLP gRPC exporter
- *   <li>ADOT collector layer (OTLP receiver → X-Ray exporter)
+ *   <li>OpenTelemetry Durable Plugin using the ADOT Java agent global provider
+ *   <li>ADOT Java agent layer with the plugin jar loaded through {@code OTEL_JAVAAGENT_EXTENSIONS}
  *   <li>Active X-Ray tracing
  * </ul>
  *
@@ -121,7 +126,7 @@ class CloudBasedOtelIntegrationTest {
         var uniqueInput = "XRay-" + System.currentTimeMillis();
         var result = runner.run(new GreetingRequest(uniqueInput));
 
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus(), "Execution failed: " + result);
+        assertExecutionSucceeded(result);
         assertEquals("HELLO, " + uniqueInput.toUpperCase() + "!", result.getResult());
 
         // 2. Wait for X-Ray ingestion
@@ -190,7 +195,7 @@ class CloudBasedOtelIntegrationTest {
         var uniqueInput = "Wait-" + System.currentTimeMillis();
         var result = runner.run(new GreetingRequest(uniqueInput));
 
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus(), "Execution failed: " + result);
+        assertExecutionSucceeded(result);
         assertTrue(
                 result.getResult().contains("Resumed and completed"),
                 "Expected result to contain 'Resumed and completed', got: " + result.getResult());
@@ -251,7 +256,135 @@ class CloudBasedOtelIntegrationTest {
                         + invocationCount + " invocations in trace " + durableTrace.id());
     }
 
+    @Test
+    void defaultConstructorWithAdotJavaAgent_producesDurableSpansInXRay() throws Exception {
+        var startTime = Instant.now();
+
+        var runner = CloudDurableTestRunner.create(
+                arn("otel-xray-default-constructor-example"), GreetingRequest.class, String.class, lambdaClient);
+        var uniqueInput = "Default-" + System.currentTimeMillis();
+        var execution = runner.startAsync(new GreetingRequest(uniqueInput));
+        var result = execution.pollUntilComplete();
+
+        assertExecutionSucceeded(result);
+        assertEquals("HELLO, " + uniqueInput.toUpperCase() + "!", result.getResult());
+
+        Thread.sleep(XRAY_INGESTION_DELAY.toMillis());
+
+        var traces = queryTracesWithRetry(startTime, Instant.now(), "otel-xray-default-constructor-example");
+        assertFalse(traces.isEmpty(), "Expected at least one trace in X-Ray after execution");
+
+        var allTraces = getFullTraces(traces);
+        var durableTrace = allTraces.stream()
+                .filter(trace ->
+                        trace.segments().stream().anyMatch(seg -> segmentContains(seg, "default-create-greeting")))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(
+                durableTrace,
+                "Expected to find a trace with default-create-greeting segment. Segment names: "
+                        + allTraces.stream()
+                                .flatMap(t -> t.segments().stream())
+                                .map(CloudBasedOtelIntegrationTest::getSegmentName)
+                                .collect(Collectors.joining(", ")));
+
+        var segmentDocuments =
+                durableTrace.segments().stream().map(Segment::document).toList();
+        var allSegmentText = String.join("\n", segmentDocuments);
+
+        assertTrue(allSegmentText.contains("invocation"), "Expected invocation span in trace");
+        assertTrue(
+                allSegmentText.contains("default-create-greeting"), "Expected default-create-greeting span in trace");
+        assertTrue(allSegmentText.contains("default-transform"), "Expected default-transform span in trace");
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────
+
+    private static void assertExecutionSucceeded(TestResult<?> result) {
+        assertTrue(
+                result.isSucceeded() && result.getError().isEmpty(),
+                () -> "Execution failed:\n" + summarizeExecutionHistory(result));
+    }
+
+    private static String summarizeExecutionHistory(TestResult<?> result) {
+        var failureSummary = result.getHistoryEvents().stream()
+                .map(CloudBasedOtelIntegrationTest::formatFailureEvent)
+                .filter(summary -> !summary.isBlank())
+                .collect(Collectors.joining("\n"));
+        if (!failureSummary.isBlank()) {
+            return failureSummary;
+        }
+
+        return result.getError()
+                .map(error -> "Execution error: " + formatError(error))
+                .orElseGet(() -> "Events: "
+                        + result.getHistoryEvents().stream()
+                                .map(event -> event.eventId() + ":" + event.eventType())
+                                .collect(Collectors.joining(", ")));
+    }
+
+    private static String formatFailureEvent(Event event) {
+        if (EventType.INVOCATION_COMPLETED.equals(event.eventType())) {
+            var details = event.invocationCompletedDetails();
+            if (details != null && details.error() != null && details.error().payload() != null) {
+                return formatEventError(event, details.error().payload());
+            }
+        }
+
+        if (EventType.EXECUTION_FAILED.equals(event.eventType())) {
+            var details = event.executionFailedDetails();
+            if (details != null && details.error() != null && details.error().payload() != null) {
+                return formatEventError(event, details.error().payload());
+            }
+        }
+
+        if (EventType.EXECUTION_TIMED_OUT.equals(event.eventType())) {
+            var details = event.executionTimedOutDetails();
+            if (details != null && details.error() != null && details.error().payload() != null) {
+                return formatEventError(event, details.error().payload());
+            }
+        }
+
+        if (EventType.EXECUTION_STOPPED.equals(event.eventType())) {
+            var details = event.executionStoppedDetails();
+            if (details != null && details.error() != null && details.error().payload() != null) {
+                return formatEventError(event, details.error().payload());
+            }
+        }
+
+        return "";
+    }
+
+    private static String formatEventError(Event event, ErrorObject error) {
+        return event.eventType() + " event " + event.eventId() + ": " + formatError(error);
+    }
+
+    private static String formatError(ErrorObject error) {
+        var parts = new ArrayList<String>();
+        if (error.errorType() != null) {
+            parts.add("type=" + error.errorType());
+        }
+        if (error.errorMessage() != null) {
+            parts.add("message=" + error.errorMessage());
+        }
+        if (error.errorData() != null) {
+            parts.add("data=" + error.errorData());
+        }
+        return String.join(", ", parts);
+    }
+
+    private List<Trace> getFullTraces(List<TraceSummary> traces) {
+        var traceIds = traces.stream().map(TraceSummary::id).toList();
+        var allTraces = new ArrayList<Trace>();
+        for (int i = 0; i < traceIds.size(); i += 5) {
+            var batch = traceIds.subList(i, Math.min(i + 5, traceIds.size()));
+            var batchResult = xrayClient.batchGetTraces(
+                    BatchGetTracesRequest.builder().traceIds(batch).build());
+            allTraces.addAll(batchResult.traces());
+        }
+        return allTraces;
+    }
 
     /** Queries X-Ray for traces with retry logic to handle eventual consistency. */
     private List<TraceSummary> queryTracesWithRetry(Instant startTime, Instant endTime, String functionName)

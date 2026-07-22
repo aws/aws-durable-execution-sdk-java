@@ -4,7 +4,12 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.javaagent.testing.FakeJavaAgentTracerProvider;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.SpanData;
@@ -13,6 +18,7 @@ import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -34,6 +40,8 @@ class OtelPluginIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
         var plugin = new OtelPlugin(
@@ -42,6 +50,13 @@ class OtelPluginIntegrationTest {
                 false);
 
         otelConfig = DurableConfig.builder().withPlugins(plugin).build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        GlobalOpenTelemetry.resetForTest();
+        DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
 
     @Test
@@ -65,6 +80,76 @@ class OtelPluginIntegrationTest {
         // All spans share the same trace ID
         var traceId = spans.get(0).getTraceId();
         assertTrue(spans.stream().allMatch(s -> s.getTraceId().equals(traceId)));
+    }
+
+    @Test
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
+        var defaultConfig =
+                DurableConfig.builder().withPlugins(new OtelPlugin()).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> ctx.step("global-step", String.class, stepCtx -> "Hello " + input),
+                defaultConfig);
+
+        var result = runner.runUntilComplete("World");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
+        assertSpanExists(spans, "invocation");
+        assertSpanExists(spans, "global-step");
+        assertSpanExists(spans, "global-step attempt 1");
+
+        var traceId = spans.get(0).getTraceId();
+        assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(traceId)));
+    }
+
+    @Test
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withSeparateAutoConfiguredIdGenerator() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var javaAgentIdGenerator = new DeterministicIdGenerator();
+        var sdkTracerProvider = SdkTracerProvider.builder()
+                .setIdGenerator(javaAgentIdGenerator)
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
+        GlobalOpenTelemetry.set(new OpenTelemetry() {
+            @Override
+            public io.opentelemetry.api.trace.TracerProvider getTracerProvider() {
+                return javaAgentTracerProvider;
+            }
+
+            @Override
+            public ContextPropagators getPropagators() {
+                return ContextPropagators.noop();
+            }
+        });
+
+        var defaultConfig =
+                DurableConfig.builder().withPlugins(new OtelPlugin()).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, ctx) -> ctx.step("javaagent-step", String.class, stepCtx -> "Hello " + input),
+                defaultConfig);
+
+        var result = runner.runUntilComplete("World");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
+        assertSpanExists(spans, "invocation");
+        assertSpanExists(spans, "javaagent-step");
+        assertSpanExists(spans, "javaagent-step attempt 1");
     }
 
     @Test

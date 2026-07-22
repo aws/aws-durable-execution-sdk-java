@@ -48,8 +48,25 @@ The SAM template configures:
 - `DurableConfig` with `ExecutionTimeout` and `RetentionPeriodInDays`
 - CloudWatch log groups for Lambda functions with 7 days of retention
 - IAM permissions for `lambda:CheckpointDurableExecutions` and `lambda:GetDurableExecutionState`
+- ADOT tracing examples with active X-Ray tracing and the ADOT Lambda layer
+- OTel examples that use `new OtelPlugin()` with `AWS_LAMBDA_EXEC_WRAPPER` and `OTEL_JAVAAGENT_EXTENSIONS` so the OTel plugin SPI is loaded by the Java agent
 
 `template.yaml` is generated from the Java example handlers and is intentionally not checked in. Re-run `python3 generate-template.py` after adding or removing a deployable example handler.
+
+The examples package copies the OTel plugin jar into `lib/` so the ADOT Java agent can load it as an extension for examples that enable `OTEL_JAVAAGENT_EXTENSIONS`.
+
+### ADOT layer region
+
+The ADOT layer is regional — its account ID and version vary by region — so the template exposes it as the `AdotLayerArn` parameter. The default targets `us-west-2` (the region used by the e2e tests), and the e2e workflow resolves the current ARN for its region automatically.
+
+If you deploy the tracing examples to any other region, override the parameter with that region's ARN, otherwise the deploy fails CloudFormation's `ResourceExistenceCheck` on a cross-region layer:
+
+```bash
+sam deploy --parameter-overrides \
+  AdotLayerArn=arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroJava:16
+```
+
+Find the current ARN for your region in the [ADOT Java instrumentation releases](https://github.com/aws-observability/aws-otel-java-instrumentation/releases/latest). You can also persist the override in your (git-ignored) `samconfig.toml` under `parameter_overrides`.
 
 ## Invoke Deployed Functions
 
@@ -96,6 +113,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [CustomShouldCompleteMapExample](src/main/java/software/amazon/lambda/durable/examples/map/CustomShouldCompleteMapExample.java) | Custom map completion with `shouldComplete` decisions |
 | [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
 | [OtelExample](src/main/java/software/amazon/lambda/durable/examples/general/OtelExample.java) | OpenTelemetry instrumentation with logging span export |
+| [OtelXRayDefaultConstructorExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayDefaultConstructorExample.java) | Export spans to X-Ray with `new OtelPlugin()` and no handler-side OpenTelemetry initialization |
 | [OtelXRayStepExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayStepExample.java) | Export step spans to X-Ray through the ADOT Lambda Layer |
 | [OtelXRayWaitExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayWaitExample.java) | Trace a step-wait-step workflow across Lambda invocations |
 | [OtelXRayMapExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayMapExample.java) | Trace concurrent map operations and item steps in X-Ray |

@@ -30,6 +30,10 @@ import java.util.concurrent.atomic.AtomicReference;
 public class DeterministicIdGenerator implements IdGenerator {
 
     private static final IdGenerator RANDOM = IdGenerator.random();
+    private static final String PROPERTY_PREFIX = "software.amazon.lambda.durable.otel.";
+    private static final String EXTRACTED_TRACE_ID_PROPERTY = PROPERTY_PREFIX + "extractedTraceId";
+    private static final String DURABLE_EXECUTION_ARN_PROPERTY = PROPERTY_PREFIX + "durableExecutionArn";
+    private static final String PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX = PROPERTY_PREFIX + "pendingSpanOperationId.";
 
     private final AtomicReference<String> extractedTraceId = new AtomicReference<>(null);
     private final AtomicReference<String> arnDerivedTraceId = new AtomicReference<>(null);
@@ -44,6 +48,7 @@ public class DeterministicIdGenerator implements IdGenerator {
      */
     public void setExtractedTraceId(String traceId) {
         this.extractedTraceId.set(traceId);
+        setOrClearProperty(EXTRACTED_TRACE_ID_PROPERTY, traceId);
     }
 
     /**
@@ -54,7 +59,8 @@ public class DeterministicIdGenerator implements IdGenerator {
      */
     public void setDurableExecutionArn(String arn) {
         this.durableExecutionArn.set(arn);
-        this.arnDerivedTraceId.set(generateTraceIdFromArn(arn));
+        this.arnDerivedTraceId.set(arn != null ? generateTraceIdFromArn(arn) : null);
+        setOrClearProperty(DURABLE_EXECUTION_ARN_PROPERTY, arn);
     }
 
     /**
@@ -64,6 +70,7 @@ public class DeterministicIdGenerator implements IdGenerator {
      */
     public void setNextSpanOperationId(String operationId) {
         this.pendingSpanOperationId.set(operationId);
+        setOrClearProperty(pendingSpanOperationIdProperty(), operationId);
     }
 
     /**
@@ -80,11 +87,18 @@ public class DeterministicIdGenerator implements IdGenerator {
     public String generateTraceId() {
         // Priority 1: extracted from X-Ray header (backend propagates same Root across invocations)
         var extracted = extractedTraceId.get();
+        if (extracted == null) {
+            extracted = System.getProperty(EXTRACTED_TRACE_ID_PROPERTY);
+        }
         if (extracted != null) {
             return extracted;
         }
         // Priority 2: deterministic from execution ARN (local tests, non-Lambda)
         var arnDerived = arnDerivedTraceId.get();
+        if (arnDerived == null) {
+            var arn = System.getProperty(DURABLE_EXECUTION_ARN_PROPERTY);
+            arnDerived = arn != null ? generateTraceIdFromArn(arn) : null;
+        }
         if (arnDerived != null) {
             return arnDerived;
         }
@@ -95,8 +109,12 @@ public class DeterministicIdGenerator implements IdGenerator {
     @Override
     public String generateSpanId() {
         var operationId = pendingSpanOperationId.get();
+        if (operationId == null) {
+            operationId = System.getProperty(pendingSpanOperationIdProperty());
+        }
         if (operationId != null) {
             pendingSpanOperationId.remove();
+            System.clearProperty(pendingSpanOperationIdProperty());
             return generateSpanIdFromOperation(operationId);
         }
         return RANDOM.generateSpanId();
@@ -113,9 +131,34 @@ public class DeterministicIdGenerator implements IdGenerator {
      */
     private String generateSpanIdFromOperation(String operationId) {
         var arn = durableExecutionArn.get();
+        if (arn == null) {
+            arn = System.getProperty(DURABLE_EXECUTION_ARN_PROPERTY);
+        }
         var input = arn != null ? arn + ":" + operationId : operationId;
         var hash = sha256(input);
         return hash.substring(0, 16);
+    }
+
+    static void clearSharedStateForTest() {
+        System.clearProperty(EXTRACTED_TRACE_ID_PROPERTY);
+        System.clearProperty(DURABLE_EXECUTION_ARN_PROPERTY);
+        System.getProperties().stringPropertyNames().stream()
+                .filter(name -> name.startsWith(PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX))
+                .toList()
+                .forEach(System::clearProperty);
+    }
+
+    private static String pendingSpanOperationIdProperty() {
+        return PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX
+                + Thread.currentThread().getId();
+    }
+
+    private static void setOrClearProperty(String key, String value) {
+        if (value == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, value);
+        }
     }
 
     private static String sha256(String input) {

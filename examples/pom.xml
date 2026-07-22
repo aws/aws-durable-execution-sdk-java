@@ -50,18 +50,6 @@
             <version>1.64.0</version>
         </dependency>
 
-        <!-- OTLP gRPC exporter (sends spans to ADOT collector layer at localhost:4317) -->
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-exporter-otlp</artifactId>
-            <version>1.64.0</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-netty-shaded</artifactId>
-            <version>1.82.2</version>
-        </dependency>
-
         <!-- AWS Lambda Java Core -->
         <dependency>
             <groupId>com.amazonaws</groupId>
@@ -150,6 +138,30 @@
                                 <transformer
                                         implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer"/>
                             </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.9.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-otel-javaagent-extension</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>${project.groupId}</groupId>
+                                    <artifactId>aws-durable-execution-sdk-java-plugin-otel</artifactId>
+                                    <version>${project.version}</version>
+                                    <outputDirectory>${project.build.outputDirectory}/lib</outputDirectory>
+                                </artifactItem>
+                            </artifactItems>
                         </configuration>
                     </execution>
                 </executions>

@@ -22,17 +22,16 @@ import software.amazon.lambda.durable.otel.OtelPlugin;
  *   <li>Logging exporter (spans printed to stdout → CloudWatch Logs)
  * </ul>
  *
- * <p>In production, replace {@code LoggingSpanExporter} with {@code OtlpGrpcSpanExporter} to send spans to an OTLP
- * collector (X-Ray, Datadog, etc.).
+ * <p>In production, replace {@code LoggingSpanExporter} with the exporter for your observability backend.
  *
  * <p>Expected trace structure:
  *
  * <pre>
- * durable.invocation
- * ├── durable.step:create-greeting [attempt 1]
- * ├── durable.step:create-greeting (operation, backfilled)
- * ├── durable.step:transform [attempt 1]
- * └── durable.step:transform (operation, backfilled)
+ * invocation
+ * ├── create-greeting
+ * │   └── create-greeting attempt 1
+ * └── transform
+ *     └── transform attempt 1
  * </pre>
  */
 public class OtelExample extends DurableHandler<GreetingRequest, String> {
