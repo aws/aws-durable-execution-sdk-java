@@ -3,3 +3,4 @@ target/
 history-*/
 report-*.xml
 report-*.json
+build/
