@@ -33,8 +33,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # map is excluded until its handlers land (9-4 divergence + new
-        # uncovered requirements under discussion).
         suite:
           - step
           - wait
@@ -44,6 +42,7 @@ jobs:
           - parallel
           - wait_for_callback
           - wait_for_condition
+          - map
     defaults:
       run:
         working-directory: conformance-tests
