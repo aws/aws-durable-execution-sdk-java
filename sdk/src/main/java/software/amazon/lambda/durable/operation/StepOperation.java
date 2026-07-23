@@ -113,8 +113,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
                 try {
                     checkpointStarted();
 
-                    // Execute the function
-                    T result = function.apply(stepContext);
+                    // Execute the user function inside the plugin hook boundary so a failure is reported
+                    // through onUserFunctionEnd; retry/checkpoint handling stays outside the boundary.
+                    T result = runUserFunction(attempt, () -> function.apply(stepContext));
 
                     handleStepSucceeded(result);
                 } catch (Throwable e) {
@@ -124,7 +125,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         };
 
         // Execute user provided step code in user-configured executor
-        runUserHandler(userHandler, ThreadType.STEP, attempt);
+        runUserHandler(userHandler, ThreadType.STEP);
     }
 
     private void checkpointStarted() {

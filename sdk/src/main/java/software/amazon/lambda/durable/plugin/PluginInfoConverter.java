@@ -62,6 +62,9 @@ public final class PluginInfoConverter {
                 operation != null && operation.status() != null
                         ? operation.status().toString()
                         : null,
+                operation != null && operation.stepDetails() != null
+                        ? operation.stepDetails().attempt()
+                        : null,
                 isReplay,
                 error);
     }

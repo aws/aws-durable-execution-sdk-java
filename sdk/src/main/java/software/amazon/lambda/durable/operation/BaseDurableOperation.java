@@ -267,43 +267,27 @@ public abstract class BaseDurableOperation {
         }
     }
 
-    protected void runUserHandler(Runnable runnable, ThreadType threadType) {
-        runUserHandler(runnable, threadType, null);
-    }
-
     /**
-     * Runs user code in a separate thread with plugin hook instrumentation.
+     * Runs an operation's handler on a user-executor thread, managing thread registration and suspension.
      *
-     * @param runnable the user code to run
+     * <p>This method is responsible only for thread/executor/suspension scaffolding. Plugin user-function hooks are
+     * fired by {@link #runUserFunction(Integer, java.util.function.Supplier)}, which operations wrap around the actual
+     * user function so a user failure is reported through the hook boundary.
+     *
+     * @param runnable the operation handler to run (typically wraps a {@link #runUserFunction} call)
      * @param threadType the thread type (STEP or CONTEXT)
-     * @param attempt the 1-based attempt number for steps/waitForCondition, null for context operations
      */
-    protected void runUserHandler(Runnable runnable, ThreadType threadType, Integer attempt) {
+    protected void runUserHandler(Runnable runnable, ThreadType threadType) {
         String operationId = getOperationId();
         logger.debug("Starting user handler for operation {} ({})", operationId, threadType);
-        var pluginRunner = getPluginRunner();
         Runnable wrapped = () -> {
             executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));
 
-            // Fire onUserFunctionStart on the user code thread
-            var userFunctionStartInfo = PluginInfoConverter.toUserFunctionStartInfo(
-                    operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
-            pluginRunner.onUserFunctionStart(userFunctionStartInfo);
-
             try {
                 runnable.run();
-                // Fire onUserFunctionEnd on success
-                pluginRunner.onUserFunctionEnd(
-                        PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, true, null));
             } catch (Throwable throwable) {
-                // Fire onUserFunctionEnd for all outcomes including suspension.
-                // This allows plugins (e.g., OTel) to properly end the attempt span and record
-                // errors, rather than leaving orphaned spans that only get cleaned up at invocation end.
-                pluginRunner.onUserFunctionEnd(
-                        PluginInfoConverter.toUserFunctionEndInfo(userFunctionStartInfo, false, throwable));
-
-                // Operations always wrap the user's function and handles all possible exceptions except for
-                // SuspendExecutionException.
+                // Operations wrap the user function and handle all outcomes except for SuspendExecutionException.
+                // Anything else reaching here is unexpected and terminates the execution.
                 if (!executionManager.isExecutionCompletedExceptionally()
                         && !(throwable instanceof SuspendExecutionException)) {
                     logger.error("An unhandled exception is thrown from user function: ", throwable);
@@ -346,6 +330,37 @@ public abstract class BaseDurableOperation {
 
         runningUserHandler.set(CompletableFuture.runAsync(
                 wrapped, getContext().getDurableConfig().getExecutorService()));
+    }
+
+    /**
+     * Runs a user-provided function inside the plugin user-function hook boundary.
+     *
+     * <p>Fires {@code onUserFunctionStart} before invoking the function and {@code onUserFunctionEnd} after. The
+     * function's exception propagates through this boundary so the end hook reports the true outcome, mirroring the
+     * JS/Python SDKs. Retry and checkpoint handling stays in the caller's surrounding try/catch, outside this boundary.
+     *
+     * <p>{@code onUserFunctionEnd} fires for failures and suspensions alike so plugins (e.g. OTel) can end/clean up the
+     * attempt rather than leak state; the original throwable is always re-thrown to the caller.
+     *
+     * @param attempt the 1-based attempt number for steps/waitForCondition, or null for context operations
+     * @param userFunction the user function to invoke
+     * @param <T> the user function's result type
+     * @return the user function's result
+     */
+    protected <T> T runUserFunction(Integer attempt, java.util.function.Supplier<T> userFunction) {
+        var pluginRunner = getPluginRunner();
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
+                operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
+        pluginRunner.onUserFunctionStart(startInfo);
+        try {
+            T result = userFunction.get();
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, true, null));
+            return result;
+        } catch (Throwable e) {
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, e));
+            ExceptionHelper.sneakyThrow(e);
+            return null; // unreachable — sneakyThrow always throws
+        }
     }
 
     /**
