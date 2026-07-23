@@ -135,7 +135,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             DurableContextImpl.setCurrentContext(childContext);
             try (var ignored = DurableLogger.attachContext()) {
                 try {
-                    T result = function.apply(childContext);
+                    // Run the user function inside the plugin hook boundary (attempt is null for contexts)
+                    // so a failure is reported through onUserFunctionEnd; checkpointing stays outside.
+                    T result = runUserFunction(null, () -> function.apply(childContext));
 
                     handleChildContextSuccess(result);
                 } catch (Throwable e) {

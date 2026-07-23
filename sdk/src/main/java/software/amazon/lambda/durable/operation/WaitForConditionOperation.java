@@ -125,8 +125,10 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                         sendOperationUpdateAsync(startUpdate);
                     }
 
-                    // Execute check function in user executor
-                    WaitForConditionResult<T> result = checkFunc.apply(currentState, stepContext);
+                    // Execute check function inside the plugin hook boundary so a failure is reported
+                    // through onUserFunctionEnd; checkpoint/poll handling stays outside the boundary.
+                    WaitForConditionResult<T> result =
+                            runUserFunction(attempt, () -> checkFunc.apply(currentState, stepContext));
 
                     // Normalize the value through SerDes so first execution matches replay.
                     var serializedState = serializeAndDeserializeResult(result.value());
@@ -164,7 +166,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             }
         };
 
-        runUserHandler(userHandler, ThreadType.STEP, attempt);
+        runUserHandler(userHandler, ThreadType.STEP);
     }
 
     private void handleCheckFailure(Throwable exception) {

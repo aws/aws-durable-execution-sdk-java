@@ -15,6 +15,7 @@ import java.time.Instant;
  * @param startTimestamp when the operation started
  * @param endTimestamp when the operation ended
  * @param status the operation's terminal status (e.g., SUCCEEDED, FAILED, TIMED_OUT) — may be null for virtual ops
+ * @param attempt the total number of attempts for retriable operations (STEP, WAIT_FOR_CONDITION) — null for others
  * @param isReplay true if this operation already existed in the execution state (completed in a prior invocation)
  * @param error non-null if the operation failed
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
@@ -29,5 +30,6 @@ public record OperationEndInfo(
         Instant startTimestamp,
         Instant endTimestamp,
         String status,
+        Integer attempt,
         boolean isReplay,
         Throwable error) {}
