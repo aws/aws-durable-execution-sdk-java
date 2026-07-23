@@ -12,7 +12,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.plugin.*;
@@ -413,10 +415,9 @@ class PluginIntegrationTest {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
 
-        // When a step fails and retries are exhausted, the step operation's handleStepFailure
-        // sends a FAIL checkpoint. However, from runUserHandler's perspective the wrapped lambda
-        // catches the exception internally, so onUserFunctionEnd still reports succeeded=true
-        // for the step handler wrapper. The actual failure is captured in onOperationEnd and onInvocationEnd.
+        // When a step's user function throws, the exception propagates through the user-function hook
+        // boundary, so onUserFunctionEnd reports succeeded=false with the error. Retry/checkpoint
+        // handling happens outside that boundary.
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.step(
@@ -437,9 +438,17 @@ class PluginIntegrationTest {
         assertEquals(1, plugin.invocationEnds.size());
         assertEquals(InvocationStatus.FAILED, plugin.invocationEnds.get(0).invocationStatus());
 
-        // The user function start/end hooks fire for the step execution thread
-        assertFalse(plugin.userFunctionStarts.isEmpty(), "Should have user function start for the step");
-        assertFalse(plugin.userFunctionEnds.isEmpty(), "Should have user function end for the step");
+        // The failed step's user function end reports the failure through the hook boundary.
+        assertTrue(
+                plugin.userFunctionStarts.stream().anyMatch(info -> "fail-step".equals(info.name())),
+                "Should have user function start for the step");
+        var failStepEnd = plugin.userFunctionEnds.stream()
+                .filter(info -> "fail-step".equals(info.name()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Should have user function end for 'fail-step'"));
+        assertFalse(failStepEnd.succeeded(), "Failed step should report succeeded=false");
+        assertNotNull(failStepEnd.error());
+        assertTrue(failStepEnd.error().getMessage().contains("step failed"));
     }
 
     @Test
@@ -568,6 +577,131 @@ class PluginIntegrationTest {
                 .filter(info -> "poll".equals(info.name()) && info.attempt() != null)
                 .toList();
         assertTrue(conditionStarts.size() >= 2, "Should have at least 2 condition check attempts");
+    }
+
+    // ─── Attempt outcome hooks ───────────────────────────────────────────
+
+    @Test
+    void plugin_reportsFailedThenSucceededAttempts_forRetriedStep() {
+        var attempts = new AtomicInteger(0);
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "flaky",
+                        String.class,
+                        stepCtx -> {
+                            if (attempts.incrementAndGet() == 1) {
+                                throw new RuntimeException("boom");
+                            }
+                            return "ok";
+                        },
+                        StepConfig.builder()
+                                .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)))
+                                .build()),
+                config);
+
+        var result = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var flakyEnds = plugin.userFunctionEnds.stream()
+                .filter(info -> "flaky".equals(info.name()))
+                .toList();
+        assertEquals(2, flakyEnds.size(), "Expected two attempts: one failed, one succeeded");
+
+        // First attempt failed — its exception is handled internally by StepOperation, but the
+        // onUserFunctionEnd hook must still report it as failed. Look up by attempt number since the
+        // retry may run nested within the failed attempt, making end-hook ordering non-deterministic.
+        var firstAttempt = flakyEnds.stream()
+                .filter(info -> info.attempt() == 1)
+                .findFirst()
+                .orElseThrow();
+        assertFalse(firstAttempt.succeeded());
+        assertNotNull(firstAttempt.error());
+
+        // Retry attempt succeeded.
+        var secondAttempt = flakyEnds.stream()
+                .filter(info -> info.attempt() == 2)
+                .findFirst()
+                .orElseThrow();
+        assertTrue(secondAttempt.succeeded());
+        assertNull(secondAttempt.error());
+
+        // The operation end reports the terminal attempt number = total attempts that ran. The step
+        // succeeded on its second attempt, so the total is 2.
+        var flakyOpEnd = plugin.operationEnds.stream()
+                .filter(info -> "flaky".equals(info.name()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(2, flakyOpEnd.attempt().intValue(), "Operation end should report total attempts run");
+    }
+
+    @Test
+    void plugin_userFunctionEnd_reportsSuspension_asNotSucceeded() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        // A child context whose body suspends (on a wait) throws SuspendExecutionException through the
+        // user-function boundary, so onUserFunctionEnd fires with succeeded=false and the suspend exception.
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.runInChildContext("child", TypeToken.get(String.class), child -> {
+                    child.wait("pause", Duration.ofMinutes(1));
+                    return "done";
+                }),
+                config);
+
+        var result = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        var childEnd = plugin.userFunctionEnds.stream()
+                .filter(info -> "child".equals(info.name()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("onUserFunctionEnd should fire for the suspended child context"));
+        assertFalse(childEnd.succeeded(), "A suspended user function must not report succeeded=true");
+        assertTrue(
+                childEnd.error() instanceof SuspendExecutionException,
+                "Suspension should surface the SuspendExecutionException, not a user error");
+    }
+
+    @Test
+    void plugin_parallelBranches_emitUserFunctionHooks_butConsumerDoesNot() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    var parallel =
+                            context.parallel("proc", ParallelConfig.builder().build());
+                    var futures = new ArrayList<DurableFuture<String>>();
+                    try (parallel) {
+                        futures.add(parallel.branch(
+                                "branch-a", String.class, ctx -> ctx.step("s-a", String.class, sc -> "A")));
+                        futures.add(parallel.branch(
+                                "branch-b", String.class, ctx -> ctx.step("s-b", String.class, sc -> "B")));
+                    }
+                    parallel.get();
+                    return String.join(
+                            ",", futures.stream().map(DurableFuture::get).toList());
+                },
+                config);
+
+        var result = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var userFnNames = plugin.userFunctionStarts.stream()
+                .map(UserFunctionStartInfo::name)
+                .toList();
+        // Each branch runs as a child context whose body is a user function → fires the hooks.
+        assertTrue(userFnNames.contains("branch-a"), "branch-a child context should emit a user-function hook");
+        assertTrue(userFnNames.contains("branch-b"), "branch-b child context should emit a user-function hook");
+        // The parallel operation itself is orchestration, not user code → no user-function hook.
+        assertFalse(
+                userFnNames.contains("proc"),
+                "the parallel consumer is orchestration and must not emit a user-function hook");
     }
 
     // ─── Test helper classes ─────────────────────────────────────────────
