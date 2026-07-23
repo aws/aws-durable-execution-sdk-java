@@ -1780,7 +1780,7 @@ class MapIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"FLAT, 0", "NESTED, 0"})
+    @CsvSource({"FLAT, 2", "NESTED, 2"})
     void testMapWithEmptyItems(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             List<String> items = List.of();
@@ -1803,7 +1803,7 @@ class MapIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"FLAT, 0", "NESTED, 0"})
+    @CsvSource({"FLAT, 2", "NESTED, 2"})
     void testAnyOfMapWithEmptyItems(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             List<String> items = List.of();
@@ -1822,5 +1822,37 @@ class MapIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 2"})
+    void testEmptyMapReplayUsesCheckpoint(NestingType nestingType, int events) {
+        var executionCount = new AtomicInteger(0);
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "empty-map",
+                    List.<String>of(),
+                    String.class,
+                    (item, index, ctx) -> {
+                        executionCount.incrementAndGet();
+                        return item;
+                    },
+                    MapConfig.builder().nestingType(nestingType).build());
+
+            assertTrue(result.allSucceeded());
+            assertEquals(0, result.size());
+            return "done";
+        });
+
+        var result1 = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
+        var firstRunCount = executionCount.get();
+
+        // Replay from the checkpointed empty map, no re-execution, no error
+        var result2 = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
+        assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
+        assertEquals(events, result2.getHistoryEvents().size());
     }
 }

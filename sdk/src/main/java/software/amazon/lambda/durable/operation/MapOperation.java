@@ -17,6 +17,7 @@ import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -100,7 +101,11 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     @Override
     protected void start() {
         if (items.isEmpty()) {
-            markAlreadyCompleted();
+            // Empty map: checkpoint START + SUCCEED directly to produce a complete map operation with an empty result.
+            sendOperationUpdate(OperationUpdate.builder()
+                    .action(OperationAction.START)
+                    .subType(getSubType().getValue()));
+            handleCompletion(CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.ALL_COMPLETED));
             return;
         }
         sendOperationUpdateAsync(OperationUpdate.builder()
@@ -113,9 +118,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     @Override
     protected void replay(Operation existing) {
-        if (items.isEmpty()) {
-            throw terminateExecutionWithIllegalDurableOperationException("Empty Map operation is not replayable");
-        }
         switch (existing.status()) {
             case SUCCEEDED -> {
                 var result = existing.contextDetails() != null
@@ -219,9 +221,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     @Override
     public MapResult<O> get() {
-        if (items.isEmpty()) {
-            return MapResult.empty();
-        }
         join();
         // cachedResult is always set upon successful completion
         return cachedResult;
