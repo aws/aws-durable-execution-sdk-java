@@ -45,4 +45,21 @@ public class OperationIdGenerator {
         var counter = String.valueOf(operationCounter.incrementAndGet());
         return hashOperationId(operationIdPrefix + counter);
     }
+
+    /**
+     * Mints an operation ID from a caller-supplied name suffix instead of the monotonic counter. Concatenates the
+     * context ID prefix ({@code contextId + "-"}) with the supplied name and SHA-256 hashes the result, reusing the
+     * exact same prefixing and hashing discipline as {@link #nextOperationId()}. Unlike {@link #nextOperationId()},
+     * this does NOT touch the internal counter, so name-based and counter-based IDs never interfere.
+     *
+     * <p>This is the seam that enables name-derived, replay-safe entity IDs (e.g. the DAG scheduler passes
+     * {@code "DAG_NODE_T_" + taskName}, yielding {@code hash(contextId + "-DAG_NODE_T_" + taskName)}). Deterministic:
+     * the same name always maps to the same ID within a given context; distinct names map to distinct IDs.
+     *
+     * @param name the caller-supplied name suffix (already namespaced by the caller if needed)
+     * @return the SHA-256 hashed operation ID for {@code operationIdPrefix + name}
+     */
+    public String operationIdForName(String name) {
+        return hashOperationId(operationIdPrefix + name);
+    }
 }

@@ -133,6 +133,20 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> DurableFuture<T> stepAsync(
             String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config) {
+        return stepAsyncWithId(nextOperationId(), name, resultType, func, config);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #stepAsync}. Launches the step operation under a caller-supplied
+     * {@code operationId} instead of the monotonic counter. Used by the DAG scheduler to run tasks under name-derived,
+     * replay-safe IDs. Not part of the public {@link DurableContext} interface.
+     */
+    public <T> DurableFuture<T> stepAsyncWithId(
+            String operationId,
+            String name,
+            TypeToken<T> resultType,
+            Function<StepContext, T> func,
+            StepConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -140,7 +154,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
-        var operationId = nextOperationId();
 
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
@@ -153,10 +166,15 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     public DurableFuture<Void> waitAsync(String name, Duration duration) {
+        return waitAsyncWithId(nextOperationId(), name, duration);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #waitAsync}. Not part of the public {@link DurableContext} interface.
+     */
+    public DurableFuture<Void> waitAsyncWithId(String operationId, String name, Duration duration) {
         ParameterValidator.validateDuration(duration, "Wait duration");
         ParameterValidator.validateOperationName(name);
-
-        var operationId = nextOperationId();
 
         // Create and start wait operation
         var operation =
@@ -169,6 +187,20 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T, U> DurableFuture<T> invokeAsync(
             String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config) {
+        return invokeAsyncWithId(nextOperationId(), name, functionName, payload, resultType, config);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #invokeAsync}. Not part of the public {@link DurableContext}
+     * interface.
+     */
+    public <T, U> DurableFuture<T> invokeAsyncWithId(
+            String operationId,
+            String name,
+            String functionName,
+            U payload,
+            TypeToken<T> resultType,
+            InvokeConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -181,7 +213,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                     .payloadSerDes(getDurableConfig().getSerDes())
                     .build();
         }
-        var operationId = nextOperationId();
 
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
@@ -198,11 +229,19 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType, CallbackConfig config) {
+        return callbackWithId(nextOperationId(), name, resultType, config);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #createCallback}. Not part of the public {@link DurableContext}
+     * interface.
+     */
+    public <T> DurableCallbackFuture<T> callbackWithId(
+            String operationId, String name, TypeToken<T> resultType, CallbackConfig config) {
         ParameterValidator.validateOperationName(name);
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
-        var operationId = nextOperationId();
 
         var operation = new CallbackOperation<>(
                 OperationIdentifier.of(operationId, name, OperationSubType.CALLBACK), resultType, config, this);
@@ -235,6 +274,30 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Function<DurableContext, T> func,
             RunInChildContextConfig config,
             OperationSubType subType) {
+        return runInChildContextAsyncWithId(nextOperationId(), name, resultType, func, config, subType);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #runInChildContextAsync}. Not part of the public
+     * {@link DurableContext} interface.
+     */
+    public <T> DurableFuture<T> runInChildContextAsyncWithId(
+            String operationId,
+            String name,
+            TypeToken<T> resultType,
+            Function<DurableContext, T> func,
+            RunInChildContextConfig config) {
+        return runInChildContextAsyncWithId(
+                operationId, name, resultType, func, config, OperationSubType.RUN_IN_CHILD_CONTEXT);
+    }
+
+    private <T> DurableFuture<T> runInChildContextAsyncWithId(
+            String operationId,
+            String name,
+            TypeToken<T> resultType,
+            Function<DurableContext, T> func,
+            RunInChildContextConfig config,
+            OperationSubType subType) {
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -242,8 +305,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
-
-        var operationId = nextOperationId();
 
         var operation = new ChildContextOperation<>(
                 OperationIdentifier.of(operationId, name, subType), func, resultType, config, this);
@@ -266,9 +327,42 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
 
+        // Short-circuit for empty collections — no checkpoint overhead
+        if (items.isEmpty()) {
+            return new CompletedDurableFuture<>(MapResult.empty());
+        }
+
+        return mapAsyncWithId(nextOperationId(), name, items, resultType, function, config);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #mapAsync}. Not part of the public {@link DurableContext} interface.
+     */
+    public <I, O> DurableFuture<MapResult<O>> mapAsyncWithId(
+            String operationId,
+            String name,
+            Collection<I> items,
+            TypeToken<O> resultType,
+            MapFunction<I, O> function,
+            MapConfig config) {
+        Objects.requireNonNull(items, "items cannot be null");
+        Objects.requireNonNull(function, "function cannot be null");
+        Objects.requireNonNull(resultType, "resultType cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+        ParameterValidator.validateOperationName(name);
+        ParameterValidator.validateOrderedCollection(items);
+
+        if (config.serDes() == null) {
+            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
+        }
+
+        // Short-circuit for empty collections — no checkpoint overhead
+        if (items.isEmpty()) {
+            return new CompletedDurableFuture<>(MapResult.empty());
+        }
+
         // Convert to List for deterministic index-based access
         var itemList = List.copyOf(items);
-        var operationId = nextOperationId();
 
         var operation = new MapOperation<>(
                 OperationIdentifier.of(operationId, name, OperationSubType.MAP),
@@ -283,8 +377,14 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     public ParallelDurableFuture parallel(String name, ParallelConfig config) {
+        return parallelWithId(nextOperationId(), name, config);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #parallel}. Not part of the public {@link DurableContext} interface.
+     */
+    public ParallelDurableFuture parallelWithId(String operationId, String name, ParallelConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
-        var operationId = nextOperationId();
 
         var parallelOp = new ParallelOperation(
                 OperationIdentifier.of(operationId, name, OperationSubType.PARALLEL),
@@ -347,6 +447,19 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             WaitForConditionConfig<T> config) {
+        return waitForConditionAsyncWithId(nextOperationId(), name, resultType, checkFunc, config);
+    }
+
+    /**
+     * Internal SPI: explicit-ID variant of {@link #waitForConditionAsync}. Not part of the public
+     * {@link DurableContext} interface.
+     */
+    public <T> DurableFuture<T> waitForConditionAsyncWithId(
+            String operationId,
+            String name,
+            TypeToken<T> resultType,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            WaitForConditionConfig<T> config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(checkFunc, "checkFunc cannot be null");
@@ -355,7 +468,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
-        var operationId = nextOperationId();
 
         var operation = new WaitForConditionOperation<>(
                 OperationIdentifier.of(operationId, name, OperationSubType.WAIT_FOR_CONDITION),
