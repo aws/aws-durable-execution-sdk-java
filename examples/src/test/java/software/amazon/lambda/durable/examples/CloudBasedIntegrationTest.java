@@ -866,4 +866,69 @@ class CloudBasedIntegrationTest {
         assertNotNull(runner.getOperation("create-greeting"));
         assertNotNull(runner.getOperation("transform"));
     }
+
+    // ── DAG cloud integration tests (feature/dag-support) ──────────────────────
+    // These exercise the DAG primitive end-to-end against the real backend. A SUCCEEDED execution with the
+    // correct terminal DagResult is definitive proof that the DAG container child-context op and every task op
+    // checkpointed successfully — i.e. NO "Invalid parent operation id" (the Go bug) and NO op-id-length
+    // ValidationException (the Python bug), both of which surface as execution FAILURES.
+
+    @Test
+    void testDagDiamondExample() {
+        var runner =
+                CloudDurableTestRunner.create(arn("dag-diamond-example"), String.class, String.class, lambdaClient);
+        var result = runner.run("go");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("ABAC", result.getResult());
+
+        // DAG container child-context op is materialized, and task ops checkpoint under it.
+        assertNotNull(runner.getOperation("etl"));
+        assertNotNull(runner.getOperation("a"));
+        assertNotNull(runner.getOperation("dd"));
+    }
+
+    @Test
+    void testDagCompensationExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("dag-compensation-example"), String.class, String.class, lambdaClient);
+        var result = runner.run("go");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // charge FAILED → refund runs (ALL_FAILED), fulfill SKIPPED (ALL_SUCCESS over failure), audit runs (ALL_DONE).
+        assertEquals("COMPLETED_WITH_FAILURES|FAILED|SUCCEEDED|SKIPPED|SUCCEEDED", result.getResult());
+
+        assertNotNull(runner.getOperation("saga"));
+        assertNotNull(runner.getOperation("charge"));
+        assertNotNull(runner.getOperation("refund"));
+        assertNotNull(runner.getOperation("audit"));
+    }
+
+    @Test
+    void testDagRunIfExample() {
+        var runner = CloudDurableTestRunner.create(arn("dag-run-if-example"), String.class, String.class, lambdaClient);
+        var result = runner.run("go");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // gate=0 → maybe SKIPPED (runIf false) → after SKIPPED (ALL_SUCCESS over skipped upstream).
+        assertEquals("SKIPPED|SKIPPED", result.getResult());
+
+        assertNotNull(runner.getOperation("cond"));
+        assertNotNull(runner.getOperation("gate"));
+    }
+
+    @Test
+    void testDagWaitResumeExample() {
+        var runner = CloudDurableTestRunner.create(
+                arn("dag-wait-resume-example"), String.class, String.class, lambdaClient);
+        var result = runner.run("go");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // In-DAG wait forces a real suspend/replay; name-based IDs keep the join deterministic.
+        assertEquals("ABAC", result.getResult());
+
+        assertNotNull(runner.getOperation("diamond_wait"));
+        assertNotNull(runner.getOperation("w"));
+        assertNotNull(runner.getOperation("join"));
+    }
 }
