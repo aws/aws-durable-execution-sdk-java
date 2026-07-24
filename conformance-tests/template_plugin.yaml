@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Durable Execution Conformance Test Examples - Java (Plugin)
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  JavaVersion:
+    Type: String
+    Default: 'java21'
+    Description: Java runtime version
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime:
+      Ref: JavaVersion
+    Architectures:
+      - Ref: Architecture
+
+Resources:
+  DurableFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: DurableExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:CheckpointDurableExecution
+            - lambda:GetDurableExecutionState
+            Resource: '*'
+
+  PluginInvocationLifecycle:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-1"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginInvocationLifecycle
+      Description: Plugin invocation lifecycle hooks (start and end on a single invocation)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      Environment:
+        Variables:
+          # The step body logs its running line via the context logger (Log4j2),
+          # whose default level is ERROR and would suppress logger.info. Raise to INFO.
+          JAVA_TOOL_OPTIONS: -Dorg.apache.logging.log4j.level=INFO
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginOperationLifecycle:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-2"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginOperationLifecycle
+      Description: Plugin operation lifecycle hooks (step start and terminal end)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginAttemptHooksRetry:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-3"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginAttemptHooksRetry
+      Description: Plugin attempt hooks fire per step attempt with attempt number and outcome
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginErrorIsolation:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-4"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginErrorIsolation
+      Description: Plugin exceptions are swallowed and never affect the execution outcome
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginMultiplePlugins:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-5"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginMultiplePlugins
+      Description: Multiple registered plugins all receive lifecycle hooks
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginFirstInvocationFlag:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-6"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginFirstInvocationFlag
+      Description: Plugin sees is-first-invocation true once, then false on replay
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginTerminalFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-7"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginTerminalFailure
+      Description: Plugin invocation-end hook receives FAILED status when execution fails
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
