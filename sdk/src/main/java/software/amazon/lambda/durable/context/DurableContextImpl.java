@@ -489,6 +489,28 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     private static final String ANONYMOUS_BACKOFF_PREFIX = "retry-backoff-";
 
     @Override
+    public DurableFuture<software.amazon.lambda.durable.dag.DagResult> dagAsync(
+            String name,
+            java.util.function.Consumer<software.amazon.lambda.durable.dag.DagContext> register,
+            software.amazon.lambda.durable.dag.DagConfig config) {
+        Objects.requireNonNull(register, "register cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+        ParameterValidator.validateOperationName(name);
+
+        var dagSerDes = software.amazon.lambda.durable.dag.internal.DagContextImpl.dagSerDes(
+                config, getDurableConfig().getSerDes());
+        var rc = RunInChildContextConfig.builder().serDes(dagSerDes).build();
+
+        // The DAG runs as a single child-context node with a normal counter-based ID; its tasks run under
+        // name-derived DAG_NODE_T_ IDs inside that child context.
+        return runInChildContextAsync(
+                name,
+                TypeToken.get(software.amazon.lambda.durable.dag.DagResult.class),
+                software.amazon.lambda.durable.dag.internal.DagContextImpl.body(register, config),
+                rc);
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public <T> DurableFuture<T> withRetryAsync(
             String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {

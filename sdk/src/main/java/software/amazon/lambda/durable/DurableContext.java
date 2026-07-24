@@ -817,6 +817,77 @@ public interface DurableContext extends BaseContext {
             String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config);
 
     /**
+     * Declares and runs a DAG (directed acyclic graph) of tasks, blocking until it completes.
+     *
+     * @param name the unique operation name within this context
+     * @param register the registration callback that declares the DAG's tasks
+     * @return the aggregate {@link software.amazon.lambda.durable.dag.DagResult}
+     * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
+     *     major-version bump.
+     */
+    @software.amazon.lambda.durable.annotations.Experimental
+    default software.amazon.lambda.durable.dag.DagResult dag(
+            String name, java.util.function.Consumer<software.amazon.lambda.durable.dag.DagContext> register) {
+        return dagAsync(name, register).get();
+    }
+
+    /**
+     * Declares and runs a DAG of tasks with custom configuration, blocking until it completes.
+     *
+     * @param name the unique operation name within this context
+     * @param register the registration callback that declares the DAG's tasks
+     * @param config the DAG configuration
+     * @return the aggregate {@link software.amazon.lambda.durable.dag.DagResult}
+     * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
+     *     major-version bump.
+     */
+    @software.amazon.lambda.durable.annotations.Experimental
+    default software.amazon.lambda.durable.dag.DagResult dag(
+            String name,
+            java.util.function.Consumer<software.amazon.lambda.durable.dag.DagContext> register,
+            software.amazon.lambda.durable.dag.DagConfig config) {
+        return dagAsync(name, register, config).get();
+    }
+
+    /**
+     * Asynchronously declares and runs a DAG of tasks, returning a {@link DurableFuture}.
+     *
+     * @param name the unique operation name within this context
+     * @param register the registration callback that declares the DAG's tasks
+     * @return a future representing the aggregate {@link software.amazon.lambda.durable.dag.DagResult}
+     * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
+     *     major-version bump.
+     */
+    @software.amazon.lambda.durable.annotations.Experimental
+    default DurableFuture<software.amazon.lambda.durable.dag.DagResult> dagAsync(
+            String name, java.util.function.Consumer<software.amazon.lambda.durable.dag.DagContext> register) {
+        return dagAsync(
+                name,
+                register,
+                software.amazon.lambda.durable.dag.DagConfig.builder().build());
+    }
+
+    /**
+     * Asynchronously declares and runs a DAG of tasks with custom configuration, returning a {@link DurableFuture}.
+     *
+     * <p>The DAG runs as a single child-context node whose body validates the graph, schedules tasks topologically
+     * (running independent chains concurrently via {@link DurableFuture} and honoring per-task trigger rules and
+     * {@code runIf} predicates), and aggregates results into a {@link software.amazon.lambda.durable.dag.DagResult}.
+     *
+     * @param name the unique operation name within this context
+     * @param register the registration callback that declares the DAG's tasks
+     * @param config the DAG configuration
+     * @return a future representing the aggregate {@link software.amazon.lambda.durable.dag.DagResult}
+     * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
+     *     major-version bump.
+     */
+    @software.amazon.lambda.durable.annotations.Experimental
+    DurableFuture<software.amazon.lambda.durable.dag.DagResult> dagAsync(
+            String name,
+            java.util.function.Consumer<software.amazon.lambda.durable.dag.DagContext> register,
+            software.amazon.lambda.durable.dag.DagConfig config);
+
+    /**
      * Function applied to each item in a map operation.
      *
      * <p>Each invocation receives its own {@link DurableContext}, allowing the use of durable operations like
