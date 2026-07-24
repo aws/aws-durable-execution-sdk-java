@@ -88,4 +88,26 @@ class DagIntegrationTest {
         assertEquals(
                 "COMPLETED_WITH_FAILURES|FAILED|SUCCEEDED|SKIPPED|SUCCEEDED", result.getResult(String.class));
     }
+
+    @Test
+    void replayAfterWaitDoesNotReexecuteCompletedTasks() {
+        var executions = new java.util.concurrent.atomic.AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("with_wait", d -> {
+                var a = d.step("a", String.class, (deps, s) -> {
+                    executions.incrementAndGet();
+                    return "A";
+                });
+                var w = d.wait("w", java.time.Duration.ofMinutes(5)).dependsOn(a);
+                d.step("b", String.class, (deps, s) -> deps.get(a) + "B").reads(a).dependsOn(w);
+            });
+            return (String) r.getResult("b").orElse("MISSING");
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("AB", result.getResult(String.class));
+        // Step "a" ran exactly once despite the wait-induced suspension/replay (name-based ID fast-path).
+        assertEquals(1, executions.get());
+    }
 }
