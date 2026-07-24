@@ -44,21 +44,21 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
     @Override
     public void onOperationStart(OperationInfo info) {
         if (isStep(info.type())) {
-            System.out.println(prefix + " operation-start");
+            System.out.println(prefix + " operation-start op=" + info.id());
         }
     }
 
     @Override
     public void onOperationEnd(OperationEndInfo info) {
         if (isStep(info.type())) {
-            System.out.println(prefix + " operation-end status=" + info.status());
+            System.out.println(prefix + " operation-end op=" + info.id() + " status=" + info.status());
         }
     }
 
     @Override
     public void onUserFunctionStart(UserFunctionStartInfo info) {
         if (isStep(info.type()) && info.attempt() != null) {
-            System.out.println(prefix + " attempt-start n=" + info.attempt());
+            System.out.println(prefix + " attempt-start n=" + info.attempt() + " op=" + info.id());
         }
     }
 
@@ -66,7 +66,8 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
         if (isStep(info.type()) && info.attempt() != null) {
             String outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
-            System.out.println(prefix + " attempt-end n=" + info.attempt() + " outcome=" + outcome);
+            System.out.println(
+                    prefix + " attempt-end n=" + info.attempt() + " outcome=" + outcome + " op=" + info.id());
         }
     }
 }
