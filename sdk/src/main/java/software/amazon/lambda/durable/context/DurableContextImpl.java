@@ -572,4 +572,13 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     public String getParentId() {
         return isVirtual ? parentContext.getParentId() : getContextId();
     }
+
+    /**
+     * Internal SPI: mints a name-derived operation ID within this context (delegates to
+     * {@link OperationIdGenerator#operationIdForName}). Used by the DAG scheduler to run tasks under replay-safe,
+     * name-based IDs. Not part of the public {@link DurableContext} interface.
+     */
+    public String operationIdForName(String name) {
+        return operationIdGenerator.operationIdForName(name);
+    }
 }
