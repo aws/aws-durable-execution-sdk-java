@@ -23,6 +23,12 @@ on:
       - main
     paths:
       - '.github/workflows/build.yml'
+      - '.github/workflows/ai-pr-review.yml'
+      - '.github/prompts/ai-pr-review.md'
+      - '.github/prompts/ai-pr-review-schema.json'
+      - '.github/scripts/prepare_ai_review_context.sh'
+      - '.github/scripts/prepare_ai_review_user.sh'
+      - '.github/scripts/run_claude_isolated.sh'
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
@@ -33,6 +39,12 @@ on:
       - main
     paths:
       - '.github/workflows/build.yml'
+      - '.github/workflows/ai-pr-review.yml'
+      - '.github/prompts/ai-pr-review.md'
+      - '.github/prompts/ai-pr-review-schema.json'
+      - '.github/scripts/prepare_ai_review_context.sh'
+      - '.github/scripts/prepare_ai_review_user.sh'
+      - '.github/scripts/run_claude_isolated.sh'
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
@@ -46,6 +58,27 @@ permissions:
   id-token: write
 
 jobs:
+  validate-ai-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'milestone' && github.event.repository.default_branch || github.ref }}
+
+      - name: Validate AI review files
+        run: |
+          scripts=(
+            .github/scripts/prepare_ai_review_context.sh
+            .github/scripts/prepare_ai_review_user.sh
+            .github/scripts/run_claude_isolated.sh
+          )
+          shellcheck "${scripts[@]}"
+          for script in "${scripts[@]}"; do
+            bash -n "$script"
+          done
+          jq -e . .github/prompts/ai-pr-review-schema.json > /dev/null
+
   build:
     runs-on: ubuntu-latest
     strategy:
