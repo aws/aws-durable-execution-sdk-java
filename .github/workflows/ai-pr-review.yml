@@ -14,11 +14,9 @@ jobs:
   approve_review:
     name: Approve AI PR review
     if: >-
-      github.actor != 'dependabot[bot]' &&
-      (
-        github.event.pull_request.draft ||
-        github.event.pull_request.author_association != 'MEMBER'
-      )
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      github.event.pull_request.draft ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     environment: ai-pr-review
     permissions: {}
@@ -31,17 +29,17 @@ jobs:
     needs: approve_review
     if: >-
       always() &&
-      github.actor != 'dependabot[bot]' &&
       (
         (
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
           !github.event.pull_request.draft &&
-          github.event.pull_request.author_association == 'MEMBER'
+          github.event.pull_request.head.repo.full_name == github.repository
         ) ||
         needs.approve_review.result == 'success'
       )
     runs-on: ubuntu-latest
     environment: ai-pr-review-runtime
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -65,13 +63,14 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash .github/scripts/prepare_ai_review_context.sh
 
-      - name: Prepare shared review prompt
-        id: review-prompt
+      - name: Prepare shared review inputs
+        id: review-inputs
         run: |
           {
             echo 'prompt<<AI_REVIEW_PROMPT'
             cat .github/prompts/ai-pr-review.md
             echo 'AI_REVIEW_PROMPT'
+            echo "schema=$(jq -c . .github/prompts/ai-pr-review-schema.json)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Prepare unprivileged Claude user
@@ -112,6 +111,7 @@ jobs:
 
       - name: Review pull request with Claude on Amazon Bedrock
         id: review
+        continue-on-error: true
         uses: anthropics/claude-code-action@fa7e2f0a29a126f0b81cdcf360561b36e44cf608 # v1.0.180
         env:
           AWS_REGION: us-east-1
@@ -123,20 +123,47 @@ jobs:
           # This also keeps the token out of the git remote configured by the action.
           allowed_non_write_users: ${{ github.actor }}
           classify_inline_comments: "false"
-          prompt: ${{ steps.review-prompt.outputs.prompt }}
+          prompt: ${{ steps.review-inputs.outputs.prompt }}
           claude_args: |
             --model us.anthropic.claude-opus-4-8
             --max-turns 20
             --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment"
             --disallowedTools "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch"
-            --json-schema '{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":4000,"description":"Concise Markdown summary of the PR review and any residual test risk"}},"required":["summary"],"additionalProperties":false}'
+            --json-schema '${{ steps.review-inputs.outputs.schema }}'
+
+      - name: Retry pull request review with Claude on Amazon Bedrock
+        id: review-retry
+        if: steps.review.outcome == 'failure'
+        uses: anthropics/claude-code-action@fa7e2f0a29a126f0b81cdcf360561b36e44cf608 # v1.0.180
+        env:
+          AWS_REGION: us-east-1
+          CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          use_bedrock: "true"
+          path_to_claude_code_executable: ${{ github.workspace }}/.github/scripts/run_claude_isolated.sh
+          # This also keeps the token out of the git remote configured by the action.
+          allowed_non_write_users: ${{ github.actor }}
+          classify_inline_comments: "false"
+          prompt: ${{ steps.review-inputs.outputs.prompt }}
+          claude_args: |
+            --model us.anthropic.claude-opus-4-8
+            --max-turns 20
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment"
+            --disallowedTools "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch"
+            --json-schema '${{ steps.review-inputs.outputs.schema }}'
 
       - name: Post review summary
         env:
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          REVIEW_OUTPUT: ${{ steps.review.outputs.structured_output }}
+          REVIEW_OUTPUT: >-
+            ${{
+              steps.review.outcome == 'success' &&
+              steps.review.outputs.structured_output ||
+              steps.review-retry.outputs.structured_output
+            }}
         run: |
           set -euo pipefail
 
@@ -148,7 +175,19 @@ jobs:
             exit 1
           fi
 
-          summary="$(jq -er '.summary | select(length > 0)' <<< "$REVIEW_OUTPUT")"
+          summary="$(
+            jq -ser '
+              select(length == 1) |
+              .[0] |
+              select(type == "object" and keys == ["summary"]) |
+              .summary |
+              select(
+                type == "string" and
+                length <= 4000 and
+                test("[^[:space:]]")
+              )
+            ' <<< "$REVIEW_OUTPUT"
+          )"
           summary="$(
             sed -E \
               -e '1{/^## (Claude|Codex) AI review$/d;}' \
@@ -171,17 +210,17 @@ jobs:
     needs: approve_review
     if: >-
       always() &&
-      github.actor != 'dependabot[bot]' &&
       (
         (
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
           !github.event.pull_request.draft &&
-          github.event.pull_request.author_association == 'MEMBER'
+          github.event.pull_request.head.repo.full_name == github.repository
         ) ||
         needs.approve_review.result == 'success'
       )
     runs-on: ubuntu-latest
     environment: ai-pr-review-runtime
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -279,7 +318,8 @@ jobs:
           output_dir="$(
             sudo -u codex-review mktemp -d -t codex-review.XXXXXX
           )"
-          output_file="${output_dir}/review.md"
+          output_file="${output_dir}/review.json"
+          output_schema="${GITHUB_WORKSPACE}/.github/prompts/ai-pr-review-schema.json"
           trap 'sudo rm -rf "$output_dir"' EXIT
 
           sudo -u codex-review -- sh -c '
@@ -289,37 +329,89 @@ jobs:
             : "${AWS_REGION:?AWS_REGION was not preserved by sudo}"
           '
 
-          # shellcheck disable=SC2024 # Runner opens the trusted prompt for read-only input.
-          sudo -u codex-review -- env \
-            CODEX_HOME=/home/codex-review/.codex \
-            FORCE_COLOR=1 \
-            "$codex_bin" exec \
-            --skip-git-repo-check \
-            --cd "$GITHUB_WORKSPACE" \
-            --output-last-message "$output_file" \
-            --model openai.gpt-5.6-sol \
-            --config 'model_reasoning_effort="xhigh"' \
-            --config 'model_provider="amazon-bedrock"' \
-            --config 'default_permissions=":read-only"' \
-            --ephemeral < .github/prompts/ai-pr-review.md
+          review_ready=false
+          for attempt in 1 2; do
+            sudo -u codex-review -- rm -f "$output_file"
+
+            # Keep enough of the job budget for a complete second attempt.
+            # shellcheck disable=SC2024 # Runner opens the trusted prompt for read-only input.
+            if sudo -u codex-review -- timeout \
+              --signal=TERM \
+              --kill-after=30s \
+              20m \
+              env \
+              CODEX_HOME=/home/codex-review/.codex \
+              "$codex_bin" exec \
+              --skip-git-repo-check \
+              --cd "$GITHUB_WORKSPACE" \
+              --output-last-message "$output_file" \
+              --output-schema "$output_schema" \
+              --color never \
+              --model openai.gpt-5.6-sol \
+              --config 'model_reasoning_effort="xhigh"' \
+              --config 'model_provider="amazon-bedrock"' \
+              --config 'default_permissions=":read-only"' \
+              --ephemeral < .github/prompts/ai-pr-review.md
+            then
+              if sudo -u codex-review -- jq -se '
+                length == 1 and
+                (
+                  .[0] |
+                  type == "object" and
+                  keys == ["summary"] and
+                  (
+                    .summary |
+                    type == "string" and
+                    length <= 4000 and
+                    test("[^[:space:]]")
+                  )
+                )
+              ' "$output_file" > /dev/null
+              then
+                review_ready=true
+                break
+              fi
+
+              echo "::warning::Codex attempt ${attempt} returned invalid review output."
+            else
+              echo "::warning::Codex attempt ${attempt} failed."
+            fi
+          done
+
+          if [[ "$review_ready" != "true" ]]; then
+            echo "::error::Codex did not return a valid review after two attempts."
+            exit 1
+          fi
 
           sudo install \
             -m 600 \
             -o runner \
             -g runner \
             "$output_file" \
-            "${RUNNER_TEMP}/codex-review.md"
+            "${RUNNER_TEMP}/codex-review.json"
 
       - name: Post Codex review
         env:
-          CODEX_REVIEW_FILE: ${{ runner.temp }}/codex-review.md
+          CODEX_REVIEW_FILE: ${{ runner.temp }}/codex-review.json
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
-          CODEX_REVIEW="$(cat "$CODEX_REVIEW_FILE")"
+          CODEX_REVIEW="$(
+            jq -ser '
+              select(length == 1) |
+              .[0] |
+              select(type == "object" and keys == ["summary"]) |
+              .summary |
+              select(
+                type == "string" and
+                length <= 4000 and
+                test("[^[:space:]]")
+              )
+            ' "$CODEX_REVIEW_FILE"
+          )"
           CODEX_REVIEW="$(
             sed -E \
               -e '1{/^## (Claude|Codex) AI review$/d;}' \
