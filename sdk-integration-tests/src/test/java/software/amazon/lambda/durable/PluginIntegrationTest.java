@@ -331,6 +331,38 @@ class PluginIntegrationTest {
         assertNull(stepEnd.error(), "error should be null for successful step");
     }
 
+    @Test
+    void plugin_operationStartAndEnd_balanced_forEmptyMap() {
+        var plugin = new RecordingPlugin();
+        // withCheckpointEmptyMap is a temporary flag expected to be removed in a future major version.
+        var config = DurableConfig.builder()
+                .withPlugins(plugin)
+                .withCheckpointEmptyMap(true)
+                .build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.map("empty-map", List.<String>of(), String.class, (item, index, ctx) -> item);
+                    return "done";
+                },
+                config);
+
+        var result = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // An empty map must fire a balanced onOperationStart/onOperationEnd pair so plugins
+        // (e.g. OTel) do not leave the completed map reported as PENDING.
+        long startCount = plugin.operationStarts.stream()
+                .filter(info -> "empty-map".equals(info.name()))
+                .count();
+        long endCount = plugin.operationEnds.stream()
+                .filter(info -> "empty-map".equals(info.name()))
+                .count();
+        assertEquals(1, startCount, "empty map should fire onOperationStart exactly once");
+        assertEquals(1, endCount, "empty map should fire onOperationEnd exactly once");
+    }
+
     // ─── Operation change hook ───────────────────────────────────────────
 
     @Test

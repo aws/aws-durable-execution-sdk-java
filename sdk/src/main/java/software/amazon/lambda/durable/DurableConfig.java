@@ -99,6 +99,7 @@ public final class DurableConfig {
     private final PollingStrategy pollingStrategy;
     private final Duration checkpointDelay;
     private final boolean deserializeAfterSerialization;
+    private final boolean checkpointEmptyMap;
     private final PluginRunner pluginRunner;
 
     private DurableConfig(Builder builder) {
@@ -111,6 +112,7 @@ public final class DurableConfig {
         this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
         this.deserializeAfterSerialization = builder.deserializeAfterSerialization;
+        this.checkpointEmptyMap = builder.checkpointEmptyMap;
         this.pluginRunner = builder.plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(builder.plugins);
 
         validateConfiguration();
@@ -199,6 +201,16 @@ public final class DurableConfig {
      */
     public boolean shouldDeserializeAfterSerialization() {
         return deserializeAfterSerialization;
+    }
+
+    /**
+     * Whether an empty map operation should emit START and SUCCEED checkpoints. Defaults to not checkpointing; this
+     * default and the flag are expected to be removed in a future major version.
+     *
+     * @return true when empty maps should be checkpointed
+     */
+    public boolean shouldCheckpointEmptyMap() {
+        return checkpointEmptyMap;
     }
 
     /**
@@ -309,6 +321,7 @@ public final class DurableConfig {
         private PollingStrategy pollingStrategy;
         private Duration checkpointDelay;
         private boolean deserializeAfterSerialization = true;
+        private boolean checkpointEmptyMap = false;
         private List<DurableExecutionPlugin> plugins = new ArrayList<>();
 
         public Builder() {}
@@ -430,6 +443,19 @@ public final class DurableConfig {
          */
         public Builder withDeserializeAfterSerialization(boolean deserializeAfterSerialization) {
             this.deserializeAfterSerialization = deserializeAfterSerialization;
+            return this;
+        }
+
+        /**
+         * Controls whether an empty map operation emits START and SUCCEED checkpoints. Defaults to not checkpointing,
+         * which leaves the operation out of the durable execution history. This default and the flag are expected to be
+         * removed in a future major version.
+         *
+         * @param checkpointEmptyMap true to checkpoint empty maps
+         * @return This builder
+         */
+        public Builder withCheckpointEmptyMap(boolean checkpointEmptyMap) {
+            this.checkpointEmptyMap = checkpointEmptyMap;
             return this;
         }
 
