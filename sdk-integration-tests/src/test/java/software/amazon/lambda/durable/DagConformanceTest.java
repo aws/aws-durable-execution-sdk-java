@@ -456,13 +456,13 @@ class DagConformanceTest {
     }
 
     // ── DAG-11..15 (validation) ─────────────────────────────────────────────
-    // The shipped dag() validates a registered graph via DagValidator inside its child-context body (see
-    // DagContextImpl.body: register → DagValidator.validate → schedule). We drive that exact registration+validation
-    // path to observe the typed Dag*Exception the SDK raises. NOTE (divergence, verified by
-    // validationErrorTypeIsErasedThroughRunner below): end-to-end through the LocalDurableTestRunner the typed
-    // exception is ERASED at the runInChildContext failure boundary (DagException carries a null ErrorObject →
-    // surfaces as a generic ChildContextFailedException "failed without an error"). The validation SEMANTICS
-    // (which graph → which error) match the catalog; only the async propagation loses the type.
+    // The shipped dag() registers + validates the graph via DagValidator EAGERLY at the dag() call site (see
+    // DurableContextImpl.dagAsync / DagContextImpl.registerAndValidate: register → DagValidator.validate happens
+    // before the runInChildContext body launches). We drive that exact registration+validation path to observe the
+    // typed Dag*Exception the SDK raises. The typed exception now also surfaces UNWRAPPED end-to-end through the
+    // runner (see validationErrorTypeSurfacesUnwrappedThroughRunner below): because validation runs at the call site,
+    // a registration-time Dag*Exception propagates directly to the dag() caller instead of being erased at the
+    // runInChildContext failure boundary.
 
     @Test
     void dag11_cycle() {
@@ -517,12 +517,14 @@ class DagConformanceTest {
     }
 
     /**
-     * Documents the verified divergence: validation errors do NOT surface with their typed identity through the
-     * end-to-end runner path — the runInChildContext failure boundary erases the {@link DagException} type (null
-     * {@code ErrorObject}) into a generic {@link ChildContextFailedException}.
+     * Verifies the fix: registration-time validation errors surface with their typed identity through the end-to-end
+     * runner path. Because {@code dag()} now registers + validates eagerly at the call site (before the
+     * {@code runInChildContext} body launches), a typed {@link DagException} — here
+     * {@link DagCyclicDependencyException} — propagates <b>unwrapped</b> to the {@code dag()} caller instead of being
+     * erased into a generic {@link ChildContextFailedException}.
      */
     @Test
-    void validationErrorTypeIsErasedThroughRunner() {
+    void validationErrorTypeSurfacesUnwrappedThroughRunner() {
         var caught = new AtomicReference<Throwable>();
         var runner = LocalDurableTestRunner.create(String.class, (in, ctx) -> {
             try {
@@ -542,11 +544,38 @@ class DagConformanceTest {
         Throwable t = caught.get();
         assertNotNull(t, "a failure must propagate for an invalid graph");
         assertTrue(
-                t instanceof ChildContextFailedException,
-                "runner surfaces a generic ChildContextFailedException, got: " + t.getClass());
+                t instanceof DagCyclicDependencyException,
+                "runner must surface the typed DagCyclicDependencyException unwrapped, got: " + t.getClass());
         assertTrue(
-                unwrapDagException(t) == null,
-                "DIVERGENCE: the typed Dag*Exception is erased at the child-context boundary");
+                !(t instanceof ChildContextFailedException),
+                "the typed Dag*Exception must NOT be erased into a generic ChildContextFailedException");
+    }
+
+    /**
+     * A second validation-error type ({@link DagDuplicateTaskException}) also surfaces unwrapped through the runner,
+     * confirming the fix is not specific to the cyclic case.
+     */
+    @Test
+    void duplicateTaskValidationErrorSurfacesUnwrappedThroughRunner() {
+        var caught = new AtomicReference<Throwable>();
+        var runner = LocalDurableTestRunner.create(String.class, (in, ctx) -> {
+            try {
+                ctx.dag("dup_e2e", d -> {
+                    d.step("dup", String.class, (deps, s) -> "1");
+                    d.step("dup", String.class, (deps, s) -> "2");
+                });
+                return "no-error";
+            } catch (Throwable t) {
+                caught.set(t);
+                return "error";
+            }
+        });
+        runner.runUntilComplete("go");
+        Throwable t = caught.get();
+        assertNotNull(t, "a failure must propagate for a duplicate-name graph");
+        assertTrue(
+                t instanceof DagDuplicateTaskException,
+                "runner must surface the typed DagDuplicateTaskException unwrapped, got: " + t.getClass());
     }
 
     // ── DAG-16 ────────────────────────────────────────────────────────────────
@@ -752,18 +781,6 @@ class DagConformanceTest {
                 scenario + ": expected " + expected.getSimpleName() + " but got "
                         + dagEx.getClass().getSimpleName());
         RECORDS.put(scenario, validationRecord(scenario, normalizedToken));
-    }
-
-    private static DagException unwrapDagException(Throwable t) {
-        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
-            if (cur instanceof DagException de) {
-                return de;
-            }
-            if (cur.getCause() == cur) {
-                break;
-            }
-        }
-        return null;
     }
 
     /** Builds a normalized conformance record (Part B schema) from a completed DagResult. */

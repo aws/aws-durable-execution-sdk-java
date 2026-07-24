@@ -54,14 +54,30 @@ public final class DagContextImpl implements DagContext {
     }
 
     /**
-     * Builds the DAG child-context body: register → validate → schedule → aggregate. Shared by the top-level
-     * {@code dag()} entry point and nested DAG tasks.
+     * Runs the declarative registration phase and validates the resulting graph, returning the populated context.
+     *
+     * <p>Registration only <em>declares</em> tasks (it launches nothing) and validation is pure graph analysis, so both
+     * are deterministic and run <b>eagerly at the {@code dag(...)} call site</b> — not inside the child-context body.
+     * This is deliberate: it lets a registration-time {@link software.amazon.lambda.durable.dag.DagException} propagate
+     * <b>unwrapped</b> to the {@code dag()} caller (matching the spec's "throws at the {@code dag(...)} call site" and
+     * the TS SDK's {@code errorMapper: (e) => e} pass-through), rather than being raised inside the
+     * {@code runInChildContext} boundary where the typed exception would be erased into a generic
+     * {@code ChildContextFailedException}.
      */
-    public static Function<DurableContext, DagResult> body(Consumer<DagContext> register, DagConfig config) {
+    public static DagContextImpl registerAndValidate(Consumer<DagContext> register) {
+        var dctx = new DagContextImpl();
+        register.accept(dctx);
+        DagValidator.validate(dctx.tasks());
+        return dctx;
+    }
+
+    /**
+     * Builds the DAG child-context body: schedule → aggregate over an already-registered, already-validated context.
+     * Shared by the top-level {@code dag()} entry point and nested DAG tasks. Registration and validation are performed
+     * eagerly by {@link #registerAndValidate(Consumer)} at the call site (see that method for why).
+     */
+    public static Function<DurableContext, DagResult> body(DagContextImpl dctx, DagConfig config) {
         return childCtx -> {
-            var dctx = new DagContextImpl();
-            register.accept(dctx);
-            DagValidator.validate(dctx.tasks());
             var outcome = DagExecutor.run(dctx.tasks(), (DurableContextImpl) childCtx, config);
             return DagResultImpl.from(outcome);
         };
@@ -233,12 +249,15 @@ public final class DagContextImpl implements DagContext {
 
     @Override
     public TaskHandle<DagResult> dag(String name, Consumer<DagContext> register, DagConfig config) {
+        // Register + validate the nested graph eagerly (during the parent's registration phase, which itself runs at
+        // the top-level dag() call site). A nested registration-time DagException therefore surfaces unwrapped at the
+        // caller rather than being erased inside the child-context boundary.
+        DagContextImpl nested = registerAndValidate(register);
         TaskExecutor<DagResult> exec = (ctx, deps, id) -> {
             RunInChildContextConfig rc = RunInChildContextConfig.builder()
                     .serDes(dagSerDes(config, ctx.getDurableConfig().getSerDes()))
                     .build();
-            return ctx.runInChildContextAsyncWithId(
-                    id, name, TypeToken.get(DagResult.class), body(register, config), rc);
+            return ctx.runInChildContextAsyncWithId(id, name, TypeToken.get(DagResult.class), body(nested, config), rc);
         };
         return register(new TaskHandleImpl<>(name, TaskKind.DAG, exec, config));
     }

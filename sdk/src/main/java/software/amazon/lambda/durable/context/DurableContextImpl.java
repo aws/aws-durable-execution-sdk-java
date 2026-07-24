@@ -501,12 +501,18 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 config, getDurableConfig().getSerDes());
         var rc = RunInChildContextConfig.builder().serDes(dagSerDes).build();
 
+        // Register + validate eagerly at the dag() call site (deterministic: registration launches nothing and
+        // validation is pure). This lets a registration-time DagException surface UNWRAPPED to the caller, instead
+        // of being raised inside the runInChildContext body where the typed exception would be erased into a generic
+        // ChildContextFailedException.
+        var dctx = software.amazon.lambda.durable.dag.internal.DagContextImpl.registerAndValidate(register);
+
         // The DAG runs as a single child-context node with a normal counter-based ID; its tasks run under
         // name-derived DAG_NODE_T_ IDs inside that child context.
         return runInChildContextAsync(
                 name,
                 TypeToken.get(software.amazon.lambda.durable.dag.DagResult.class),
-                software.amazon.lambda.durable.dag.internal.DagContextImpl.body(register, config),
+                software.amazon.lambda.durable.dag.internal.DagContextImpl.body(dctx, config),
                 rc);
     }
 
