@@ -583,9 +583,9 @@ class DagConformanceTest {
         assertEquals(3, r.successCount());
         assertEquals(0, r.failureCount());
         assertEquals(0, r.skippedCount());
-        // DIVERGENCE (see summary): catalog expects totalCount == registered (5); Java's DagResult.totalCount()
-        // returns the number of tasks that reached a terminal state (3). Asserted against ACTUAL Java behavior.
-        assertEquals(3, r.totalCount());
+        // Per spec §2.8: totalCount == number of REGISTERED tasks (5), fixed and independent of early completion.
+        // s4, s5 never started and stay absent from the results map (§2.9/§9.6); getStatus disambiguates.
+        assertEquals(5, r.totalCount());
         RECORDS.put("DAG-16", record("DAG-16", r, List.of("s1", "s2", "s3", "s4", "s5")));
     }
 
@@ -653,8 +653,9 @@ class DagConformanceTest {
         assertEquals(0, r.successCount());
         assertEquals(2, r.failureCount());
         assertEquals(0, r.skippedCount());
-        // DIVERGENCE (see summary): catalog expects totalCount == registered (4); Java returns terminal-task count (2).
-        assertEquals(2, r.totalCount());
+        // Per spec §2.8: totalCount == number of REGISTERED tasks (4), fixed and independent of early completion.
+        // t3, t4 never started and stay absent from the results map (§2.9/§9.6); getStatus disambiguates.
+        assertEquals(4, r.totalCount());
         RECORDS.put("DAG-17", record("DAG-17", r, List.of("t1", "t2", "t3", "t4")));
     }
 

@@ -10,5 +10,7 @@ import software.amazon.lambda.durable.dag.DagCompletionReason;
  *
  * @param tasks the serialized task executions, in registration order
  * @param completionReason why the DAG finished
+ * @param totalCount number of registered tasks (spec §2.8)
  */
-public record SerializedDagResult(List<SerializedTaskExecution> tasks, DagCompletionReason completionReason) {}
+public record SerializedDagResult(
+        List<SerializedTaskExecution> tasks, DagCompletionReason completionReason, int totalCount) {}

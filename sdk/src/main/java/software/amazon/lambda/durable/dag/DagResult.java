@@ -47,6 +47,10 @@ public interface DagResult {
 
     int skippedCount();
 
+    /**
+     * Number of registered tasks. Fixed at registration; independent of early completion and never-started tasks (spec
+     * §2.8). Never-started tasks are absent from {@link #results()} — use {@link #getStatus(String)} to disambiguate.
+     */
     int totalCount();
 
     /** Why the DAG finished. */

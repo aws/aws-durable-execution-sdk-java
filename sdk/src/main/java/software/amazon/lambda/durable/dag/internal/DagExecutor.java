@@ -111,7 +111,7 @@ public final class DagExecutor {
                 ordered.put(task.name(), exec);
             }
         }
-        return new DagExecutionOutcome(ordered, completionReason);
+        return new DagExecutionOutcome(ordered, completionReason, totalTaskCount);
     }
 
     /** Launches/skips every currently-ready task, up to the concurrency cap. Idempotent within a wave. */

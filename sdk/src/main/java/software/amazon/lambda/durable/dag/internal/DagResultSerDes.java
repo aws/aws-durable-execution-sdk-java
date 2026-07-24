@@ -88,7 +88,7 @@ public final class DagResultSerDes implements SerDes {
                     te.startedAt().map(Instant::toString).orElse(null),
                     te.completedAt().map(Instant::toString).orElse(null)));
         }
-        return new SerializedDagResult(tasks, dr.completionReason());
+        return new SerializedDagResult(tasks, dr.completionReason(), dr.totalCount());
     }
 
     private DagResultImpl fromSerialized(SerializedDagResult s) {
@@ -109,7 +109,7 @@ public final class DagResultSerDes implements SerDes {
                             Optional.ofNullable(ste.startedAt()).map(Instant::parse),
                             Optional.ofNullable(ste.completedAt()).map(Instant::parse)));
         }
-        return new DagResultImpl(results, s.completionReason());
+        return new DagResultImpl(results, s.completionReason(), s.totalCount());
     }
 
     private Object rehydrate(SerializedResultKind kind, Object raw, String resultType) {

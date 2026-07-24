@@ -20,14 +20,24 @@ public final class DagResultImpl implements DagResult {
 
     private final Map<String, TaskExecution<?>> results;
     private final DagCompletionReason completionReason;
+    private final int totalCount;
 
+    /**
+     * Backward-compatible constructor for callers where every registered task settled (total == settled map size), e.g.
+     * unit tests and small-DAG serde round-trips that don't model early completion.
+     */
     public DagResultImpl(Map<String, TaskExecution<?>> results, DagCompletionReason completionReason) {
+        this(results, completionReason, results.size());
+    }
+
+    public DagResultImpl(Map<String, TaskExecution<?>> results, DagCompletionReason completionReason, int totalCount) {
         this.results = new LinkedHashMap<>(results);
         this.completionReason = completionReason;
+        this.totalCount = totalCount;
     }
 
     public static DagResultImpl from(DagExecutionOutcome outcome) {
-        return new DagResultImpl(outcome.results(), outcome.completionReason());
+        return new DagResultImpl(outcome.results(), outcome.completionReason(), outcome.totalCount());
     }
 
     @SuppressWarnings("unchecked")
@@ -103,7 +113,7 @@ public final class DagResultImpl implements DagResult {
 
     @Override
     public int totalCount() {
-        return results.size();
+        return totalCount;
     }
 
     @Override
