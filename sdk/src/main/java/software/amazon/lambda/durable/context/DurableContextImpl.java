@@ -327,11 +327,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
 
-        // Short-circuit for empty collections — no checkpoint overhead
-        if (items.isEmpty()) {
-            return new CompletedDurableFuture<>(MapResult.empty());
-        }
-
         return mapAsyncWithId(nextOperationId(), name, items, resultType, function, config);
     }
 
@@ -354,11 +349,6 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
-        }
-
-        // Short-circuit for empty collections — no checkpoint overhead
-        if (items.isEmpty()) {
-            return new CompletedDurableFuture<>(MapResult.empty());
         }
 
         // Convert to List for deterministic index-based access
