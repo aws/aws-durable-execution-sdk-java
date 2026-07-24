@@ -27,7 +27,7 @@ class TaskHandleTest {
         var a = handle("a");
         var b = handle("b");
         var c = handle("c");
-        c.reads(a).dependsOn(b).triggerRule(TriggerRule.ALL_DONE).runIf(deps -> true);
+        c.reads(a).after(b).triggerRule(TriggerRule.ALL_DONE).runIf(deps -> true);
 
         assertEquals(1, c.inlineDeps().size());
         assertTrue(c.inlineDeps().contains(a));

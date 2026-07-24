@@ -43,6 +43,23 @@ public interface DagContext {
 
     <T> TaskHandle<T> step(String name, TypeToken<T> type, DagStepFunction<T> fn, StepConfig config);
 
+    // ── step: positional-arity typed-deps sugar (§2.7) ─────────────────────────
+    // Compile-time-checked convenience overloads for the common 1..3 typed-dep case: each upstream result is passed to
+    // the body directly (typed via the handle's generic), desugaring to step(...).reads(...) + Deps.get(...). For >3
+    // deps or ordering-only edges, use the canonical step(...) + .reads(...)/.after(...) + Deps.get(...) form.
+    <A, T> TaskHandle<T> step(String name, Class<T> type, TaskHandle<A> a, DagStep1Function<A, T> fn);
+
+    <A, B, T> TaskHandle<T> step(
+            String name, Class<T> type, TaskHandle<A> a, TaskHandle<B> b, DagStep2Function<A, B, T> fn);
+
+    <A, B, C, T> TaskHandle<T> step(
+            String name,
+            Class<T> type,
+            TaskHandle<A> a,
+            TaskHandle<B> b,
+            TaskHandle<C> c,
+            DagStep3Function<A, B, C, T> fn);
+
     // ── invoke ───────────────────────────────────────────────────────────────
     <T> TaskHandle<T> invoke(String name, String functionName, Class<T> type, DagPayloadFunction payloadFn);
 

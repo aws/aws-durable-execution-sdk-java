@@ -107,12 +107,12 @@ class DagConformanceTest {
                             throw new RuntimeException("charge failed");
                         },
                         noRetry);
-                d.step("fulfill", String.class, (deps, s) -> "fulfilled").dependsOn(charge);
+                d.step("fulfill", String.class, (deps, s) -> "fulfilled").after(charge);
                 d.step("refund", String.class, (deps, s) -> "refunded")
-                        .dependsOn(charge)
+                        .after(charge)
                         .triggerRule(TriggerRule.ALL_FAILED);
                 d.step("audit", String.class, (deps, s) -> "audited")
-                        .dependsOn(charge)
+                        .after(charge)
                         .triggerRule(TriggerRule.ALL_DONE);
             });
             ref.set(r);
@@ -136,12 +136,12 @@ class DagConformanceTest {
         var runner = LocalDurableTestRunner.create(String.class, (in, ctx) -> {
             DagResult r = ctx.dag("dag3", d -> {
                 var charge = d.step("charge", String.class, (deps, s) -> "charged");
-                d.step("fulfill", String.class, (deps, s) -> "fulfilled").dependsOn(charge);
+                d.step("fulfill", String.class, (deps, s) -> "fulfilled").after(charge);
                 d.step("refund", String.class, (deps, s) -> "refunded")
-                        .dependsOn(charge)
+                        .after(charge)
                         .triggerRule(TriggerRule.ALL_FAILED);
                 d.step("audit", String.class, (deps, s) -> "audited")
-                        .dependsOn(charge)
+                        .after(charge)
                         .triggerRule(TriggerRule.ALL_DONE);
             });
             ref.set(r);
@@ -197,8 +197,8 @@ class DagConformanceTest {
                 d.step("r_all_success", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.ALL_SUCCESS);
                 d.step("r_all_failed", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.ALL_FAILED);
                 d.step("r_all_done", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.ALL_DONE);
-                d.step("r_one_success", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.ONE_SUCCESS);
-                d.step("r_one_failed", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.ONE_FAILED);
+                d.step("r_one_success", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.ANY_SUCCESS);
+                d.step("r_one_failed", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.ANY_FAILED);
                 d.step("r_none_failed", String.class, (deps, s) -> "ok").triggerRule(TriggerRule.NONE_FAILED);
             });
             ref.set(r);
@@ -246,22 +246,22 @@ class DagConformanceTest {
                         },
                         noRetry);
                 d.step("c_all_success", String.class, (deps, s) -> "c")
-                        .dependsOn(upOk, upFail)
+                        .after(upOk, upFail)
                         .triggerRule(TriggerRule.ALL_SUCCESS);
                 d.step("c_all_failed", String.class, (deps, s) -> "c")
-                        .dependsOn(upOk, upFail)
+                        .after(upOk, upFail)
                         .triggerRule(TriggerRule.ALL_FAILED);
                 d.step("c_all_done", String.class, (deps, s) -> "c")
-                        .dependsOn(upOk, upFail)
+                        .after(upOk, upFail)
                         .triggerRule(TriggerRule.ALL_DONE);
                 d.step("c_one_success", String.class, (deps, s) -> "c")
-                        .dependsOn(upOk, upFail)
-                        .triggerRule(TriggerRule.ONE_SUCCESS);
+                        .after(upOk, upFail)
+                        .triggerRule(TriggerRule.ANY_SUCCESS);
                 d.step("c_one_failed", String.class, (deps, s) -> "c")
-                        .dependsOn(upOk, upFail)
-                        .triggerRule(TriggerRule.ONE_FAILED);
+                        .after(upOk, upFail)
+                        .triggerRule(TriggerRule.ANY_FAILED);
                 d.step("c_none_failed", String.class, (deps, s) -> "c")
-                        .dependsOn(upOk, upFail)
+                        .after(upOk, upFail)
                         .triggerRule(TriggerRule.NONE_FAILED);
             });
             ref.set(r);
@@ -319,22 +319,22 @@ class DagConformanceTest {
                         },
                         noRetry);
                 d.step("k_all_success", String.class, (deps, s) -> "k")
-                        .dependsOn(u1, u2)
+                        .after(u1, u2)
                         .triggerRule(TriggerRule.ALL_SUCCESS);
                 d.step("k_all_failed", String.class, (deps, s) -> "k")
-                        .dependsOn(u1, u2)
+                        .after(u1, u2)
                         .triggerRule(TriggerRule.ALL_FAILED);
                 d.step("k_all_done", String.class, (deps, s) -> "k")
-                        .dependsOn(u1, u2)
+                        .after(u1, u2)
                         .triggerRule(TriggerRule.ALL_DONE);
                 d.step("k_one_success", String.class, (deps, s) -> "k")
-                        .dependsOn(u1, u2)
-                        .triggerRule(TriggerRule.ONE_SUCCESS);
+                        .after(u1, u2)
+                        .triggerRule(TriggerRule.ANY_SUCCESS);
                 d.step("k_one_failed", String.class, (deps, s) -> "k")
-                        .dependsOn(u1, u2)
-                        .triggerRule(TriggerRule.ONE_FAILED);
+                        .after(u1, u2)
+                        .triggerRule(TriggerRule.ANY_FAILED);
                 d.step("k_none_failed", String.class, (deps, s) -> "k")
-                        .dependsOn(u1, u2)
+                        .after(u1, u2)
                         .triggerRule(TriggerRule.NONE_FAILED);
             });
             ref.set(r);
@@ -378,11 +378,9 @@ class DagConformanceTest {
                 var gate = d.step("gate", String.class, (deps, s) -> "gate")
                         .reads(seed)
                         .runIf(deps -> ((Integer) deps.get(seed)) > 100);
-                var d1 = d.step("d1", String.class, (deps, s) -> "d1").dependsOn(gate);
-                d.step("d2", String.class, (deps, s) -> "d2").dependsOn(d1);
-                d.step("sink", String.class, (deps, s) -> "sink")
-                        .dependsOn(gate)
-                        .triggerRule(TriggerRule.ALL_DONE);
+                var d1 = d.step("d1", String.class, (deps, s) -> "d1").after(gate);
+                d.step("d2", String.class, (deps, s) -> "d2").after(d1);
+                d.step("sink", String.class, (deps, s) -> "sink").after(gate).triggerRule(TriggerRule.ALL_DONE);
             });
             ref.set(r);
             return "ok";
@@ -411,7 +409,7 @@ class DagConformanceTest {
                             innerCtx.step("y", Integer.class, (deps, s) -> deps.get(x) * 10)
                                     .reads(x);
                         })
-                        .dependsOn(a);
+                        .after(a);
                 d.step("consume", Integer.class, (deps, s) -> {
                             DagResult innerResult = deps.get(inner);
                             return (Integer) innerResult.getResult("y").orElseThrow() + 5;
@@ -470,8 +468,8 @@ class DagConformanceTest {
             var d = new DagContextImpl();
             var p = d.step("p", String.class, (deps, s) -> "p");
             var q = d.step("q", String.class, (deps, s) -> "q");
-            p.dependsOn(q);
-            q.dependsOn(p);
+            p.after(q);
+            q.after(p);
             return d.tasks();
         });
     }
@@ -511,7 +509,7 @@ class DagConformanceTest {
             var sibling = new DagContextImpl();
             TaskHandle<String> foreign = sibling.step("foreign", String.class, (deps, s) -> "f");
             var d = new DagContextImpl();
-            d.step("t", String.class, (deps, s) -> "t").dependsOn(foreign);
+            d.step("t", String.class, (deps, s) -> "t").after(foreign);
             return d.tasks();
         });
     }
@@ -531,8 +529,8 @@ class DagConformanceTest {
                 ctx.dag("cyc_e2e", d -> {
                     var p = d.step("p", String.class, (deps, s) -> "p");
                     var q = d.step("q", String.class, (deps, s) -> "q");
-                    p.dependsOn(q);
-                    q.dependsOn(p);
+                    p.after(q);
+                    q.after(p);
                 });
                 return "no-error";
             } catch (Throwable t) {
@@ -591,10 +589,10 @@ class DagConformanceTest {
                     "dag16",
                     d -> {
                         var s1 = d.step("s1", Integer.class, (deps, s) -> 1);
-                        var s2 = d.step("s2", Integer.class, (deps, s) -> 2).dependsOn(s1);
-                        var s3 = d.step("s3", Integer.class, (deps, s) -> 3).dependsOn(s2);
-                        var s4 = d.step("s4", Integer.class, (deps, s) -> 4).dependsOn(s3);
-                        d.step("s5", Integer.class, (deps, s) -> 5).dependsOn(s4);
+                        var s2 = d.step("s2", Integer.class, (deps, s) -> 2).after(s1);
+                        var s3 = d.step("s3", Integer.class, (deps, s) -> 3).after(s2);
+                        var s4 = d.step("s4", Integer.class, (deps, s) -> 4).after(s3);
+                        d.step("s5", Integer.class, (deps, s) -> 5).after(s4);
                     },
                     config);
             ref.set(r);
@@ -647,7 +645,7 @@ class DagConformanceTest {
                                             throw new RuntimeException("boom");
                                         },
                                         noRetry)
-                                .dependsOn(t1)
+                                .after(t1)
                                 .triggerRule(TriggerRule.ALL_DONE);
                         var t3 = d.step(
                                         "t3",
@@ -656,7 +654,7 @@ class DagConformanceTest {
                                             throw new RuntimeException("boom");
                                         },
                                         noRetry)
-                                .dependsOn(t2)
+                                .after(t2)
                                 .triggerRule(TriggerRule.ALL_DONE);
                         d.step(
                                         "t4",
@@ -665,7 +663,7 @@ class DagConformanceTest {
                                             throw new RuntimeException("boom");
                                         },
                                         noRetry)
-                                .dependsOn(t3)
+                                .after(t3)
                                 .triggerRule(TriggerRule.ALL_DONE);
                     },
                     config);

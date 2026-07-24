@@ -11,8 +11,7 @@ import software.amazon.lambda.durable.annotations.Experimental;
  *
  * <p>This is Java's answer to the JS {@code DepsMap}: instead of literal-string type keys, a result is retrieved by
  * passing the upstream task's {@link TaskHandle}, which carries the result type via generics. Only handles declared via
- * {@code TaskHandle.reads(...)} are retrievable; ordering-only dependencies (declared via {@code dependsOn(...)}) are
- * not.
+ * {@code TaskHandle.reads(...)} are retrievable; ordering-only dependencies (declared via {@code after(...)}) are not.
  *
  * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
  *     major-version bump.

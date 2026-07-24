@@ -37,7 +37,7 @@ public interface TaskHandle<T> {
      * @param deps the upstream handles to wait for
      * @return this handle, for chaining
      */
-    TaskHandle<T> dependsOn(TaskHandle<?>... deps);
+    TaskHandle<T> after(TaskHandle<?>... deps);
 
     /**
      * Sets the trigger rule (defaults to {@code DagConfig.defaultTriggerRule}, else {@link TriggerRule#ALL_SUCCESS}).

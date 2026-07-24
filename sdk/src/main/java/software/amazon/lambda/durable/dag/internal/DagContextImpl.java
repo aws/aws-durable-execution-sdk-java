@@ -28,6 +28,9 @@ import software.amazon.lambda.durable.dag.DagConfig;
 import software.amazon.lambda.durable.dag.DagContext;
 import software.amazon.lambda.durable.dag.DagPayloadFunction;
 import software.amazon.lambda.durable.dag.DagResult;
+import software.amazon.lambda.durable.dag.DagStep1Function;
+import software.amazon.lambda.durable.dag.DagStep2Function;
+import software.amazon.lambda.durable.dag.DagStep3Function;
 import software.amazon.lambda.durable.dag.DagStepFunction;
 import software.amazon.lambda.durable.dag.Deps;
 import software.amazon.lambda.durable.dag.TaskHandle;
@@ -108,6 +111,31 @@ public final class DagContextImpl implements DagContext {
     public <T> TaskHandle<T> step(String name, TypeToken<T> type, DagStepFunction<T> fn, StepConfig config) {
         TaskExecutor<T> exec = (ctx, deps, id) -> ctx.stepAsyncWithId(id, name, type, sc -> fn.apply(deps, sc), config);
         return register(new TaskHandleImpl<>(name, TaskKind.STEP, exec, config));
+    }
+
+    // ── step: positional-arity typed-deps sugar (§2.7) ─────────────────────────
+    @Override
+    public <A, T> TaskHandle<T> step(String name, Class<T> type, TaskHandle<A> a, DagStep1Function<A, T> fn) {
+        return step(name, type, (deps, sc) -> fn.apply(deps.get(a), sc)).reads(a);
+    }
+
+    @Override
+    public <A, B, T> TaskHandle<T> step(
+            String name, Class<T> type, TaskHandle<A> a, TaskHandle<B> b, DagStep2Function<A, B, T> fn) {
+        return step(name, type, (deps, sc) -> fn.apply(deps.get(a), deps.get(b), sc))
+                .reads(a, b);
+    }
+
+    @Override
+    public <A, B, C, T> TaskHandle<T> step(
+            String name,
+            Class<T> type,
+            TaskHandle<A> a,
+            TaskHandle<B> b,
+            TaskHandle<C> c,
+            DagStep3Function<A, B, C, T> fn) {
+        return step(name, type, (deps, sc) -> fn.apply(deps.get(a), deps.get(b), deps.get(c), sc))
+                .reads(a, b, c);
     }
 
     // ── invoke ───────────────────────────────────────────────────────────────

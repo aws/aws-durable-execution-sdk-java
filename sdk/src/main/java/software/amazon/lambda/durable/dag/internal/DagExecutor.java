@@ -136,7 +136,7 @@ public final class DagExecutor {
                 }
                 var statuses = depStatuses(task, results);
                 var rule = task.triggerRuleOpt().orElse(defaultRule);
-                if (!rule.eval(statuses)) {
+                if (!TriggerRuleEvaluator.eval(rule, statuses)) {
                     results.put(name, skipped(name, SkipReason.TRIGGER_RULE));
                     changed = true;
                     continue;

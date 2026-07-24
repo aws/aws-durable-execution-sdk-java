@@ -29,9 +29,9 @@ class DagValidatorTest {
     @Test
     void diamondIsNotACycle() {
         var a = task("a");
-        var b = task("b").dependsOn(a);
-        var c = task("c").dependsOn(a);
-        var d = task("d").dependsOn(b, c);
+        var b = task("b").after(a);
+        var c = task("c").after(a);
+        var d = task("d").after(b, c);
         assertDoesNotThrow(() -> DagValidator.validate(
                 List.of(a, (TaskHandleImpl<Object>) b, (TaskHandleImpl<Object>) c, (TaskHandleImpl<Object>) d)));
     }
@@ -39,7 +39,7 @@ class DagValidatorTest {
     @Test
     void selfLoopIsCycle() {
         var a = task("a");
-        a.dependsOn(a);
+        a.after(a);
         assertThrows(DagCyclicDependencyException.class, () -> DagValidator.validate(List.of(a)));
     }
 
@@ -47,17 +47,17 @@ class DagValidatorTest {
     void twoCycleDetected() {
         var a = task("a");
         var b = task("b");
-        a.dependsOn(b);
-        b.dependsOn(a);
+        a.after(b);
+        b.after(a);
         assertThrows(DagCyclicDependencyException.class, () -> DagValidator.validate(List.of(a, b)));
     }
 
     @Test
     void deepCycleDetected() {
         var a = task("a");
-        var b = task("b").dependsOn(a);
-        var c = task("c").dependsOn(b);
-        a.dependsOn(c);
+        var b = task("b").after(a);
+        var c = task("c").after(b);
+        a.after(c);
         assertThrows(
                 DagCyclicDependencyException.class,
                 () -> DagValidator.validate(List.of(a, (TaskHandleImpl<Object>) b, (TaskHandleImpl<Object>) c)));
@@ -80,7 +80,7 @@ class DagValidatorTest {
     void foreignDependencyRejected() {
         var registered = task("a");
         var foreign = task("foreign");
-        var b = task("b").dependsOn(foreign);
+        var b = task("b").after(foreign);
         assertThrows(
                 DagInvalidDependencyException.class,
                 () -> DagValidator.validate(List.of(registered, (TaskHandleImpl<Object>) b)));

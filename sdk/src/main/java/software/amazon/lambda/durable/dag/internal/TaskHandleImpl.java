@@ -51,7 +51,7 @@ public final class TaskHandleImpl<T> implements TaskHandle<T> {
     }
 
     @Override
-    public TaskHandle<T> dependsOn(TaskHandle<?>... deps) {
+    public TaskHandle<T> after(TaskHandle<?>... deps) {
         for (var d : deps) {
             if (!extraDeps.contains(d)) {
                 extraDeps.add(d);
@@ -84,7 +84,7 @@ public final class TaskHandleImpl<T> implements TaskHandle<T> {
         return inlineDeps;
     }
 
-    /** Union of inline (reads) and ordering-only (dependsOn) dependencies, de-duplicated, inline first. */
+    /** Union of inline (reads) and ordering-only (after) dependencies, de-duplicated, inline first. */
     public List<TaskHandle<?>> allDeps() {
         var all = new ArrayList<TaskHandle<?>>(inlineDeps);
         for (var d : extraDeps) {

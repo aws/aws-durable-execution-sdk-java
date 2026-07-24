@@ -20,6 +20,33 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 class DagIntegrationTest {
 
     @Test
+    void positionalArityTypedDepsSugarResolves() {
+        // C9: the 1..3-arity sugar passes upstream results directly (typed via the handle) and desugars to
+        // step(...).reads(...); dependency wiring is identical to the .reads() + Deps.get() form.
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("sugar", d -> {
+                var a = d.step("a", Integer.class, (deps, s) -> 1);
+                var b = d.step("b", Integer.class, a, (Integer av, StepContext s) -> av + 1); // 1-arity
+                var c = d.step("c", Integer.class, a, b, (Integer av, Integer bv, StepContext s) -> av + bv); // 2-arity
+                d.step(
+                        "dd",
+                        String.class,
+                        a,
+                        b,
+                        c,
+                        (Integer av, Integer bv, Integer cv, StepContext s) -> av + "-" + bv + "-" + cv); // 3-arity
+            });
+            return (String) r.getResult("dd").orElse("MISSING") + "|"
+                    + r.getResult("c").map(Object::toString).orElse("?");
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // a=1, b=2, c=3, dd="1-2-3"
+        assertEquals("1-2-3|3", result.getResult(String.class));
+    }
+
+    @Test
     void diamondResolvesWithTypedDeps() {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             DagResult r = ctx.dag("etl", d -> {
@@ -47,7 +74,7 @@ class DagIntegrationTest {
                 var maybe = d.step("maybe", String.class, (deps, s) -> "ran")
                         .reads(gate)
                         .runIf(deps -> ((Integer) deps.get(gate)) > 0);
-                d.step("after", String.class, (deps, s) -> "after").dependsOn(maybe);
+                d.step("after", String.class, (deps, s) -> "after").after(maybe);
             });
             return r.getStatus("maybe").map(Enum::name).orElse("?")
                     + "|"
@@ -75,11 +102,11 @@ class DagIntegrationTest {
                         },
                         noRetry);
                 d.step("refund", String.class, (deps, s) -> "refunded")
-                        .dependsOn(charge)
+                        .after(charge)
                         .triggerRule(TriggerRule.ALL_FAILED);
-                d.step("fulfill", String.class, (deps, s) -> "fulfilled").dependsOn(charge);
+                d.step("fulfill", String.class, (deps, s) -> "fulfilled").after(charge);
                 d.step("audit", String.class, (deps, s) -> "audited")
-                        .dependsOn(charge)
+                        .after(charge)
                         .triggerRule(TriggerRule.ALL_DONE);
             });
             return r.completionReason().name()
@@ -103,10 +130,10 @@ class DagIntegrationTest {
                     executions.incrementAndGet();
                     return "A";
                 });
-                var w = d.wait("w", java.time.Duration.ofMinutes(5)).dependsOn(a);
+                var w = d.wait("w", java.time.Duration.ofMinutes(5)).after(a);
                 d.step("b", String.class, (deps, s) -> deps.get(a) + "B")
                         .reads(a)
-                        .dependsOn(w);
+                        .after(w);
             });
             return (String) r.getResult("b").orElse("MISSING");
         });
@@ -140,7 +167,7 @@ class DagIntegrationTest {
                             inner.step("y", String.class, (deps, s) -> deps.get(x) + "Y")
                                     .reads(x);
                         })
-                        .dependsOn(root);
+                        .after(root);
             });
             DagResult innerDag = (DagResult) r.getResult("inner").orElseThrow();
             return innerDag.getResult("y").map(Object::toString).orElse("MISSING") + "|"
@@ -263,10 +290,10 @@ class DagIntegrationTest {
                         })
                         .reads(a);
                 // Wait after the concurrent fan-out forces a suspend/replay before the join runs.
-                var w = d.wait("w", java.time.Duration.ofMinutes(5)).dependsOn(b, c);
+                var w = d.wait("w", java.time.Duration.ofMinutes(5)).after(b, c);
                 d.step("join", String.class, (deps, s) -> deps.get(b) + deps.get(c))
                         .reads(b, c)
-                        .dependsOn(w);
+                        .after(w);
             });
             return (String) r.getResult("join").orElse("MISSING");
         });
