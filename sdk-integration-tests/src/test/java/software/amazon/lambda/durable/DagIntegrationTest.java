@@ -203,4 +203,107 @@ class DagIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(DagCompletionReason.FAILURE_TOLERANCE_EXCEEDED.name() + "|1", result.getResult(String.class));
     }
+
+    @Test
+    void maxConcurrencyThrottlesConcurrentTasks() {
+        var active = new java.util.concurrent.atomic.AtomicInteger(0);
+        var maxObserved = new java.util.concurrent.atomic.AtomicInteger(0);
+        var config = DagConfig.builder().maxConcurrency(2).build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "throttle",
+                    d -> {
+                        for (int i = 0; i < 4; i++) {
+                            d.step("t" + i, String.class, (deps, s) -> {
+                                int now = active.incrementAndGet();
+                                maxObserved.accumulateAndGet(now, Math::max);
+                                try {
+                                    Thread.sleep(50);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                active.decrementAndGet();
+                                return "ok";
+                            });
+                        }
+                    },
+                    config);
+            return r.successCount() + "|" + maxObserved.get();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // All four tasks succeed, and observed concurrency never exceeds the cap of 2.
+        String[] parts = result.getResult(String.class).split("\\|");
+        assertEquals(4, Integer.parseInt(parts[0]));
+        int observed = Integer.parseInt(parts[1]);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                observed >= 1 && observed <= 2, "observed concurrency must be within [1,2] but was " + observed);
+    }
+
+    @Test
+    void diamondWithWaitReplaysDeterministically() {
+        var aRuns = new java.util.concurrent.atomic.AtomicInteger(0);
+        var bRuns = new java.util.concurrent.atomic.AtomicInteger(0);
+        var cRuns = new java.util.concurrent.atomic.AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("diamond", d -> {
+                var a = d.step("a", String.class, (deps, s) -> {
+                    aRuns.incrementAndGet();
+                    return "A";
+                });
+                var b = d.step("b", String.class, (deps, s) -> {
+                            bRuns.incrementAndGet();
+                            return deps.get(a) + "B";
+                        })
+                        .reads(a);
+                var c = d.step("c", String.class, (deps, s) -> {
+                            cRuns.incrementAndGet();
+                            return deps.get(a) + "C";
+                        })
+                        .reads(a);
+                // Wait after the concurrent fan-out forces a suspend/replay before the join runs.
+                var w = d.wait("w", java.time.Duration.ofMinutes(5)).dependsOn(b, c);
+                d.step("join", String.class, (deps, s) -> deps.get(b) + deps.get(c))
+                        .reads(b, c)
+                        .dependsOn(w);
+            });
+            return (String) r.getResult("join").orElse("MISSING");
+        });
+
+        var result = runner.runUntilComplete("go");
+        // No NonDeterministicExecutionException despite concurrent B/C completing in arbitrary order across
+        // the replay boundary — name-based IDs make the join deterministic.
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("ABAC", result.getResult(String.class));
+        // Each upstream ran exactly once; the post-wait replay hit their name-based fast-path.
+        assertEquals(1, aRuns.get());
+        assertEquals(1, bRuns.get());
+        assertEquals(1, cRuns.get());
+    }
+
+    @Test
+    void largeDagResultReExecutesOnReplayWithoutRerunningTasks() {
+        int size = 300 * 1024; // > 256KB LARGE_RESULT_THRESHOLD for the DAG's child-context aggregate
+        var bigRuns = new java.util.concurrent.atomic.AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("big", d -> {
+                d.step("payload", String.class, (deps, s) -> {
+                    bigRuns.incrementAndGet();
+                    return "x".repeat(size);
+                });
+            });
+            int len = ((String) r.getResult("payload").orElse("")).length();
+            // Wait AFTER the DAG completes forces the completed (large) DAG child to be replayed: its aggregate
+            // was checkpointed as an empty payload + replayChildren=true, so on resume the child body re-runs
+            // the scheduler and each task returns via its per-task checkpoint fast-path (no body re-execution).
+            ctx.wait("after", java.time.Duration.ofMinutes(5));
+            return len + "|" + bigRuns.get();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // Aggregate reconstructed to full size, and the task body executed exactly once across the replay.
+        assertEquals(size + "|1", result.getResult(String.class));
+    }
 }

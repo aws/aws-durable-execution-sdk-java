@@ -166,6 +166,27 @@ class DagResultTest {
         assertEquals(DagCompletionReason.ALL_COMPLETED, nested.completionReason());
     }
 
+    /** Simple record used to prove PLAIN typed-result fidelity across a serde round-trip. */
+    public record Point(int x, int y) {}
+
+    @Test
+    void serdeRoundTripPreservesPlainPojoType() {
+        var serdes = new DagResultSerDes(new JacksonSerDes());
+        Map<String, TaskExecution<?>> m = new LinkedHashMap<>();
+        m.put("p", ok("p", new Point(3, 4)));
+        var original = new DagResultImpl(m, DagCompletionReason.ALL_COMPLETED);
+
+        var restored = serdes.deserialize(
+                serdes.serialize(original), TypeToken.get(software.amazon.lambda.durable.dag.DagResult.class));
+
+        var rehydrated = restored.getResult("p").orElseThrow();
+        assertTrue(
+                rehydrated instanceof Point,
+                "PLAIN POJO result must rehydrate to its concrete type, not a generic map; was: "
+                        + rehydrated.getClass());
+        assertEquals(new Point(3, 4), rehydrated);
+    }
+
     @Test
     void serdeRoundTripReconstructsError() {
         var serdes = new DagResultSerDes(new JacksonSerDes());

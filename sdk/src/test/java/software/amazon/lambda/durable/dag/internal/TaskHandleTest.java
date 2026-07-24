@@ -23,20 +23,19 @@ class TaskHandleTest {
     }
 
     @Test
-    void buildersMutateTaskDef() {
+    void buildersMutateHandleState() {
         var a = handle("a");
         var b = handle("b");
         var c = handle("c");
         c.reads(a).dependsOn(b).triggerRule(TriggerRule.ALL_DONE).runIf(deps -> true);
 
-        var def = c.toTaskDef();
-        assertEquals(1, def.inlineDeps().size());
-        assertTrue(def.inlineDeps().contains(a));
-        assertEquals(2, def.allDeps().size()); // inline (a) + ordering-only (b)
-        assertTrue(def.allDeps().contains(a));
-        assertTrue(def.allDeps().contains(b));
-        assertEquals(Optional.of(TriggerRule.ALL_DONE), def.triggerRule());
-        assertTrue(def.runIf().isPresent());
+        assertEquals(1, c.inlineDeps().size());
+        assertTrue(c.inlineDeps().contains(a));
+        assertEquals(2, c.allDeps().size()); // inline (a) + ordering-only (b)
+        assertTrue(c.allDeps().contains(a));
+        assertTrue(c.allDeps().contains(b));
+        assertEquals(Optional.of(TriggerRule.ALL_DONE), c.triggerRuleOpt());
+        assertTrue(c.runIfOpt().isPresent());
     }
 
     @Test

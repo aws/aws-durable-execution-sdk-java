@@ -14,6 +14,8 @@ import software.amazon.lambda.durable.dag.TaskStatus;
  * @param skipReason the skip reason, or {@code null}
  * @param resultKind how {@code result} must be rehydrated
  * @param result the (kind-tagged) result payload, or {@code null}
+ * @param resultType fully-qualified class name of a {@code PLAIN} result, used to rehydrate it to its concrete type
+ *     instead of a generic JSON tree; {@code null} for non-PLAIN, {@code null}, or unresolvable results
  * @param error the failure error, or {@code null}
  * @param startedAt ISO-8601 start time, or {@code null}
  * @param completedAt ISO-8601 completion time, or {@code null}
@@ -24,6 +26,7 @@ public record SerializedTaskExecution(
         SkipReason skipReason,
         SerializedResultKind resultKind,
         Object result,
+        String resultType,
         DagTaskError error,
         String startedAt,
         String completedAt) {}

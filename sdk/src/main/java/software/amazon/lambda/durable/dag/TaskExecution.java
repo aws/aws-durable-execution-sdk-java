@@ -15,8 +15,11 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param skipReason present only when {@code status == SKIPPED}
  * @param result present only when {@code status == SUCCEEDED}
  * @param error present only when {@code status == FAILED}
- * @param startedAt when the task started, if it ran
- * @param completedAt when the task completed, if it ran
+ * @param startedAt when the task started, if it ran; currently always {@link Optional#empty()} — reserved. Timings are
+ *     deliberately not captured from the wall clock in the scheduler because that code runs outside a step and would
+ *     yield non-deterministic values across replay; a replay-safe timing source is future work.
+ * @param completedAt when the task completed, if it ran; currently always {@link Optional#empty()} — reserved (see
+ *     {@code startedAt}).
  * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
  *     major-version bump.
  */

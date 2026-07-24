@@ -21,9 +21,11 @@ import software.amazon.lambda.durable.serde.SerDes;
  * {@code MAP} results rehydrate to {@link MapResult} and nested {@code DAG} results recursively rehydrate to
  * {@link DagResult} instances.
  *
- * <p>Note: {@code PLAIN} results rehydrate as generic JSON trees (type erasure). For precise typed reconstruction of
- * arbitrary POJO results, the DAG's native child-context re-execution path (used for large aggregates) re-runs the
- * scheduler so every task returns its own correctly-typed checkpointed result via the per-task fast path.
+ * <p>{@code PLAIN} results persist their concrete runtime class name and rehydrate to that type, so POJO/record results
+ * survive a small-DAG replay round-trip (top-level generic element types still erase — e.g. a {@code List<Pojo>}
+ * rehydrates as {@code List} of JSON trees). If the class cannot be resolved, the result falls back to a generic JSON
+ * tree. The DAG's native child-context re-execution path (used for large aggregates, §8.1) re-runs the scheduler so
+ * every task returns its own correctly-typed checkpointed result via the per-task fast path.
  */
 public final class DagResultSerDes implements SerDes {
 
@@ -58,6 +60,7 @@ public final class DagResultSerDes implements SerDes {
             Object resultObj = te.result().orElse(null);
             SerializedResultKind kind;
             Object serResult;
+            String resultType = null;
             if (resultObj instanceof MapResult<?>) {
                 kind = SerializedResultKind.MAP;
                 serResult = resultObj;
@@ -67,6 +70,12 @@ public final class DagResultSerDes implements SerDes {
             } else {
                 kind = SerializedResultKind.PLAIN;
                 serResult = resultObj;
+                if (resultObj != null) {
+                    // Persist the concrete runtime type so PLAIN POJO/record/collection results rehydrate to
+                    // their declared type on replay of a small (<256KB) completed DAG, rather than degrading to a
+                    // generic LinkedHashMap JSON tree (type erasure). Top-level generic element types still erase.
+                    resultType = resultObj.getClass().getName();
+                }
             }
             tasks.add(new SerializedTaskExecution(
                     te.name(),
@@ -74,6 +83,7 @@ public final class DagResultSerDes implements SerDes {
                     te.skipReason().orElse(null),
                     kind,
                     serResult,
+                    resultType,
                     te.error().orElse(null),
                     te.startedAt().map(Instant::toString).orElse(null),
                     te.completedAt().map(Instant::toString).orElse(null)));
@@ -86,7 +96,7 @@ public final class DagResultSerDes implements SerDes {
         for (var ste : s.tasks()) {
             Optional<Object> result = Optional.empty();
             if (ste.status() == TaskStatus.SUCCEEDED) {
-                result = Optional.ofNullable(rehydrate(ste.resultKind(), ste.result()));
+                result = Optional.ofNullable(rehydrate(ste.resultKind(), ste.result(), ste.resultType()));
             }
             results.put(
                     ste.name(),
@@ -102,15 +112,32 @@ public final class DagResultSerDes implements SerDes {
         return new DagResultImpl(results, s.completionReason());
     }
 
-    private Object rehydrate(SerializedResultKind kind, Object raw) {
+    private Object rehydrate(SerializedResultKind kind, Object raw, String resultType) {
         if (raw == null) {
             return null;
         }
         return switch (kind) {
-            case PLAIN -> raw;
+            case PLAIN -> rehydratePlain(raw, resultType);
             case MAP -> delegate.deserialize(delegate.serialize(raw), TypeToken.get(MapResult.class));
             case DAG ->
                 fromSerialized(delegate.deserialize(delegate.serialize(raw), TypeToken.get(SerializedDagResult.class)));
         };
+    }
+
+    /**
+     * Rehydrates a PLAIN result to its persisted concrete type when known, so POJO/record/collection results survive
+     * replay of a small completed DAG rather than degrading to a generic JSON tree. Falls back to the raw parsed tree
+     * if the type is absent or cannot be resolved (e.g. class not on the classpath).
+     */
+    private Object rehydratePlain(Object raw, String resultType) {
+        if (resultType == null) {
+            return raw;
+        }
+        try {
+            Class<?> cls = Class.forName(resultType);
+            return delegate.deserialize(delegate.serialize(raw), TypeToken.get(cls));
+        } catch (ClassNotFoundException | RuntimeException e) {
+            return raw;
+        }
     }
 }

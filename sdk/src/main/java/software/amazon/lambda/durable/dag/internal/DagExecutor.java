@@ -81,6 +81,14 @@ public final class DagExecutor {
             var reason = evaluateEarlyCompletion(completion, results, totalTaskCount);
             if (reason != null) {
                 earlyReason = reason;
+                // Early completion: stop launching/awaiting and abandon any still-in-flight tasks. This is
+                // deliberate and replay-safe: each in-flight op was launched under its name-based ID
+                // (idOf(name)), so any late checkpoint it writes is inert on replay — the scheduler
+                // re-evaluates completion deterministically, reaches the identical stop point, and never
+                // reads a checkpoint for a task past that point (spec §8.1(3)). Abandoned tasks are therefore
+                // excluded from `results`, preserving the minimal-set early-completion semantics. We drop the
+                // in-flight references so no further waves are launched.
+                inFlight.clear();
                 break;
             }
             fillReady(tasks, childCtx, config, defaultRule, maxConcurrency, results, inFlight);

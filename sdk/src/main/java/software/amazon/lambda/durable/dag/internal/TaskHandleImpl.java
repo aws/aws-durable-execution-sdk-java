@@ -12,8 +12,8 @@ import software.amazon.lambda.durable.dag.TriggerRule;
 
 /**
  * Concrete, mutable {@link TaskHandle} produced during DAG registration. Carries the task's kind, executor closure,
- * declared dependencies, trigger rule, and {@code runIf} predicate. The scheduler snapshots it to an immutable
- * {@link TaskDef} via {@link #toTaskDef()}.
+ * declared dependencies, trigger rule, and {@code runIf} predicate. Consumed directly by the scheduler
+ * ({@link DagExecutor}) via its accessors.
  *
  * @param <T> the task result type
  */
@@ -101,18 +101,5 @@ public final class TaskHandleImpl<T> implements TaskHandle<T> {
 
     public Optional<Predicate<Deps>> runIfOpt() {
         return Optional.ofNullable(runIf);
-    }
-
-    /** Immutable snapshot for the scheduler. */
-    public TaskDef<T> toTaskDef() {
-        return new TaskDef<>(
-                name,
-                kind,
-                List.copyOf(inlineDeps),
-                List.copyOf(allDeps()),
-                triggerRuleOpt(),
-                runIfOpt(),
-                options,
-                executor);
     }
 }
