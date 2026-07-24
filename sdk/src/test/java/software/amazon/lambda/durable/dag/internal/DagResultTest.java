@@ -106,6 +106,67 @@ class DagResultTest {
     }
 
     @Test
+    void emptyDagResultHasZeroCounts() {
+        var r = new DagResultImpl(new LinkedHashMap<>(), DagCompletionReason.ALL_COMPLETED);
+        assertEquals(0, r.totalCount());
+        assertEquals(0, r.successCount());
+        assertEquals(0, r.failureCount());
+        assertEquals(0, r.skippedCount());
+        assertTrue(r.getResult("nope").isEmpty());
+        assertTrue(r.getStatus("nope").isEmpty());
+        r.throwIfError(); // must not throw
+    }
+
+    @Test
+    void serdeRoundTripRehydratesMapResultTask() {
+        var serdes = new DagResultSerDes(new JacksonSerDes());
+        var mapResult = new software.amazon.lambda.durable.model.MapResult<>(
+                java.util.List.of(
+                        software.amazon.lambda.durable.model.MapResult.MapResultItem.succeeded("x"),
+                        software.amazon.lambda.durable.model.MapResult.MapResultItem.succeeded("y")),
+                software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.ALL_COMPLETED);
+        Map<String, TaskExecution<?>> m = new LinkedHashMap<>();
+        m.put("m", ok("m", mapResult));
+        var original = new DagResultImpl(m, DagCompletionReason.ALL_COMPLETED);
+
+        var restored = serdes.deserialize(
+                serdes.serialize(original), TypeToken.get(software.amazon.lambda.durable.dag.DagResult.class));
+
+        var rehydrated = restored.getResult("m").orElseThrow();
+        assertTrue(
+                rehydrated instanceof software.amazon.lambda.durable.model.MapResult,
+                "MAP result must rehydrate to a MapResult instance, was: " + rehydrated.getClass());
+        var mr = (software.amazon.lambda.durable.model.MapResult<?>) rehydrated;
+        assertEquals(2, mr.size());
+        assertEquals("x", mr.getResult(0));
+        assertEquals("y", mr.getResult(1));
+    }
+
+    @Test
+    void serdeRoundTripRehydratesNestedDagResultTask() {
+        var serdes = new DagResultSerDes(new JacksonSerDes());
+        Map<String, TaskExecution<?>> inner = new LinkedHashMap<>();
+        inner.put("leaf", ok("leaf", "deep"));
+        var innerDag = new DagResultImpl(inner, DagCompletionReason.ALL_COMPLETED);
+
+        Map<String, TaskExecution<?>> outer = new LinkedHashMap<>();
+        outer.put("nested", ok("nested", innerDag));
+        var original = new DagResultImpl(outer, DagCompletionReason.ALL_COMPLETED);
+
+        var restored = serdes.deserialize(
+                serdes.serialize(original), TypeToken.get(software.amazon.lambda.durable.dag.DagResult.class));
+
+        var rehydrated = restored.getResult("nested").orElseThrow();
+        assertTrue(
+                rehydrated instanceof software.amazon.lambda.durable.dag.DagResult,
+                "DAG result must rehydrate to a DagResult instance, was: " + rehydrated.getClass());
+        var nested = (software.amazon.lambda.durable.dag.DagResult) rehydrated;
+        assertEquals(1, nested.totalCount());
+        assertEquals(Optional.of("deep"), nested.getResult("leaf"));
+        assertEquals(DagCompletionReason.ALL_COMPLETED, nested.completionReason());
+    }
+
+    @Test
     void serdeRoundTripReconstructsError() {
         var serdes = new DagResultSerDes(new JacksonSerDes());
         Map<String, TaskExecution<?>> m = new LinkedHashMap<>();

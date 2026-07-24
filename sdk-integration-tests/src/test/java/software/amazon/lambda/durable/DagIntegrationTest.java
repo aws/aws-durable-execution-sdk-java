@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.dag.DagCompletionConfig;
+import software.amazon.lambda.durable.dag.DagCompletionReason;
+import software.amazon.lambda.durable.dag.DagConfig;
 import software.amazon.lambda.durable.dag.DagResult;
 import software.amazon.lambda.durable.dag.TaskStatus;
 import software.amazon.lambda.durable.dag.TriggerRule;
@@ -21,9 +24,12 @@ class DagIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             DagResult r = ctx.dag("etl", d -> {
                 var a = d.step("a", String.class, (deps, s) -> "A");
-                var b = d.step("b", String.class, (deps, s) -> deps.get(a) + "B").reads(a);
-                var c = d.step("c", String.class, (deps, s) -> deps.get(a) + "C").reads(a);
-                d.step("dd", String.class, (deps, s) -> deps.get(b) + deps.get(c)).reads(b, c);
+                var b = d.step("b", String.class, (deps, s) -> deps.get(a) + "B")
+                        .reads(a);
+                var c = d.step("c", String.class, (deps, s) -> deps.get(a) + "C")
+                        .reads(a);
+                d.step("dd", String.class, (deps, s) -> deps.get(b) + deps.get(c))
+                        .reads(b, c);
             });
             return (String) r.getResult("dd").orElse("MISSING");
         });
@@ -85,8 +91,7 @@ class DagIntegrationTest {
 
         var result = runner.runUntilComplete("go");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(
-                "COMPLETED_WITH_FAILURES|FAILED|SUCCEEDED|SKIPPED|SUCCEEDED", result.getResult(String.class));
+        assertEquals("COMPLETED_WITH_FAILURES|FAILED|SUCCEEDED|SKIPPED|SUCCEEDED", result.getResult(String.class));
     }
 
     @Test
@@ -99,7 +104,9 @@ class DagIntegrationTest {
                     return "A";
                 });
                 var w = d.wait("w", java.time.Duration.ofMinutes(5)).dependsOn(a);
-                d.step("b", String.class, (deps, s) -> deps.get(a) + "B").reads(a).dependsOn(w);
+                d.step("b", String.class, (deps, s) -> deps.get(a) + "B")
+                        .reads(a)
+                        .dependsOn(w);
             });
             return (String) r.getResult("b").orElse("MISSING");
         });
@@ -109,5 +116,91 @@ class DagIntegrationTest {
         assertEquals("AB", result.getResult(String.class));
         // Step "a" ran exactly once despite the wait-induced suspension/replay (name-based ID fast-path).
         assertEquals(1, executions.get());
+    }
+
+    @Test
+    void emptyDagCompletesImmediately() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("empty", d -> {});
+            return r.totalCount() + "|" + r.completionReason().name();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("0|" + DagCompletionReason.ALL_COMPLETED.name(), result.getResult(String.class));
+    }
+
+    @Test
+    void nestedDagScopeIsolation() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("outer", d -> {
+                var root = d.step("root", String.class, (deps, s) -> "R");
+                d.dag("inner", inner -> {
+                            var x = inner.step("x", String.class, (deps, s) -> "X");
+                            inner.step("y", String.class, (deps, s) -> deps.get(x) + "Y")
+                                    .reads(x);
+                        })
+                        .dependsOn(root);
+            });
+            DagResult innerDag = (DagResult) r.getResult("inner").orElseThrow();
+            return innerDag.getResult("y").map(Object::toString).orElse("MISSING") + "|"
+                    + innerDag.completionReason().name();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("XY|" + DagCompletionReason.ALL_COMPLETED.name(), result.getResult(String.class));
+    }
+
+    @Test
+    void minSuccessfulTriggersEarlyCompletion() {
+        var config = DagConfig.builder()
+                .completionConfig(DagCompletionConfig.minSuccessful(1))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "early",
+                    d -> {
+                        d.step("a", String.class, (deps, s) -> "A");
+                        d.step("b", String.class, (deps, s) -> "B");
+                        d.step("c", String.class, (deps, s) -> "C");
+                    },
+                    config);
+            return r.completionReason().name() + "|" + r.successCount();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // First success reaches the threshold; reason is MIN_SUCCESSFUL_REACHED with >= 1 success recorded.
+        assertEquals(DagCompletionReason.MIN_SUCCESSFUL_REACHED.name() + "|1", result.getResult(String.class));
+    }
+
+    @Test
+    void toleratedFailureCountExceededTriggersEarlyCompletion() {
+        var noRetry = StepConfig.builder()
+                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                .build();
+        var config = DagConfig.builder()
+                .completionConfig(DagCompletionConfig.toleratedFailureCount(0))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "failfast",
+                    d -> {
+                        d.step(
+                                "boom",
+                                String.class,
+                                (deps, s) -> {
+                                    throw new RuntimeException("kaboom");
+                                },
+                                noRetry);
+                    },
+                    config);
+            return r.completionReason().name() + "|" + r.failureCount();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(DagCompletionReason.FAILURE_TOLERANCE_EXCEEDED.name() + "|1", result.getResult(String.class));
     }
 }
