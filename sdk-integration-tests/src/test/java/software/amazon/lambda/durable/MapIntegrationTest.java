@@ -1780,8 +1780,10 @@ class MapIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"FLAT, 2", "NESTED, 2"})
+    @CsvSource({"FLAT, 0", "NESTED, 0"})
     void testMapWithEmptyItems(NestingType nestingType, int events) {
+        // Default behavior (checkpointEmptyMap disabled): empty map is not checkpointed, so no history events.
+        // Temporary: remove this test along with the checkpointEmptyMap flag in a future major version.
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             List<String> items = List.of();
             var result = context.map(
@@ -1803,8 +1805,10 @@ class MapIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"FLAT, 2", "NESTED, 2"})
+    @CsvSource({"FLAT, 0", "NESTED, 0"})
     void testAnyOfMapWithEmptyItems(NestingType nestingType, int events) {
+        // Default behavior (checkpointEmptyMap disabled): empty map is not checkpointed, so no history events.
+        // Temporary: remove this test along with the checkpointEmptyMap flag in a future major version.
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             List<String> items = List.of();
             var result = context.mapAsync(
@@ -1826,24 +1830,53 @@ class MapIntegrationTest {
 
     @ParameterizedTest
     @CsvSource({"FLAT, 2", "NESTED, 2"})
+    void testMapWithEmptyItemsCheckpointed(NestingType nestingType, int events) {
+        var config = DurableConfig.builder().withCheckpointEmptyMap(true).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    var result = context.map(
+                            "empty-map",
+                            List.<String>of(),
+                            String.class,
+                            (item, index, ctx) -> item,
+                            MapConfig.builder().nestingType(nestingType).build());
+
+                    assertTrue(result.allSucceeded());
+                    assertEquals(0, result.size());
+                    return "done";
+                },
+                config);
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"FLAT, 2", "NESTED, 2"})
     void testEmptyMapReplayUsesCheckpoint(NestingType nestingType, int events) {
+        var config = DurableConfig.builder().withCheckpointEmptyMap(true).build();
         var executionCount = new AtomicInteger(0);
 
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var result = context.map(
-                    "empty-map",
-                    List.<String>of(),
-                    String.class,
-                    (item, index, ctx) -> {
-                        executionCount.incrementAndGet();
-                        return item;
-                    },
-                    MapConfig.builder().nestingType(nestingType).build());
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    var result = context.map(
+                            "empty-map",
+                            List.<String>of(),
+                            String.class,
+                            (item, index, ctx) -> {
+                                executionCount.incrementAndGet();
+                                return item;
+                            },
+                            MapConfig.builder().nestingType(nestingType).build());
 
-            assertTrue(result.allSucceeded());
-            assertEquals(0, result.size());
-            return "done";
-        });
+                    assertTrue(result.allSucceeded());
+                    assertEquals(0, result.size());
+                    return "done";
+                },
+                config);
 
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());

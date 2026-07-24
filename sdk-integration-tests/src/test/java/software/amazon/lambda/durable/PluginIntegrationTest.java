@@ -334,7 +334,11 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationStartAndEnd_balanced_forEmptyMap() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        // withCheckpointEmptyMap is a temporary flag expected to be removed in a future major version.
+        var config = DurableConfig.builder()
+                .withPlugins(plugin)
+                .withCheckpointEmptyMap(true)
+                .build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,

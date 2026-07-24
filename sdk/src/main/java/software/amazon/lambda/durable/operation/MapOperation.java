@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -37,6 +39,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  */
 public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
+    private static final Logger logger = LoggerFactory.getLogger(MapOperation.class);
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private final List<I> items;
@@ -101,11 +104,26 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     @Override
     protected void start() {
         if (items.isEmpty()) {
-            // Empty map: checkpoint START + SUCCEED directly to produce a complete map operation with an empty result.
-            sendOperationUpdate(OperationUpdate.builder()
-                    .action(OperationAction.START)
-                    .subType(getSubType().getValue()));
-            handleCompletion(CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.ALL_COMPLETED));
+            // TODO: Remove the checkpointEmptyMap flag and the non-checkpointing branch in a future major version,
+            // making checkpointing the default.
+            if (getContext().getDurableConfig().shouldCheckpointEmptyMap()) {
+                // Checkpoint START + SUCCEED to produce a complete map operation with an empty result.
+                sendOperationUpdate(OperationUpdate.builder()
+                        .action(OperationAction.START)
+                        .subType(getSubType().getValue()));
+                handleCompletion(
+                        CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.ALL_COMPLETED));
+            } else {
+                // Default: complete without checkpointing. Fire onOperationEnd so plugin hooks stay balanced.
+                logger.warn(
+                        "Empty map operation '{}' is not checkpointed by default. This behavior is unintended and may"
+                                + " affect replay and plugin instrumentation. Enable"
+                                + " DurableConfig.withCheckpointEmptyMap(true) to checkpoint empty maps.",
+                        getName());
+                cachedResult = MapResult.empty();
+                fireOnOperationEnd(null, null, false);
+                markAlreadyCompleted();
+            }
             return;
         }
         sendOperationUpdateAsync(OperationUpdate.builder()
@@ -221,6 +239,11 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
 
     @Override
     public MapResult<O> get() {
+        // Non-checkpointed empty map: no stored operation, so skip join() and return the result set in start().
+        // Tied to the temporary checkpointEmptyMap flag; remove with it in a future major version.
+        if (items.isEmpty() && !getContext().getDurableConfig().shouldCheckpointEmptyMap()) {
+            return cachedResult;
+        }
         join();
         // cachedResult is always set upon successful completion
         return cachedResult;
