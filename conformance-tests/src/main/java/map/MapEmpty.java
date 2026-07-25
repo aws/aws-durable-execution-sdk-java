@@ -3,6 +3,7 @@
 package map;
 
 import java.util.List;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.config.MapConfig;
@@ -10,6 +11,11 @@ import software.amazon.lambda.durable.model.MapResult;
 
 /** 9-4: Map with an empty items list completes immediately with an empty results list. */
 public class MapEmpty extends DurableHandler<Object, List<String>> {
+
+    @Override
+    protected DurableConfig createConfiguration() {
+        return DurableConfig.builder().withCheckpointEmptyMap(true).build();
+    }
 
     @Override
     public List<String> handleRequest(Object input, DurableContext context) {
