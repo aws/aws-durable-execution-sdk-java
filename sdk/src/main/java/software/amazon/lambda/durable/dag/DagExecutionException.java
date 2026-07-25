@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.dag;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
@@ -17,7 +19,19 @@ public class DagExecutionException extends DagException {
         super(message);
     }
 
-    public DagExecutionException(String message, Throwable cause) {
+    /**
+     * Primary constructor: wraps the first failed task's cause.
+     *
+     * <p>Annotated as the {@code @JsonCreator} so that when this exception crosses a {@code runInChildContext} boundary
+     * (a nested DAG task that calls {@code throwIfError()} in its body) it is reconstructed with its cause set at
+     * construction time. This avoids {@code Throwable.initCause}, which the base hierarchy would otherwise reject
+     * because it pre-initializes the cause to {@code null} — the same idiom {@link DagPredicateException} uses. Without
+     * it, a cause-carrying {@code DagExecutionException} degrades to a bare {@code ChildContextFailedException} at the
+     * caller. Jackson passes {@code cause == null} for the no-cause form, which is equivalent to the single-arg
+     * constructor.
+     */
+    @JsonCreator
+    public DagExecutionException(@JsonProperty("message") String message, @JsonProperty("cause") Throwable cause) {
         super(message, cause);
     }
 }

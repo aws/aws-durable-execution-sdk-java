@@ -20,6 +20,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.dag.DagException;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackSubmitterException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
@@ -199,15 +200,21 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         if (exception instanceof DurableOperationException opEx) {
             if (opEx.getErrorObject() != null) {
                 errorObject = opEx.getErrorObject();
-            } else if (opEx.getOperation() == null) {
-                // A DurableOperationException carrying NEITHER an operation NOR an ErrorObject — the DAG family's
-                // DagPredicateException, constructed with both null (the errorObject "erasure" the review flagged).
-                // With no operation/error to translate from, the prior code left the checkpoint error null and the
-                // typed exception degraded to a bare ChildContextFailedException with no cause. Serialize the exception
-                // itself instead — exactly as a plain throwable — so its type, message (which names the offending task)
-                // and cause survive this child-context boundary and translateException(...) can reconstruct it.
-                // (Operation-backed DurableOperationExceptions are deliberately excluded: their non-null AWS Operation
-                // model is not JSON-serializable, and their null-error behaviour is unchanged below.)
+            } else if (exception instanceof DagException) {
+                // A DAG-family exception (DagException and every subtype: the runIf DagPredicateException, the
+                // registration-time Dag{CyclicDependency,DuplicateTask,InvalidTaskName,InvalidDependency}Exception, and
+                // DagExecutionException). DagException calls super(null, null, ...), so every family member carries
+                // NEITHER an AWS Operation NOR an ErrorObject to translate from. The pre-DAG code therefore left the
+                // checkpoint error null and the typed exception degraded to a bare ChildContextFailedException with no
+                // cause. Serialize the exception itself instead — exactly as a plain throwable — so its concrete DAG
+                // type, message (which for the predicate/registration cases names the offending task) and cause
+                // survive this child-context boundary and translateException(...) can reconstruct it.
+                //
+                // Scoped to the DAG family on purpose (this was previously keyed on getOperation()==null, which was
+                // broader than intended): a NON-DAG DurableOperationException that happens to carry a null operation
+                // and null error — e.g. WaitForConditionFailedException(String) — falls through to the null-error
+                // branch below and keeps its prior degrade-to-ChildContextFailedException behaviour rather than being
+                // newly serialized here.
                 errorObject = serializeException(exception);
             } else {
                 errorObject = null;
