@@ -37,7 +37,8 @@ public class DagWaitForCondition extends DurableHandler<Object, Map<String, Obje
                             WaitForConditionConfig.<Integer>builder()
                                     .initialState(0)
                                     .build());
-                    d.step("done", Integer.class, (deps, s) -> deps.get(poll) * 5).reads(poll);
+                    d.step("done", Integer.class, (deps, s) -> deps.get(poll) * 5)
+                            .reads(poll);
                 },
                 DagConfig.builder().maxConcurrency(1).build());
 

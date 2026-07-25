@@ -16,9 +16,9 @@ import software.amazon.lambda.durable.model.MapResult;
 /**
  * 10-6: DAG task that is a map over a fixed item list (flat map container under the DAG).
  *
- * <p>squares(map [1,2] each item-&gt;item*item = [1,4]) -&gt; sum(step[squares]=1+4=5). maxConcurrency=1 at both the DAG
- * and map levels for a deterministic history. Every task succeeds → ALL_COMPLETED. Returns the canonical summary from
- * 10-6.yaml.
+ * <p>squares(map [1,2] each item-&gt;item*item = [1,4]) -&gt; sum(step[squares]=1+4=5). maxConcurrency=1 at both the
+ * DAG and map levels for a deterministic history. Every task succeeds → ALL_COMPLETED. Returns the canonical summary
+ * from 10-6.yaml.
  */
 public class DagMap extends DurableHandler<Object, Map<String, Object>> {
 

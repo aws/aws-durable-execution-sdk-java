@@ -46,6 +46,7 @@ Resources:
             Action:
             - lambda:CheckpointDurableExecution
             - lambda:GetDurableExecutionState
+            - lambda:InvokeFunction
             Resource: '*'
 
   DagDiamond:
@@ -184,6 +185,58 @@ Resources:
       CodeUri: .
       Handler: dag.DagNested
       Description: DAG task that is itself a nested DAG / sub-dag (flat nested Dag container)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  # Target Functions
+
+  TargetEcho:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: invoke.TargetEcho
+      Description: Echo target function — returns whatever it receives
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  DagInvoke:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-10"]
+    Properties:
+      CodeUri: .
+      Handler: dag.DagInvoke
+      Description: DAG task that is an invoke of another Lambda (flat invoke op)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME:
+            Fn::Sub: "${TargetEcho.Arn}:$LATEST"
+
+  DagCallback:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-11"]
+    Properties:
+      CodeUri: .
+      Handler: dag.DagCallback
+      Description: DAG task that is a callback / wait-for-callback (flat callback container)
       Role:
         Fn::GetAtt:
         - DurableFunctionRole

@@ -31,7 +31,8 @@ public class DagChild extends DurableHandler<Object, Map<String, Object>> {
                                 return a + b;
                             })
                             .reads(seed);
-                    d.step("done", Integer.class, (deps, s) -> deps.get(group) * 2).reads(group);
+                    d.step("done", Integer.class, (deps, s) -> deps.get(group) * 2)
+                            .reads(group);
                 },
                 DagConfig.builder().maxConcurrency(1).build());
 
