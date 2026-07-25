@@ -5,23 +5,44 @@ package plugin;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 /**
  * 10-5: Multiple registered plugins all receive lifecycle hooks.
  *
- * <p>A single greeting step configured with TWO {@link ConformanceLoggingPlugin} instances registered together in
- * order A, B. Plugin A logs with prefix {@code CONFPLUGIN-A}, plugin B with prefix {@code CONFPLUGIN-B}. Both plugins
- * must receive the invocation-start and invocation-end hooks exactly once.
+ * <p>A single greeting step configured with TWO invocation-logging plugins registered together in order A, B. Plugin A
+ * logs with prefix {@code CONFPLUGIN-A}, plugin B with prefix {@code CONFPLUGIN-B}, emitting exactly the lines the
+ * requirement documents: {@code <prefix> invocation-start} and {@code <prefix> invocation-end status=<status>}.
  */
 @SuppressWarnings("deprecation")
 public class PluginMultiplePlugins extends DurableHandler<String, String> {
+
+    /** Minimal plugin emitting exactly the 10-5 documented invocation lines. */
+    static final class InvocationLoggingPlugin implements DurableExecutionPlugin {
+        private final String prefix;
+
+        InvocationLoggingPlugin(String prefix) {
+            this.prefix = prefix;
+        }
+
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            System.out.println(prefix + " invocation-start");
+        }
+
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            System.out.println(prefix + " invocation-end status=" + info.invocationStatus().name());
+        }
+    }
 
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
                 .withPlugins(
-                        new ConformanceLoggingPlugin("CONFPLUGIN-A"),
-                        new ConformanceLoggingPlugin("CONFPLUGIN-B"))
+                        new InvocationLoggingPlugin("CONFPLUGIN-A"), new InvocationLoggingPlugin("CONFPLUGIN-B"))
                 .build();
     }
 
