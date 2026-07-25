@@ -156,11 +156,6 @@ Resources:
         Fn::GetAtt:
         - DurableFunctionRole
         - Arn
-      Environment:
-        Variables:
-          # Log4j2's default configuration logs at ERROR, which suppresses the
-          # logger.info calls that requirement 1-7 asserts on. Raise it to INFO.
-          JAVA_TOOL_OPTIONS: -Dorg.apache.logging.log4j.level=INFO
       DurableConfig:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300

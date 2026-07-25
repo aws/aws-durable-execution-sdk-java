@@ -12,8 +12,7 @@ public class ChildLargePayload extends DurableHandler<Object, String> {
     @Override
     public String handleRequest(Object input, DurableContext context) {
         String largeResult = context.runInChildContext("large-data-processor", String.class, child -> {
-            System.out.println(input);
-            System.out.flush();
+            child.getLogger().info("{}", input);
 
             String seed = child.step("fetch-seed", String.class, stepCtx -> "seed");
 
