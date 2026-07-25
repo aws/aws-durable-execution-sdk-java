@@ -5,7 +5,9 @@ package software.amazon.lambda.durable.dag.internal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
@@ -47,8 +49,38 @@ public final class DagContextImpl implements DagContext {
 
     private final List<TaskHandleImpl<?>> tasks = new ArrayList<>();
 
+    /**
+     * Declared result types (fully-qualified class names) of this scope's PLAIN-result tasks — the allowlist that
+     * bounds which classes {@link DagResultSerDes} will reconstruct from a checkpoint on replay (H3). Populated during
+     * registration as each task is declared; nested DAGs contribute recursively via {@link #collectAllowedResultTypes}.
+     */
+    private final Set<String> declaredResultTypes = new LinkedHashSet<>();
+
+    /** Nested DAG contexts registered in this scope, so their declared result types can be merged recursively (H3). */
+    private final List<DagContextImpl> nestedContexts = new ArrayList<>();
+
     public List<TaskHandleImpl<?>> tasks() {
         return tasks;
+    }
+
+    /** Records a task's declared result type in the PLAIN-reconstruction allowlist (H3). Generics/wildcards skipped. */
+    private void recordResultType(software.amazon.lambda.durable.TypeToken<?> type) {
+        if (type.getType() instanceof Class<?> c) {
+            declaredResultTypes.add(c.getName());
+        }
+    }
+
+    /**
+     * The transitive allowlist of declared PLAIN result-type class names for this DAG and all nested DAGs. Handed to
+     * {@link DagResultSerDes} so checkpoint replay can only reconstruct classes the DAG could legitimately have
+     * produced (H3); everything else degrades to a generic JSON tree.
+     */
+    public Set<String> collectAllowedResultTypes() {
+        Set<String> out = new LinkedHashSet<>(declaredResultTypes);
+        for (var nested : nestedContexts) {
+            out.addAll(nested.collectAllowedResultTypes());
+        }
+        return out;
     }
 
     private <T> TaskHandle<T> register(TaskHandleImpl<T> handle) {
@@ -87,8 +119,8 @@ public final class DagContextImpl implements DagContext {
     }
 
     /** Resolves the SerDes used to (de)serialize a DAG's aggregate result. */
-    public static SerDes dagSerDes(DagConfig config, SerDes defaultSerDes) {
-        return config.serDes().orElseGet(() -> new DagResultSerDes(defaultSerDes));
+    public static SerDes dagSerDes(DagConfig config, SerDes defaultSerDes, DagContextImpl dctx) {
+        return config.serDes().orElseGet(() -> new DagResultSerDes(defaultSerDes, dctx.collectAllowedResultTypes()));
     }
 
     // ── step ─────────────────────────────────────────────────────────────────
@@ -109,6 +141,7 @@ public final class DagContextImpl implements DagContext {
 
     @Override
     public <T> TaskHandle<T> step(String name, TypeToken<T> type, DagStepFunction<T> fn, StepConfig config) {
+        recordResultType(type);
         // Flat model: the step is checkpointed DIRECTLY under the Dag container, keyed by the name-based ID.
         TaskExecutor<T> exec = (ctx, deps, id) -> ctx.stepAsyncWithId(id, name, type, sc -> fn.apply(deps, sc), config);
         return register(new TaskHandleImpl<>(name, TaskKind.STEP, exec, config));
@@ -150,6 +183,7 @@ public final class DagContextImpl implements DagContext {
     public <T> TaskHandle<T> invoke(
             String name, String functionName, Class<T> type, DagPayloadFunction payloadFn, InvokeConfig config) {
         var typeToken = TypeToken.get(type);
+        recordResultType(typeToken);
         TaskExecutor<T> exec = (ctx, deps, id) ->
                 ctx.invokeAsyncWithId(id, name, functionName, payloadFn.apply(deps), typeToken, config);
         return register(new TaskHandleImpl<>(name, TaskKind.INVOKE, exec, config));
@@ -165,6 +199,7 @@ public final class DagContextImpl implements DagContext {
     public <T> TaskHandle<T> callback(
             String name, Class<T> type, DagCallbackSubmitter submitter, WaitForCallbackConfig config) {
         var typeToken = TypeToken.get(type);
+        recordResultType(typeToken);
         TaskExecutor<T> exec = (ctx, deps, id) -> {
             RunInChildContextConfig rc = RunInChildContextConfig.builder()
                     .serDes(config.stepConfig().serDes())
@@ -198,6 +233,7 @@ public final class DagContextImpl implements DagContext {
     public <S> TaskHandle<S> waitForCondition(
             String name, Class<S> type, DagConditionFunction<S> check, WaitForConditionConfig<S> config) {
         var typeToken = TypeToken.get(type);
+        recordResultType(typeToken);
         TaskExecutor<S> exec = (ctx, deps, id) -> ctx.waitForConditionAsyncWithId(
                 id, name, typeToken, (state, sc) -> check.apply(deps, state, sc), config);
         return register(new TaskHandleImpl<>(name, TaskKind.WAIT_FOR_CONDITION, exec, config));
@@ -211,6 +247,7 @@ public final class DagContextImpl implements DagContext {
 
     @Override
     public <T> TaskHandle<T> runInChildContext(String name, TypeToken<T> type, DagChildFunction<T> fn) {
+        recordResultType(type);
         TaskExecutor<T> exec = (ctx, deps, id) -> ctx.runInChildContextAsyncWithId(
                 id,
                 name,
@@ -256,6 +293,7 @@ public final class DagContextImpl implements DagContext {
     @Override
     public TaskHandle<ParallelResult> parallel(
             String name, Consumer<ParallelDurableFuture> branches, ParallelConfig config) {
+        recordResultType(TypeToken.get(ParallelResult.class));
         TaskExecutor<ParallelResult> exec = (ctx, deps, id) -> {
             ParallelDurableFuture p = ctx.parallelWithId(id, name, config);
             branches.accept(p);
@@ -276,9 +314,10 @@ public final class DagContextImpl implements DagContext {
         // the top-level dag() call site). A nested registration-time DagException therefore surfaces unwrapped at the
         // caller rather than being erased inside the child-context boundary.
         DagContextImpl nested = registerAndValidate(register);
+        nestedContexts.add(nested);
         TaskExecutor<DagResult> exec = (ctx, deps, id) -> {
             RunInChildContextConfig rc = RunInChildContextConfig.builder()
-                    .serDes(dagSerDes(config, ctx.getDurableConfig().getSerDes()))
+                    .serDes(dagSerDes(config, ctx.getDurableConfig().getSerDes(), nested))
                     .build();
             return ctx.runInChildContextAsyncWithId(
                     id, name, TypeToken.get(DagResult.class), body(nested, config), rc, OperationSubType.DAG);

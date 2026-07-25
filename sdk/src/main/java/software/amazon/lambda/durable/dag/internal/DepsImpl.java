@@ -14,7 +14,10 @@ import software.amazon.lambda.durable.dag.TaskStatus;
 
 /**
  * {@link Deps} implementation backing a single task. Only the task's inline dependencies (declared via
- * {@code reads(...)}) are retrievable; results are resolved from the scheduler's terminal-state map by task name.
+ * {@code reads(...)}) are retrievable; results are resolved by task name from an <b>immutable per-task snapshot</b> of
+ * those dependencies' terminal executions, taken by the scheduler at launch time (all inline deps are terminal before
+ * the task is launched). The snapshot is private to this task, so reads here never race the scheduler's writes to its
+ * live results map.
  */
 final class DepsImpl implements Deps {
 

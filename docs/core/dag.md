@@ -37,14 +37,14 @@ DagResult r = ctx.dag("etl", d -> {
                    process(deps.get(a), deps.get(b)))
              .reads(a, b);                                                   // .reads(...) = inline (typed) deps
     d.step("notify", Void.class, (deps, s) -> notifyDone())
-             .dependsOn(c);                                                  // .dependsOn(...) = ordering-only
+             .after(c);                                                      // .after(...) = ordering-only
 });
 ```
 
 - `.reads(TaskHandle<?>...)` — **inline** deps: gate scheduling **and** are retrievable via `Deps.get(handle)`.
   Passing an undeclared handle to `Deps.get` throws `IllegalStateException`. Java cannot introspect a lambda body, so
   inline deps must be declared explicitly.
-- `.dependsOn(TaskHandle<?>...)` — **ordering-only** deps: gate scheduling but are **not** retrievable via `Deps`.
+- `.after(TaskHandle<?>...)` — **ordering-only** deps: gate scheduling but are **not** retrievable via `Deps`.
 - `deps.get(handle)` returns the upstream's declared type `T`; `deps.getOptional(handle)` returns `Optional<T>` for
   non-`ALL_SUCCESS` paths where an upstream may be FAILED/SKIPPED.
 
@@ -62,8 +62,8 @@ Supported task kinds: `step`, `invoke`, `callback` (submitter-based), `wait`, `w
 | `ALL_SUCCESS` | every upstream SUCCEEDED          | run            |
 | `ALL_FAILED`  | every upstream FAILED             | skip           |
 | `ALL_DONE`    | all upstream terminal (any state) | run            |
-| `ONE_SUCCESS` | ≥1 upstream SUCCEEDED             | skip           |
-| `ONE_FAILED`  | ≥1 upstream FAILED                | skip           |
+| `ANY_SUCCESS` | ≥1 upstream SUCCEEDED             | skip           |
+| `ANY_FAILED`  | ≥1 upstream FAILED                | skip           |
 | `NONE_FAILED` | no upstream FAILED                | run            |
 
 A failed task is a **terminal state, not an abort**: by default the scheduler drains the reachable graph so

@@ -3,6 +3,8 @@
 package software.amazon.lambda.durable.dag.internal;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -141,7 +143,17 @@ public final class DagExecutor {
                     changed = true;
                     continue;
                 }
-                Deps deps = new DepsImpl(task.inlineDeps(), results);
+                // B1 fix: snapshot THIS task's inline deps into an immutable map and hand that to DepsImpl instead of
+                // the scheduler's live `results` map. Every inline dep is already terminal here (depsTerminal(task,
+                // results) passed above), so the snapshot is complete and its values never change. This removes the
+                // shared mutable state entirely: task bodies (which call deps.get(...) on user-executor threads) read
+                // their own private, immutable view rather than racing the scheduler thread's results.put(...) writes
+                // on a non-thread-safe LinkedHashMap. Deps semantics are unchanged (requireDeclared + SUCCEEDED-only).
+                Map<String, TaskExecution<?>> depsSnapshot = new HashMap<>();
+                for (TaskHandle<?> dep : task.inlineDeps()) {
+                    depsSnapshot.put(dep.name(), results.get(dep.name()));
+                }
+                Deps deps = new DepsImpl(task.inlineDeps(), Collections.unmodifiableMap(depsSnapshot));
                 if (task.runIfOpt().isPresent() && !task.runIfOpt().get().test(deps)) {
                     results.put(name, skipped(name, SkipReason.RUN_IF_PREDICATE));
                     changed = true;

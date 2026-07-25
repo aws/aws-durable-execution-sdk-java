@@ -31,8 +31,23 @@ public final class DagResultSerDes implements SerDes {
 
     private final SerDes delegate;
 
+    /**
+     * Fully-qualified class names that {@code PLAIN} results are allowed to rehydrate into on replay — the declared
+     * result types of the DAG's registered tasks (see {@code DagContextImpl.collectAllowedResultTypes()}). A checkpoint
+     * is untrusted input on replay; restricting {@link #rehydratePlain} to this set means a stored type name that the
+     * DAG could not legitimately have produced (unknown/tampered/gadget class) is never resolved via
+     * {@code Class.forName}, and instead falls back to the generic JSON tree. Empty means "no PLAIN reconstruction"
+     * (safe default for trusted/in-process construction).
+     */
+    private final java.util.Set<String> allowedResultTypes;
+
     public DagResultSerDes(SerDes delegate) {
+        this(delegate, java.util.Set.of());
+    }
+
+    public DagResultSerDes(SerDes delegate, java.util.Set<String> allowedResultTypes) {
         this.delegate = delegate;
+        this.allowedResultTypes = java.util.Set.copyOf(allowedResultTypes);
     }
 
     @Override
@@ -128,13 +143,23 @@ public final class DagResultSerDes implements SerDes {
      * Rehydrates a PLAIN result to its persisted concrete type when known, so POJO/record/collection results survive
      * replay of a small completed DAG rather than degrading to a generic JSON tree. Falls back to the raw parsed tree
      * if the type is absent or cannot be resolved (e.g. class not on the classpath).
+     *
+     * <p><b>Trust boundary (H3):</b> {@code resultType} is read from a checkpoint, which is untrusted input on replay.
+     * We only rehydrate into a class the DAG could legitimately have produced — one of the registered tasks' declared
+     * result types ({@link #allowedResultTypes}). Any other name (unknown, tampered, or a polymorphic subtype we did
+     * not record) is <em>never</em> passed to {@code Class.forName}; it falls back to the generic tree. Resolution also
+     * uses {@code initialize=false} so merely resolving a class name cannot trigger an arbitrary static initializer.
      */
     private Object rehydratePlain(Object raw, String resultType) {
         if (resultType == null) {
             return raw;
         }
+        if (!allowedResultTypes.contains(resultType)) {
+            // Not a type this DAG could have produced: do not load it; degrade to the generic JSON tree.
+            return raw;
+        }
         try {
-            Class<?> cls = Class.forName(resultType);
+            Class<?> cls = Class.forName(resultType, false, DagResultSerDes.class.getClassLoader());
             return delegate.deserialize(delegate.serialize(raw), TypeToken.get(cls));
         } catch (ClassNotFoundException | RuntimeException e) {
             return raw;

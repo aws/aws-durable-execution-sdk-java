@@ -493,15 +493,16 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         Objects.requireNonNull(config, "config cannot be null");
         ParameterValidator.validateOperationName(name);
 
-        var dagSerDes = software.amazon.lambda.durable.dag.internal.DagContextImpl.dagSerDes(
-                config, getDurableConfig().getSerDes());
-        var rc = RunInChildContextConfig.builder().serDes(dagSerDes).build();
-
         // Register + validate eagerly at the dag() call site (deterministic: registration launches nothing and
         // validation is pure). This lets a registration-time DagException surface UNWRAPPED to the caller, instead
         // of being raised inside the runInChildContext body where the typed exception would be erased into a generic
-        // ChildContextFailedException.
+        // ChildContextFailedException. It must run before building the SerDes, whose PLAIN-result allowlist (H3) is
+        // derived from the registered tasks' declared result types.
         var dctx = software.amazon.lambda.durable.dag.internal.DagContextImpl.registerAndValidate(register);
+
+        var dagSerDes = software.amazon.lambda.durable.dag.internal.DagContextImpl.dagSerDes(
+                config, getDurableConfig().getSerDes(), dctx);
+        var rc = RunInChildContextConfig.builder().serDes(dagSerDes).build();
 
         // The DAG runs as a single child-context node (SubType Dag) with a normal counter-based ID; its tasks run
         // flat under name-derived DAG_NODE_T_ IDs, each task's underlying op checkpointed directly inside this
