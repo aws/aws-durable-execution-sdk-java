@@ -109,14 +109,8 @@ public final class DagContextImpl implements DagContext {
 
     @Override
     public <T> TaskHandle<T> step(String name, TypeToken<T> type, DagStepFunction<T> fn, StepConfig config) {
-        // Each task materializes as a DagTask child-context node (keyed by the name-based ID for replay stability);
-        // the actual step runs inside it (counter-based ID) so it nests beneath the DagTask op per the history contract.
-        TaskExecutor<T> exec = (ctx, deps, id) -> ctx.dagTaskAsyncWithId(
-                id,
-                name,
-                type,
-                childCtx -> childCtx.step(name, type, sc -> fn.apply(deps, sc), config),
-                RunInChildContextConfig.builder().serDes(config.serDes()).build());
+        // Flat model: the step is checkpointed DIRECTLY under the Dag container, keyed by the name-based ID.
+        TaskExecutor<T> exec = (ctx, deps, id) -> ctx.stepAsyncWithId(id, name, type, sc -> fn.apply(deps, sc), config);
         return register(new TaskHandleImpl<>(name, TaskKind.STEP, exec, config));
     }
 
@@ -201,17 +195,8 @@ public final class DagContextImpl implements DagContext {
     // ── wait ─────────────────────────────────────────────────────────────────
     @Override
     public TaskHandle<Void> wait(String name, Duration duration) {
-        // Wrap the wait in a DagTask child-context node so the WaitStarted/WaitSucceeded ops nest beneath the DagTask
-        // op. The name-based ID keys the DagTask node so it resumes deterministically across the wait's suspend/replay.
-        TaskExecutor<Void> exec = (ctx, deps, id) -> ctx.dagTaskAsyncWithId(
-                id,
-                name,
-                TypeToken.get(Void.class),
-                childCtx -> {
-                    childCtx.wait(name, duration);
-                    return null;
-                },
-                RunInChildContextConfig.builder().build());
+        // Flat model: the wait is checkpointed DIRECTLY under the Dag container, keyed by the name-based ID.
+        TaskExecutor<Void> exec = (ctx, deps, id) -> ctx.waitAsyncWithId(id, name, duration);
         return register(new TaskHandleImpl<>(name, TaskKind.WAIT, exec, duration));
     }
 

@@ -23,8 +23,7 @@ public enum OperationSubType {
     WAIT_FOR_CALLBACK(OperationType.CONTEXT, "WaitForCallback"),
     WAIT_FOR_CONDITION(OperationType.STEP, "WaitForCondition"),
     WITH_RETRY(OperationType.CONTEXT, "WithRetry"),
-    DAG(OperationType.CONTEXT, "Dag"),
-    DAG_TASK(OperationType.CONTEXT, "DagTask");
+    DAG(OperationType.CONTEXT, "Dag");
 
     private final OperationType operationType;
     private final String value;
