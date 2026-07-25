@@ -497,13 +497,30 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         // ChildContextFailedException.
         var dctx = software.amazon.lambda.durable.dag.internal.DagContextImpl.registerAndValidate(register);
 
-        // The DAG runs as a single child-context node with a normal counter-based ID; its tasks run under
-        // name-derived DAG_NODE_T_ IDs inside that child context.
+        // The DAG runs as a single child-context node (SubType Dag) with a normal counter-based ID; its tasks run
+        // under name-derived DAG_NODE_T_ IDs, each materialized as a DagTask child-context node inside that container.
         return runInChildContextAsync(
                 name,
                 TypeToken.get(software.amazon.lambda.durable.dag.DagResult.class),
                 software.amazon.lambda.durable.dag.internal.DagContextImpl.body(dctx, config),
-                rc);
+                rc,
+                OperationSubType.DAG);
+    }
+
+    /**
+     * Internal SPI: launches a DAG task as a child-context node with SubType {@code DagTask}. Not part of the public
+     * {@link DurableContext} interface. The task's underlying durable operation runs inside the returned child context
+     * (parented to this DagTask node), so each task materializes as a {@code DagTask} CONTEXT op with its inner
+     * operation nested beneath it, per the cross-language DAG history contract.
+     */
+    public <T> DurableFuture<T> dagTaskAsyncWithId(
+            String operationId,
+            String name,
+            TypeToken<T> resultType,
+            Function<DurableContext, T> body,
+            RunInChildContextConfig config) {
+        return runInChildContextAsyncWithId(
+                operationId, name, resultType, body, config, OperationSubType.DAG_TASK);
     }
 
     @Override
