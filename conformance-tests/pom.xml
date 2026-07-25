@@ -36,6 +36,11 @@
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-lambda-java-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-log4j2</artifactId>
+            <version>1.6.4</version>
+        </dependency>
 
         <!-- DynamoDB: attempt tracking for the interrupted-child test (3-12),
              where the built-in step attempt cannot survive a crash without a

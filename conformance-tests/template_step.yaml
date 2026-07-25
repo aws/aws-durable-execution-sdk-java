@@ -23,6 +23,8 @@ Globals:
       Ref: JavaVersion
     Architectures:
       - Ref: Architecture
+    LoggingConfig:
+      LogFormat: JSON
 
 Resources:
   DurableFunctionRole:
