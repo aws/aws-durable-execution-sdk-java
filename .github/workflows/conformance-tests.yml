@@ -129,27 +129,43 @@ jobs:
         run: |
           if [[ "${{ matrix.suite }}" == "step" ]]; then
             functions=(StepLogging StepAtMostOnceNoRetry StepAtMostOnceWithRetry)
+            test_ids=(1-7 1-17 1-18)
           else
             functions=(ChildLargePayload ChildPrintOnly)
+            test_ids=(3-11 3-17)
           fi
 
+          account_id=$(aws sts get-caller-identity --query Account --output text)
           start_time=$((($(date +%s) - 600) * 1000))
-          for logical_id in "${functions[@]}"; do
+          for index in "${!functions[@]}"; do
+            logical_id="${functions[$index]}"
+            test_id="${test_ids[$index]}"
             physical_id=$(aws cloudformation describe-stack-resource \
               --stack-name "conformance-tests-conformance-java-${SUITE_SLUG}" \
               --logical-resource-id "$logical_id" \
               --query "StackResourceDetail.PhysicalResourceId" \
               --output text)
+            execution_name=$(jq -r '.Events[] | select(.EventType == "ExecutionStarted") | .Name' \
+              "history-${{ matrix.suite }}/${test_id}.json")
+            execution_id=$(jq -r '.Events[] | select(.EventType == "ExecutionStarted") | .Id' \
+              "history-${{ matrix.suite }}/${test_id}.json")
+            expected_arn="arn:aws:lambda:${AWS_REGION}:${account_id}:function:${physical_id}:\$LATEST/durable-execution/${execution_name}/${execution_id}"
             aws logs filter-log-events \
               --log-group-name "/aws/lambda/${physical_id}" \
               --start-time "$start_time" \
               --output json |
-              jq -c --arg function "$logical_id" '
+              jq -c \
+                --arg function "$logical_id" \
+                --arg expectedArn "$expected_arn" '
                 .events[-40:][]?.message as $raw
                 | (try ($raw | fromjson) catch {"message": $raw, "unparsed": true})
                 | {
                     function: $function,
                     message: (.message // "<none>"),
+                    expectedArn: $expectedArn,
+                    executionArn: (.executionArn // null),
+                    durableExecutionArn: (.durableExecutionArn // null),
+                    arnMatches: ((.executionArn // .durableExecutionArn // null) == $expectedArn),
                     fields: (keys | sort),
                     labelFields: ((.labels // {}) | if type == "object" then keys | sort else [] end)
                   }'
