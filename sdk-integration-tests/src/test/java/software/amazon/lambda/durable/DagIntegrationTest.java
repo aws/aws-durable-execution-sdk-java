@@ -5,10 +5,12 @@ package software.amazon.lambda.durable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.dag.DagCompletionConfig;
 import software.amazon.lambda.durable.dag.DagCompletionReason;
 import software.amazon.lambda.durable.dag.DagConfig;
+import software.amazon.lambda.durable.dag.DagPredicateException;
 import software.amazon.lambda.durable.dag.DagResult;
 import software.amazon.lambda.durable.dag.TaskStatus;
 import software.amazon.lambda.durable.dag.TriggerRule;
@@ -18,6 +20,101 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 /** End-to-end DAG tests via the local runner. */
 class DagIntegrationTest {
+
+    @Test
+    void throwingRunIfAbortsDagAndCallerCatchesTypedExceptionWithCause() {
+        // A throwing runIf ABORTS the DAG with a typed DagPredicateException (contract H5), rather than recording the
+        // task FAILED or SKIPPED. The dag(...) caller can catch the typed exception; its message and taskName name the
+        // offending task and its cause carries the original error. (This is the exception the caller observes after it
+        // crosses the DAG child-context boundary: it is checkpointed and reconstructed from its serialized form.)
+        var caught = new java.util.concurrent.atomic.AtomicReference<DagPredicateException>();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            try {
+                ctx.dag("cond", d -> {
+                    var gate = d.step("gate", Integer.class, (deps, s) -> 7);
+                    d.step("maybe", String.class, (deps, s) -> "ran")
+                            .reads(gate)
+                            .runIf(deps -> {
+                                throw new IllegalStateException("predicate boom");
+                            });
+                });
+                return "no-throw";
+            } catch (DagPredicateException e) {
+                caught.set(e);
+                return "caught";
+            }
+        });
+
+        var result = runner.runUntilComplete("go");
+        // The caller handled the typed exception, so the execution completes.
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("caught", result.getResult(String.class));
+
+        // The reconstructed exception the caller observes is a typed DagPredicateException that names the offending
+        // task (both via taskName() and its message) and whose cause carries the original error and its stack trace.
+        DagPredicateException e = caught.get();
+        org.junit.jupiter.api.Assertions.assertNotNull(e, "caller must observe a DagPredicateException");
+        assertEquals("maybe", e.taskName());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                e.getMessage().contains("maybe") && e.getMessage().contains("predicate boom"), e.getMessage());
+        org.junit.jupiter.api.Assertions.assertNotNull(e.getCause(), "the original error must be retrievable as cause");
+        assertEquals("predicate boom", e.getCause().getMessage());
+    }
+
+    @Test
+    void throwingRunIfLeavesNoTerminalStateAndRunsNoCompensation() {
+        // The abort is durable and wire-visible: the DAG container checkpoints FAILED, the offending task has NO
+        // terminal state, an already-run upstream keeps its SUCCEEDED checkpoint, and a downstream ALL_FAILED
+        // compensation task never runs (the defect must not drive compensation). The top-level execution fails with
+        // the typed DagPredicateException naming the task and the original error.
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("cond", d -> {
+                var gate = d.step("gate", Integer.class, (deps, s) -> 7);
+                var maybe = d.step("maybe", String.class, (deps, s) -> "ran")
+                        .reads(gate)
+                        .runIf(deps -> {
+                            throw new IllegalStateException("predicate boom");
+                        });
+                d.step("refund", String.class, (deps, s) -> "refunded")
+                        .after(maybe)
+                        .triggerRule(TriggerRule.ALL_FAILED);
+            });
+            return "unreached:" + r.completionReason().name();
+        });
+
+        var result = runner.runUntilComplete("go");
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // The DAG container failed (wire-visible abort) and its checkpoint carries the typed error intact: type is
+        // DagPredicateException, message names the offending task and the original error, and the serialized cause
+        // chain preserves the original error. This is the durable, history-visible record of the abort.
+        var container = result.getOperation("cond");
+        assertEquals(OperationStatus.FAILED, container.getStatus());
+        var error = container.getContextDetails().error();
+        org.junit.jupiter.api.Assertions.assertNotNull(error, "DAG container must checkpoint the failure error");
+        assertEquals("software.amazon.lambda.durable.dag.DagPredicateException", error.errorType());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                error.errorMessage().contains("maybe"),
+                "message must name the offending task: " + error.errorMessage());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                error.errorMessage().contains("IllegalStateException")
+                        && error.errorMessage().contains("predicate boom"),
+                "message must identify the original error: " + error.errorMessage());
+        // The serialized cause chain preserves the original error (retrievable as the cause).
+        org.junit.jupiter.api.Assertions.assertTrue(
+                error.errorData() != null && error.errorData().contains("predicate boom"),
+                "errorData must carry the original cause");
+
+        // The already-run upstream kept its terminal SUCCEEDED state ...
+        assertEquals(OperationStatus.SUCCEEDED, result.getOperation("gate").getStatus());
+        // ... the offending task has NO terminal state (it was never launched) ...
+        org.junit.jupiter.api.Assertions.assertNull(
+                result.getOperation("maybe"), "offending task must have no terminal state");
+        // ... and the downstream ALL_FAILED compensation never ran.
+        org.junit.jupiter.api.Assertions.assertNull(
+                result.getOperation("refund"), "downstream ALL_FAILED compensation must not run");
+    }
 
     @Test
     void positionalArityTypedDepsSugarResolves() {
@@ -332,5 +429,54 @@ class DagIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         // Aggregate reconstructed to full size, and the task body executed exactly once across the replay.
         assertEquals(size + "|1", result.getResult(String.class));
+    }
+
+    @Test
+    void wideFanOutTasksAlwaysObserveUpstreamValue() {
+        // B1 regression. Many tasks read a common upstream under unbounded concurrency. Each reader repeatedly reads
+        // the upstream via deps.get(...) while the scheduler thread concurrently records the OTHER readers' results
+        // with results.put(...). Pre-fix, every reader shared the scheduler's live LinkedHashMap; a get() overlapping
+        // a put()-induced table resize could observe a half-linked bucket and return null for the SUCCEEDED upstream —
+        // a silently-wrong input indistinguishable from a legitimate non-ALL_SUCCESS null. With the immutable per-task
+        // snapshot each reader sees a private, stable view and MUST always observe the real value. A raced null/wrong
+        // read throws, failing that reader task, so any occurrence surfaces as failureCount > 0.
+        //
+        // Sensitivity: the scheduler harvests futures in launch order (blocking on each get()), so results.put(...)
+        // calls happen roughly as tasks finish. Reader work therefore INCREASES with index so completions — and thus
+        // the resize-inducing puts (the 13th/25th/49th insertions grow a default-capacity map) — land while the many
+        // slower, later readers are still mid-loop on get(). That overlap is what makes the race observable; with
+        // uniform durations the writes burst after every reader has already stopped reading and nothing overlaps.
+        final int fanOut = 64; // >= 32; forces map growth/resizes (thresholds at 12/24/48 entries)
+        final int readUnit = 6000; // reader i performs (i+1) * readUnit reads: staggered, increasing durations
+        final int iterations = 50; // repeat so the timing-dependent race is meaningfully likely to surface
+
+        for (int iter = 0; iter < iterations; iter++) {
+            var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+                DagResult r = ctx.dag("fanout", d -> {
+                    var up = d.step("up", String.class, (deps, s) -> "UPSTREAM");
+                    for (int i = 0; i < fanOut; i++) {
+                        final int reads = (i + 1) * readUnit;
+                        d.step("t" + i, Boolean.class, (deps, s) -> {
+                                    for (int k = 0; k < reads; k++) {
+                                        Object v = deps.get(up);
+                                        if (!"UPSTREAM".equals(v)) {
+                                            throw new IllegalStateException(
+                                                    "raced read of upstream: expected 'UPSTREAM' but observed " + v);
+                                        }
+                                    }
+                                    return Boolean.TRUE;
+                                })
+                                .reads(up);
+                    }
+                });
+                return r.successCount() + "|" + r.failureCount();
+            });
+
+            var result = runner.runUntilComplete("go");
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            // upstream (1) + every fan-out reader succeed, with ZERO failures. A single raced read flips a reader to
+            // FAILED and makes failureCount non-zero.
+            assertEquals((fanOut + 1) + "|0", result.getResult(String.class), "iteration " + iter);
+        }
     }
 }
