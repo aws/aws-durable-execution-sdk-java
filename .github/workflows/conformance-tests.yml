@@ -124,6 +124,37 @@ jobs:
             --report console junit \
             --report-file report-${{ matrix.suite }}
 
+      - name: Diagnose structured log fields
+        if: failure() && (matrix.suite == 'step' || matrix.suite == 'child')
+        run: |
+          if [[ "${{ matrix.suite }}" == "step" ]]; then
+            functions=(StepLogging StepAtMostOnceNoRetry StepAtMostOnceWithRetry)
+          else
+            functions=(ChildLargePayload ChildPrintOnly)
+          fi
+
+          start_time=$((($(date +%s) - 600) * 1000))
+          for logical_id in "${functions[@]}"; do
+            physical_id=$(aws cloudformation describe-stack-resource \
+              --stack-name "conformance-tests-conformance-java-${SUITE_SLUG}" \
+              --logical-resource-id "$logical_id" \
+              --query "StackResourceDetail.PhysicalResourceId" \
+              --output text)
+            aws logs filter-log-events \
+              --log-group-name "/aws/lambda/${physical_id}" \
+              --start-time "$start_time" \
+              --output json |
+              jq -c --arg function "$logical_id" '
+                .events[-40:][]?.message as $raw
+                | (try ($raw | fromjson) catch {"message": $raw, "unparsed": true})
+                | {
+                    function: $function,
+                    message: (.message // "<none>"),
+                    fields: (keys | sort),
+                    labelFields: ((.labels // {}) | if type == "object" then keys | sort else [] end)
+                  }'
+          done
+
       - name: Upload conformance report
         if: always()
         uses: actions/upload-artifact@v4
