@@ -8,7 +8,12 @@
                 <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss} %X{AWSRequestId} %-5p %c{1} - %m%n"/>
             </LambdaTextFormat>
             <LambdaJSONFormat>
-                <JsonTemplateLayout eventTemplateUri="classpath:LambdaLayout.json"/>
+                <JsonTemplateLayout eventTemplateUri="classpath:LambdaLayout.json">
+                    <EventTemplateAdditionalField
+                            key="executionArn"
+                            value='{"$resolver": "mdc", "key": "executionArn"}'
+                            format="JSON"/>
+                </JsonTemplateLayout>
             </LambdaJSONFormat>
         </Lambda>
     </Appenders>
