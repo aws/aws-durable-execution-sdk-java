@@ -10,7 +10,7 @@
             <LambdaJSONFormat>
                 <JsonTemplateLayout eventTemplateUri="classpath:LambdaLayout.json">
                     <EventTemplateAdditionalField
-                            key="executionArn"
+                            key="durableExecutionArn"
                             value='{"$resolver": "mdc", "key": "executionArn"}'
                             format="JSON"/>
                 </JsonTemplateLayout>
