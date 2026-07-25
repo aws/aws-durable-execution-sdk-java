@@ -291,7 +291,13 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 operationId, name, resultType, func, config, OperationSubType.RUN_IN_CHILD_CONTEXT);
     }
 
-    private <T> DurableFuture<T> runInChildContextAsyncWithId(
+    /**
+     * Internal SPI: explicit-ID variant of {@link #runInChildContextAsyncWithId} that also threads the
+     * {@link OperationSubType} through (mirroring the non-explicit-ID {@code runInChildContextAsync(..., subType)}
+     * overload). Used by nested DAG tasks to checkpoint their container as {@link OperationSubType#DAG} rather than
+     * {@link OperationSubType#RUN_IN_CHILD_CONTEXT}. Not part of the public {@link DurableContext} interface.
+     */
+    public <T> DurableFuture<T> runInChildContextAsyncWithId(
             String operationId,
             String name,
             TypeToken<T> resultType,
@@ -498,7 +504,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         var dctx = software.amazon.lambda.durable.dag.internal.DagContextImpl.registerAndValidate(register);
 
         // The DAG runs as a single child-context node (SubType Dag) with a normal counter-based ID; its tasks run
-        // flat under name-derived DAG_NODE_T_ IDs, each task's underlying op checkpointed directly inside this container.
+        // flat under name-derived DAG_NODE_T_ IDs, each task's underlying op checkpointed directly inside this
+        // container.
         return runInChildContextAsync(
                 name,
                 TypeToken.get(software.amazon.lambda.durable.dag.DagResult.class),

@@ -919,8 +919,8 @@ class CloudBasedIntegrationTest {
 
     @Test
     void testDagWaitResumeExample() {
-        var runner = CloudDurableTestRunner.create(
-                arn("dag-wait-resume-example"), String.class, String.class, lambdaClient);
+        var runner =
+                CloudDurableTestRunner.create(arn("dag-wait-resume-example"), String.class, String.class, lambdaClient);
         var result = runner.run("go");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());

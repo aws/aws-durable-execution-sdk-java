@@ -7,9 +7,9 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.dag.DagResult;
 
 /**
- * DAG example: {@code runIf} conditional branching with skip cascade. The {@code gate} step yields 0, so {@code maybe}'s
- * run-if predicate is false and it is SKIPPED; {@code after} (default ALL_SUCCESS over a skipped upstream) also SKIPS.
- * Returns a pipe-delimited summary of the two task statuses.
+ * DAG example: {@code runIf} conditional branching with skip cascade. The {@code gate} step yields 0, so
+ * {@code maybe}'s run-if predicate is false and it is SKIPPED; {@code after} (default ALL_SUCCESS over a skipped
+ * upstream) also SKIPS. Returns a pipe-delimited summary of the two task statuses.
  */
 public class DagRunIfExample extends DurableHandler<String, String> {
 

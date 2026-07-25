@@ -23,7 +23,15 @@ public enum OperationSubType {
     WAIT_FOR_CALLBACK(OperationType.CONTEXT, "WaitForCallback"),
     WAIT_FOR_CONDITION(OperationType.STEP, "WaitForCondition"),
     WITH_RETRY(OperationType.CONTEXT, "WithRetry"),
-    DAG(OperationType.CONTEXT, "Dag");
+    DAG(OperationType.CONTEXT, "Dag"),
+    /**
+     * DAG callback container. A DAG {@code callback} task materializes as a child context (hence
+     * {@link OperationType#CONTEXT}, emitting {@code ContextStarted}/{@code ContextSucceeded}) whose wire subtype value
+     * is {@code "Callback"}, matching the cross-language DAG callback contract (outer {@code Callback} container →
+     * inner {@code WaitForCallback}). Distinct from {@link #CALLBACK}, which is a native callback operation
+     * ({@link OperationType#CALLBACK}, emitting {@code CallbackStarted}).
+     */
+    DAG_CALLBACK(OperationType.CONTEXT, "Callback");
 
     private final OperationType operationType;
     private final String value;

@@ -11,9 +11,9 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 
 /**
  * DAG example: saga-style compensation via trigger rules. {@code charge} fails; {@code refund} fires on
- * {@link TriggerRule#ALL_FAILED}; {@code fulfill} is skipped (default ALL_SUCCESS over a failed upstream); {@code audit}
- * always runs ({@link TriggerRule#ALL_DONE}). The DAG completes with {@code COMPLETED_WITH_FAILURES}. Returns a
- * pipe-delimited summary of the completion reason and per-task statuses.
+ * {@link TriggerRule#ALL_FAILED}; {@code fulfill} is skipped (default ALL_SUCCESS over a failed upstream);
+ * {@code audit} always runs ({@link TriggerRule#ALL_DONE}). The DAG completes with {@code COMPLETED_WITH_FAILURES}.
+ * Returns a pipe-delimited summary of the completion reason and per-task statuses.
  */
 public class DagCompensationExample extends DurableHandler<String, String> {
 
@@ -34,9 +34,7 @@ public class DagCompensationExample extends DurableHandler<String, String> {
                     .after(charge)
                     .triggerRule(TriggerRule.ALL_FAILED);
             d.step("fulfill", String.class, (deps, s) -> "fulfilled").after(charge);
-            d.step("audit", String.class, (deps, s) -> "audited")
-                    .after(charge)
-                    .triggerRule(TriggerRule.ALL_DONE);
+            d.step("audit", String.class, (deps, s) -> "audited").after(charge).triggerRule(TriggerRule.ALL_DONE);
         });
         return r.completionReason().name()
                 + "|" + r.getStatus("charge").map(Enum::name).orElse("?")

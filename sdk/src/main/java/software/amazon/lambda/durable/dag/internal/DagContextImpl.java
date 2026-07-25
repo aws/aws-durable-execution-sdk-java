@@ -12,7 +12,6 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableContext.MapFunction;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
@@ -35,6 +34,7 @@ import software.amazon.lambda.durable.dag.DagStepFunction;
 import software.amazon.lambda.durable.dag.Deps;
 import software.amazon.lambda.durable.dag.TaskHandle;
 import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -166,28 +166,21 @@ public final class DagContextImpl implements DagContext {
             String name, Class<T> type, DagCallbackSubmitter submitter, WaitForCallbackConfig config) {
         var typeToken = TypeToken.get(type);
         TaskExecutor<T> exec = (ctx, deps, id) -> {
-            CallbackConfig callbackConfig = config.callbackConfig();
-            StepConfig stepConfig = config.stepConfig();
             RunInChildContextConfig rc = RunInChildContextConfig.builder()
-                    .serDes(stepConfig.serDes())
+                    .serDes(config.stepConfig().serDes())
                     .build();
+            // Flat model: the callback task materializes as a callback container (SubType Callback) whose body
+            // delegates to the native waitForCallback operation. waitForCallback itself checkpoints an inner
+            // WaitForCallback container (CallbackStarted + submitter step), so the resulting two-layer structure
+            // matches the cross-language DAG callback contract (outer Callback → inner WaitForCallback).
             return ctx.runInChildContextAsyncWithId(
                     id,
                     name,
                     typeToken,
-                    childCtx -> {
-                        var cb = childCtx.createCallback(name + "-callback", typeToken, callbackConfig);
-                        childCtx.step(
-                                name + "-submitter",
-                                Void.class,
-                                sc -> {
-                                    submitter.apply(deps, cb.callbackId(), sc);
-                                    return null;
-                                },
-                                stepConfig);
-                        return cb.get();
-                    },
-                    rc);
+                    childCtx -> childCtx.waitForCallback(
+                            name, typeToken, (callbackId, sc) -> submitter.apply(deps, callbackId, sc), config),
+                    rc,
+                    OperationSubType.DAG_CALLBACK);
         };
         return register(new TaskHandleImpl<>(name, TaskKind.CALLBACK, exec, config));
     }
@@ -287,7 +280,8 @@ public final class DagContextImpl implements DagContext {
             RunInChildContextConfig rc = RunInChildContextConfig.builder()
                     .serDes(dagSerDes(config, ctx.getDurableConfig().getSerDes()))
                     .build();
-            return ctx.runInChildContextAsyncWithId(id, name, TypeToken.get(DagResult.class), body(nested, config), rc);
+            return ctx.runInChildContextAsyncWithId(
+                    id, name, TypeToken.get(DagResult.class), body(nested, config), rc, OperationSubType.DAG);
         };
         return register(new TaskHandleImpl<>(name, TaskKind.DAG, exec, config));
     }
