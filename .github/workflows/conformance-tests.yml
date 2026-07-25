@@ -124,6 +124,65 @@ jobs:
             --report console junit \
             --report-file report-${{ matrix.suite }}
 
+      - name: Diagnose Logs Insights query
+        if: failure() && (matrix.suite == 'step' || matrix.suite == 'child')
+        run: |
+          if [[ "${{ matrix.suite }}" == "step" ]]; then
+            logical_id=StepLogging
+            test_id=1-7
+          else
+            logical_id=ChildPrintOnly
+            test_id=3-17
+          fi
+
+          physical_id=$(aws cloudformation describe-stack-resource \
+            --stack-name "conformance-tests-conformance-java-${SUITE_SLUG}" \
+            --logical-resource-id "$logical_id" \
+            --query "StackResourceDetail.PhysicalResourceId" \
+            --output text)
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          execution_name=$(jq -r '.Events[] | select(.EventType == "ExecutionStarted") | .Name' \
+            "history-${{ matrix.suite }}/${test_id}.json")
+          execution_id=$(jq -r '.Events[] | select(.EventType == "ExecutionStarted") | .Id' \
+            "history-${{ matrix.suite }}/${test_id}.json")
+          execution_arn="arn:aws:lambda:${AWS_REGION}:${account_id}:function:${physical_id}:\$LATEST/durable-execution/${execution_name}/${execution_id}"
+          log_group="/aws/lambda/${physical_id}"
+          start_time=$(date --date="10 minutes ago" +%s)
+          end_time=$(date +%s)
+
+          run_query() {
+            local label="$1"
+            local query="$2"
+            local query_id
+            local result
+            local status
+
+            query_id=$(aws logs start-query \
+              --log-group-name "$log_group" \
+              --start-time "$start_time" \
+              --end-time "$end_time" \
+              --query-string "$query" \
+              --query queryId \
+              --output text)
+            for _ in {1..20}; do
+              result=$(aws logs get-query-results --query-id "$query_id")
+              status=$(jq -r .status <<<"$result")
+              [[ "$status" == "Complete" ]] && break
+              sleep 0.5
+            done
+            jq -c --arg label "$label" '{
+              label: $label,
+              status: .status,
+              rows: (.results | length),
+              messages: [.results[] | map({key: .field, value: .value}) | from_entries | .["@message"]]
+            }' <<<"$result"
+          }
+
+          run_query "runner" \
+            "fields @timestamp, @message | filter coalesce(durableExecutionArn, executionArn) like \"${execution_arn}\""
+          run_query "equality" \
+            "fields @timestamp, @message | filter durableExecutionArn = \"${execution_arn}\" or executionArn = \"${execution_arn}\""
+
       - name: Upload conformance report
         if: always()
         uses: actions/upload-artifact@v4
