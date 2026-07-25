@@ -55,13 +55,26 @@ public final class DagResultSerDes implements SerDes {
         if (value == null) {
             return null;
         }
-        return delegate.serialize(toSerialized((DagResult) value));
+        if (value instanceof DagResult dr) {
+            return delegate.serialize(toSerialized(dr));
+        }
+        // Not a DAG aggregate. The DAG runs inside a child context whose result SerDes is this instance, so the same
+        // SerDes is also asked to serialize a Throwable when that child context fails (e.g. a throwing runIf surfacing
+        // as DagPredicateException). Delegate verbatim rather than casting to DagResult — the DAG's aggregate shaping
+        // must never corrupt error serialization.
+        return delegate.serialize(value);
     }
 
     @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
         if (data == null) {
             return null;
+        }
+        // Only the DAG aggregate goes through the resultKind-tagged shape; anything else (notably a Throwable being
+        // reconstructed for a failed child context) delegates so the typed exception survives the round-trip.
+        boolean isDagResult = typeToken.getType() instanceof Class<?> c && DagResult.class.isAssignableFrom(c);
+        if (!isDagResult) {
+            return delegate.deserialize(data, typeToken);
         }
         var s = delegate.deserialize(data, TypeToken.get(SerializedDagResult.class));
         @SuppressWarnings("unchecked")

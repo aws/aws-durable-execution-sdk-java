@@ -51,13 +51,13 @@ public class DurableOperationException extends DurableExecutionException {
         return operation;
     }
 
-    /** Returns the status of the operation that caused this exception. */
+    /** Returns the status of the operation that caused this exception, or {@code null} if there is no operation. */
     public OperationStatus getOperationStatus() {
-        return operation.status();
+        return operation != null ? operation.status() : null;
     }
 
-    /** Returns the ID of the operation that caused this exception. */
+    /** Returns the ID of the operation that caused this exception, or {@code null} if there is no operation. */
     public String getOperationId() {
-        return operation.id();
+        return operation != null ? operation.id() : null;
     }
 }

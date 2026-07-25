@@ -73,7 +73,45 @@ cascades downstream. Skips checkpoint nothing.
 ## `runIf`
 
 `.runIf(Predicate<Deps>)` is evaluated after the trigger rule passes; returning `false` skips the task
-(`SkipReason.RUN_IF_PREDICATE`). Predicates must be synchronous and deterministic.
+(`SkipReason.RUN_IF_PREDICATE`). Predicates must be **synchronous, deterministic, and pure** — they are re-evaluated on
+every replay and are never checkpointed.
+
+### A throwing `runIf` aborts the DAG (it is **not** a task failure)
+
+Because a `runIf` predicate is pure scheduler-decision code, a predicate that **throws** is a *defect in deterministic
+code*, not a business outcome — so it must not be reinterpreted as a task failure (which would fire every downstream
+`ALL_FAILED` / `ANY_FAILED` / `ALL_DONE` compensation, e.g. a `NullPointerException` in a predicate issuing a refund).
+Instead, a throwing `runIf` **aborts** the DAG:
+
+- The offending task gets **no terminal state** — it is neither `FAILED` nor `SKIPPED`.
+- The scheduler **starts no further tasks**; tasks that already completed keep their checkpoints.
+- The DAG container checkpoints a **failure** (durable and visible in history), and the `dag(...)` operation **fails**
+  with a typed **`DagPredicateException`** whose message names the offending task and whose **cause is the original
+  error** (message and stack trace preserved). `DagPredicateException.taskName()` returns the offending task's name.
+
+```java
+try {
+    ctx.dag("cond", d -> {
+        var gate = d.step("gate", Integer.class, (deps, s) -> fetch());
+        d.step("maybe", String.class, (deps, s) -> "ran")
+            .reads(gate)
+            .runIf(deps -> deps.get(gate) > threshold());   // if this throws, the whole DAG aborts
+    });
+} catch (DagPredicateException e) {
+    log.error("predicate for task {} threw", e.taskName(), e.getCause());
+}
+```
+
+> **Boundary note (Java-specific).** A DAG runs inside a `runInChildContext` node, so `DagPredicateException` is
+> checkpointed and **reconstructed from its serialized form** before the `dag(...)` caller observes it. The
+> reconstructed exception is a `DagPredicateException` that preserves its type, message, `taskName()`, and a cause
+> carrying the original error's message and stack trace. As with every exception the SDK round-trips through a
+> checkpoint, the **cause's concrete Java class is not preserved** (it degrades to `Throwable`); only a top-level
+> exception's concrete type is recoverable. This is a general property of the SDK's exception serialization, not
+> specific to `runIf`.
+>
+> A throwing task **body**, by contrast, is a normal task `FAILED` (see [Trigger rules](#trigger-rules)); only the
+> *predicate* aborts.
 
 ## Completion (threshold only in v1)
 
@@ -125,6 +163,10 @@ Validation runs once after `register` returns, before any task launches, and thr
   not a cycle).
 
 All extend `DagException` → `DurableOperationException` → `DurableExecutionException` (`RuntimeException`).
+
+A **runtime** DAG exception — `DagPredicateException` — is thrown when a task's `runIf` predicate throws; it aborts the
+DAG (see [`runIf`](#runif) above) rather than surfacing at the `dag(...)` call site during registration. It also
+extends `DagException`.
 
 ## Notes / v1 limitations
 

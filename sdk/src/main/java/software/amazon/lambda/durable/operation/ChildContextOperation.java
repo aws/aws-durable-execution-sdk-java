@@ -197,7 +197,21 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
         final ErrorObject errorObject;
         if (exception instanceof DurableOperationException opEx) {
-            errorObject = opEx.getErrorObject();
+            if (opEx.getErrorObject() != null) {
+                errorObject = opEx.getErrorObject();
+            } else if (opEx.getOperation() == null) {
+                // A DurableOperationException carrying NEITHER an operation NOR an ErrorObject — the DAG family's
+                // DagPredicateException, constructed with both null (the errorObject "erasure" the review flagged).
+                // With no operation/error to translate from, the prior code left the checkpoint error null and the
+                // typed exception degraded to a bare ChildContextFailedException with no cause. Serialize the exception
+                // itself instead — exactly as a plain throwable — so its type, message (which names the offending task)
+                // and cause survive this child-context boundary and translateException(...) can reconstruct it.
+                // (Operation-backed DurableOperationExceptions are deliberately excluded: their non-null AWS Operation
+                // model is not JSON-serializable, and their null-error behaviour is unchanged below.)
+                errorObject = serializeException(exception);
+            } else {
+                errorObject = null;
+            }
         } else {
             errorObject = serializeException(exception);
         }

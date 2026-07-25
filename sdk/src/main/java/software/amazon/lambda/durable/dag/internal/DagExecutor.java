@@ -15,6 +15,7 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.dag.DagCompletionConfig;
 import software.amazon.lambda.durable.dag.DagCompletionReason;
 import software.amazon.lambda.durable.dag.DagConfig;
+import software.amazon.lambda.durable.dag.DagPredicateException;
 import software.amazon.lambda.durable.dag.DagTaskError;
 import software.amazon.lambda.durable.dag.Deps;
 import software.amazon.lambda.durable.dag.SkipReason;
@@ -154,10 +155,25 @@ public final class DagExecutor {
                     depsSnapshot.put(dep.name(), results.get(dep.name()));
                 }
                 Deps deps = new DepsImpl(task.inlineDeps(), Collections.unmodifiableMap(depsSnapshot));
-                if (task.runIfOpt().isPresent() && !task.runIfOpt().get().test(deps)) {
-                    results.put(name, skipped(name, SkipReason.RUN_IF_PREDICATE));
-                    changed = true;
-                    continue;
+                if (task.runIfOpt().isPresent()) {
+                    boolean run;
+                    try {
+                        run = task.runIfOpt().get().test(deps);
+                    } catch (SuspendExecutionException suspend) {
+                        throw suspend; // control-flow: must propagate for suspend/replay
+                    } catch (Throwable t) {
+                        // A runIf predicate is specified as synchronous/deterministic/pure; a throw is a defect in
+                        // deterministic code, NOT a business outcome. Abort the DAG with a typed error instead of
+                        // recording the task FAILED (which would fire ALL_FAILED/ANY_FAILED/ALL_DONE compensation) or
+                        // SKIPPED. The offending task gets no terminal state and no further tasks are launched; the
+                        // throw escapes the scheduler and fails the DAG child-context body. See DagPredicateException.
+                        throw new DagPredicateException(name, t);
+                    }
+                    if (!run) {
+                        results.put(name, skipped(name, SkipReason.RUN_IF_PREDICATE));
+                        changed = true;
+                        continue;
+                    }
                 }
                 if (inFlight.size() < maxConcurrency) {
                     String id = childCtx.operationIdForName(NODE_PREFIX + name);
