@@ -244,3 +244,51 @@ Resources:
       DurableConfig:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
+
+  DagRunIfAbort:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-12"]
+    Properties:
+      CodeUri: .
+      Handler: dag.DagRunIfAbort
+      Description: DAG runIf abort path — throwing predicate aborts the DAG with a typed error (execution FAILS)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  DagConcurrentOverlap:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-13"]
+    Properties:
+      CodeUri: .
+      Handler: dag.DagConcurrentOverlap
+      Description: DAG real overlap inside one invocation (maxConcurrency unset; peak concurrency instrumented)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  DagConcurrentSuspend:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-14"]
+    Properties:
+      CodeUri: .
+      Handler: dag.DagConcurrentSuspend
+      Description: DAG inverted readiness across a suspend (two in-flight waits; maxConcurrency unset)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300

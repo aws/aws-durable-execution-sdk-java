@@ -3,6 +3,9 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -14,6 +17,8 @@ import software.amazon.lambda.durable.dag.DagPredicateException;
 import software.amazon.lambda.durable.dag.DagResult;
 import software.amazon.lambda.durable.dag.TaskStatus;
 import software.amazon.lambda.durable.dag.TriggerRule;
+import software.amazon.lambda.durable.dag.internal.DagExecutor;
+import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
@@ -478,5 +483,175 @@ class DagIntegrationTest {
             // FAILED and makes failureCount non-zero.
             assertEquals((fanOut + 1) + "|0", result.getResult(String.class), "iteration " + iter);
         }
+    }
+
+    @Test
+    void concurrentOverlapRunsTasksInParallelWithNameBasedIds() {
+        // 10-13: real overlap inside one invocation (maxConcurrency unset). slow (~2s) and fast (~200ms) both depend
+        // on root and launch in the same wave; afterFast becomes ready before afterSlow (inverted vs registration
+        // order), so tasks finish OUT of registration order. We assert only order-invariant outcomes, plus the two
+        // things the cloud suite deliberately cannot check: (1) genuine overlap via an atomic peak counter, and
+        // (2) that each task's recorded operation id is its NAME-derived DAG_NODE_T_ id. A counter-based-id
+        // regression cannot survive the out-of-order completion (replay-consistency failure) AND would fail the id
+        // equality below.
+        final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger(0);
+        final java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("overlapdag", d -> {
+                var root = d.step("root", Integer.class, (deps, s) -> 1);
+                var slow = d.step("slow", String.class, (deps, s) -> {
+                            int now = active.incrementAndGet();
+                            peak.accumulateAndGet(now, Math::max);
+                            try {
+                                Thread.sleep(2000);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            } finally {
+                                active.decrementAndGet();
+                            }
+                            return "S";
+                        })
+                        .after(root);
+                var fast = d.step("fast", String.class, (deps, s) -> {
+                            int now = active.incrementAndGet();
+                            peak.accumulateAndGet(now, Math::max);
+                            try {
+                                Thread.sleep(200);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            } finally {
+                                active.decrementAndGet();
+                            }
+                            return "F";
+                        })
+                        .after(root);
+                var afterSlow = d.step("afterSlow", String.class, (deps, s) -> deps.get(slow) + "s")
+                        .reads(slow);
+                var afterFast = d.step("afterFast", String.class, (deps, s) -> deps.get(fast) + "f")
+                        .reads(fast);
+                d.step("merge", String.class, (deps, s) -> deps.get(afterSlow) + deps.get(afterFast))
+                        .reads(afterSlow, afterFast);
+            });
+            return (String) r.getResult("merge").orElse("MISSING");
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("SsFf", result.getResult(String.class));
+
+        // Genuine overlap actually occurred: slow holds for ~2s while fast (~200ms) runs, so both bodies are active
+        // simultaneously. If a future change serialised the scheduler, peak would drop to 1 and this would fail.
+        assertTrue(peak.get() >= 2, "expected real overlap (peak >= 2) but observed " + peak.get());
+
+        // Each task's recorded operation id is its NAME-derived DAG_NODE_T_ id: hash(containerCtxId + "-DAG_NODE_T_"
+        // + name). Java hashes operation ids, so the id cannot literally contain the segment — the faithful check is
+        // equality against the recomputed name-based hash, which a counter-based regression would not match. The
+        // container context id is the DAG child-context op id, which is also each flat task op's parentId.
+        String containerId = result.getOperation("overlapdag").getId();
+        for (String name : new String[] {"root", "slow", "fast", "afterSlow", "afterFast", "merge"}) {
+            var op = result.getOperation(name);
+            assertNotNull(op, "missing operation for task " + name);
+            String expectedId =
+                    OperationIdGenerator.hashOperationId(containerId + "-" + DagExecutor.NODE_PREFIX + name);
+            assertEquals(expectedId, op.getId(), "task " + name + " must carry its own name-derived DAG_NODE_T_ id");
+            assertEquals(
+                    containerId,
+                    op.getEvents().get(0).parentId(),
+                    "task " + name + " must be checkpointed flat under the DAG container");
+        }
+    }
+
+    @Test
+    void invertedReadinessAcrossSuspendReplaysWithoutError() {
+        // 10-14: two in-flight waits (slow 8s, fast 2s) both start in the first invocation, so the invocation
+        // suspends with two tasks in flight and resumes twice. afterFast becomes ready one invocation before
+        // afterSlow, so the downstream pair starts in the REVERSE of registration order across different
+        // invocations — the replay-flip case. Name-based ids make this deterministic: no NonDeterministic /
+        // replay-consistency error, each downstream step runs exactly once, and merge fans in to "SF".
+        var afterSlowRuns = new java.util.concurrent.atomic.AtomicInteger(0);
+        var afterFastRuns = new java.util.concurrent.atomic.AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("suspenddag", d -> {
+                var root = d.step("root", Integer.class, (deps, s) -> 1);
+                var slow = d.wait("slow", java.time.Duration.ofSeconds(8)).after(root);
+                var fast = d.wait("fast", java.time.Duration.ofSeconds(2)).after(root);
+                var afterSlow = d.step("afterSlow", String.class, (deps, s) -> {
+                            afterSlowRuns.incrementAndGet();
+                            return "S";
+                        })
+                        .after(slow);
+                var afterFast = d.step("afterFast", String.class, (deps, s) -> {
+                            afterFastRuns.incrementAndGet();
+                            return "F";
+                        })
+                        .after(fast);
+                d.step("merge", String.class, (deps, s) -> deps.get(afterSlow) + deps.get(afterFast))
+                        .reads(afterSlow, afterFast);
+            });
+            return r.getResult("merge").map(Object::toString).orElse("MISSING")
+                    + "|" + r.successCount()
+                    + "|" + r.completionReason().name();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // merge = "SF", all six tasks succeed, DAG completes normally despite the mid-graph suspend with two
+        // concurrent in-flight waits.
+        assertEquals("SF|6|" + DagCompletionReason.ALL_COMPLETED.name(), result.getResult(String.class));
+        // Each downstream step ran exactly once across the suspend/replay boundary (name-based fast path); a
+        // re-execution would signal a replay-consistency problem.
+        assertEquals(1, afterSlowRuns.get());
+        assertEquals(1, afterFastRuns.get());
+    }
+
+    @Test
+    void abortGraphFailsWithTypedErrorAndRunsNoCompensationBody() {
+        // 10-12 graph: a throwing runIf ABORTS the DAG. Beyond the wire/no-terminal-state facts, this asserts via an
+        // EXTERNAL COUNTER that the ALL_FAILED compensation body was never invoked — a predicate defect must not
+        // drive compensation. The top-level execution FAILS with the typed DagPredicateException naming the task.
+        var refundBodyRuns = new java.util.concurrent.atomic.AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "abortdag",
+                    d -> {
+                        var gate = d.step("gate", Integer.class, (deps, s) -> 1);
+                        var guarded = d.step("guarded", String.class, (deps, s) -> "ran")
+                                .reads(gate)
+                                .runIf(deps -> {
+                                    throw new IllegalStateException("predicate boom");
+                                });
+                        d.step("refund", String.class, (deps, s) -> {
+                                    refundBodyRuns.incrementAndGet();
+                                    return "refunded";
+                                })
+                                .after(guarded)
+                                .triggerRule(TriggerRule.ALL_FAILED);
+                    },
+                    DagConfig.builder().maxConcurrency(1).build());
+            return "unreached:" + r.completionReason().name();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        // The DAG container checkpointed the typed abort error, naming the offending task and the original error.
+        var container = result.getOperation("abortdag");
+        assertEquals(OperationStatus.FAILED, container.getStatus());
+        var error = container.getContextDetails().error();
+        assertNotNull(error, "DAG container must checkpoint the failure error");
+        assertEquals("software.amazon.lambda.durable.dag.DagPredicateException", error.errorType());
+        assertTrue(
+                error.errorMessage().contains("guarded"),
+                "message must name the offending task: " + error.errorMessage());
+        assertTrue(
+                error.errorMessage().contains("predicate boom"),
+                "message must identify the original error: " + error.errorMessage());
+
+        // gate succeeded; guarded (offending) and refund (compensation) have NO terminal state; and, crucially, the
+        // compensation body never executed.
+        assertEquals(OperationStatus.SUCCEEDED, result.getOperation("gate").getStatus());
+        assertNull(result.getOperation("guarded"), "offending task must have no terminal state");
+        assertNull(result.getOperation("refund"), "downstream ALL_FAILED compensation must not run");
+        assertEquals(0, refundBodyRuns.get(), "ALL_FAILED compensation body must never be invoked");
     }
 }
