@@ -748,4 +748,152 @@ class DagIntegrationTest {
         assertNull(result.getOperation("refund"), "downstream ALL_FAILED compensation must not run");
         assertEquals(0, refundBodyRuns.get(), "ALL_FAILED compensation body must never be invoked");
     }
+
+    @Test
+    void largePayloadAggregateSurvivesContainerReplayByteIdentical() {
+        // 10-15 (shared aggregate fidelity). Eight roots p1..p8 each return their own letter × 51200 (a..h), so the
+        // aggregate is ~410KB — comfortably over the 256KB checkpoint threshold — while every individual result stays
+        // well under it, so ONLY the aggregate is offloaded. A wait AFTER the DAG resolves forces the next invocation
+        // to replay the completed (offloaded) container. We assert (a) the offload actually fired (the container
+        // checkpoint carries replayChildren=true; without this the test would not exercise the large-payload path),
+        // and (b) every task result is individually retrievable and BYTE-IDENTICAL after the replay — checking full
+        // 51200-char values, not just a digest.
+        final int perTask = 51200;
+        final var replayed = new java.util.concurrent.ConcurrentHashMap<String, String>();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "bigdag",
+                    d -> {
+                        for (int i = 1; i <= 8; i++) {
+                            final String letter = String.valueOf((char) ('a' + (i - 1)));
+                            d.step("p" + i, String.class, (deps, s) -> letter.repeat(perTask));
+                        }
+                    },
+                    DagConfig.builder().maxConcurrency(1).build());
+            // Suspend AFTER the DAG completes → the completed, offloaded container is replayed on resume. This code
+            // runs only in the resume invocation, so it captures the REPLAYED per-task values.
+            ctx.wait("suspend", java.time.Duration.ofMinutes(5));
+            for (int i = 1; i <= 8; i++) {
+                replayed.put("p" + i, (String) r.getResult("p" + i).orElseThrow());
+            }
+            return Integer.toString(r.successCount());
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("8", result.getResult(String.class));
+
+        // The offload actually triggered: the DAG container was checkpointed with an empty payload + ReplayChildren
+        // because its aggregate exceeded 256KB. This is the direct evidence the large-payload path was exercised.
+        var container = result.getOperation("bigdag");
+        assertNotNull(container, "DAG container operation must exist");
+        assertEquals(
+                Boolean.TRUE,
+                container.getContextDetails().replayChildren(),
+                "aggregate must exceed 256KB and be offloaded (replayChildren=true)");
+
+        // Every task result round-tripped byte-identical through the offload + replay, at full 51200-char length.
+        assertEquals(8, replayed.size());
+        for (int i = 1; i <= 8; i++) {
+            String expected = String.valueOf((char) ('a' + (i - 1))).repeat(perTask);
+            String actual = replayed.get("p" + i);
+            assertEquals(perTask, actual.length(), "task p" + i + " must retain its full length after replay");
+            assertEquals(expected, actual, "task p" + i + " must round-trip byte-identical after replay");
+        }
+    }
+
+    @Test
+    void largePayloadTaskBodiesRunExactlyOnceAcrossOffloadAndReplay() {
+        // 10-15 (shared exactly-once). External per-task counters. The container is offloaded (aggregate > 256KB) and
+        // replayed after the wait. Under Java's re-execution strategy the scheduler re-runs on resume, but each task
+        // body MUST fast-path from its own per-task checkpoint. If a body runs twice, a customer's side effect happens
+        // twice — the bug this test exists to catch. Assert every body ran EXACTLY ONCE across the offload and replay.
+        final int perTask = 51200;
+        final java.util.concurrent.atomic.AtomicInteger[] runs = new java.util.concurrent.atomic.AtomicInteger[8];
+        for (int i = 0; i < 8; i++) {
+            runs[i] = new java.util.concurrent.atomic.AtomicInteger(0);
+        }
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "bigdag",
+                    d -> {
+                        for (int i = 1; i <= 8; i++) {
+                            final int idx = i - 1;
+                            final String letter = String.valueOf((char) ('a' + idx));
+                            d.step("p" + i, String.class, (deps, s) -> {
+                                runs[idx].incrementAndGet();
+                                return letter.repeat(perTask);
+                            });
+                        }
+                    },
+                    DagConfig.builder().maxConcurrency(1).build());
+            ctx.wait("suspend", java.time.Duration.ofMinutes(5));
+            return Integer.toString(r.successCount());
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("8", result.getResult(String.class));
+        // The replay path was genuinely exercised (offload fired) ...
+        assertEquals(
+                Boolean.TRUE,
+                result.getOperation("bigdag").getContextDetails().replayChildren(),
+                "aggregate must be offloaded (replayChildren=true) for this test to exercise the replay path");
+        // ... and every task body ran exactly once despite the container replay (per-task checkpoint fast-path).
+        for (int i = 0; i < 8; i++) {
+            assertEquals(1, runs[i].get(), "task p" + (i + 1) + " body must run exactly once across offload + replay");
+        }
+    }
+
+    @Test
+    void largePayloadContainerReplayUsesChildBodyReExecutionNotEnvelope() {
+        // 10-15 (Java re-execution path). Java has NO summary-generator hook (DAG_SPEC_CROSS_LANGUAGE §2.B.6): unlike
+        // TypeScript, which writes an SDK-owned DagSummary envelope and reconstructs the aggregate from it, Java
+        // re-executes the DAG child body via ReplayChildren and rebuilds the aggregate from the per-task checkpoints,
+        // exactly as map does. The hook the SDK exposes for "which path was taken" is the container's ReplayChildren
+        // flag: replayChildren=true means the empty-payload + re-execute-children strategy — NOT envelope
+        // reconstruction (there is no envelope in Java). We assert that flag is set, that the per-task checkpoints the
+        // re-execution rebuilds from are present and SUCCEEDED, and that the reconstructed per-task results are
+        // identical — the same fidelity guarantee as JS reached by a different mechanism.
+        final int perTask = 51200;
+        final var replayed = new java.util.concurrent.ConcurrentHashMap<String, String>();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "bigdag",
+                    d -> {
+                        for (int i = 1; i <= 8; i++) {
+                            final String letter = String.valueOf((char) ('a' + (i - 1)));
+                            d.step("p" + i, String.class, (deps, s) -> letter.repeat(perTask));
+                        }
+                    },
+                    DagConfig.builder().maxConcurrency(1).build());
+            ctx.wait("suspend", java.time.Duration.ofMinutes(5));
+            for (int i = 1; i <= 8; i++) {
+                replayed.put("p" + i, (String) r.getResult("p" + i).orElseThrow());
+            }
+            return Integer.toString(r.successCount());
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // Mechanism: the container took the ReplayChildren (re-execute) path, not envelope reconstruction. This is the
+        // observable hook Java exposes for the large-payload replay strategy.
+        var container = result.getOperation("bigdag");
+        assertEquals(
+                Boolean.TRUE,
+                container.getContextDetails().replayChildren(),
+                "Java large-payload replay must use the ReplayChildren re-execution strategy (no DagSummary envelope)");
+
+        // The re-execution rebuilds the aggregate from per-task checkpoints: each task is a flat, SUCCEEDED operation
+        // under the container, and its reconstructed result is byte-identical — fidelity by re-execution, not envelope.
+        for (int i = 1; i <= 8; i++) {
+            var taskOp = result.getOperation("p" + i);
+            assertNotNull(taskOp, "per-task checkpoint p" + i + " must exist for re-execution to rebuild from");
+            assertEquals(
+                    OperationStatus.SUCCEEDED, taskOp.getStatus(), "per-task checkpoint p" + i + " must be SUCCEEDED");
+            String expected = String.valueOf((char) ('a' + (i - 1))).repeat(perTask);
+            assertEquals(expected, replayed.get("p" + i), "re-executed task p" + i + " must yield identical result");
+        }
+    }
 }
