@@ -13,8 +13,11 @@ import software.amazon.lambda.durable.serde.SerDes;
  * <p>Note: unlike the JS spec's {@code DagConfig}, there is no {@code summaryGenerator} — it has no native precedent in
  * the Java SDK, and large-result handling relies on native child-context re-execution rather than a summary envelope.
  *
- * @param maxConcurrency maximum number of top-level tasks running concurrently; must be {@code >= 1} if present
- *     (default: unlimited)
+ * @param maxConcurrency maximum number of top-level tasks running concurrently; must be {@code >= 1} if present. When
+ *     unset, the DAG scheduler defaults to {@code 40} (previously unlimited). This bounds the DAG scheduler only — the
+ *     top-level tasks of this DAG — and is not inherited by a task's own internal fan-out: a {@code map} or
+ *     {@code parallel} task keeps its unlimited default unless configured, and a nested {@code dag} gets its own
+ *     independent default of 40. An explicit value always wins, including one above the default.
  * @param completionConfig early-completion policy (default: drain the whole reachable graph)
  * @param defaultRetryStrategy default retry strategy applied to tasks that do not specify one
  * @param defaultTriggerRule default trigger rule (default {@link TriggerRule#ALL_SUCCESS})

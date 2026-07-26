@@ -133,13 +133,30 @@ reports `ALL_COMPLETED`, `COMPLETED_WITH_FAILURES`, `MIN_SUCCESSFUL_REACHED`, or
 
 ```java
 DagConfig.builder()
-    .maxConcurrency(4)                        // >= 1; default unlimited. Limits top-level tasks only.
+    .maxConcurrency(4)                        // >= 1; default 40. Limits top-level tasks only.
     .defaultTriggerRule(TriggerRule.ALL_DONE)
     .completionConfig(DagCompletionConfig.minSuccessful(3))
     .build();
 ```
 
 There is **no `summaryGenerator`** (see below).
+
+### Default concurrency
+
+When `maxConcurrency` is unset, the DAG scheduler runs at most **40** top-level tasks concurrently (it was previously
+unbounded). An explicit `maxConcurrency` always wins, including a value above 40; the `>= 1` validation is unchanged.
+
+The bound applies to the **DAG scheduler only** — the top-level tasks of *this* DAG, one level. It is **not** inherited
+by a task's own internal fan-out:
+
+- A `map` or `parallel` task still defaults to **unlimited** internal fan-out. A DAG task that is a 500-item map still
+  fans out to 500 items internally. This divergence from `map`/`parallel` is deliberate.
+- A **nested `dag`** task gets its own independent default of 40, scoped to its own top-level tasks.
+
+Note the interaction with early completion: for a graph wider than 40 that uses `completionConfig`, capping concurrency
+changes which tasks ever start, so more tasks end up **absent** (never started) rather than reaching a terminal state.
+Absent tasks count only toward `totalCount`; the early-completion semantics are unchanged, but the population of
+started tasks shifts.
 
 ## Replay & large results (no summary envelope)
 

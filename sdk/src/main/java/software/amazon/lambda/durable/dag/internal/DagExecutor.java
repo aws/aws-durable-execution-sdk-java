@@ -41,6 +41,15 @@ public final class DagExecutor {
     /** Prefix applied to task names before minting name-based operation IDs. */
     public static final String NODE_PREFIX = "DAG_NODE_T_";
 
+    /**
+     * Default cap on the number of top-level tasks a DAG runs concurrently when {@link DagConfig#maxConcurrency()} is
+     * unset. Bounds the DAG scheduler only (one level, top-level tasks); it is not inherited by a task's own internal
+     * fan-out (a {@code map}/{@code parallel} task keeps its unlimited default, and a nested {@code dag} gets its own
+     * independent default of 40). An explicit {@code maxConcurrency} always wins, including values above 40. See the
+     * cross-SDK default-concurrency contract (review finding H2).
+     */
+    public static final int DEFAULT_MAX_CONCURRENCY = 40;
+
     private DagExecutor() {}
 
     /**
@@ -54,7 +63,7 @@ public final class DagExecutor {
     public static DagExecutionOutcome run(
             List<TaskHandleImpl<?>> tasks, DurableContextImpl childCtx, DagConfig config) {
 
-        int maxConcurrency = config.maxConcurrency().orElse(Integer.MAX_VALUE);
+        int maxConcurrency = config.maxConcurrency().orElse(DEFAULT_MAX_CONCURRENCY);
         TriggerRule defaultRule = config.defaultTriggerRule().orElse(TriggerRule.ALL_SUCCESS);
         Optional<CompletionConfig> completion = config.completionConfig().map(DagExecutor::unwrap);
         int totalTaskCount = tasks.size();

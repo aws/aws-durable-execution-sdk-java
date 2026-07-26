@@ -371,6 +371,100 @@ class DagIntegrationTest {
     }
 
     @Test
+    void unsetMaxConcurrencyCapsWideGraphAtDefault() {
+        // Contract H2: with no maxConcurrency set, the DAG scheduler caps top-level concurrency at
+        // DagExecutor.DEFAULT_MAX_CONCURRENCY (40) — it was previously unbounded. This is the test that actually
+        // pins the behaviour: it asserts an OBSERVED peak via atomics, not a config value. The graph is WIDER than
+        // the cap (60 independent tasks all ready at once), so an unbounded default would drive peak toward 60 and
+        // fail the upper bound; a serialised scheduler would keep peak at 1 and fail the lower bound. Only a genuine
+        // cap of 40 satisfies both.
+        final int fanOut = 60; // > DEFAULT_MAX_CONCURRENCY (40)
+        final var active = new java.util.concurrent.atomic.AtomicInteger(0);
+        final var peak = new java.util.concurrent.atomic.AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("wide", d -> {
+                for (int i = 0; i < fanOut; i++) {
+                    d.step("t" + i, String.class, (deps, s) -> {
+                        int now = active.incrementAndGet();
+                        peak.accumulateAndGet(now, Math::max);
+                        try {
+                            Thread.sleep(150);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } finally {
+                            active.decrementAndGet();
+                        }
+                        return "ok";
+                    });
+                }
+            }); // no DagConfig -> default maxConcurrency applies
+            return Integer.toString(r.successCount());
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(Integer.toString(fanOut), result.getResult(String.class), "every wide task must succeed");
+
+        int observedPeak = peak.get();
+        assertTrue(
+                observedPeak <= DagExecutor.DEFAULT_MAX_CONCURRENCY,
+                "observed peak " + observedPeak + " must never exceed the default cap of "
+                        + DagExecutor.DEFAULT_MAX_CONCURRENCY);
+        assertTrue(
+                observedPeak > DagExecutor.DEFAULT_MAX_CONCURRENCY / 2,
+                "observed peak " + observedPeak + " should climb near the cap (real overlap up to the bound), "
+                        + "proving the scheduler is not serialising");
+    }
+
+    @Test
+    void explicitMaxConcurrencyAboveDefaultStillWins() {
+        // An explicit maxConcurrency ABOVE the default must win: the 40-task default cap must not clamp it. With 60
+        // ready tasks and an explicit cap of 50, observed peak must exceed the default (proving 40 is not applied)
+        // while staying within the explicit bound. (The below-default case is covered by
+        // maxConcurrencyThrottlesConcurrentTasks, cap 2.)
+        final int fanOut = 60;
+        final int explicit = 50; // > DEFAULT_MAX_CONCURRENCY (40)
+        final var active = new java.util.concurrent.atomic.AtomicInteger(0);
+        final var peak = new java.util.concurrent.atomic.AtomicInteger(0);
+        var config = DagConfig.builder().maxConcurrency(explicit).build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "wideExplicit",
+                    d -> {
+                        for (int i = 0; i < fanOut; i++) {
+                            d.step("t" + i, String.class, (deps, s) -> {
+                                int now = active.incrementAndGet();
+                                peak.accumulateAndGet(now, Math::max);
+                                try {
+                                    Thread.sleep(150);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                } finally {
+                                    active.decrementAndGet();
+                                }
+                                return "ok";
+                            });
+                        }
+                    },
+                    config);
+            return Integer.toString(r.successCount());
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(Integer.toString(fanOut), result.getResult(String.class));
+
+        int observedPeak = peak.get();
+        assertTrue(
+                observedPeak > DagExecutor.DEFAULT_MAX_CONCURRENCY,
+                "explicit maxConcurrency=" + explicit + " must win over the default cap of "
+                        + DagExecutor.DEFAULT_MAX_CONCURRENCY + "; observed peak " + observedPeak);
+        assertTrue(
+                observedPeak <= explicit,
+                "observed peak " + observedPeak + " must not exceed the explicit cap " + explicit);
+    }
+
+    @Test
     void diamondWithWaitReplaysDeterministically() {
         var aRuns = new java.util.concurrent.atomic.AtomicInteger(0);
         var bRuns = new java.util.concurrent.atomic.AtomicInteger(0);
