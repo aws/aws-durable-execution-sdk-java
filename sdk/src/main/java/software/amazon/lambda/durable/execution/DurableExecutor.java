@@ -19,6 +19,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.dag.DagException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -194,7 +195,29 @@ public class DurableExecutor {
     private static ErrorObject buildErrorObject(Throwable e, SerDes serDes) {
         // exceptions thrown from operations, e.g. Step
         if (e instanceof DurableOperationException durableOperationException) {
-            return durableOperationException.getErrorObject();
+            var errorObject = durableOperationException.getErrorObject();
+            if (errorObject != null) {
+                return errorObject;
+            }
+            // A DAG-family exception (DagException and every subtype: the runIf DagPredicateException, the
+            // registration-time Dag{CyclicDependency,DuplicateTask,InvalidTaskName,InvalidDependency}Exception, and
+            // DagExecutionException) is a DurableOperationException that, by construction (super(null, null, ...)),
+            // carries NEITHER a backing AWS Operation NOR an ErrorObject to hand to ExecutionFailed. Left as-is it
+            // degrades to a null execution error, so ExecutionFailed ships { "Truncated": false } with no Payload —
+            // unlike every other Java failure path. Serialize the exception itself — exactly as a plain throwable and
+            // exactly as ChildContextOperation already does at the child-context boundary — so the execution error
+            // carries the concrete DAG type (and, for the predicate/registration cases, the offending task name).
+            //
+            // Scoped to the DAG family on purpose: every OTHER operation-backed exception
+            // (Step/Callback/Map/Parallel/WaitForCondition/Invoke...) returns a non-null errorObject above and never
+            // reaches here, and a non-DAG DurableOperationException that happens to carry a null operation and null
+            // error keeps its prior null-error behaviour via the return below. This is why the fix cannot regress the
+            // operation-backed paths: their non-null AWS Operation (which is not JSON-serializable) is never passed to
+            // ExceptionHelper.buildErrorObject.
+            if (e instanceof DagException) {
+                return ExceptionHelper.buildErrorObject(e, serDes);
+            }
+            return errorObject;
         }
         if (e instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
             return unrecoverableDurableExecutionException.getErrorObject();
