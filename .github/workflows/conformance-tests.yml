@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload conformance report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-report-${{ matrix.suite }}
           path: |
