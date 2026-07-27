@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -55,6 +56,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     private final Function<DurableContext, T> function;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
     private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
+    private final Function<Object, List<String>> oversizePayloadLadder;
 
     // child context for RunInChildContext
     public ChildContextOperation(
@@ -82,6 +84,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 parentOperation,
                 config.isVirtual());
         this.function = function;
+        this.oversizePayloadLadder = config.oversizePayloadLadder();
     }
 
     /** Starts the operation. */
@@ -170,19 +173,46 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void checkpointSuccess(T result, String serialized) {
-        if (serialized == null || serialized.getBytes(StandardCharsets.UTF_8).length < LARGE_RESULT_THRESHOLD) {
+        if (serialized == null || fitsUnderThreshold(serialized)) {
+            // Ladder step 1: full payload fits. Checkpoint it as the container payload; do NOT set ReplayChildren.
             sendOperationUpdate(
                     OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));
-        } else {
-            // Large result: checkpoint with empty payload + ReplayChildren flag.
-            // Store the result so get() can return it directly without deserializing the empty payload.
-            cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
-            sendOperationUpdate(OperationUpdate.builder()
-                    .action(OperationAction.SUCCEED)
-                    .payload("")
-                    .contextOptions(
-                            ContextOptions.builder().replayChildren(true).build()));
+            return;
         }
+
+        // Too large. Store the in-memory result so get() returns it directly this invocation without deserializing
+        // the (reduced or empty) checkpoint payload.
+        cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
+
+        String offloadPayload = "";
+        if (oversizePayloadLadder != null) {
+            // Ladder steps 2..n: an operation that knows its own shape (the DAG) supplies progressively smaller
+            // payloads (drop the per-task detail; then drop further droppable fields). Pick the first that fits so the
+            // console still renders the always-present summary; fall back to the smallest (last) candidate otherwise.
+            // The retained child operations hold the offloaded detail, so ReplayChildren is set below and replay
+            // reconstructs by re-executing the child body.
+            List<String> candidates = oversizePayloadLadder.apply(result);
+            for (String candidate : candidates) {
+                offloadPayload = candidate;
+                if (candidate != null && fitsUnderThreshold(candidate)) {
+                    break;
+                }
+            }
+            if (offloadPayload == null) {
+                offloadPayload = "";
+            }
+        }
+
+        // Large result: checkpoint the reduced (or empty) payload + ReplayChildren so the backend preserves the child
+        // operations that now hold the per-task results, and replay re-executes the child body to reconstruct.
+        sendOperationUpdate(OperationUpdate.builder()
+                .action(OperationAction.SUCCEED)
+                .payload(offloadPayload)
+                .contextOptions(ContextOptions.builder().replayChildren(true).build()));
+    }
+
+    private static boolean fitsUnderThreshold(String serialized) {
+        return serialized.getBytes(StandardCharsets.UTF_8).length < LARGE_RESULT_THRESHOLD;
     }
 
     private void handleChildContextFailure(Throwable exception) {

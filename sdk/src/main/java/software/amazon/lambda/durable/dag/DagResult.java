@@ -56,6 +56,18 @@ public interface DagResult {
     /** Why the DAG finished. */
     DagCompletionReason completionReason();
 
+    /**
+     * Names of tasks that were launched but had not reached a terminal state when the DAG stopped early (bounded by
+     * {@code maxConcurrency}). Empty when the DAG drained fully. These tasks are deliberately excluded from
+     * {@link #results()}; this set is what a large-payload reconstruct preserves that no child operation records.
+     */
+    List<String> startedTaskNames();
+
+    /** Names of the {@link #failed()} tasks, in registration order. */
+    default List<String> failedTaskNames() {
+        return failed().stream().map(TaskExecution::name).toList();
+    }
+
     /** Throws {@link DagExecutionException} if {@link #failureCount()} {@code > 0}. */
     void throwIfError();
 }

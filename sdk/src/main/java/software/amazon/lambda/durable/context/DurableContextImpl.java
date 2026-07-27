@@ -502,7 +502,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         var dagSerDes = software.amazon.lambda.durable.dag.internal.DagContextImpl.dagSerDes(
                 config, getDurableConfig().getSerDes(), dctx);
-        var rc = RunInChildContextConfig.builder().serDes(dagSerDes).build();
+        var rc = RunInChildContextConfig.builder()
+                .serDes(dagSerDes)
+                .oversizePayloadLadder(
+                        software.amazon.lambda.durable.dag.internal.DagContextImpl.oversizeLadder(dagSerDes))
+                .build();
 
         // The DAG runs as a single child-context node (SubType Dag) with a normal counter-based ID; its tasks run
         // flat under name-derived DAG_NODE_T_ IDs, each task's underlying op checkpointed directly inside this

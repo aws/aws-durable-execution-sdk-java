@@ -21,6 +21,7 @@ public final class DagResultImpl implements DagResult {
     private final Map<String, TaskExecution<?>> results;
     private final DagCompletionReason completionReason;
     private final int totalCount;
+    private final List<String> startedTaskNames;
 
     /**
      * Backward-compatible constructor for callers where every registered task settled (total == settled map size), e.g.
@@ -31,13 +32,23 @@ public final class DagResultImpl implements DagResult {
     }
 
     public DagResultImpl(Map<String, TaskExecution<?>> results, DagCompletionReason completionReason, int totalCount) {
+        this(results, completionReason, totalCount, List.of());
+    }
+
+    public DagResultImpl(
+            Map<String, TaskExecution<?>> results,
+            DagCompletionReason completionReason,
+            int totalCount,
+            List<String> startedTaskNames) {
         this.results = new LinkedHashMap<>(results);
         this.completionReason = completionReason;
         this.totalCount = totalCount;
+        this.startedTaskNames = List.copyOf(startedTaskNames);
     }
 
     public static DagResultImpl from(DagExecutionOutcome outcome) {
-        return new DagResultImpl(outcome.results(), outcome.completionReason(), outcome.totalCount());
+        return new DagResultImpl(
+                outcome.results(), outcome.completionReason(), outcome.totalCount(), outcome.startedTaskNames());
     }
 
     @SuppressWarnings("unchecked")
@@ -119,6 +130,11 @@ public final class DagResultImpl implements DagResult {
     @Override
     public DagCompletionReason completionReason() {
         return completionReason;
+    }
+
+    @Override
+    public List<String> startedTaskNames() {
+        return startedTaskNames;
     }
 
     @Override

@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -73,6 +74,7 @@ public final class DagExecutor {
         LinkedHashMap<String, InFlight> inFlight = new LinkedHashMap<>();
 
         DagCompletionReason earlyReason = null;
+        List<String> startedTaskNames = new ArrayList<>();
 
         fillReady(tasks, childCtx, config, defaultRule, maxConcurrency, results, inFlight);
 
@@ -93,8 +95,14 @@ public final class DagExecutor {
             var reason = evaluateEarlyCompletion(completion, results, totalTaskCount);
             if (reason != null) {
                 earlyReason = reason;
-                // Early completion: stop launching/awaiting and abandon any still-in-flight tasks. This is
-                // deliberate and replay-safe: each in-flight op was launched under its name-based ID
+                // Early completion: capture the tasks that were launched but had not reached a terminal state at the
+                // deterministic stop point (in launch order). These are excluded from `results`, but the envelope
+                // records them as startedTaskNames — the started set that no child operation records, and which a
+                // large-payload reconstruct must preserve. On replay the scheduler re-evaluates completion
+                // deterministically, reaches the identical stop point, and reproduces this exact set.
+                startedTaskNames = new ArrayList<>(inFlight.keySet());
+                // Stop launching/awaiting and abandon any still-in-flight tasks. This is deliberate and replay-safe:
+                // each in-flight op was launched under its name-based ID
                 // (idOf(name)), so any late checkpoint it writes is inert on replay — the scheduler
                 // re-evaluates completion deterministically, reaches the identical stop point, and never
                 // reads a checkpoint for a task past that point (spec §8.1(3)). Abandoned tasks are therefore
@@ -123,7 +131,40 @@ public final class DagExecutor {
                 ordered.put(task.name(), exec);
             }
         }
-        return new DagExecutionOutcome(ordered, completionReason, totalTaskCount);
+        Map<String, TaskExecution<?>> timed = applyTimings(ordered, childCtx);
+        return new DagExecutionOutcome(timed, startedTaskNames, completionReason, totalTaskCount);
+    }
+
+    /**
+     * Populates each terminal task's {@code startedAt}/{@code completedAt} from its child operation's
+     * backend-recorded timestamps. Those timestamps are recorded once by the backend at true execution time and are
+     * stable across replay (unlike a scheduler-side wall clock, which re-runs would recompute), so the resulting
+     * envelope is deterministic in both the inline and the reconstruct case. A task with no operation (a skip, which
+     * checkpoints nothing) keeps empty timings.
+     */
+    private static Map<String, TaskExecution<?>> applyTimings(
+            Map<String, TaskExecution<?>> results, DurableContextImpl childCtx) {
+        Map<String, Operation> byId = new HashMap<>();
+        for (Operation op : childCtx.getExecutionManager().getChildOperations(childCtx.getParentId())) {
+            byId.put(op.id(), op);
+        }
+        Map<String, TaskExecution<?>> out = new LinkedHashMap<>();
+        for (var e : results.entrySet()) {
+            String name = e.getKey();
+            TaskExecution<?> te = e.getValue();
+            Operation op = byId.get(childCtx.operationIdForName(NODE_PREFIX + name));
+            Optional<java.time.Instant> startedAt =
+                    op == null ? Optional.empty() : Optional.ofNullable(op.startTimestamp());
+            Optional<java.time.Instant> completedAt =
+                    op == null ? Optional.empty() : Optional.ofNullable(op.endTimestamp());
+            @SuppressWarnings("unchecked")
+            Optional<Object> result = (Optional<Object>) te.result();
+            out.put(
+                    name,
+                    new TaskExecution<>(
+                            te.name(), te.status(), te.skipReason(), result, te.error(), startedAt, completedAt));
+        }
+        return out;
     }
 
     /** Launches/skips every currently-ready task, up to the concurrency cap. Idempotent within a wave. */

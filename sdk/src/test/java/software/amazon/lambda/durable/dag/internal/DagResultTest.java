@@ -171,8 +171,11 @@ class DagResultTest {
 
     @Test
     void serdeRoundTripPreservesPlainPojoType() {
-        // The allowlist (H3) contains the declared result type, so PLAIN reconstruction is permitted.
-        var serdes = new DagResultSerDes(new JacksonSerDes(), java.util.Set.of(Point.class.getName()));
+        // The type graph maps the task name to its declared result type, so PLAIN reconstruction into the concrete
+        // type is permitted (recovered by name from the registered graph, not from a checkpoint-stored class name).
+        var serdes = new DagResultSerDes(
+                new JacksonSerDes(),
+                new DagResultTypes(Map.of("p", TypeToken.get(Point.class)), Map.of()));
         Map<String, TaskExecution<?>> m = new LinkedHashMap<>();
         m.put("p", ok("p", new Point(3, 4)));
         var original = new DagResultImpl(m, DagCompletionReason.ALL_COMPLETED);
@@ -189,11 +192,12 @@ class DagResultTest {
     }
 
     @Test
-    void serdePlainResultNotInAllowlistFallsBackToGenericTree() {
-        // H3: a PLAIN result whose stored type name is NOT in the allowlist (here: empty) must never be resolved via
-        // Class.forName — the class is not loaded and the value degrades to a generic JSON tree instead. This is the
-        // regression guard for the checkpoint-sourced arbitrary-class-load / static-initializer hazard.
-        var serdes = new DagResultSerDes(new JacksonSerDes(), java.util.Set.of());
+    void serdePlainResultUnknownTaskFallsBackToGenericTree() {
+        // A PLAIN result whose task is NOT in the type graph (here: empty) is never reconstructed into a concrete
+        // type — no class is resolved from the checkpoint and the value degrades to a generic JSON tree. This is the
+        // regression guard for the former checkpoint-sourced arbitrary-class-load hazard (there is now no
+        // Class.forName on any checkpoint string at all).
+        var serdes = new DagResultSerDes(new JacksonSerDes(), DagResultTypes.empty());
         Map<String, TaskExecution<?>> m = new LinkedHashMap<>();
         m.put("p", ok("p", new Point(3, 4)));
         var original = new DagResultImpl(m, DagCompletionReason.ALL_COMPLETED);
@@ -204,7 +208,7 @@ class DagResultTest {
         var rehydrated = restored.getResult("p").orElseThrow();
         assertFalse(
                 rehydrated instanceof Point,
-                "A type absent from the allowlist must NOT be reconstructed; expected a generic tree, got: "
+                "A task absent from the type graph must NOT be reconstructed; expected a generic tree, got: "
                         + rehydrated.getClass());
     }
 
