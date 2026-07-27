@@ -48,15 +48,15 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *       span, linked to the current Invocation span.
  * </ul>
  *
- * <p>Contrast with {@link OtelPlugin} (the invocation-rooted variant, equivalent to the reference
- * {@code InvocationOtelPlugin}): there the invocation span is the root and there is no Workflow span. Here the Workflow
- * span is the root, operations hang off the Workflow span, and each operation/attempt links to the invocation that ran
- * it. Both plugins share {@link DeterministicIdGenerator}, {@link ContextExtractor}, {@link SpanAttributes}, and
- * {@link MdcSpanEnricher}.
+ * <p>Contrast with {@link InvocationOtelPlugin} (the invocation-rooted variant, equivalent to the reference
+ * {@code InvocationInvocationOtelPlugin}): there the invocation span is the root and there is no Workflow span. Here
+ * the Workflow span is the root, operations hang off the Workflow span, and each operation/attempt links to the
+ * invocation that ran it. Both plugins share {@link DeterministicIdGenerator}, {@link ContextExtractor},
+ * {@link SpanAttributes}, and {@link MdcSpanEnricher}.
  *
- * <p>Trace ID resolution matches {@link OtelPlugin}: the X-Ray trace ID from {@code _X_AMZN_TRACE_ID} when available
- * (the backend propagates the same Root to all invocations, unifying the trace), else a deterministic trace ID derived
- * from the execution ARN.
+ * <p>Trace ID resolution matches {@link InvocationOtelPlugin}: the X-Ray trace ID from {@code _X_AMZN_TRACE_ID} when
+ * available (the backend propagates the same Root to all invocations, unifying the trace), else a deterministic trace
+ * ID derived from the execution ARN.
  *
  * <p>Status mapping (parity with the Python/JS references):
  *
@@ -154,7 +154,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         idGenerator.setDurableExecutionArn(info.durableExecutionArn());
 
         // Extract trace context from environment (X-Ray header). Only the trace ID is used — the Workflow span is a
-        // true root, so the X-Ray parent span ID is intentionally not used for parenting (unlike OtelPlugin).
+        // true root, so the X-Ray parent span ID is intentionally not used for parenting (unlike InvocationOtelPlugin).
         var extractedContext = contextExtractor.extract();
         if (extractedContext != null) {
             idGenerator.setExtractedTraceId(extractedContext.traceId());

@@ -10,7 +10,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.otel.OtelPlugin;
+import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
 
 /**
  * OTel examples for map, parallel, and nested context operations. These are local-only examples (not deployed to
@@ -22,8 +22,8 @@ public final class OtelXRayExamples {
 
     private static DurableConfig otelConfig() {
         var otlpExporter = OtlpGrpcSpanExporter.getDefault();
-        var otelPlugin =
-                new OtelPlugin(SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
+        var otelPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
         return DurableConfig.builder().withPlugins(otelPlugin).build();
     }
 

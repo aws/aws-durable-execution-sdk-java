@@ -41,7 +41,7 @@ You also need the OpenTelemetry SDK and an exporter:
 
 1. Add the ADOT Lambda Layer to your function
 2. Enable X-Ray Active Tracing on the function
-3. Register `OtelPlugin` in your handler's `DurableConfig`
+3. Register `InvocationOtelPlugin` in your handler's `DurableConfig`
 4. Grant X-Ray write permissions
 
 ### 1. ADOT Lambda Layer
@@ -110,7 +110,7 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.otel.OtelPlugin;
+import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
 
 public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 
@@ -118,7 +118,7 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
     protected DurableConfig createConfiguration() {
         var otlpExporter = OtlpGrpcSpanExporter.getDefault();
 
-        var otelPlugin = new OtelPlugin(
+        var otelPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder()
                         .addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
 
@@ -215,13 +215,13 @@ These appear automatically in structured log output (Log4j2 JSON, Logback JSON) 
 
 ```java
 // Default: X-Ray context extraction, MDC enabled
-new OtelPlugin(tracerProviderBuilder);
+new InvocationOtelPlugin(tracerProviderBuilder);
 
 // Custom context extractor, MDC enabled
-new OtelPlugin(tracerProviderBuilder, contextExtractor);
+new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor);
 
 // Full configuration
-new OtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
+new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 ```
 
 | Parameter | Description | Default |
@@ -262,7 +262,7 @@ For local testing, use a logging exporter to print spans to stdout:
 ```java
 import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 
-var otelPlugin = new OtelPlugin(
+var otelPlugin = new InvocationOtelPlugin(
         SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
 ```

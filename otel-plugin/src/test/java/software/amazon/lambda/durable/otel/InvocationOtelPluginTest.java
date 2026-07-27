@@ -15,16 +15,16 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
-class OtelPluginTest {
+class InvocationOtelPluginTest {
 
     private InMemorySpanExporter spanExporter;
-    private OtelPlugin plugin;
+    private InvocationOtelPlugin plugin;
 
     @BeforeEach
     void setUp() {
         spanExporter = InMemorySpanExporter.create();
 
-        plugin = new OtelPlugin(
+        plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
@@ -274,7 +274,7 @@ class OtelPluginTest {
     @Test
     void sampling_disabled_producesNoSpans() {
         spanExporter = InMemorySpanExporter.create();
-        var sampledPlugin = new OtelPlugin(
+        var sampledPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
@@ -302,7 +302,7 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -321,7 +321,7 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -351,7 +351,7 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, parentSpanId);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -376,7 +376,7 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -406,7 +406,7 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, "53995c3f42cd8ad8");
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
@@ -440,7 +440,7 @@ class OtelPluginTest {
     @Test
     void xrayExtraction_nullExtractor_fallsBackToArnDerived() {
         spanExporter = InMemorySpanExporter.create();
-        var noXrayPlugin = new OtelPlugin(
+        var noXrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
@@ -471,7 +471,7 @@ class OtelPluginTest {
         // Now feed it through the plugin
         var extractedContext = new ExtractedContext(convertedId, null);
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);

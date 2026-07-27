@@ -67,9 +67,9 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
 @Deprecated
-public class OtelPlugin implements DurableExecutionPlugin {
+public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
-    private static final Logger logger = LoggerFactory.getLogger(OtelPlugin.class);
+    private static final Logger logger = LoggerFactory.getLogger(InvocationOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
 
     private final SdkTracerProvider tracerProvider;
@@ -102,13 +102,13 @@ public class OtelPlugin implements DurableExecutionPlugin {
      *
      * <pre>{@code
      * var otlpExporter = OtlpGrpcSpanExporter.getDefault(); // sends to localhost:4317
-     * var plugin = new OtelPlugin(
+     * var plugin = new InvocationOtelPlugin(
      *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
      * }</pre>
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
-    public OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
+    public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
         this(tracerProviderBuilder, new XRayContextExtractor(), true);
     }
 
@@ -118,7 +118,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
      */
-    public OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor) {
+    public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor) {
         this(tracerProviderBuilder, contextExtractor, true);
     }
 
@@ -129,7 +129,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
      * @param contextExtractor extracts parent trace context from the Lambda environment
      * @param enableMdc if true, injects traceId/spanId/traceSampled into SLF4J MDC for log correlation
      */
-    public OtelPlugin(
+    public InvocationOtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
         this.idGenerator = new DeterministicIdGenerator();
 
