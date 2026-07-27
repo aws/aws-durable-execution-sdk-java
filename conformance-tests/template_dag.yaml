@@ -308,3 +308,19 @@ Resources:
       DurableConfig:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
+
+  DagRetry:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-16"]
+    Properties:
+      CodeUri: .
+      Handler: dag.DagRetry
+      Description: DAG per-task retry — a flaky task retries and succeeds, its result flows downstream (ALL_COMPLETED)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300

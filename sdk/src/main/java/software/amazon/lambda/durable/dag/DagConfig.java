@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.dag;
 
 import java.util.Optional;
 import software.amazon.lambda.durable.annotations.Experimental;
-import software.amazon.lambda.durable.retry.RetryStrategy;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -19,7 +18,6 @@ import software.amazon.lambda.durable.serde.SerDes;
  *     {@code parallel} task keeps its unlimited default unless configured, and a nested {@code dag} gets its own
  *     independent default of 40. An explicit value always wins, including one above the default.
  * @param completionConfig early-completion policy (default: drain the whole reachable graph)
- * @param defaultRetryStrategy default retry strategy applied to tasks that do not specify one
  * @param defaultTriggerRule default trigger rule (default {@link TriggerRule#ALL_SUCCESS})
  * @param serDes custom serializer/deserializer for the aggregate {@link DagResult}
  * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
@@ -29,7 +27,6 @@ import software.amazon.lambda.durable.serde.SerDes;
 public record DagConfig(
         Optional<Integer> maxConcurrency,
         Optional<DagCompletionConfig> completionConfig,
-        Optional<RetryStrategy> defaultRetryStrategy,
         Optional<TriggerRule> defaultTriggerRule,
         Optional<SerDes> serDes) {
 
@@ -55,7 +52,6 @@ public record DagConfig(
     public static final class Builder {
         private Integer maxConcurrency;
         private DagCompletionConfig completionConfig;
-        private RetryStrategy defaultRetryStrategy;
         private TriggerRule defaultTriggerRule;
         private SerDes serDes;
 
@@ -74,11 +70,6 @@ public record DagConfig(
             return this;
         }
 
-        public Builder defaultRetryStrategy(RetryStrategy defaultRetryStrategy) {
-            this.defaultRetryStrategy = defaultRetryStrategy;
-            return this;
-        }
-
         public Builder defaultTriggerRule(TriggerRule defaultTriggerRule) {
             this.defaultTriggerRule = defaultTriggerRule;
             return this;
@@ -93,7 +84,6 @@ public record DagConfig(
             return new DagConfig(
                     Optional.ofNullable(maxConcurrency),
                     Optional.ofNullable(completionConfig),
-                    Optional.ofNullable(defaultRetryStrategy),
                     Optional.ofNullable(defaultTriggerRule),
                     Optional.ofNullable(serDes));
         }

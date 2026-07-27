@@ -187,8 +187,6 @@ extends `DagException`.
 
 ## Notes / v1 limitations
 
-- `DagConfig.defaultRetryStrategy` is accepted but per-task auto-injection is not yet applied in v1; set retry on each
-  task's config as needed.
 - `TaskExecution.startedAt`/`completedAt` are not populated in v1 (wall-clock capture outside a step would be
   non-deterministic across replays).
 - `parallel` branches are declared against the existing `ParallelDurableFuture` (`Consumer<ParallelDurableFuture>`);

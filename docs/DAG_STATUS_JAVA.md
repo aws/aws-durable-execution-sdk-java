@@ -26,7 +26,6 @@
 - `Deps.get(TaskHandle<T>)` typed accessor; `.reads(...)` (inline) vs `.dependsOn(...)` (ordering-only).
 
 ## v1 limitations (documented in docs/core/dag.md)
-- `DagConfig.defaultRetryStrategy` accepted but not auto-injected per task yet.
 - `TaskExecution.startedAt`/`completedAt` not populated (determinism: no wall-clock outside steps).
 - `parallel` DAG task branches declared via `Consumer<ParallelDurableFuture>` (reuses existing type; no `ParallelBuilder`); branches don't receive `Deps`.
 - Small-result direct serde rehydrates PLAIN results as generic JSON trees (erasure); precise typed reconstruction is guaranteed by the re-execution path.
