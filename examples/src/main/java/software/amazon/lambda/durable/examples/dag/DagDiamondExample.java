@@ -16,9 +16,15 @@ public class DagDiamondExample extends DurableHandler<String, String> {
     public String handleRequest(String input, DurableContext context) {
         DagResult r = context.dag("etl", d -> {
             var a = d.step("a", String.class, (deps, s) -> "A");
-            var b = d.step("b", String.class, (deps, s) -> deps.get(a) + "B").reads(a);
-            var c = d.step("c", String.class, (deps, s) -> deps.get(a) + "C").reads(a);
-            d.step("dd", String.class, (deps, s) -> deps.get(b) + deps.get(c)).reads(b, c);
+            var b = d.step("b", String.class, (deps, s) -> deps.get(a).orElseThrow() + "B")
+                    .reads(a);
+            var c = d.step("c", String.class, (deps, s) -> deps.get(a).orElseThrow() + "C")
+                    .reads(a);
+            d.step(
+                            "dd",
+                            String.class,
+                            (deps, s) -> deps.get(b).orElseThrow() + deps.get(c).orElseThrow())
+                    .reads(b, c);
         });
         return (String) r.getResult("dd").orElse("MISSING");
     }

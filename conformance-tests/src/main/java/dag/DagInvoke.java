@@ -27,9 +27,10 @@ public class DagInvoke extends DurableHandler<Object, Map<String, Object>> {
                 "invokedag",
                 d -> {
                     var prep = d.step("prep", Integer.class, (deps, s) -> 21);
-                    var call = d.invoke("call", functionName, Integer.class, deps -> deps.get(prep))
+                    var call = d.invoke("call", functionName, Integer.class, deps -> deps.get(prep)
+                                    .orElseThrow())
                             .reads(prep);
-                    d.step("done", Integer.class, (deps, s) -> deps.get(call) * 2)
+                    d.step("done", Integer.class, (deps, s) -> deps.get(call).orElseThrow() * 2)
                             .reads(call);
                 },
                 DagConfig.builder().maxConcurrency(1).build());

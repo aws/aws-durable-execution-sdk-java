@@ -25,13 +25,13 @@ public class DagChild extends DurableHandler<Object, Map<String, Object>> {
                 d -> {
                     var seed = d.step("seed", Integer.class, (deps, s) -> 1);
                     var group = d.runInChildContext("group", Integer.class, (deps, childCtx) -> {
-                                int seedVal = deps.get(seed);
+                                int seedVal = deps.get(seed).orElseThrow();
                                 int a = childCtx.step("inner-a", Integer.class, s -> seedVal + 1);
                                 int b = childCtx.step("inner-b", Integer.class, s -> seedVal + 2);
                                 return a + b;
                             })
                             .reads(seed);
-                    d.step("done", Integer.class, (deps, s) -> deps.get(group) * 2)
+                    d.step("done", Integer.class, (deps, s) -> deps.get(group).orElseThrow() * 2)
                             .reads(group);
                 },
                 DagConfig.builder().maxConcurrency(1).build());

@@ -19,7 +19,7 @@ public class DagRunIfExample extends DurableHandler<String, String> {
             var gate = d.step("gate", Integer.class, (deps, s) -> 0);
             var maybe = d.step("maybe", String.class, (deps, s) -> "ran")
                     .reads(gate)
-                    .runIf(deps -> ((Integer) deps.get(gate)) > 0);
+                    .runIf(deps -> ((Integer) deps.get(gate).orElseThrow()) > 0);
             d.step("after", String.class, (deps, s) -> "after").after(maybe);
         });
         return r.getStatus("maybe").map(Enum::name).orElse("?")

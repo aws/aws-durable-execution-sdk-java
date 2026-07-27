@@ -33,18 +33,7 @@ final class DepsImpl implements Deps {
 
     @SuppressWarnings("unchecked")
     @Override
-    public <T> T get(TaskHandle<T> handle) {
-        requireDeclared(handle);
-        var exec = results.get(handle.name());
-        if (exec == null || exec.status() != TaskStatus.SUCCEEDED) {
-            return null;
-        }
-        return (T) exec.result().orElse(null);
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public <T> Optional<T> getOptional(TaskHandle<T> handle) {
+    public <T> Optional<T> get(TaskHandle<T> handle) {
         requireDeclared(handle);
         var exec = results.get(handle.name());
         if (exec == null || exec.status() != TaskStatus.SUCCEEDED) {

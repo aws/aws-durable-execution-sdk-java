@@ -58,11 +58,21 @@ public class DagConcurrentOverlap extends DurableHandler<Object, Map<String, Obj
                         return "F";
                     })
                     .after(root);
-            var afterSlow = d.step("afterSlow", String.class, (deps, s) -> deps.get(slow) + "s")
+            var afterSlow = d.step(
+                            "afterSlow",
+                            String.class,
+                            (deps, s) -> deps.get(slow).orElseThrow() + "s")
                     .reads(slow);
-            var afterFast = d.step("afterFast", String.class, (deps, s) -> deps.get(fast) + "f")
+            var afterFast = d.step(
+                            "afterFast",
+                            String.class,
+                            (deps, s) -> deps.get(fast).orElseThrow() + "f")
                     .reads(fast);
-            d.step("merge", String.class, (deps, s) -> deps.get(afterSlow) + deps.get(afterFast))
+            d.step(
+                            "merge",
+                            String.class,
+                            (deps, s) -> deps.get(afterSlow).orElseThrow()
+                                    + deps.get(afterFast).orElseThrow())
                     .reads(afterSlow, afterFast);
         });
 

@@ -153,11 +153,15 @@ class DagIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
             DagResult r = ctx.dag("etl", d -> {
                 var a = d.step("a", String.class, (deps, s) -> "A");
-                var b = d.step("b", String.class, (deps, s) -> deps.get(a) + "B")
+                var b = d.step("b", String.class, (deps, s) -> deps.get(a).orElseThrow() + "B")
                         .reads(a);
-                var c = d.step("c", String.class, (deps, s) -> deps.get(a) + "C")
+                var c = d.step("c", String.class, (deps, s) -> deps.get(a).orElseThrow() + "C")
                         .reads(a);
-                d.step("dd", String.class, (deps, s) -> deps.get(b) + deps.get(c))
+                d.step(
+                                "dd",
+                                String.class,
+                                (deps, s) ->
+                                        deps.get(b).orElseThrow() + deps.get(c).orElseThrow())
                         .reads(b, c);
             });
             return (String) r.getResult("dd").orElse("MISSING");
@@ -175,7 +179,7 @@ class DagIntegrationTest {
                 var gate = d.step("gate", Integer.class, (deps, s) -> 0);
                 var maybe = d.step("maybe", String.class, (deps, s) -> "ran")
                         .reads(gate)
-                        .runIf(deps -> ((Integer) deps.get(gate)) > 0);
+                        .runIf(deps -> ((Integer) deps.get(gate).orElseThrow()) > 0);
                 d.step("after", String.class, (deps, s) -> "after").after(maybe);
             });
             return r.getStatus("maybe").map(Enum::name).orElse("?")
@@ -223,6 +227,38 @@ class DagIntegrationTest {
         assertEquals("COMPLETED_WITH_FAILURES|FAILED|SUCCEEDED|SKIPPED|SUCCEEDED", result.getResult(String.class));
     }
 
+    /**
+     * Proves the {@code Deps.get} contract at execution time: a compensation task that declares a failing task as an
+     * inline dependency ({@code reads}) and runs anyway via a non-ALL_SUCCESS trigger rule ({@code ALL_DONE}) reads
+     * that dependency inside its body and observes {@link java.util.Optional#empty()} — matching the long-standing
+     * runtime behavior now made honest by the {@code Optional<T>} return type.
+     */
+    @Test
+    void failedInlineDependencyReadsAsEmptyOptionalUnderAllDone() {
+        var noRetry = StepConfig.builder()
+                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag("compensation", d -> {
+                var charge = d.step(
+                        "charge",
+                        String.class,
+                        (deps, s) -> {
+                            throw new RuntimeException("charge failed");
+                        },
+                        noRetry);
+                d.step("compensate", String.class, (deps, s) -> deps.get(charge).isPresent() ? "present" : "empty")
+                        .reads(charge)
+                        .triggerRule(TriggerRule.ALL_DONE);
+            });
+            return (String) r.getResult("compensate").orElse("MISSING");
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("empty", result.getResult(String.class));
+    }
+
     @Test
     void replayAfterWaitDoesNotReexecuteCompletedTasks() {
         var executions = new java.util.concurrent.atomic.AtomicInteger(0);
@@ -233,7 +269,7 @@ class DagIntegrationTest {
                     return "A";
                 });
                 var w = d.wait("w", java.time.Duration.ofMinutes(5)).after(a);
-                d.step("b", String.class, (deps, s) -> deps.get(a) + "B")
+                d.step("b", String.class, (deps, s) -> deps.get(a).orElseThrow() + "B")
                         .reads(a)
                         .after(w);
             });
@@ -266,7 +302,10 @@ class DagIntegrationTest {
                 var root = d.step("root", String.class, (deps, s) -> "R");
                 d.dag("inner", inner -> {
                             var x = inner.step("x", String.class, (deps, s) -> "X");
-                            inner.step("y", String.class, (deps, s) -> deps.get(x) + "Y")
+                            inner.step(
+                                            "y",
+                                            String.class,
+                                            (deps, s) -> deps.get(x).orElseThrow() + "Y")
                                     .reads(x);
                         })
                         .after(root);
@@ -477,17 +516,21 @@ class DagIntegrationTest {
                 });
                 var b = d.step("b", String.class, (deps, s) -> {
                             bRuns.incrementAndGet();
-                            return deps.get(a) + "B";
+                            return deps.get(a).orElseThrow() + "B";
                         })
                         .reads(a);
                 var c = d.step("c", String.class, (deps, s) -> {
                             cRuns.incrementAndGet();
-                            return deps.get(a) + "C";
+                            return deps.get(a).orElseThrow() + "C";
                         })
                         .reads(a);
                 // Wait after the concurrent fan-out forces a suspend/replay before the join runs.
                 var w = d.wait("w", java.time.Duration.ofMinutes(5)).after(b, c);
-                d.step("join", String.class, (deps, s) -> deps.get(b) + deps.get(c))
+                d.step(
+                                "join",
+                                String.class,
+                                (deps, s) ->
+                                        deps.get(b).orElseThrow() + deps.get(c).orElseThrow())
                         .reads(b, c)
                         .after(w);
             });
@@ -557,7 +600,7 @@ class DagIntegrationTest {
                         final int reads = (i + 1) * readUnit;
                         d.step("t" + i, Boolean.class, (deps, s) -> {
                                     for (int k = 0; k < reads; k++) {
-                                        Object v = deps.get(up);
+                                        Object v = deps.get(up).orElse(null);
                                         if (!"UPSTREAM".equals(v)) {
                                             throw new IllegalStateException(
                                                     "raced read of upstream: expected 'UPSTREAM' but observed " + v);
@@ -619,11 +662,21 @@ class DagIntegrationTest {
                             return "F";
                         })
                         .after(root);
-                var afterSlow = d.step("afterSlow", String.class, (deps, s) -> deps.get(slow) + "s")
+                var afterSlow = d.step(
+                                "afterSlow",
+                                String.class,
+                                (deps, s) -> deps.get(slow).orElseThrow() + "s")
                         .reads(slow);
-                var afterFast = d.step("afterFast", String.class, (deps, s) -> deps.get(fast) + "f")
+                var afterFast = d.step(
+                                "afterFast",
+                                String.class,
+                                (deps, s) -> deps.get(fast).orElseThrow() + "f")
                         .reads(fast);
-                d.step("merge", String.class, (deps, s) -> deps.get(afterSlow) + deps.get(afterFast))
+                d.step(
+                                "merge",
+                                String.class,
+                                (deps, s) -> deps.get(afterSlow).orElseThrow()
+                                        + deps.get(afterFast).orElseThrow())
                         .reads(afterSlow, afterFast);
             });
             return (String) r.getResult("merge").orElse("MISSING");
@@ -679,7 +732,11 @@ class DagIntegrationTest {
                             return "F";
                         })
                         .after(fast);
-                d.step("merge", String.class, (deps, s) -> deps.get(afterSlow) + deps.get(afterFast))
+                d.step(
+                                "merge",
+                                String.class,
+                                (deps, s) -> deps.get(afterSlow).orElseThrow()
+                                        + deps.get(afterFast).orElseThrow())
                         .reads(afterSlow, afterFast);
             });
             return r.getResult("merge").map(Object::toString).orElse("MISSING")
@@ -923,10 +980,15 @@ class DagIntegrationTest {
                         var digestBefore = d.step(
                                         "digestBefore",
                                         String.class,
-                                        (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                                        (deps, s) -> innerDigest(
+                                                (DagResult) deps.get(inner).orElseThrow()))
                                 .reads(inner);
                         var w = d.wait("wait", java.time.Duration.ofSeconds(2)).after(digestBefore);
-                        d.step("digestAfter", String.class, (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                        d.step(
+                                        "digestAfter",
+                                        String.class,
+                                        (deps, s) -> innerDigest(
+                                                (DagResult) deps.get(inner).orElseThrow()))
                                 .reads(inner)
                                 .after(w);
                     },
@@ -991,10 +1053,15 @@ class DagIntegrationTest {
                         var digestBefore = d.step(
                                         "digestBefore",
                                         String.class,
-                                        (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                                        (deps, s) -> innerDigest(
+                                                (DagResult) deps.get(inner).orElseThrow()))
                                 .reads(inner);
                         var w = d.wait("wait", java.time.Duration.ofSeconds(2)).after(digestBefore);
-                        d.step("digestAfter", String.class, (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                        d.step(
+                                        "digestAfter",
+                                        String.class,
+                                        (deps, s) -> innerDigest(
+                                                (DagResult) deps.get(inner).orElseThrow()))
                                 .reads(inner)
                                 .after(w);
                     },

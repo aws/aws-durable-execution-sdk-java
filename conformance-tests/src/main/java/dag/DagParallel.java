@@ -40,7 +40,7 @@ public class DagParallel extends DurableHandler<Object, Map<String, Object>> {
                             },
                             ParallelConfig.builder().maxConcurrency(1).build());
                     d.step("join", String.class, (deps, s) -> {
-                                ParallelResult pr = deps.get(fork);
+                                ParallelResult pr = deps.get(fork).orElseThrow();
                                 return pr.succeeded() + "/" + pr.size();
                             })
                             .reads(fork);

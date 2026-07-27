@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.dag.internal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -57,8 +56,7 @@ class TaskHandleTest {
                         Optional.empty()));
 
         Deps deps = new DepsImpl(b.inlineDeps(), results);
-        assertEquals("hello", deps.get(a));
-        assertEquals(Optional.of("hello"), deps.getOptional(a));
+        assertEquals(Optional.of("hello"), deps.get(a));
     }
 
     @Test
@@ -70,7 +68,7 @@ class TaskHandleTest {
     }
 
     @Test
-    void depsGetReturnsNullForNonSucceededUpstream() {
+    void depsGetReturnsEmptyForNonSucceededUpstream() {
         var a = handle("a");
         var b = handle("b");
         b.reads(a);
@@ -86,7 +84,37 @@ class TaskHandleTest {
                         Optional.empty(),
                         Optional.empty()));
         Deps deps = new DepsImpl(b.inlineDeps(), results);
-        assertNull(deps.get(a));
-        assertTrue(deps.getOptional(a).isEmpty());
+        assertTrue(deps.get(a).isEmpty());
+    }
+
+    /**
+     * Models the compensation-task scenario the {@code Optional<T>} return type exists for: a downstream task with a
+     * non-ALL_SUCCESS trigger rule (here {@code ALL_DONE}) runs even though its inline dependency FAILED. Reading that
+     * dependency's result via {@code deps.get(handle)} must yield {@link Optional#empty()}, not a null masquerading as
+     * a present value.
+     */
+    @Test
+    void depsGetReturnsEmptyForFailedUpstreamUnderAllDoneTriggerRule() {
+        var upstream = handle("upstream"); // designed to fail
+        var compensate = handle("compensate");
+        compensate.reads(upstream).triggerRule(TriggerRule.ALL_DONE);
+
+        // Snapshot the scheduler would hand to the compensation task: upstream terminal but FAILED.
+        Map<String, TaskExecution<?>> results = new LinkedHashMap<>();
+        results.put(
+                "upstream",
+                new TaskExecution<>(
+                        "upstream",
+                        TaskStatus.FAILED,
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty()));
+
+        Deps deps = new DepsImpl(compensate.inlineDeps(), results);
+
+        Optional<String> result = deps.get(upstream);
+        assertTrue(result.isEmpty(), "failed upstream under ALL_DONE must surface as Optional.empty()");
     }
 }

@@ -72,11 +72,21 @@ class DagConformanceTest {
         var runner = LocalDurableTestRunner.create(String.class, (in, ctx) -> {
             DagResult r = ctx.dag("dag1", d -> {
                 var fetch = d.step("fetch", Integer.class, (deps, s) -> 10);
-                var ta = d.step("ta", Integer.class, (deps, s) -> deps.get(fetch) + 1)
+                var ta = d.step(
+                                "ta",
+                                Integer.class,
+                                (deps, s) -> deps.get(fetch).orElseThrow() + 1)
                         .reads(fetch);
-                var tb = d.step("tb", Integer.class, (deps, s) -> deps.get(fetch) * 2)
+                var tb = d.step(
+                                "tb",
+                                Integer.class,
+                                (deps, s) -> deps.get(fetch).orElseThrow() * 2)
                         .reads(fetch);
-                d.step("merge", Integer.class, (deps, s) -> deps.get(ta) + deps.get(tb))
+                d.step(
+                                "merge",
+                                Integer.class,
+                                (deps, s) -> deps.get(ta).orElseThrow()
+                                        + deps.get(tb).orElseThrow())
                         .reads(ta, tb);
             });
             ref.set(r);
@@ -167,13 +177,13 @@ class DagConformanceTest {
                 var classify = d.step("classify", String.class, (deps, s) -> "review");
                 d.step("publish", String.class, (deps, s) -> "published")
                         .reads(classify)
-                        .runIf(deps -> "publish".equals(deps.get(classify)));
+                        .runIf(deps -> "publish".equals(deps.get(classify).orElse(null)));
                 d.step("review", String.class, (deps, s) -> "reviewed")
                         .reads(classify)
-                        .runIf(deps -> "review".equals(deps.get(classify)));
+                        .runIf(deps -> "review".equals(deps.get(classify).orElse(null)));
                 d.step("block", String.class, (deps, s) -> "blocked")
                         .reads(classify)
-                        .runIf(deps -> "block".equals(deps.get(classify)));
+                        .runIf(deps -> "block".equals(deps.get(classify).orElse(null)));
             });
             ref.set(r);
             return "ok";
@@ -377,7 +387,7 @@ class DagConformanceTest {
                 var seed = d.step("seed", Integer.class, (deps, s) -> 1);
                 var gate = d.step("gate", String.class, (deps, s) -> "gate")
                         .reads(seed)
-                        .runIf(deps -> ((Integer) deps.get(seed)) > 100);
+                        .runIf(deps -> ((Integer) deps.get(seed).orElseThrow()) > 100);
                 var d1 = d.step("d1", String.class, (deps, s) -> "d1").after(gate);
                 d.step("d2", String.class, (deps, s) -> "d2").after(d1);
                 d.step("sink", String.class, (deps, s) -> "sink").after(gate).triggerRule(TriggerRule.ALL_DONE);
@@ -406,12 +416,15 @@ class DagConformanceTest {
                 var a = d.step("a", Integer.class, (deps, s) -> 2);
                 var inner = d.dag("inner", innerCtx -> {
                             var x = innerCtx.step("x", Integer.class, (deps, s) -> 3);
-                            innerCtx.step("y", Integer.class, (deps, s) -> deps.get(x) * 10)
+                            innerCtx.step(
+                                            "y",
+                                            Integer.class,
+                                            (deps, s) -> deps.get(x).orElseThrow() * 10)
                                     .reads(x);
                         })
                         .after(a);
                 d.step("consume", Integer.class, (deps, s) -> {
-                            DagResult innerResult = deps.get(inner);
+                            DagResult innerResult = deps.get(inner).orElseThrow();
                             return (Integer) innerResult.getResult("y").orElseThrow() + 5;
                         })
                         .reads(inner);
@@ -709,17 +722,21 @@ class DagConformanceTest {
                 TaskHandle<Integer> b;
                 TaskHandle<Integer> c;
                 if (bFirst) {
-                    b = d.step("b", Integer.class, (deps, s) -> deps.get(root) + 1)
+                    b = d.step("b", Integer.class, (deps, s) -> deps.get(root).orElseThrow() + 1)
                             .reads(root);
-                    c = d.step("c", Integer.class, (deps, s) -> deps.get(root) + 2)
+                    c = d.step("c", Integer.class, (deps, s) -> deps.get(root).orElseThrow() + 2)
                             .reads(root);
                 } else {
-                    c = d.step("c", Integer.class, (deps, s) -> deps.get(root) + 2)
+                    c = d.step("c", Integer.class, (deps, s) -> deps.get(root).orElseThrow() + 2)
                             .reads(root);
-                    b = d.step("b", Integer.class, (deps, s) -> deps.get(root) + 1)
+                    b = d.step("b", Integer.class, (deps, s) -> deps.get(root).orElseThrow() + 1)
                             .reads(root);
                 }
-                d.step("merge", Integer.class, (deps, s) -> deps.get(b) + deps.get(c))
+                d.step(
+                                "merge",
+                                Integer.class,
+                                (deps, s) ->
+                                        deps.get(b).orElseThrow() + deps.get(c).orElseThrow())
                         .reads(b, c);
             });
             ref.set(r);

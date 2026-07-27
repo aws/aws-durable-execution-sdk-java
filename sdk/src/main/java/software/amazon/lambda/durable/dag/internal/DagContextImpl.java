@@ -160,13 +160,18 @@ public final class DagContextImpl implements DagContext {
     // ── step: positional-arity typed-deps sugar (§2.7) ─────────────────────────
     @Override
     public <A, T> TaskHandle<T> step(String name, Class<T> type, TaskHandle<A> a, DagStep1Function<A, T> fn) {
-        return step(name, type, (deps, sc) -> fn.apply(deps.get(a), sc)).reads(a);
+        return step(name, type, (deps, sc) -> fn.apply(deps.get(a).orElse(null), sc))
+                .reads(a);
     }
 
     @Override
     public <A, B, T> TaskHandle<T> step(
             String name, Class<T> type, TaskHandle<A> a, TaskHandle<B> b, DagStep2Function<A, B, T> fn) {
-        return step(name, type, (deps, sc) -> fn.apply(deps.get(a), deps.get(b), sc))
+        return step(
+                        name,
+                        type,
+                        (deps, sc) ->
+                                fn.apply(deps.get(a).orElse(null), deps.get(b).orElse(null), sc))
                 .reads(a, b);
     }
 
@@ -178,7 +183,14 @@ public final class DagContextImpl implements DagContext {
             TaskHandle<B> b,
             TaskHandle<C> c,
             DagStep3Function<A, B, C, T> fn) {
-        return step(name, type, (deps, sc) -> fn.apply(deps.get(a), deps.get(b), deps.get(c), sc))
+        return step(
+                        name,
+                        type,
+                        (deps, sc) -> fn.apply(
+                                deps.get(a).orElse(null),
+                                deps.get(b).orElse(null),
+                                deps.get(c).orElse(null),
+                                sc))
                 .reads(a, b, c);
     }
 

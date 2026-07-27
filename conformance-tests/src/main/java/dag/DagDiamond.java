@@ -23,11 +23,21 @@ public class DagDiamond extends DurableHandler<Object, Map<String, Object>> {
                 "diamond",
                 d -> {
                     var fetch = d.step("fetch", Integer.class, (deps, s) -> 10);
-                    var ta = d.step("ta", Integer.class, (deps, s) -> deps.get(fetch) + 1)
+                    var ta = d.step(
+                                    "ta",
+                                    Integer.class,
+                                    (deps, s) -> deps.get(fetch).orElseThrow() + 1)
                             .reads(fetch);
-                    var tb = d.step("tb", Integer.class, (deps, s) -> deps.get(fetch) * 2)
+                    var tb = d.step(
+                                    "tb",
+                                    Integer.class,
+                                    (deps, s) -> deps.get(fetch).orElseThrow() * 2)
                             .reads(fetch);
-                    d.step("merge", Integer.class, (deps, s) -> deps.get(ta) + deps.get(tb))
+                    d.step(
+                                    "merge",
+                                    Integer.class,
+                                    (deps, s) -> deps.get(ta).orElseThrow()
+                                            + deps.get(tb).orElseThrow())
                             .reads(ta, tb);
                 },
                 DagConfig.builder().maxConcurrency(1).build());

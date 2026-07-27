@@ -34,7 +34,7 @@ public class DagMap extends DurableHandler<Object, Map<String, Object>> {
                             (item, index, ctx) -> ctx.step(null, Integer.class, s -> item * item),
                             MapConfig.builder().maxConcurrency(1).build());
                     d.step("sum", Integer.class, (deps, s) -> {
-                                MapResult<Integer> m = deps.get(squares);
+                                MapResult<Integer> m = deps.get(squares).orElseThrow();
                                 return m.results().stream()
                                         .filter(Objects::nonNull)
                                         .mapToInt(Integer::intValue)

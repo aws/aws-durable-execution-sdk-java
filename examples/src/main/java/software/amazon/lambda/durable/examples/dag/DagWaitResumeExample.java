@@ -18,10 +18,15 @@ public class DagWaitResumeExample extends DurableHandler<String, String> {
     public String handleRequest(String input, DurableContext context) {
         DagResult r = context.dag("diamond_wait", d -> {
             var a = d.step("a", String.class, (deps, s) -> "A");
-            var b = d.step("b", String.class, (deps, s) -> deps.get(a) + "B").reads(a);
-            var c = d.step("c", String.class, (deps, s) -> deps.get(a) + "C").reads(a);
+            var b = d.step("b", String.class, (deps, s) -> deps.get(a).orElseThrow() + "B")
+                    .reads(a);
+            var c = d.step("c", String.class, (deps, s) -> deps.get(a).orElseThrow() + "C")
+                    .reads(a);
             var w = d.wait("w", Duration.ofSeconds(5)).after(b, c);
-            d.step("join", String.class, (deps, s) -> deps.get(b) + deps.get(c))
+            d.step(
+                            "join",
+                            String.class,
+                            (deps, s) -> deps.get(b).orElseThrow() + deps.get(c).orElseThrow())
                     .reads(b, c)
                     .after(w);
         });

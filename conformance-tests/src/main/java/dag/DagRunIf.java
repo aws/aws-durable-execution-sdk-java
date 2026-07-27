@@ -31,7 +31,7 @@ public class DagRunIf extends DurableHandler<Object, Map<String, Object>> {
                         final String name = branch;
                         d.step(name, String.class, (deps, s) -> name)
                                 .reads(classify)
-                                .runIf(deps -> name.equals(deps.get(classify)));
+                                .runIf(deps -> name.equals(deps.get(classify).orElse(null)));
                     }
                 },
                 DagConfig.builder().maxConcurrency(1).build());

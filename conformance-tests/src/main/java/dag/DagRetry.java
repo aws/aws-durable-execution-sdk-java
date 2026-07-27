@@ -15,16 +15,16 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 /**
  * 10-16: retry inside a DAG (a task retries and eventually succeeds).
  *
- * <p>{@code flaky} is a step carrying an explicit per-task retry strategy of 3 attempts with a fixed 1-second delay (the
- * minimum the SDK allows; no exponential backoff worth waiting on). Its body reads the 1-based attempt number from its
- * {@link software.amazon.lambda.durable.StepContext} via {@code getAttempt()} and throws on attempts 1 and 2, returning
- * the attempt number ({@code 3}) on the third. {@code after} depends on {@code flaky} and returns that value doubled
- * ({@code 6}), proving a retried task's result flows downstream normally. {@code maxConcurrency=1} for a deterministic
- * order.
+ * <p>{@code flaky} is a step carrying an explicit per-task retry strategy of 3 attempts with a fixed 1-second delay
+ * (the minimum the SDK allows; no exponential backoff worth waiting on). Its body reads the 1-based attempt number from
+ * its {@link software.amazon.lambda.durable.StepContext} via {@code getAttempt()} and throws on attempts 1 and 2,
+ * returning the attempt number ({@code 3}) on the third. {@code after} depends on {@code flaky} and returns that value
+ * doubled ({@code 6}), proving a retried task's result flows downstream normally. {@code maxConcurrency=1} for a
+ * deterministic order.
  *
  * <p>The point of the scenario: {@code flaky} ends {@code SUCCEEDED} (not {@code FAILED}) and {@code after} runs rather
- * than being skipped — which is exactly what a broken retry inside a DAG would break. Returns
- * {@code {"flaky": 3, "after": 6}}.
+ * than being skipped — which is exactly what a broken retry inside a DAG would break. Returns {@code {"flaky": 3,
+ * "after": 6}}.
  */
 public class DagRetry extends DurableHandler<Object, Map<String, Object>> {
 
@@ -46,7 +46,7 @@ public class DagRetry extends DurableHandler<Object, Map<String, Object>> {
                             StepConfig.builder()
                                     .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)))
                                     .build());
-                    d.step("after", Integer.class, (deps, s) -> deps.get(flaky) * 2)
+                    d.step("after", Integer.class, (deps, s) -> deps.get(flaky).orElseThrow() * 2)
                             .reads(flaky);
                 },
                 DagConfig.builder().maxConcurrency(1).build());

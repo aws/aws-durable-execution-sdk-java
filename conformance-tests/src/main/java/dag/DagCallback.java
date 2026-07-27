@@ -30,7 +30,10 @@ public class DagCallback extends DurableHandler<Object, Map<String, Object>> {
                                 // Submitter receives the callback id; nothing durable to do.
                             })
                             .reads(pre);
-                    d.step("post", String.class, (deps, s) -> stripQuotes(deps.get(cb)) + "_done")
+                    d.step(
+                                    "post",
+                                    String.class,
+                                    (deps, s) -> stripQuotes(deps.get(cb).orElseThrow()) + "_done")
                             .reads(cb);
                 },
                 DagConfig.builder().maxConcurrency(1).build());

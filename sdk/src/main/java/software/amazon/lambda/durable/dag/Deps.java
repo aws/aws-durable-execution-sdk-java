@@ -20,24 +20,18 @@ import software.amazon.lambda.durable.annotations.Experimental;
 public interface Deps {
 
     /**
-     * Returns the checkpointed result of an upstream inline dependency.
+     * Returns the checkpointed result of an upstream inline dependency as an {@link Optional}.
+     *
+     * <p>The result is {@link Optional#empty()} whenever the upstream did not produce a success value — i.e. it FAILED
+     * or was SKIPPED. This is possible under non-ALL_SUCCESS trigger rules ({@code ALL_DONE}, {@code ANY_FAILED},
+     * {@code NONE_FAILED}, {@code ALL_FAILED}), where a task can run even though one of its inline dependencies did not
+     * succeed. For the default {@code ALL_SUCCESS} trigger rule the value is always present, so callers may unwrap with
+     * {@link Optional#orElseThrow()}.
      *
      * @param <T> the upstream task's result type
      * @param handle the upstream task's handle (must be an inline dependency declared via {@code reads(...)})
-     * @return the upstream result; may be {@code null} if the upstream did not SUCCEED (possible under non-ALL_SUCCESS
-     *     trigger rules — see {@link #getOptional})
+     * @return the upstream result, or {@link Optional#empty()} if the upstream did not SUCCEED
      * @throws IllegalStateException if {@code handle} was not declared as an inline dependency of this task
      */
-    <T> T get(TaskHandle<T> handle);
-
-    /**
-     * Returns the checkpointed result of an upstream inline dependency as an {@link Optional}, empty when the upstream
-     * did not produce a success value (FAILED/SKIPPED). Convenience for non-ALL_SUCCESS trigger rules.
-     *
-     * @param <T> the upstream task's result type
-     * @param handle the upstream task's handle (must be an inline dependency declared via {@code reads(...)})
-     * @return the upstream result, or {@link Optional#empty()} if absent
-     * @throws IllegalStateException if {@code handle} was not declared as an inline dependency of this task
-     */
-    <T> Optional<T> getOptional(TaskHandle<T> handle);
+    <T> Optional<T> get(TaskHandle<T> handle);
 }

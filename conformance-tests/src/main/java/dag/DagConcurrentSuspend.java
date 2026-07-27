@@ -30,7 +30,11 @@ public class DagConcurrentSuspend extends DurableHandler<Object, Map<String, Obj
             var fast = d.wait("fast", Duration.ofSeconds(2)).after(root);
             var afterSlow = d.step("afterSlow", String.class, (deps, s) -> "S").after(slow);
             var afterFast = d.step("afterFast", String.class, (deps, s) -> "F").after(fast);
-            d.step("merge", String.class, (deps, s) -> deps.get(afterSlow) + deps.get(afterFast))
+            d.step(
+                            "merge",
+                            String.class,
+                            (deps, s) -> deps.get(afterSlow).orElseThrow()
+                                    + deps.get(afterFast).orElseThrow())
                     .reads(afterSlow, afterFast);
         });
 

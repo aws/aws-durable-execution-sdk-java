@@ -26,12 +26,15 @@ public class DagNested extends DurableHandler<Object, Map<String, Object>> {
                     var pre = d.step("pre", Integer.class, (deps, s) -> 1);
                     var sub = d.dag("sub", nd -> {
                                 var n1 = nd.step("n1", Integer.class, (deps, s) -> 2);
-                                nd.step("n2", Integer.class, (deps, s) -> deps.get(n1) + 3)
+                                nd.step(
+                                                "n2",
+                                                Integer.class,
+                                                (deps, s) -> deps.get(n1).orElseThrow() + 3)
                                         .reads(n1);
                             })
                             .after(pre);
                     d.step("post", Integer.class, (deps, s) -> {
-                                DagResult nested = deps.get(sub);
+                                DagResult nested = deps.get(sub).orElseThrow();
                                 return ((Number) nested.getResult("n2").orElseThrow()).intValue() * 10;
                             })
                             .reads(sub);
