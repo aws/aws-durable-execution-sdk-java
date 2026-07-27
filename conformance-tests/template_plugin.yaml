@@ -23,6 +23,8 @@ Globals:
       Ref: JavaVersion
     Architectures:
       - Ref: Architecture
+    LoggingConfig:
+      LogFormat: JSON
 
 Resources:
   DurableFunctionRole:
@@ -60,11 +62,6 @@ Resources:
         Fn::GetAtt:
         - DurableFunctionRole
         - Arn
-      Environment:
-        Variables:
-          # The step body logs its running line via the context logger (Log4j2),
-          # whose default level is ERROR and would suppress logger.info. Raise to INFO.
-          JAVA_TOOL_OPTIONS: -Dorg.apache.logging.log4j.level=INFO
       DurableConfig:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
