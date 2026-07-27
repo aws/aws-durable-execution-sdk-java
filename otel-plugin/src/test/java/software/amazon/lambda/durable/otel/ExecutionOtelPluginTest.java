@@ -49,6 +49,17 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
+    void workflowSpan_hasInternalKind() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        assertEquals(
+                SpanKind.INTERNAL,
+                spanByName(spanExporter.getFinishedSpanItems(), "Workflow").getKind(),
+                "Workflow span must be INTERNAL kind");
+    }
+
+    @Test
     void workflowSpan_isRoot_invocationSpanIsChild() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));

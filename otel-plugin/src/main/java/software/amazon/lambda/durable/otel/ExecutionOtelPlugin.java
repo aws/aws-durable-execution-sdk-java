@@ -164,6 +164,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // same ID so it is exported once as a single logical span (on the terminal invocation only).
         idGenerator.setNextSpanId(idGenerator.generateWorkflowSpanId());
         workflowSpan = tracer.spanBuilder(workflowSpanName)
+                .setSpanKind(SpanKind.INTERNAL)
                 .setNoParent()
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
                 .startSpan();
