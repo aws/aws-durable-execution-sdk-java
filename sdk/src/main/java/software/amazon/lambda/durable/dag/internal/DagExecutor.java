@@ -136,11 +136,11 @@ public final class DagExecutor {
     }
 
     /**
-     * Populates each terminal task's {@code startedAt}/{@code completedAt} from its child operation's
-     * backend-recorded timestamps. Those timestamps are recorded once by the backend at true execution time and are
-     * stable across replay (unlike a scheduler-side wall clock, which re-runs would recompute), so the resulting
-     * envelope is deterministic in both the inline and the reconstruct case. A task with no operation (a skip, which
-     * checkpoints nothing) keeps empty timings.
+     * Populates each terminal task's {@code startedAt}/{@code completedAt} from its child operation's backend-recorded
+     * timestamps. Those timestamps are recorded once by the backend at true execution time and are stable across replay
+     * (unlike a scheduler-side wall clock, which re-runs would recompute), so the resulting envelope is deterministic
+     * in both the inline and the reconstruct case. A task with no operation (a skip, which checkpoints nothing) keeps
+     * empty timings.
      */
     private static Map<String, TaskExecution<?>> applyTimings(
             Map<String, TaskExecution<?>> results, DurableContextImpl childCtx) {

@@ -48,10 +48,7 @@ public class RunInChildContextConfig {
     }
 
     public Builder toBuilder() {
-        return new Builder()
-                .serDes(serDes)
-                .isVirtual(isVirtual)
-                .oversizePayloadLadder(oversizePayloadLadder);
+        return new Builder().serDes(serDes).isVirtual(isVirtual).oversizePayloadLadder(oversizePayloadLadder);
     }
 
     /**

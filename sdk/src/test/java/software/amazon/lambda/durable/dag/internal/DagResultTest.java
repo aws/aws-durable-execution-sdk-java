@@ -174,8 +174,7 @@ class DagResultTest {
         // The type graph maps the task name to its declared result type, so PLAIN reconstruction into the concrete
         // type is permitted (recovered by name from the registered graph, not from a checkpoint-stored class name).
         var serdes = new DagResultSerDes(
-                new JacksonSerDes(),
-                new DagResultTypes(Map.of("p", TypeToken.get(Point.class)), Map.of()));
+                new JacksonSerDes(), new DagResultTypes(Map.of("p", TypeToken.get(Point.class)), Map.of()));
         Map<String, TaskExecution<?>> m = new LinkedHashMap<>();
         m.put("p", ok("p", new Point(3, 4)));
         var original = new DagResultImpl(m, DagCompletionReason.ALL_COMPLETED);

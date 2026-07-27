@@ -121,8 +121,8 @@ public final class DagContextImpl implements DagContext {
     }
 
     /**
-     * The oversize-payload degradation ladder for a DAG container, or {@code null} when the resolved SerDes is a
-     * custom user SerDes (which cannot produce the reduced envelope, so the child-context falls back to its generic
+     * The oversize-payload degradation ladder for a DAG container, or {@code null} when the resolved SerDes is a custom
+     * user SerDes (which cannot produce the reduced envelope, so the child-context falls back to its generic
      * empty-payload offload). When present, {@code ChildContextOperation} invokes it with the {@link DagResult} to
      * obtain the ordered offloaded payload candidates (drop {@code tasks}; then also drop {@code failedTaskNames}).
      */

@@ -13,10 +13,10 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 /**
  * Error details for a failed DAG task.
  *
- * <p>Serializes to the cross-language canonical error object shape — PascalCase {@code ErrorType} / {@code ErrorMessage}
- * / {@code StackTrace} (envelope convergence contract), matching the platform's error-object convention and what the
- * JS and Python SDKs already emit. {@code StackTrace} is {@code null} when unavailable. Carries an optional
- * reconstructed {@code cause} which is never serialized.
+ * <p>Serializes to the cross-language canonical error object shape — PascalCase {@code ErrorType} /
+ * {@code ErrorMessage} / {@code StackTrace} (envelope convergence contract), matching the platform's error-object
+ * convention and what the JS and Python SDKs already emit. {@code StackTrace} is {@code null} when unavailable. Carries
+ * an optional reconstructed {@code cause} which is never serialized.
  *
  * <p><b>Value semantics (recorded cross-language difference):</b> Java's {@code ErrorType} carries the <em>thrown
  * exception's class name</em> (e.g. {@code java.lang.RuntimeException}) — see {@link #of(Throwable)} — whereas JS and
