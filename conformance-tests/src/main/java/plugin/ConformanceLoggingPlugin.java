@@ -23,6 +23,9 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
 
     private final String prefix;
 
+    /** Captured from onInvocationStart; read by later hooks that may run on other threads. */
+    private volatile String executionArn;
+
     public ConformanceLoggingPlugin(String prefix) {
         this.prefix = prefix;
     }
@@ -31,25 +34,32 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
         return "STEP".equals(type);
     }
 
+    /** Returns {@code , "durableExecutionArn": "<arn>"} when captured, otherwise an empty string. */
+    private String arnField() {
+        return executionArn == null ? "" : String.format(", \"durableExecutionArn\": \"%s\"", executionArn);
+    }
+
     @Override
     public void onInvocationStart(InvocationInfo info) {
+        this.executionArn = info.durableExecutionArn();
         System.out.println(String.format(
-                "{\"plugin\": \"%s\", \"hook\": \"invocation-start\", \"first\": %b}",
-                prefix, info.isFirstInvocation()));
+                "{\"plugin\": \"%s\", \"hook\": \"invocation-start\", \"first\": %b%s}",
+                prefix, info.isFirstInvocation(), arnField()));
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
         System.out.println(String.format(
-                "{\"plugin\": \"%s\", \"hook\": \"invocation-end\", \"status\": \"%s\"}",
-                prefix, info.invocationStatus().name()));
+                "{\"plugin\": \"%s\", \"hook\": \"invocation-end\", \"status\": \"%s\"%s}",
+                prefix, info.invocationStatus().name(), arnField()));
     }
 
     @Override
     public void onOperationStart(OperationInfo info) {
         if (isStep(info.type())) {
             System.out.println(String.format(
-                    "{\"plugin\": \"%s\", \"hook\": \"operation-start\", \"op\": \"%s\"}", prefix, info.id()));
+                    "{\"plugin\": \"%s\", \"hook\": \"operation-start\", \"op\": \"%s\"%s}",
+                    prefix, info.id(), arnField()));
         }
     }
 
@@ -57,8 +67,8 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
     public void onOperationEnd(OperationEndInfo info) {
         if (isStep(info.type())) {
             System.out.println(String.format(
-                    "{\"plugin\": \"%s\", \"hook\": \"operation-end\", \"op\": \"%s\", \"status\": \"%s\"}",
-                    prefix, info.id(), info.status()));
+                    "{\"plugin\": \"%s\", \"hook\": \"operation-end\", \"op\": \"%s\", \"status\": \"%s\"%s}",
+                    prefix, info.id(), info.status(), arnField()));
         }
     }
 
@@ -66,8 +76,8 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
     public void onUserFunctionStart(UserFunctionStartInfo info) {
         if (isStep(info.type()) && info.attempt() != null) {
             System.out.println(String.format(
-                    "{\"plugin\": \"%s\", \"hook\": \"attempt-start\", \"n\": %d, \"op\": \"%s\"}",
-                    prefix, info.attempt(), info.id()));
+                    "{\"plugin\": \"%s\", \"hook\": \"attempt-start\", \"n\": %d, \"op\": \"%s\"%s}",
+                    prefix, info.attempt(), info.id(), arnField()));
         }
     }
 
@@ -76,8 +86,8 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
         if (isStep(info.type()) && info.attempt() != null) {
             String outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
             System.out.println(String.format(
-                    "{\"plugin\": \"%s\", \"hook\": \"attempt-end\", \"n\": %d, \"outcome\": \"%s\", \"op\": \"%s\"}",
-                    prefix, info.attempt(), outcome, info.id()));
+                    "{\"plugin\": \"%s\", \"hook\": \"attempt-end\", \"n\": %d, \"outcome\": \"%s\", \"op\": \"%s\"%s}",
+                    prefix, info.attempt(), outcome, info.id(), arnField()));
         }
     }
 }

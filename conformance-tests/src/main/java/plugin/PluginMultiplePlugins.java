@@ -23,21 +23,30 @@ public class PluginMultiplePlugins extends DurableHandler<String, String> {
     static final class InvocationLoggingPlugin implements DurableExecutionPlugin {
         private final String prefix;
 
+        /** Captured from onInvocationStart; read by onInvocationEnd which may run on another thread. */
+        private volatile String executionArn;
+
         InvocationLoggingPlugin(String prefix) {
             this.prefix = prefix;
         }
 
+        /** Returns {@code , "durableExecutionArn": "<arn>"} when captured, otherwise an empty string. */
+        private String arnField() {
+            return executionArn == null ? "" : String.format(", \"durableExecutionArn\": \"%s\"", executionArn);
+        }
+
         @Override
         public void onInvocationStart(InvocationInfo info) {
-            System.out.println(
-                    String.format("{\"plugin\": \"%s\", \"hook\": \"invocation-start\"}", prefix));
+            this.executionArn = info.durableExecutionArn();
+            System.out.println(String.format(
+                    "{\"plugin\": \"%s\", \"hook\": \"invocation-start\"%s}", prefix, arnField()));
         }
 
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
             System.out.println(String.format(
-                    "{\"plugin\": \"%s\", \"hook\": \"invocation-end\", \"status\": \"%s\"}",
-                    prefix, info.invocationStatus().name()));
+                    "{\"plugin\": \"%s\", \"hook\": \"invocation-end\", \"status\": \"%s\"%s}",
+                    prefix, info.invocationStatus().name(), arnField()));
         }
     }
 
