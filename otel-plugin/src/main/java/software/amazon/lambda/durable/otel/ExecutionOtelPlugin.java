@@ -185,23 +185,20 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
-        // End any operation spans that are still open (operations that didn't complete in this invocation)
-        for (var entry : operationSpans.entrySet()) {
-            var span = entry.getValue();
-            span.setAttribute(DURABLE_OPERATION_STATUS, "PENDING");
-            span.end();
-        }
+        // Reset per-invocation operation state WITHOUT ending open operation spans. Matching the JS/Python
+        // ExecutionOtelPlugin, an operation span is only ended in onOperationEnd. An operation still open when the
+        // invocation suspends is left un-exported here and is re-materialized once (with its deterministic span ID,
+        // plus a link to the invocation that completes it) when onOperationEnd fires in a later invocation.
         operationSpans.clear();
         operationContexts.clear();
 
-        // End any attempt spans that are still open (e.g., crash before onUserFunctionEnd)
-        for (var entry : attemptScopes.entrySet()) {
-            entry.getValue().close();
+        // Defensively close any lingering attempt scopes so OTel context is not leaked on worker threads (normally
+        // every onUserFunctionStart is paired with onUserFunctionEnd within the invocation). The attempt spans
+        // themselves are left un-ended rather than force-ended, consistent with not ending open spans here.
+        for (var scope : attemptScopes.values()) {
+            scope.close();
         }
         attemptScopes.clear();
-        for (var entry : attemptSpans.entrySet()) {
-            entry.getValue().end();
-        }
         attemptSpans.clear();
 
         // End the invocation span every invocation.

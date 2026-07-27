@@ -262,20 +262,48 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void operationNotCompleted_endedPendingAtInvocationEnd() {
+    void operationNotCompleted_notEndedAtInvocationEnd() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true));
         plugin.onOperationStart(new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, false));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // invocation span + PENDING operation span (Workflow not exported — non-terminal)
-        assertEquals(2, spans.size());
-        var operationSpan = spanByName(spans, "my-wait");
-        assertEquals(
-                "PENDING",
-                operationSpan
-                        .getAttributes()
-                        .get(io.opentelemetry.api.common.AttributeKey.stringKey("durable.operation.status")));
+        // Only the invocation span is exported. The still-open operation span is NOT force-ended (no PENDING
+        // span here), and the Workflow span is not exported on a non-terminal invocation.
+        assertEquals(1, spans.size());
+        assertEquals("invocation", spans.get(0).getName());
+        assertTrue(
+                spans.stream().noneMatch(s -> s.getName().equals("my-wait")),
+                "An operation still open at invocation end must not be ended/exported in onInvocationEnd");
+    }
+
+    @Test
+    void operationOpenedThenCompletedNextInvocation_exportedOnceOnOperationEnd() {
+        // Invocation 1: operation opens but does not complete.
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true));
+        plugin.onOperationStart(new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, false));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+        assertTrue(
+                spanExporter.getFinishedSpanItems().stream()
+                        .noneMatch(s -> s.getName().equals("my-wait")),
+                "Operation span must not be exported by the suspending invocation");
+        spanExporter.reset();
+
+        // Invocation 2: the operation completes → materialized once via onOperationEnd, linked to this invocation.
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        var waitSpans =
+                spans.stream().filter(s -> s.getName().equals("my-wait")).toList();
+        assertEquals(1, waitSpans.size(), "The operation must be exported exactly once, when it completes");
+        var invocationSpan = spanByName(spans, "invocation");
+        assertTrue(
+                waitSpans.get(0).getLinks().stream()
+                        .anyMatch(l -> l.getSpanContext().getSpanId().equals(invocationSpan.getSpanId())),
+                "Completed operation span should link to the invocation that completed it");
     }
 
     // ─── Cross-invocation stitching ──────────────────────────────────────
