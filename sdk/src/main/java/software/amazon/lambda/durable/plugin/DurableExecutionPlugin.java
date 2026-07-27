@@ -45,9 +45,16 @@ public interface DurableExecutionPlugin {
     default void onOperationStart(OperationInfo info) {}
 
     /**
-     * Called when an operation reaches a terminal status for the first time (not on replay).
+     * Called once when an operation's terminal status is first observed.
      *
-     * <p>The OTel plugin creates operation spans here with backfilled start/end timestamps.
+     * <p>This is usually the invocation that completes the operation, but it can also be a later invocation that first
+     * observes a completion which happened while the execution was suspended (for example an operation that finished
+     * during a wait). In that case {@link OperationEndInfo#isReplay()} is {@code true}, so do not assume this hook only
+     * fires with {@code isReplay() == false}. It does not fire again on subsequent replays of an already-observed
+     * completion.
+     *
+     * <p>The OTel plugin creates operation spans here with backfilled start/end timestamps (emitting a linked
+     * continuation span when the completion is observed on a replaying invocation).
      */
     default void onOperationEnd(OperationEndInfo info) {}
 
@@ -74,6 +81,12 @@ public interface DurableExecutionPlugin {
      * functions.
      *
      * <p>This hook fires on the same thread as user code, so plugins can close OTel scopes here.
+     *
+     * <p>It fires for every terminal outcome of the user function: normal return, a thrown failure, and suspension.
+     * {@link UserFunctionEndInfo#succeeded()} is {@code true} only on normal return; it is {@code false} for both a
+     * genuine failure and a suspension. On suspension the {@link UserFunctionEndInfo#error()} is the SDK's internal
+     * {@code SuspendExecutionException}, which is not a user error — plugins that count failures should treat a
+     * suspension as a neutral outcome (for example by checking the error type) rather than a failure.
      */
     default void onUserFunctionEnd(UserFunctionEndInfo info) {}
 }
