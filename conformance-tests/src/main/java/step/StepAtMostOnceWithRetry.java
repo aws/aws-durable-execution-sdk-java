@@ -18,9 +18,7 @@ public class StepAtMostOnceWithRetry extends DurableHandler<Object, String> {
                 "at-most-once-retry",
                 String.class,
                 stepCtx -> {
-                    // Print input to stdout each time step executes
-                    System.out.println(input);
-                    System.out.flush();
+                    stepCtx.getLogger().info("{}", input);
 
                     // Use the SDK's built-in attempt number (1-based at runtime).
                     // With AT_MOST_ONCE_PER_RETRY the interrupted first attempt is

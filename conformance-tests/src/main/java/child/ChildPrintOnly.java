@@ -12,8 +12,7 @@ public class ChildPrintOnly extends DurableHandler<String, String> {
     @Override
     public String handleRequest(String input, DurableContext context) {
         String result = context.runInChildContext("print-child", String.class, child -> {
-            System.out.println(input);
-            System.out.flush();
+            child.getLogger().info("{}", input);
             return input;
         });
 
