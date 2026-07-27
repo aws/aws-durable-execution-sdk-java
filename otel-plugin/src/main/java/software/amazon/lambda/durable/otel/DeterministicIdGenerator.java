@@ -34,6 +34,7 @@ public class DeterministicIdGenerator implements IdGenerator {
     private final AtomicReference<String> extractedTraceId = new AtomicReference<>(null);
     private final AtomicReference<String> arnDerivedTraceId = new AtomicReference<>(null);
     private final ThreadLocal<String> pendingSpanOperationId = new ThreadLocal<>();
+    private final ThreadLocal<String> pendingRawSpanId = new ThreadLocal<>();
     private final AtomicReference<String> durableExecutionArn = new AtomicReference<>(null);
 
     /**
@@ -67,6 +68,17 @@ public class DeterministicIdGenerator implements IdGenerator {
     }
 
     /**
+     * Queues the next span to use the given pre-computed span ID verbatim. Unlike {@link #setNextSpanOperationId}, the
+     * supplied value is used directly rather than derived from an operation ID. Used for the Workflow root span, whose
+     * ID is derived once from the execution ARN via {@link #generateWorkflowSpanId()}.
+     *
+     * @param spanId a 16-char lowercase hex span ID
+     */
+    public void setNextSpanId(String spanId) {
+        this.pendingRawSpanId.set(spanId);
+    }
+
+    /**
      * Generates a deterministic span ID for a given operation ID without consuming the ThreadLocal state.
      *
      * @param operationId the operation ID to derive the span ID from
@@ -74,6 +86,24 @@ public class DeterministicIdGenerator implements IdGenerator {
      */
     public String generateSpanIdForOperation(String operationId) {
         return generateSpanIdFromOperation(operationId);
+    }
+
+    /**
+     * Generates the deterministic span ID for the Workflow root span from the current execution ARN, using the seed
+     * {@code "workflow:" + arn} (SHA-256, truncated to 16 hex chars). Stable across all invocations of the same
+     * execution so the Workflow span is exported once as a single logical span. Guarded to never be all-zero (an
+     * invalid OTel span ID).
+     *
+     * @return a deterministic 16-char hex span ID
+     */
+    public String generateWorkflowSpanId() {
+        var arn = durableExecutionArn.get();
+        var seed = "workflow:" + (arn != null ? arn : "");
+        var spanId = sha256(seed).substring(0, 16);
+        if (spanId.equals("0000000000000000")) {
+            spanId = "0000000000000001";
+        }
+        return spanId;
     }
 
     @Override
@@ -94,6 +124,11 @@ public class DeterministicIdGenerator implements IdGenerator {
 
     @Override
     public String generateSpanId() {
+        var raw = pendingRawSpanId.get();
+        if (raw != null) {
+            pendingRawSpanId.remove();
+            return raw;
+        }
         var operationId = pendingSpanOperationId.get();
         if (operationId != null) {
             pendingSpanOperationId.remove();

@@ -46,7 +46,7 @@ class OtelPluginTest {
 
         var span = spans.get(0);
         assertEquals("invocation", span.getName());
-        assertEquals(StatusCode.UNSET, span.getStatus().getStatusCode());
+        assertEquals(StatusCode.OK, span.getStatus().getStatusCode());
     }
 
     @Test
