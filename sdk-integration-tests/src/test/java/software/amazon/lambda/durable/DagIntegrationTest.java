@@ -896,4 +896,142 @@ class DagIntegrationTest {
             assertEquals(expected, replayed.get("p" + i), "re-executed task p" + i + " must yield identical result");
         }
     }
+
+    @Test
+    void nestedDagInnerAggregateOffloadsAndSurvivesReconstruct() {
+        // Nested-offload contract, test 2. Outer DAG "outernested" contains a nested dag task "inner" whose OWN
+        // aggregate (6 × 51200 = 307200 chars ≈ 307KB) exceeds the 256KB checkpoint limit, so the inner container
+        // offloads; because the outer embeds the inner result in full, the outer offloads too. digestBefore/wait/
+        // digestAfter are outer tasks (mirroring 10-17). The wait forces the next invocation to replay both completed,
+        // offloaded containers. After the reconstruct path runs, the inner DagResult read through the outer must report
+        // the correct counts and reason (rule 1) AND, under Java's re-execution reconstruct, its full per-task detail
+        // (rule 2), so the two digests are byte-equal.
+        final int perTask = 51200; // 6 × 51200 = 307200 > 256KB
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "outernested",
+                    d -> {
+                        var inner = d.dag(
+                                "inner",
+                                nd -> {
+                                    for (int i = 1; i <= 6; i++) {
+                                        final String letter = String.valueOf((char) ('a' + (i - 1)));
+                                        nd.step("p" + i, String.class, (deps, s) -> letter.repeat(perTask));
+                                    }
+                                },
+                                DagConfig.builder().maxConcurrency(1).build());
+                        var digestBefore = d.step(
+                                        "digestBefore",
+                                        String.class,
+                                        (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                                .reads(inner);
+                        var w = d.wait("wait", java.time.Duration.ofSeconds(2)).after(digestBefore);
+                        d.step("digestAfter", String.class, (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                                .reads(inner)
+                                .after(w);
+                    },
+                    DagConfig.builder().maxConcurrency(1).build());
+
+            DagResult inner = (DagResult) r.getResult("inner").orElseThrow();
+            String digestBefore = (String) r.getResult("digestBefore").orElseThrow();
+            String digestAfter = (String) r.getResult("digestAfter").orElseThrow();
+            return digestBefore + "#" + digestAfter + "#"
+                    + inner.completionReason().name() + "#" + inner.totalCount()
+                    + "," + inner.failureCount() + "," + inner.skippedCount() + "," + inner.successCount() + "#"
+                    + digestBefore.equals(digestAfter);
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // digestBefore == digestAfter == "6:307200:abcdef"; inner ALL_COMPLETED; innerCounts [total,failed,skipped,
+        // succeeded] = [6,0,0,6]; match=true. The decisive proof the inner per-task detail survived both offloads.
+        assertEquals(
+                "6:307200:abcdef#6:307200:abcdef#" + DagCompletionReason.ALL_COMPLETED.name() + "#6,0,0,6#true",
+                result.getResult(String.class));
+
+        // Both containers actually offloaded (aggregate > 256KB → empty payload + ReplayChildren), so the reconstruct
+        // path was genuinely exercised for the nested case.
+        assertEquals(
+                Boolean.TRUE,
+                result.getOperation("inner").getContextDetails().replayChildren(),
+                "inner nested-dag container must be offloaded (replayChildren=true)");
+        assertEquals(
+                Boolean.TRUE,
+                result.getOperation("outernested").getContextDetails().replayChildren(),
+                "outer dag container must be offloaded (replayChildren=true)");
+    }
+
+    @Test
+    void nestedDagOffloadTaskBodiesRunExactlyOnce() {
+        // Nested-offload contract, test 3. Nesting doubles the number of containers that replay, so assert with
+        // per-task counters that each inner task body runs EXACTLY ONCE across the offloaded replay of both the inner
+        // and the outer container. A body running twice would double a customer side effect.
+        final int perTask = 51200;
+        final java.util.concurrent.atomic.AtomicInteger[] runs = new java.util.concurrent.atomic.AtomicInteger[6];
+        for (int i = 0; i < 6; i++) {
+            runs[i] = new java.util.concurrent.atomic.AtomicInteger(0);
+        }
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "outernested",
+                    d -> {
+                        var inner = d.dag(
+                                "inner",
+                                nd -> {
+                                    for (int i = 1; i <= 6; i++) {
+                                        final int idx = i - 1;
+                                        final String letter = String.valueOf((char) ('a' + idx));
+                                        nd.step("p" + i, String.class, (deps, s) -> {
+                                            runs[idx].incrementAndGet();
+                                            return letter.repeat(perTask);
+                                        });
+                                    }
+                                },
+                                DagConfig.builder().maxConcurrency(1).build());
+                        var digestBefore = d.step(
+                                        "digestBefore",
+                                        String.class,
+                                        (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                                .reads(inner);
+                        var w = d.wait("wait", java.time.Duration.ofSeconds(2)).after(digestBefore);
+                        d.step("digestAfter", String.class, (deps, s) -> innerDigest((DagResult) deps.get(inner)))
+                                .reads(inner)
+                                .after(w);
+                    },
+                    DagConfig.builder().maxConcurrency(1).build());
+            return Integer.toString(((DagResult) r.getResult("inner").orElseThrow()).successCount());
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("6", result.getResult(String.class));
+        // The replay path was genuinely exercised (both containers offloaded) ...
+        assertEquals(
+                Boolean.TRUE,
+                result.getOperation("inner").getContextDetails().replayChildren(),
+                "inner container must be offloaded for this test to exercise the nested replay path");
+        // ... and every inner task body ran exactly once despite the inner+outer container re-execution.
+        for (int i = 0; i < 6; i++) {
+            assertEquals(
+                    1,
+                    runs[i].get(),
+                    "inner task p" + (i + 1) + " body must run exactly once across the nested offload + replay");
+        }
+    }
+
+    /**
+     * Language-neutral digest of a nested DAG's aggregate:
+     * {@code "<taskCount>:<totalLength>:<firstCharOfEachTaskInOrder>"}; for the p1..p6 graph it is
+     * {@code "6:307200:abcdef"}.
+     */
+    private static String innerDigest(DagResult inner) {
+        long totalLength = 0;
+        StringBuilder firstChars = new StringBuilder();
+        for (int i = 1; i <= 6; i++) {
+            String v = (String) inner.getResult("p" + i).orElseThrow();
+            totalLength += v.length();
+            firstChars.append(v.charAt(0));
+        }
+        return inner.totalCount() + ":" + totalLength + ":" + firstChars;
+    }
 }

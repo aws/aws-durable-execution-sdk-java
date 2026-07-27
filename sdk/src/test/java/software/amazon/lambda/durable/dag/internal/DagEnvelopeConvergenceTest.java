@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.dag.internal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,6 +19,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.dag.DagCompletionReason;
+import software.amazon.lambda.durable.dag.DagExecutionException;
 import software.amazon.lambda.durable.dag.DagResult;
 import software.amazon.lambda.durable.dag.DagTaskError;
 import software.amazon.lambda.durable.dag.SkipReason;
@@ -93,7 +95,8 @@ class DagEnvelopeConvergenceTest {
         assertEquals(1, root.get("failureCount").asInt());
         assertEquals(1, root.get("skippedCount").asInt());
         assertEquals("COMPLETED_WITH_FAILURES", root.get("completionReason").asText());
-        assertTrue(root.get("startedTaskNames").isArray() && root.get("startedTaskNames").isEmpty());
+        assertTrue(root.get("startedTaskNames").isArray()
+                && root.get("startedTaskNames").isEmpty());
         assertEquals(1, root.get("failedTaskNames").size());
         assertEquals("charge-card", root.get("failedTaskNames").get(0).asText());
         assertTrue(root.has("tasks"), "inline envelope must carry tasks");
@@ -160,6 +163,47 @@ class DagEnvelopeConvergenceTest {
         assertTrue(root2.has("totalCount"));
         assertTrue(root2.has("completionReason"));
         assertTrue(root2.has("startedTaskNames"));
+    }
+
+    @Test
+    void restoringOffloadedEnvelopeWithFailuresPreservesCountsAndReason() {
+        // Contract rule 1: restoring a tasks-less (offloaded) envelope MUST preserve totalCount, the three counts and
+        // completionReason. It must NEVER fabricate ALL_COMPLETED / zeroed counts when the envelope says otherwise.
+        var serdes = new DagResultSerDes(new JacksonSerDes());
+        // Step-2 offload payload: tasks dropped, failedTaskNames kept.
+        String offloaded = serdes.offloadPayloads(threeTaskDag()).get(0);
+
+        DagResult restored = serdes.deserialize(offloaded, TypeToken.get(DagResult.class));
+
+        // The per-task map is legitimately empty (tasks were offloaded)...
+        assertTrue(restored.results().isEmpty(), "offloaded restore has no per-task detail in the map");
+        // ...but the aggregate is honest, NOT a fabricated empty success.
+        assertEquals(DagCompletionReason.COMPLETED_WITH_FAILURES, restored.completionReason());
+        assertFalse(
+                restored.completionReason() == DagCompletionReason.ALL_COMPLETED,
+                "must not report ALL_COMPLETED for a DAG that had failures");
+        assertEquals(3, restored.totalCount());
+        assertEquals(1, restored.successCount());
+        assertEquals(1, restored.failureCount());
+        assertEquals(1, restored.skippedCount());
+        // A caller must never be told the DAG succeeded when the checkpoint says it did not.
+        assertThrows(DagExecutionException.class, restored::throwIfError);
+    }
+
+    @Test
+    void restoringLastResortOffloadEnvelopePreservesCountsAndReason() {
+        // The smallest offload candidate additionally drops failedTaskNames; counts, reason and totalCount must still
+        // survive the round-trip.
+        var serdes = new DagResultSerDes(new JacksonSerDes());
+        String lastResort = serdes.offloadPayloads(threeTaskDag()).get(1);
+
+        DagResult restored = serdes.deserialize(lastResort, TypeToken.get(DagResult.class));
+
+        assertEquals(DagCompletionReason.COMPLETED_WITH_FAILURES, restored.completionReason());
+        assertEquals(3, restored.totalCount());
+        assertEquals(1, restored.successCount());
+        assertEquals(1, restored.failureCount());
+        assertEquals(1, restored.skippedCount());
     }
 
     @Test

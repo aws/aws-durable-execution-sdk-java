@@ -24,6 +24,18 @@ public final class DagResultImpl implements DagResult {
     private final List<String> startedTaskNames;
 
     /**
+     * Explicit per-status counts, used when this result was restored from an offloaded (tasks-less) envelope where the
+     * per-task {@link #results} map is legitimately empty but the aggregate counts are carried by the envelope and MUST
+     * be preserved (see the nested-offload contract, rule 1). {@code null} means "derive from the {@link #results}
+     * map", which is the correct behaviour for a live scheduler outcome and for an inline (tasks-carrying) round-trip
+     * where the map is fully populated.
+     */
+    private final Integer explicitSuccessCount;
+
+    private final Integer explicitFailureCount;
+    private final Integer explicitSkippedCount;
+
+    /**
      * Backward-compatible constructor for callers where every registered task settled (total == settled map size), e.g.
      * unit tests and small-DAG serde round-trips that don't model early completion.
      */
@@ -40,10 +52,31 @@ public final class DagResultImpl implements DagResult {
             DagCompletionReason completionReason,
             int totalCount,
             List<String> startedTaskNames) {
+        this(results, completionReason, totalCount, startedTaskNames, null, null, null);
+    }
+
+    /**
+     * Full constructor that allows the three per-status counts to be supplied explicitly rather than derived from the
+     * {@code results} map. This is what preserves the aggregate when restoring from an offloaded envelope whose
+     * {@code tasks} list was dropped: the map is empty, but {@code successCount}/{@code failureCount}/
+     * {@code skippedCount} still report the values the envelope carried (contract rule 1). Pass {@code null} for a
+     * count to derive it from the map (the inline / live-outcome case).
+     */
+    public DagResultImpl(
+            Map<String, TaskExecution<?>> results,
+            DagCompletionReason completionReason,
+            int totalCount,
+            List<String> startedTaskNames,
+            Integer successCount,
+            Integer failureCount,
+            Integer skippedCount) {
         this.results = new LinkedHashMap<>(results);
         this.completionReason = completionReason;
         this.totalCount = totalCount;
         this.startedTaskNames = List.copyOf(startedTaskNames);
+        this.explicitSuccessCount = successCount;
+        this.explicitFailureCount = failureCount;
+        this.explicitSkippedCount = skippedCount;
     }
 
     public static DagResultImpl from(DagExecutionOutcome outcome) {
@@ -109,17 +142,23 @@ public final class DagResultImpl implements DagResult {
 
     @Override
     public int successCount() {
-        return byStatus(TaskStatus.SUCCEEDED).size();
+        return explicitSuccessCount != null
+                ? explicitSuccessCount
+                : byStatus(TaskStatus.SUCCEEDED).size();
     }
 
     @Override
     public int failureCount() {
-        return byStatus(TaskStatus.FAILED).size();
+        return explicitFailureCount != null
+                ? explicitFailureCount
+                : byStatus(TaskStatus.FAILED).size();
     }
 
     @Override
     public int skippedCount() {
-        return byStatus(TaskStatus.SKIPPED).size();
+        return explicitSkippedCount != null
+                ? explicitSkippedCount
+                : byStatus(TaskStatus.SKIPPED).size();
     }
 
     @Override
@@ -140,7 +179,17 @@ public final class DagResultImpl implements DagResult {
     @Override
     public void throwIfError() {
         if (failureCount() > 0) {
-            var first = failed().get(0);
+            var failedList = failed();
+            if (failedList.isEmpty()) {
+                // Restored from an offloaded (tasks-less) envelope: the aggregate states the DAG had failures, but the
+                // per-task detail is not present in this result (it lives in the retained child operations). Still
+                // honour the contract — never report success when the checkpoint says otherwise — by throwing with the
+                // aggregate failure count rather than a specific task.
+                throw new DagExecutionException(
+                        "DAG completed with " + failureCount()
+                                + " failed task(s); per-task detail unavailable (result restored from an offloaded checkpoint)");
+            }
+            var first = failedList.get(0);
             var cause = first.error().flatMap(e -> e.cause()).orElse(null);
             var message = "DAG completed with " + failureCount() + " failed task(s); first failure: '"
                     + first.name() + "'"

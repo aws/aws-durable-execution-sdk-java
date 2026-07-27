@@ -309,6 +309,22 @@ Resources:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
 
+  DagNestedLargePayload:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-17"]
+    Properties:
+      CodeUri: .
+      Handler: dag.DagNestedLargePayload
+      Description: Nested DAG whose inner aggregate is offloaded, then replayed across a suspend (inner per-task detail survives offload of both containers)
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
   DagRetry:
     Type: AWS::Serverless::Function
     TestingMetadata:

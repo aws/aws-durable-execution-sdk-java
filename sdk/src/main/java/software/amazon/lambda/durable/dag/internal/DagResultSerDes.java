@@ -10,7 +10,6 @@ import java.util.Map;
 import java.util.Optional;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.dag.DagResult;
-import software.amazon.lambda.durable.dag.DagTaskError;
 import software.amazon.lambda.durable.dag.TaskExecution;
 import software.amazon.lambda.durable.dag.TaskStatus;
 import software.amazon.lambda.durable.model.MapResult;
@@ -60,15 +59,13 @@ public final class DagResultSerDes implements SerDes {
     /**
      * The ordered degradation ladder for a DAG aggregate that does not fit as the full inline envelope, largest first.
      * Both candidates drop {@code tasks} (the per-task detail is preserved in the retained child operations via
-     * {@code ReplayChildren}); the second additionally drops {@code failedTaskNames}. Counts,
-     * {@code completionReason} and {@code startedTaskNames} are never dropped, so a DAG can never fail to checkpoint
-     * because its own summary did not fit. See {@code ChildContextOperation}'s size branch, which selects the first
-     * candidate that fits.
+     * {@code ReplayChildren}); the second additionally drops {@code failedTaskNames}. Counts, {@code completionReason}
+     * and {@code startedTaskNames} are never dropped, so a DAG can never fail to checkpoint because its own summary did
+     * not fit. See {@code ChildContextOperation}'s size branch, which selects the first candidate that fits.
      */
     public List<String> offloadPayloads(DagResult dr) {
         return List.of(
-                delegate.serialize(toEnvelope(dr, false, true)),
-                delegate.serialize(toEnvelope(dr, false, false)));
+                delegate.serialize(toEnvelope(dr, false, true)), delegate.serialize(toEnvelope(dr, false, false)));
     }
 
     @Override
@@ -162,7 +159,20 @@ public final class DagResultSerDes implements SerDes {
                             Optional.ofNullable(ste.completedAt()).map(Instant::parse)));
         }
         List<String> startedTaskNames = s.startedTaskNames() == null ? List.of() : s.startedTaskNames();
-        return new DagResultImpl(results, s.completionReason(), s.totalCount(), startedTaskNames);
+        // Preserve the aggregate counts carried by the envelope rather than re-deriving them from `results`. In the
+        // inline case the two agree (the map is fully populated). In the offloaded case `tasks` was dropped so
+        // `results`
+        // is empty, but the envelope still carries the counts — and contract rule 1 requires that restoring a
+        // tasks-less envelope preserve totalCount, the three counts and completionReason. Deriving from the (empty) map
+        // would fabricate zeroed counts and could report a failed DAG as having zero failures.
+        return new DagResultImpl(
+                results,
+                s.completionReason(),
+                s.totalCount(),
+                startedTaskNames,
+                s.successCount(),
+                s.failureCount(),
+                s.skippedCount());
     }
 
     private Object rehydrate(SerializedResultKind kind, Object raw, String taskName, DagResultTypes scope) {
