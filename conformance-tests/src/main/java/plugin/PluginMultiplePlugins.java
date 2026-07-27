@@ -29,12 +29,15 @@ public class PluginMultiplePlugins extends DurableHandler<String, String> {
 
         @Override
         public void onInvocationStart(InvocationInfo info) {
-            System.out.println(prefix + " invocation-start");
+            System.out.println(
+                    String.format("{\"plugin\": \"%s\", \"hook\": \"invocation-start\"}", prefix));
         }
 
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
-            System.out.println(prefix + " invocation-end status=" + info.invocationStatus().name());
+            System.out.println(String.format(
+                    "{\"plugin\": \"%s\", \"hook\": \"invocation-end\", \"status\": \"%s\"}",
+                    prefix, info.invocationStatus().name()));
         }
     }
 

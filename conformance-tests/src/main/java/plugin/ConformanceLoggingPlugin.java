@@ -33,32 +33,41 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onInvocationStart(InvocationInfo info) {
-        System.out.println(prefix + " invocation-start first=" + info.isFirstInvocation());
+        System.out.println(String.format(
+                "{\"plugin\": \"%s\", \"hook\": \"invocation-start\", \"first\": %b}",
+                prefix, info.isFirstInvocation()));
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
-        System.out.println(prefix + " invocation-end status=" + info.invocationStatus().name());
+        System.out.println(String.format(
+                "{\"plugin\": \"%s\", \"hook\": \"invocation-end\", \"status\": \"%s\"}",
+                prefix, info.invocationStatus().name()));
     }
 
     @Override
     public void onOperationStart(OperationInfo info) {
         if (isStep(info.type())) {
-            System.out.println(prefix + " operation-start op=" + info.id());
+            System.out.println(String.format(
+                    "{\"plugin\": \"%s\", \"hook\": \"operation-start\", \"op\": \"%s\"}", prefix, info.id()));
         }
     }
 
     @Override
     public void onOperationEnd(OperationEndInfo info) {
         if (isStep(info.type())) {
-            System.out.println(prefix + " operation-end op=" + info.id() + " status=" + info.status());
+            System.out.println(String.format(
+                    "{\"plugin\": \"%s\", \"hook\": \"operation-end\", \"op\": \"%s\", \"status\": \"%s\"}",
+                    prefix, info.id(), info.status()));
         }
     }
 
     @Override
     public void onUserFunctionStart(UserFunctionStartInfo info) {
         if (isStep(info.type()) && info.attempt() != null) {
-            System.out.println(prefix + " attempt-start n=" + info.attempt() + " op=" + info.id());
+            System.out.println(String.format(
+                    "{\"plugin\": \"%s\", \"hook\": \"attempt-start\", \"n\": %d, \"op\": \"%s\"}",
+                    prefix, info.attempt(), info.id()));
         }
     }
 
@@ -66,8 +75,9 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
         if (isStep(info.type()) && info.attempt() != null) {
             String outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
-            System.out.println(
-                    prefix + " attempt-end n=" + info.attempt() + " outcome=" + outcome + " op=" + info.id());
+            System.out.println(String.format(
+                    "{\"plugin\": \"%s\", \"hook\": \"attempt-end\", \"n\": %d, \"outcome\": \"%s\", \"op\": \"%s\"}",
+                    prefix, info.attempt(), outcome, info.id()));
         }
     }
 }
