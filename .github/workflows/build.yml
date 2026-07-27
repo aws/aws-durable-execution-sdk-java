@@ -26,6 +26,7 @@ on:
       - '.github/workflows/ai-pr-review.yml'
       - '.github/prompts/ai-pr-review.md'
       - '.github/prompts/ai-pr-review-schema.json'
+      - '.github/scripts/post_ai_review_summary.sh'
       - '.github/scripts/prepare_ai_review_context.sh'
       - '.github/scripts/prepare_ai_review_user.sh'
       - '.github/scripts/run_claude_isolated.sh'
@@ -42,6 +43,7 @@ on:
       - '.github/workflows/ai-pr-review.yml'
       - '.github/prompts/ai-pr-review.md'
       - '.github/prompts/ai-pr-review-schema.json'
+      - '.github/scripts/post_ai_review_summary.sh'
       - '.github/scripts/prepare_ai_review_context.sh'
       - '.github/scripts/prepare_ai_review_user.sh'
       - '.github/scripts/run_claude_isolated.sh'
@@ -69,6 +71,7 @@ jobs:
       - name: Validate AI review files
         run: |
           scripts=(
+            .github/scripts/post_ai_review_summary.sh
             .github/scripts/prepare_ai_review_context.sh
             .github/scripts/prepare_ai_review_user.sh
             .github/scripts/run_claude_isolated.sh

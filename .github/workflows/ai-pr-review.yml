@@ -66,11 +66,22 @@ jobs:
       - name: Prepare shared review inputs
         id: review-inputs
         run: |
+          inline_marker="<!-- ai-pr-review:inline:claude:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:primary -->"
+          retry_inline_marker="<!-- ai-pr-review:inline:claude:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:retry -->"
           {
             echo 'prompt<<AI_REVIEW_PROMPT'
             cat .github/prompts/ai-pr-review.md
+            printf '\nFor every inline comment, the first line of the comment body must be exactly:\n%s\nPut the finding text on the following lines. Do not include this marker in the final response.\n' \
+              "$inline_marker"
             echo 'AI_REVIEW_PROMPT'
+            echo 'retry_prompt<<AI_REVIEW_RETRY_PROMPT'
+            cat .github/prompts/ai-pr-review.md
+            printf '\nFor every inline comment, the first line of the comment body must be exactly:\n%s\nPut the finding text on the following lines. Do not include this marker in the final response.\n' \
+              "$retry_inline_marker"
+            echo 'AI_REVIEW_RETRY_PROMPT'
             echo "schema=$(jq -c . .github/prompts/ai-pr-review-schema.json)"
+            echo "inline_marker=$inline_marker"
+            echo "retry_inline_marker=$retry_inline_marker"
           } >> "$GITHUB_OUTPUT"
 
       - name: Prepare unprivileged Claude user
@@ -145,7 +156,7 @@ jobs:
           # This also keeps the token out of the git remote configured by the action.
           allowed_non_write_users: ${{ github.actor }}
           classify_inline_comments: "false"
-          prompt: ${{ steps.review-inputs.outputs.prompt }}
+          prompt: ${{ steps.review-inputs.outputs.retry_prompt }}
           claude_args: |
             --model us.anthropic.claude-opus-4-8
             --max-turns 20
@@ -158,6 +169,12 @@ jobs:
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          CURRENT_INLINE_COMMENT_MARKER: >-
+            ${{
+              steps.review.outcome == 'success' &&
+              steps.review-inputs.outputs.inline_marker ||
+              steps.review-inputs.outputs.retry_inline_marker
+            }}
           REVIEW_OUTPUT: >-
             ${{
               steps.review.outcome == 'success' &&
@@ -166,14 +183,6 @@ jobs:
             }}
         run: |
           set -euo pipefail
-
-          current_head_sha="$(
-            gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha
-          )"
-          if [[ "$current_head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
-            echo "::error::The PR changed while it was being reviewed."
-            exit 1
-          fi
 
           summary="$(
             jq -ser '
@@ -199,11 +208,12 @@ jobs:
             exit 1
           fi
 
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # shellcheck disable=SC2016 # Markdown backticks are intentionally literal.
-          printf -v body '## Claude AI review\n\n%s\n\nReviewed commit `%s`. [Workflow run](%s)' \
-            "$summary" "$EXPECTED_HEAD_SHA" "$run_url"
-          gh pr comment "$PR_NUMBER" --body "$body"
+          summary_file="${RUNNER_TEMP}/claude-review-summary.md"
+          printf '%s' "$summary" > "$summary_file"
+          bash .github/scripts/post_ai_review_summary.sh \
+            claude \
+            "$EXPECTED_HEAD_SHA" \
+            "$summary_file"
 
   codex-review:
     name: Codex review
@@ -418,20 +428,14 @@ jobs:
               -e '/[^[:space:]]/,$!d' \
               <<< "$CODEX_REVIEW"
           )"
-          current_head_sha="$(
-            gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha
-          )"
-          if [[ "$current_head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
-            echo "::error::The PR changed while it was being reviewed."
-            exit 1
-          fi
           if [[ -z "${CODEX_REVIEW//[[:space:]]/}" ]]; then
             echo "::error::Codex returned an empty review."
             exit 1
           fi
 
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # shellcheck disable=SC2016 # Markdown backticks are intentionally literal.
-          printf -v body '## Codex AI review\n\n%s\n\nReviewed commit `%s`. [Workflow run](%s)' \
-            "$CODEX_REVIEW" "$EXPECTED_HEAD_SHA" "$run_url"
-          gh pr comment "$PR_NUMBER" --body "$body"
+          summary_file="${RUNNER_TEMP}/codex-review-summary.md"
+          printf '%s' "$CODEX_REVIEW" > "$summary_file"
+          bash .github/scripts/post_ai_review_summary.sh \
+            codex \
+            "$EXPECTED_HEAD_SHA" \
+            "$summary_file"
