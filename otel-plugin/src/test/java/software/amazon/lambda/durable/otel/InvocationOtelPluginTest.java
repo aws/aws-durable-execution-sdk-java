@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
@@ -50,15 +51,12 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void invocationSpan_hasServerKind_forSeparateXRayNode() {
+    void invocationSpan_hasInternalKind() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var span = spanExporter.getFinishedSpanItems().get(0);
-        assertEquals(
-                SpanKind.SERVER,
-                span.getKind(),
-                "Invocation span must be SERVER kind so X-Ray creates a separate service node");
+        assertEquals(SpanKind.INTERNAL, span.getKind(), "Invocation span must be INTERNAL kind");
     }
 
     @Test
@@ -75,6 +73,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 Instant.now(),
                 "SUCCEEDED",
+                null,
                 false,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -106,6 +105,67 @@ class InvocationOtelPluginTest {
                 "process-order attempt 1",
                 attemptSpan.getName(),
                 "Attempt span should be 'name attempt N' without brackets or prefix");
+    }
+
+    @Test
+    void operationEnd_withAttempt_stampsAttemptNumberOnOperationSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        plugin.onOperationStart(new OperationInfo("op-1", "flaky", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 3, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().equals("flaky"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                3L,
+                operationSpan.getAttributes().get(AttributeKey.longKey("durable.attempt.number")),
+                "Operation span should carry total attempt count at end");
+    }
+
+    @Test
+    void attemptSpan_carriesOperationSubtype() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("process-order"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                "Step",
+                attemptSpan.getAttributes().get(AttributeKey.stringKey("durable.operation.subtype")),
+                "Attempt span should carry durable.operation.subtype from the operation");
+    }
+
+    @Test
+    void operationEnd_withoutMatchingStart_stampsAttemptNumberOnContinuationSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+
+        // No onOperationStart in this invocation → onOperationEnd takes the continuation-span branch.
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 2, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var continuationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().equals("flaky"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                2L,
+                continuationSpan.getAttributes().get(AttributeKey.longKey("durable.attempt.number")),
+                "Continuation span should carry the attempt count");
+        assertEquals(
+                "Step",
+                continuationSpan.getAttributes().get(AttributeKey.stringKey("durable.operation.subtype")),
+                "Continuation span should carry durable.operation.subtype");
     }
 
     @Test
@@ -145,7 +205,7 @@ class InvocationOtelPluginTest {
 
         // Operation span ended at completion
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-hash-1", "my-step", "STEP", "Step", null, start, end, "SUCCEEDED", false, null));
+                "op-hash-1", "my-step", "STEP", "Step", null, start, end, "SUCCEEDED", null, false, null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -223,7 +283,7 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
 
         // Step 2: operation starts, user function runs, operation completes
         plugin.onOperationStart(new OperationInfo("op-2", "step-b", "STEP", "Step", null, Instant.now(), null, false));
@@ -232,7 +292,7 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-2", "step-b", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-2", "step-b", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-2", "step-b", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.SUCCEEDED, null));
 
@@ -301,7 +361,7 @@ class InvocationOtelPluginTest {
         sampledPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         sampledPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         sampledPlugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -348,7 +408,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -430,7 +490,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-1", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-1", "step-1", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
 
         // Second invocation (same execution, same X-Ray Root from backend)
@@ -438,7 +498,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-2", "step-2", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
-                "op-2", "step-2", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-2", "step-2", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         xrayPlugin.onInvocationEnd(
                 new InvocationEndInfo("req-2", "arn:exec1", false, InvocationStatus.SUCCEEDED, null));
 
@@ -505,7 +565,17 @@ class InvocationOtelPluginTest {
 
         // onOperationEnd without a prior onOperationStart — operation completed between invocations
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-wait-1", "my-wait", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-wait-1",
+                "my-wait",
+                "WAIT",
+                "Wait",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -529,7 +599,17 @@ class InvocationOtelPluginTest {
 
         // onOperationEnd without a prior onOperationStart — continuation span
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-wait-1", "my-wait", "WAIT", "Wait", null, operationStart, operationEnd, "SUCCEEDED", false, null));
+                "op-wait-1",
+                "my-wait",
+                "WAIT",
+                "Wait",
+                null,
+                operationStart,
+                operationEnd,
+                "SUCCEEDED",
+                null,
+                false,
+                null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -557,6 +637,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 Instant.now(),
                 "FAILED",
+                null,
                 false,
                 new RuntimeException("timed out")));
 
@@ -648,6 +729,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 Instant.now(),
                 "SUCCEEDED",
+                null,
                 false,
                 null));
 
@@ -660,6 +742,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 Instant.now(),
                 "SUCCEEDED",
+                null,
                 false,
                 null));
 
@@ -696,7 +779,7 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         plugin.onOperationStart(new OperationInfo("op-2", "pause", "WAIT", "Wait", null, Instant.now(), null, false));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
 
@@ -709,14 +792,14 @@ class InvocationOtelPluginTest {
         // Invocation 2: wait completed between invocations, new step runs
         plugin.onInvocationStart(new InvocationInfo("req-2", arn, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-2", "pause", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-2", "pause", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         plugin.onOperationStart(new OperationInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-3", "step-B", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-3", "step-B", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", false, null));
+                "op-3", "step-B", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
 
         var inv2Spans = spanExporter.getFinishedSpanItems();
@@ -801,6 +884,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 Instant.now(),
                 "SUCCEEDED",
+                null,
                 false,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));

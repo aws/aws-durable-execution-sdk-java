@@ -133,8 +133,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
         this.idGenerator = new DeterministicIdGenerator();
 
-        // Set service.name to "invocation" — X-Ray uses this as the display name for SERVER spans,
-        // creating a separate service node in the trace map labeled "invocation".
+        // Set service.name to "invocation" for the exported spans' resource.
         var resource = Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, "invocation"));
         tracerProviderBuilder.addResource(resource);
 
@@ -177,10 +176,9 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             parentContext = Context.root();
         }
 
-        // Create a SERVER span to establish a separate X-Ray service node.
-        // X-Ray uses service.name for the segment display name.
+        // Create an INTERNAL span for the invocation.
         var spanBuilder = tracer.spanBuilder("invocation")
-                .setSpanKind(SpanKind.SERVER)
+                .setSpanKind(SpanKind.INTERNAL)
                 .setParent(parentContext)
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
                 .setAttribute(DURABLE_FIRST_INVOCATION, info.isFirstInvocation());
@@ -196,11 +194,11 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     public void onInvocationEnd(InvocationEndInfo info) {
         if (invocationSpan == null) return;
 
-        // End any operation spans that are still open (operations that didn't complete in this invocation)
+        // End still-open operation spans without stamping a status — no terminal
+        // durable.operation.status means still running (STARTED). A later invocation's
+        // onOperationEnd emits a continuation span with the real terminal status.
         for (var entry : operationSpans.entrySet()) {
-            var span = entry.getValue();
-            span.setAttribute(DURABLE_OPERATION_STATUS, "PENDING");
-            span.end();
+            entry.getValue().end();
         }
         operationSpans.clear();
         operationContexts.clear();
@@ -303,6 +301,10 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             if (info.status() != null) {
                 span.setAttribute(DURABLE_OPERATION_STATUS, info.status());
             }
+            // Total attempts for retriable operations (STEP, WAIT_FOR_CONDITION) — emitted only at end.
+            if (info.attempt() != null) {
+                span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
+            }
             if (info.error() != null) {
                 span.setStatus(StatusCode.ERROR, info.error().getMessage());
                 span.recordException(info.error());
@@ -332,11 +334,18 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             if (info.name() != null) {
                 spanBuilder.setAttribute(DURABLE_OPERATION_NAME, info.name());
             }
+            if (info.subType() != null) {
+                spanBuilder.setAttribute(DURABLE_OPERATION_SUBTYPE, info.subType());
+            }
 
             var continuationSpan = spanBuilder.startSpan();
 
             if (info.status() != null) {
                 continuationSpan.setAttribute(DURABLE_OPERATION_STATUS, info.status());
+            }
+            if (info.attempt() != null) {
+                continuationSpan.setAttribute(
+                        DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
             }
             if (info.error() != null) {
                 continuationSpan.setStatus(StatusCode.ERROR, info.error().getMessage());
@@ -385,6 +394,9 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         }
         if (info.name() != null) {
             spanBuilder.setAttribute(DURABLE_OPERATION_NAME, info.name());
+        }
+        if (info.subType() != null) {
+            spanBuilder.setAttribute(DURABLE_OPERATION_SUBTYPE, info.subType());
         }
         if (info.attempt() != null) {
             spanBuilder.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());

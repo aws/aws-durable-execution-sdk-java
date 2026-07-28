@@ -17,8 +17,7 @@ public class StepAtMostOnceNoRetry extends DurableHandler<Object, String> {
                 "at_most_once_flaky_step",
                 String.class,
                 stepCtx -> {
-                    System.out.println(input);
-                    System.out.flush();
+                    stepCtx.getLogger().info("{}", input);
                     try {
                         Thread.sleep(1000);
                     } catch (InterruptedException ignored) {

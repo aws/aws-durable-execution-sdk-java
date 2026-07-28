@@ -105,6 +105,26 @@ class DurableConfigTest {
         assertFalse(config.shouldDeserializeAfterSerialization());
     }
 
+    // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
+    @Test
+    void testBuilder_CheckpointEmptyMapDefaultsToFalse() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        assertFalse(config.shouldCheckpointEmptyMap());
+    }
+
+    // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
+    @Test
+    void testBuilder_WithCheckpointEmptyMapEnabled() {
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withCheckpointEmptyMap(true)
+                .build();
+
+        assertTrue(config.shouldCheckpointEmptyMap());
+    }
+
     @Test
     void testBuilder_WithAllCustomComponents() {
         var config = DurableConfig.builder()

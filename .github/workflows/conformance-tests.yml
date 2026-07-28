@@ -70,15 +70,15 @@ jobs:
         run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
       - name: Install conformance runner
-        run: pip install aws-durable-execution-conformance-tests==0.1.0
+        run: pip install "git+https://github.com/aws/aws-durable-execution-conformance-tests.git@main#subdirectory=packages/aws-durable-execution-conformance-tests"
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           # SAM-capable deploy role (has CloudFormation/S3/IAM), same role the
           # SAM-based e2e tests assume.
@@ -124,9 +124,68 @@ jobs:
             --report console junit \
             --report-file report-${{ matrix.suite }}
 
+      - name: Diagnose Logs Insights query
+        if: failure() && (matrix.suite == 'step' || matrix.suite == 'child')
+        run: |
+          if [[ "${{ matrix.suite }}" == "step" ]]; then
+            logical_id=StepLogging
+            test_id=1-7
+          else
+            logical_id=ChildPrintOnly
+            test_id=3-17
+          fi
+
+          physical_id=$(aws cloudformation describe-stack-resource \
+            --stack-name "conformance-tests-conformance-java-${SUITE_SLUG}" \
+            --logical-resource-id "$logical_id" \
+            --query "StackResourceDetail.PhysicalResourceId" \
+            --output text)
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          execution_name=$(jq -r '.Events[] | select(.EventType == "ExecutionStarted") | .Name' \
+            "history-${{ matrix.suite }}/${test_id}.json")
+          execution_id=$(jq -r '.Events[] | select(.EventType == "ExecutionStarted") | .Id' \
+            "history-${{ matrix.suite }}/${test_id}.json")
+          execution_arn="arn:aws:lambda:${AWS_REGION}:${account_id}:function:${physical_id}:\$LATEST/durable-execution/${execution_name}/${execution_id}"
+          log_group="/aws/lambda/${physical_id}"
+          start_time=$(date --date="10 minutes ago" +%s)
+          end_time=$(date +%s)
+
+          run_query() {
+            local label="$1"
+            local query="$2"
+            local query_id
+            local result
+            local status
+
+            query_id=$(aws logs start-query \
+              --log-group-name "$log_group" \
+              --start-time "$start_time" \
+              --end-time "$end_time" \
+              --query-string "$query" \
+              --query queryId \
+              --output text)
+            for _ in {1..20}; do
+              result=$(aws logs get-query-results --query-id "$query_id")
+              status=$(jq -r .status <<<"$result")
+              [[ "$status" == "Complete" ]] && break
+              sleep 0.5
+            done
+            jq -c --arg label "$label" '{
+              label: $label,
+              status: .status,
+              rows: (.results | length),
+              messages: [.results[] | map({key: .field, value: .value}) | from_entries | .["@message"]]
+            }' <<<"$result"
+          }
+
+          run_query "runner" \
+            "fields @timestamp, @message | filter coalesce(durableExecutionArn, executionArn) like \"${execution_arn}\""
+          run_query "equality" \
+            "fields @timestamp, @message | filter durableExecutionArn = \"${execution_arn}\" or executionArn = \"${execution_arn}\""
+
       - name: Upload conformance report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-report-${{ matrix.suite }}
           path: |

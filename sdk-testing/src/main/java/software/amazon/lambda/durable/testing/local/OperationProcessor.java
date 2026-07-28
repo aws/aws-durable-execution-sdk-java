@@ -128,6 +128,12 @@ public class OperationProcessor {
                             Instant.now().plusSeconds(update.stepOptions().nextAttemptDelaySeconds()));
         }
 
+        // Record the attempt number on success too, so the terminal operation reflects the number of the
+        // attempt that produced the result (i.e. the total attempts run), matching the durable backend.
+        if (update.action() == OperationAction.SUCCEED) {
+            detailsBuilder.attempt(attempt);
+        }
+
         if (update.payload() != null) {
             detailsBuilder.result(update.payload());
         }

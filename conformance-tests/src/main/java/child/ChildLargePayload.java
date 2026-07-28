@@ -3,17 +3,25 @@
 package child;
 
 import java.time.Duration;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.logging.LoggerConfig;
 
 /** 3-11: Child context large payload (ReplayChildren mode) */
 public class ChildLargePayload extends DurableHandler<Object, String> {
 
     @Override
+    protected DurableConfig createConfiguration() {
+        return DurableConfig.builder()
+                .withLoggerConfig(LoggerConfig.withReplayLogging())
+                .build();
+    }
+
+    @Override
     public String handleRequest(Object input, DurableContext context) {
         String largeResult = context.runInChildContext("large-data-processor", String.class, child -> {
-            System.out.println(input);
-            System.out.flush();
+            child.getLogger().info("{}", input);
 
             String seed = child.step("fetch-seed", String.class, stepCtx -> "seed");
 
