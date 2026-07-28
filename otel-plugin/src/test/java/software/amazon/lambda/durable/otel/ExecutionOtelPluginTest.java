@@ -49,6 +49,19 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
+    void workflowSpan_startsAtExecutionStartTime() {
+        var start = Instant.parse("2026-01-15T08:00:00Z");
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, start));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var workflowSpan = spanByName(spanExporter.getFinishedSpanItems(), "Workflow");
+        assertEquals(
+                start.toEpochMilli(),
+                workflowSpan.getStartEpochNanos() / 1_000_000,
+                "Workflow span should start at the execution start time from InvocationInfo");
+    }
+
+    @Test
     void workflowSpan_hasInternalKind() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
