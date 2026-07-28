@@ -83,7 +83,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
-    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
+    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "workflow";
     private static final String SERVICE_NAME = "workflow";
 
     private final SdkTracerProvider tracerProvider;
@@ -110,7 +110,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     /**
      * Creates a workflow-rooted OTel plugin with default settings: X-Ray context extraction, MDC enabled, root span
-     * named {@code "Workflow"}.
+     * named {@code "workflow"}.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
@@ -120,7 +120,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     /**
      * Creates a workflow-rooted OTel plugin with a custom context extractor, MDC enabled, root span named
-     * {@code "Workflow"}.
+     * {@code "workflow"}.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment

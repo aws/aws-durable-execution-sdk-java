@@ -75,7 +75,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(InvocationOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
-    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
+    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "workflow";
 
     private final SdkTracerProvider tracerProvider;
     private final Tracer tracer;
