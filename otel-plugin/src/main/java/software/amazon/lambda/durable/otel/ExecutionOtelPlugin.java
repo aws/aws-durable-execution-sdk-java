@@ -292,8 +292,10 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             }
             endSpan(span, info.endTimestamp());
         } else {
-            // Operation completed between invocations (started in a prior invocation). Recreate it with the same
-            // deterministic span ID so it stitches to the original, plus a link to the current invocation.
+            // Operation completed between invocations: its onOperationStart ran in a prior invocation, whose
+            // in-memory span was dropped un-exported at that invocation's end. Emit the operation's single span
+            // now, using its deterministic span ID (stable across the execution), plus a link to the invocation
+            // that completed it.
             operationContexts.remove(info.id());
             idGenerator.setNextSpanOperationId(info.id());
 
