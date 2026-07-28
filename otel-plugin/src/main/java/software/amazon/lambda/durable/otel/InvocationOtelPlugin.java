@@ -75,13 +75,14 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(InvocationOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
-    private static final String WORKFLOW_SPAN_NAME = "Workflow";
+    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
 
     private final SdkTracerProvider tracerProvider;
     private final Tracer tracer;
     private final DeterministicIdGenerator idGenerator;
     private final ContextExtractor contextExtractor;
     private final boolean enableMdc;
+    private final String workflowSpanName;
 
     // Per-invocation state
     private volatile Span workflowSpan;
@@ -129,7 +130,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     }
 
     /**
-     * Creates an OTel plugin with full configuration.
+     * Creates an OTel plugin with the given context extractor and MDC setting, using the default Workflow span name.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
@@ -137,6 +138,22 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      */
     public InvocationOtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
+        this(tracerProviderBuilder, contextExtractor, enableMdc, DEFAULT_WORKFLOW_SPAN_NAME);
+    }
+
+    /**
+     * Creates an OTel plugin with full configuration.
+     *
+     * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
+     * @param contextExtractor extracts parent trace context from the Lambda environment
+     * @param enableMdc if true, injects traceId/spanId/traceSampled into SLF4J MDC for log correlation
+     * @param workflowSpanName the name for the Workflow span
+     */
+    public InvocationOtelPlugin(
+            SdkTracerProviderBuilder tracerProviderBuilder,
+            ContextExtractor contextExtractor,
+            boolean enableMdc,
+            String workflowSpanName) {
         this.idGenerator = new DeterministicIdGenerator();
 
         // Set service.name to "invocation" for the exported spans' resource.
@@ -147,6 +164,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
         this.contextExtractor = contextExtractor;
         this.enableMdc = enableMdc;
+        this.workflowSpanName = workflowSpanName != null ? workflowSpanName : DEFAULT_WORKFLOW_SPAN_NAME;
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────
@@ -171,7 +189,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         // X-Ray parent below). Deterministic span ID from the ARN so it is the same across invocations; exported once,
         // on the terminal invocation. Operation and attempt spans link to it for execution-level correlation while
         // remaining parented to the per-invocation span (this plugin stays invocation-rooted).
-        var workflowSpanBuilder = tracer.spanBuilder(WORKFLOW_SPAN_NAME)
+        var workflowSpanBuilder = tracer.spanBuilder(workflowSpanName)
                 .setSpanKind(SpanKind.INTERNAL)
                 .setNoParent()
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())

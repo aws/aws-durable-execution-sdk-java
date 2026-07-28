@@ -1006,6 +1006,28 @@ class InvocationOtelPluginTest {
                 "Operation span should link to Workflow span even when the invocation is parented to the X-Ray segment");
     }
 
+    @Test
+    void workflowSpanName_isConfigurable() {
+        var exporter = InMemorySpanExporter.create();
+        var customPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                () -> null,
+                false,
+                "MyWorkflow");
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        customPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        assertTrue(
+                exporter.getFinishedSpanItems().stream()
+                        .anyMatch(s -> s.getName().equals("MyWorkflow")),
+                "Workflow span should use the configured name");
+        assertTrue(
+                exporter.getFinishedSpanItems().stream()
+                        .noneMatch(s -> s.getName().equals("Workflow")),
+                "Default 'Workflow' name should not appear when a custom name is configured");
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────
 
     private io.opentelemetry.sdk.trace.data.SpanData spanByName(String name) {
