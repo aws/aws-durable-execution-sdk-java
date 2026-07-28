@@ -33,18 +33,18 @@ import software.amazon.lambda.durable.plugin.UserFunctionEndInfo;
 import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
 
 /**
- * workflow-rooted OpenTelemetry plugin for the AWS Lambda Durable Execution SDK.
+ * Workflow-rooted OpenTelemetry plugin for the AWS Lambda Durable Execution SDK.
  *
  * <p>This is the Java port of the {@code ExecutionOtelPlugin} in the Python and JavaScript SDKs. It renders the full
  * durable-execution hierarchy:
  *
  * <ul>
- *   <li><b>workflow span</b> — one <em>logical</em> root span per durable execution. Its span ID is derived
+ *   <li><b>Workflow span</b> — one <em>logical</em> root span per durable execution. Its span ID is derived
  *       deterministically from the execution ARN, so every invocation of the same execution produces the same ID. It is
  *       ended (and therefore exported) exactly once, on the terminal invocation.
- *   <li><b>Invocation span</b> — one per Lambda invocation, a child of the workflow span. Created and ended every
+ *   <li><b>Invocation span</b> — one per Lambda invocation, a child of the Workflow span. Created and ended every
  *       invocation.
- *   <li><b>Operation span</b> — parented to its parent operation span (or the workflow span) and carrying a
+ *   <li><b>Operation span</b> — parented to its parent operation span (or the Workflow span) and carrying a
  *       <em>link</em> to the current Invocation span for correlation. Deterministic ID keyed by operation ID, so a
  *       suspended-then-resumed operation stitches into a single logical span across invocations.
  *   <li><b>Attempt span</b> — one per user-function execution (step attempt, child-context run), child of the operation
@@ -52,8 +52,8 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * </ul>
  *
  * <p>Contrast with {@link InvocationOtelPlugin} (the invocation-rooted variant, equivalent to the reference
- * {@code InvocationOtelPlugin}): there the invocation span is the root and there is no workflow span. Here the workflow
- * span is the root, operations hang off the workflow span, and each operation/attempt links to the invocation that ran
+ * {@code InvocationOtelPlugin}): there the invocation span is the root and there is no Workflow span. Here the workflow
+ * span is the root, operations hang off the Workflow span, and each operation/attempt links to the invocation that ran
  * it. Both plugins share {@link DeterministicIdGenerator}, {@link ContextExtractor}, {@link SpanAttributes}, and
  * {@link MdcSpanEnricher}.
  *
@@ -66,10 +66,10 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <ul>
  *   <li>Invocation span: {@code SUCCEEDED}/{@code PENDING} → {@link StatusCode#OK}; {@code FAILED} →
  *       {@link StatusCode#ERROR}; {@code RETRYING} → {@link StatusCode#UNSET}. {@code RETRYING} is left {@code UNSET}
- *       because the plugin interface does not expose whether the invocation/workflow was STOPPED or TIMED_OUT versus
+ *       because the plugin interface does not expose whether the invocation/Workflow was STOPPED or TIMED_OUT versus
  *       retried for a transient error, so an ERROR status cannot be asserted reliably.
- *   <li>workflow span (terminal only): {@code SUCCEEDED} → {@link StatusCode#OK}; {@code FAILED} →
- *       {@link StatusCode#ERROR}. Non-terminal statuses ({@code PENDING}/{@code RETRYING}) never end the workflow span,
+ *   <li>Workflow span (terminal only): {@code SUCCEEDED} → {@link StatusCode#OK}; {@code FAILED} →
+ *       {@link StatusCode#ERROR}. Non-terminal statuses ({@code PENDING}/{@code RETRYING}) never end the Workflow span,
  *       so it is not exported this invocation (effectively {@link StatusCode#UNSET}).
  * </ul>
  *
@@ -83,7 +83,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
-    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "workflow";
+    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
     private static final String SERVICE_NAME = "workflow";
 
     private final SdkTracerProvider tracerProvider;
@@ -109,8 +109,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private final ConcurrentHashMap<String, SpanContext> operationContexts = new ConcurrentHashMap<>();
 
     /**
-     * Creates a workflow-rooted OTel plugin with default settings: X-Ray context extraction, MDC enabled, root span
-     * named {@code "workflow"}.
+     * Creates a Workflow-rooted OTel plugin with default settings: X-Ray context extraction, MDC enabled, root span
+     * named {@code "Workflow"}.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
@@ -119,8 +119,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     /**
-     * Creates a workflow-rooted OTel plugin with a custom context extractor, MDC enabled, root span named
-     * {@code "workflow"}.
+     * Creates a Workflow-rooted OTel plugin with a custom context extractor, MDC enabled, root span named
+     * {@code "Workflow"}.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
@@ -130,12 +130,12 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     /**
-     * Creates a workflow-rooted OTel plugin with full configuration.
+     * Creates a Workflow-rooted OTel plugin with full configuration.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
      * @param enableMdc if true, injects traceId/spanId/traceSampled into SLF4J MDC for log correlation
-     * @param workflowSpanName the name for the workflow root span
+     * @param workflowSpanName the name for the Workflow root span
      */
     public ExecutionOtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder,
@@ -165,14 +165,14 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // Set execution ARN for deterministic span/trace ID generation
         idGenerator.setDurableExecutionArn(info.durableExecutionArn());
 
-        // Extract trace context from environment (X-Ray header). Only the trace ID is used — the workflow span is a
+        // Extract trace context from environment (X-Ray header). Only the trace ID is used — the Workflow span is a
         // true root, so the X-Ray parent span ID is intentionally not used for parenting (unlike InvocationOtelPlugin).
         var extractedContext = contextExtractor.extract();
         if (extractedContext != null) {
             idGenerator.setExtractedTraceId(extractedContext.traceId());
         }
 
-        // workflow root span — deterministic span ID from the ARN, no parent. Recreated every invocation with the
+        // Workflow root span — deterministic span ID from the ARN, no parent. Recreated every invocation with the
         // same ID so it is exported once as a single logical span (on the terminal invocation only). Its start time
         // is the execution start time from the backend (falling back to now if unavailable).
         var workflowSpanBuilder = tracer.spanBuilder(workflowSpanName)
@@ -183,8 +183,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         idGenerator.setNextSpanId(idGenerator.generateWorkflowSpanId());
         workflowSpan = workflowSpanBuilder.startSpan();
 
-        // Invocation span — child of the workflow span, INTERNAL kind, random span ID (new every invocation).
-        var spanBuilder = tracer.spanBuilder("invocation")
+        // Invocation span — child of the Workflow span, INTERNAL kind, random span ID (new every invocation).
+        var spanBuilder = tracer.spanBuilder("Invocation")
                 .setSpanKind(SpanKind.INTERNAL)
                 .setParent(Context.root().with(workflowSpan))
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
@@ -224,7 +224,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             invocationSpan = null;
         }
 
-        // End the workflow span only on a terminal status, so it is exported exactly once per execution.
+        // End the Workflow span only on a terminal status, so it is exported exactly once per execution.
         if (workflowSpan != null) {
             if (isTerminal(info)) {
                 workflowSpan.setAttribute(
@@ -243,7 +243,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 }
                 workflowSpan.end();
             }
-            // Non-terminal (PENDING/RETRYING): leave the workflow span un-ended (not exported this invocation).
+            // Non-terminal (PENDING/RETRYING): leave the Workflow span un-ended (not exported this invocation).
             workflowSpan = null;
         }
 
@@ -497,7 +497,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                     traceId, deterministicParentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
             return Context.current().with(Span.wrap(placeholderContext));
         }
-        // No parent operation — hang off the workflow root span.
+        // No parent operation — hang off the Workflow root span.
         if (workflowSpan != null) {
             return Context.current().with(workflowSpan);
         }

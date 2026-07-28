@@ -69,7 +69,7 @@ public class DeterministicIdGenerator implements IdGenerator {
 
     /**
      * Queues the next span to use the given pre-computed span ID verbatim. Unlike {@link #setNextSpanOperationId}, the
-     * supplied value is used directly rather than derived from an operation ID. Used for the workflow root span, whose
+     * supplied value is used directly rather than derived from an operation ID. Used for the Workflow root span, whose
      * ID is derived once from the execution ARN via {@link #generateWorkflowSpanId()}.
      *
      * @param spanId a 16-char lowercase hex span ID
@@ -89,9 +89,9 @@ public class DeterministicIdGenerator implements IdGenerator {
     }
 
     /**
-     * Generates the deterministic span ID for the workflow root span from the current execution ARN, using the seed
+     * Generates the deterministic span ID for the Workflow root span from the current execution ARN, using the seed
      * {@code "workflow:" + arn} (SHA-256, truncated to 16 hex chars). Stable across all invocations of the same
-     * execution so the workflow span is exported once as a single logical span. Guarded to never be all-zero (an
+     * execution so the Workflow span is exported once as a single logical span. Guarded to never be all-zero (an
      * invalid OTel span ID).
      *
      * @return a deterministic 16-char hex span ID

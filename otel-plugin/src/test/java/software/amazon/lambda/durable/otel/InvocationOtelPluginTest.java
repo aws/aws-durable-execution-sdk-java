@@ -46,7 +46,7 @@ class InvocationOtelPluginTest {
         assertEquals(2, spans.size()); // invocation + Workflow
 
         var span = spans.get(0);
-        assertEquals("invocation", span.getName());
+        assertEquals("Invocation", span.getName());
         assertEquals(StatusCode.OK, span.getStatus().getStatusCode());
     }
 
@@ -936,7 +936,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-wf", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec-wf", true, InvocationStatus.SUCCEEDED, null));
 
-        var workflow = spanByName("workflow");
+        var workflow = spanByName("Workflow");
         assertEquals(SpanKind.INTERNAL, workflow.getKind(), "Workflow span must be INTERNAL");
         assertEquals(StatusCode.OK, workflow.getStatus().getStatusCode());
         assertTrue(workflow.getSpanId().matches("[0-9a-f]{16}"), "Workflow span ID should be 16 hex chars");
@@ -949,7 +949,7 @@ class InvocationOtelPluginTest {
 
         assertTrue(
                 spanExporter.getFinishedSpanItems().stream()
-                        .noneMatch(s -> s.getName().equals("workflow")),
+                        .noneMatch(s -> s.getName().equals("Workflow")),
                 "Workflow span must not be exported on a non-terminal invocation");
     }
 
@@ -965,7 +965,7 @@ class InvocationOtelPluginTest {
                 "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 1, false, null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec-wf", true, InvocationStatus.SUCCEEDED, null));
 
-        var workflowId = spanByName("workflow").getSpanId();
+        var workflowId = spanByName("Workflow").getSpanId();
         var operationSpan = spanByName("step-a");
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
                 .filter(s -> s.getName().contains("attempt"))
@@ -992,7 +992,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var workflowId = exporter.getFinishedSpanItems().stream()
-                .filter(s -> s.getName().equals("workflow"))
+                .filter(s -> s.getName().equals("Workflow"))
                 .findFirst()
                 .orElseThrow()
                 .getSpanId();
@@ -1024,7 +1024,7 @@ class InvocationOtelPluginTest {
                 "Workflow span should use the configured name");
         assertTrue(
                 exporter.getFinishedSpanItems().stream()
-                        .noneMatch(s -> s.getName().equals("workflow")),
+                        .noneMatch(s -> s.getName().equals("Workflow")),
                 "Default 'Workflow' name should not appear when a custom name is configured");
     }
 
