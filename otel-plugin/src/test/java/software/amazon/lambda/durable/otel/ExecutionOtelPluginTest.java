@@ -49,6 +49,20 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
+    void spans_carryWorkflowServiceName() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var workflowSpan = spanByName(spanExporter.getFinishedSpanItems(), "Workflow");
+        assertEquals(
+                "workflow",
+                workflowSpan
+                        .getResource()
+                        .getAttribute(io.opentelemetry.api.common.AttributeKey.stringKey("service.name")),
+                "Spans should carry service.name=workflow");
+    }
+
+    @Test
     void workflowSpan_startsAtExecutionStartTime() {
         var start = Instant.parse("2026-01-15T08:00:00Z");
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, start));
@@ -154,6 +168,40 @@ class ExecutionOtelPluginTest {
     }
 
     // ─── Operation topology: parented to Workflow, linked to invocation ──
+
+    @Test
+    void operationSpan_carriesAttemptNumberAtEnd() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(new OperationInfo("op-1", "flaky", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 3, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
+        assertEquals(
+                3L,
+                operationSpan
+                        .getAttributes()
+                        .get(io.opentelemetry.api.common.AttributeKey.longKey("durable.attempt.number")),
+                "Operation span should carry total attempt count at end");
+    }
+
+    @Test
+    void continuationOperationSpan_carriesAttemptNumber() {
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        // No matching onOperationStart in this invocation — continuation branch.
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 2, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
+        assertEquals(
+                2L,
+                operationSpan
+                        .getAttributes()
+                        .get(io.opentelemetry.api.common.AttributeKey.longKey("durable.attempt.number")),
+                "Continuation operation span should also carry the total attempt count");
+    }
 
     @Test
     void operationSpan_startsAtOperationStartTimestamp() {

@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.otel;
 import static software.amazon.lambda.durable.otel.SpanAttributes.*;
 
 import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.SpanContext;
@@ -15,8 +16,10 @@ import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
+import io.opentelemetry.semconv.ServiceAttributes;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
@@ -81,6 +84,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
     private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
+    private static final String SERVICE_NAME = "workflow";
 
     private final SdkTracerProvider tracerProvider;
     private final Tracer tracer;
@@ -139,6 +143,12 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             boolean enableMdc,
             String workflowSpanName) {
         this.idGenerator = new DeterministicIdGenerator();
+
+        // Set service.name so this plugin's spans group under a distinct "workflow" node in X-Ray/OTLP backends
+        // (parity with InvocationOtelPlugin, which sets "invocation"). Applies to all spans from this provider.
+        var resource = Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, SERVICE_NAME));
+        tracerProviderBuilder.addResource(resource);
+
         this.tracerProvider = tracerProviderBuilder.setIdGenerator(idGenerator).build();
         this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
         this.contextExtractor = contextExtractor;
@@ -291,6 +301,10 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             if (info.status() != null) {
                 span.setAttribute(DURABLE_OPERATION_STATUS, info.status());
             }
+            // Total attempts for retriable operations (STEP, WAIT_FOR_CONDITION) — emitted only at end.
+            if (info.attempt() != null) {
+                span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
+            }
             if (info.error() != null) {
                 span.setStatus(StatusCode.ERROR, info.error().getMessage());
                 span.recordException(info.error());
@@ -327,6 +341,11 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
             if (info.status() != null) {
                 continuationSpan.setAttribute(DURABLE_OPERATION_STATUS, info.status());
+            }
+            // Total attempts for retriable operations (STEP, WAIT_FOR_CONDITION) — emitted only at end.
+            if (info.attempt() != null) {
+                continuationSpan.setAttribute(
+                        DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
             }
             if (info.error() != null) {
                 continuationSpan.setStatus(StatusCode.ERROR, info.error().getMessage());
