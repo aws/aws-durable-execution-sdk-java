@@ -52,8 +52,9 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
  * catalog's expected semantic outcome, and emits one key-sorted normalized JSON to
  * {@code /Users/parpooya/workplace/dag-conformance-out/java.json} (schema per catalog Part B).
  *
- * <p>DAG-18 (custom result-based completion) is [TS + Go ONLY] — Java has no completion predicate hook in v1 — so it is
- * NOT implemented here (Java emits 18 records).
+ * <p>DAG-18 (custom result-based completion) originally shipped TS + Go only; Java added
+ * {@code DagCompletionConfig.custom(...)} after v1 (see {@code DAG_SPEC_CROSS_LANGUAGE.md} §4.2), so Java now emits it
+ * too (java.json carries 19 records).
  */
 @TestMethodOrder(MethodOrderer.MethodName.class)
 class DagConformanceTest {
@@ -700,8 +701,49 @@ class DagConformanceTest {
     }
 
     // ── DAG-18 ────────────────────────────────────────────────────────────────
-    // NOT-APPLICABLE: custom result-based completion is [TS + Go ONLY]. Java has no completion-predicate hook in v1
-    // (threshold-only, see DagCompletionConfig). No record emitted for DAG-18 (java.json carries 18 records).
+    @Test
+    void dag18_customCompletion() {
+        var config = DagConfig.builder()
+                .maxConcurrency(1)
+                .completionConfig(DagCompletionConfig.custom(status -> {
+                    boolean anyRejected = status.items().stream()
+                            .anyMatch(item -> item.status().isPresent()
+                                    && item.status().get() == TaskStatus.SUCCEEDED
+                                    && item.result().isPresent()
+                                    && "REJECT"
+                                            .equals(((Map<?, ?>) item.result().get()).get("verdict")));
+                    return anyRejected
+                            ? software.amazon.lambda.durable.dag.DagCompletionDecision.complete(
+                                    software.amazon.lambda.durable.dag.DagCompletionOutcome.FAILED)
+                            : software.amazon.lambda.durable.dag.DagCompletionDecision.continueDag();
+                }))
+                .build();
+        var ref = new AtomicReference<DagResult>();
+        var runner = LocalDurableTestRunner.create(String.class, (in, ctx) -> {
+            DagResult r = ctx.dag(
+                    "dag18",
+                    d -> {
+                        var r1 = d.step("r1", Map.class, (deps, s) -> Map.of("verdict", "ACCEPT"));
+                        var r2 = d.step("r2", Map.class, (deps, s) -> Map.of("verdict", "REJECT"))
+                                .reads(r1);
+                        d.step("r3", Map.class, (deps, s) -> Map.of("verdict", "ACCEPT"))
+                                .reads(r2);
+                    },
+                    config);
+            ref.set(r);
+            return "ok";
+        });
+        assertSucceeded(runner);
+        DagResult r = ref.get();
+        assertEquals(Map.of("verdict", "ACCEPT"), r.getResult("r1").orElseThrow());
+        assertEquals(Map.of("verdict", "REJECT"), r.getResult("r2").orElseThrow());
+        assertTrue(r.getStatus("r3").isEmpty(), "r3 must be absent (never started)");
+        assertEquals(DagCompletionReason.CUSTOM_COMPLETION_FAILED, r.completionReason());
+        assertEquals(0, r.failureCount());
+        assertCounts(r, 2, 0, 0, 3);
+        assertThrows(software.amazon.lambda.durable.dag.DagExecutionException.class, r::throwIfError);
+        RECORDS.put("DAG-18", record("DAG-18", r, List.of("r1", "r2", "r3")));
+    }
 
     // ── DAG-19 ────────────────────────────────────────────────────────────────
     @Test
@@ -756,10 +798,10 @@ class DagConformanceTest {
     // ── emission ──────────────────────────────────────────────────────────────
     @AfterAll
     static void writeConformanceJson() throws IOException {
-        // 18 applicable scenarios for Java (DAG-18 is TS+Go only).
-        assertEquals(18, RECORDS.size(), "Java must emit exactly 18 conformance records");
+        // 19 scenarios for Java: DAG-18 now applies to all four languages.
+        assertEquals(19, RECORDS.size(), "Java must emit exactly 19 conformance records");
         assertTrue(RECORDS.containsKey("DAG-1") && RECORDS.containsKey("DAG-19"));
-        assertTrue(!RECORDS.containsKey("DAG-18"), "DAG-18 is [TS+Go only] and must not be emitted");
+        assertTrue(RECORDS.containsKey("DAG-18"), "DAG-18 now applies to Java too");
         String json = toJson(RECORDS, "") + "\n";
         Path out = Path.of(OUT);
         Files.createDirectories(out.getParent());

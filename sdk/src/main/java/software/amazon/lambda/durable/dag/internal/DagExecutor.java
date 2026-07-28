@@ -13,8 +13,13 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.dag.CustomDagCompletion;
 import software.amazon.lambda.durable.dag.DagCompletionConfig;
+import software.amazon.lambda.durable.dag.DagCompletionDecision;
+import software.amazon.lambda.durable.dag.DagCompletionItemStatus;
+import software.amazon.lambda.durable.dag.DagCompletionOutcome;
 import software.amazon.lambda.durable.dag.DagCompletionReason;
+import software.amazon.lambda.durable.dag.DagCompletionStatus;
 import software.amazon.lambda.durable.dag.DagConfig;
 import software.amazon.lambda.durable.dag.DagPredicateException;
 import software.amazon.lambda.durable.dag.DagTaskError;
@@ -66,7 +71,7 @@ public final class DagExecutor {
 
         int maxConcurrency = config.maxConcurrency().orElse(DEFAULT_MAX_CONCURRENCY);
         TriggerRule defaultRule = config.defaultTriggerRule().orElse(TriggerRule.ALL_SUCCESS);
-        Optional<CompletionConfig> completion = config.completionConfig().map(DagExecutor::unwrap);
+        Optional<DagCompletionConfig> completion = config.completionConfig();
         int totalTaskCount = tasks.size();
 
         Map<String, TaskExecution<?>> results = new LinkedHashMap<>();
@@ -92,7 +97,7 @@ public final class DagExecutor {
                 results.put(name, failed(name, DagTaskError.of(e)));
             }
 
-            var reason = evaluateEarlyCompletion(completion, results, totalTaskCount);
+            var reason = evaluateEarlyCompletion(completion, tasks, results, totalTaskCount);
             if (reason != null) {
                 earlyReason = reason;
                 // Early completion: capture the tasks that were launched but had not reached a terminal state at the
@@ -259,11 +264,25 @@ public final class DagExecutor {
     }
 
     private static DagCompletionReason evaluateEarlyCompletion(
-            Optional<CompletionConfig> completion, Map<String, TaskExecution<?>> results, int totalTaskCount) {
+            Optional<DagCompletionConfig> completion,
+            List<TaskHandleImpl<?>> tasks,
+            Map<String, TaskExecution<?>> results,
+            int totalTaskCount) {
         if (completion.isEmpty()) {
             return null; // default: drain the whole reachable graph
         }
-        var cc = completion.get();
+        var dcc = completion.get();
+        if (dcc instanceof CustomDagCompletion custom) {
+            DagCompletionStatus status = buildCompletionStatus(tasks, results, totalTaskCount);
+            DagCompletionDecision decision = custom.shouldComplete().apply(status);
+            if (decision.complete()) {
+                return decision.outcome() == DagCompletionOutcome.FAILED
+                        ? DagCompletionReason.CUSTOM_COMPLETION_FAILED
+                        : DagCompletionReason.CUSTOM_COMPLETION_SUCCEEDED;
+            }
+            return null;
+        }
+        var cc = unwrap(dcc);
         int succeeded = countByStatus(results, TaskStatus.SUCCEEDED);
         int failed = countByStatus(results, TaskStatus.FAILED);
         if (cc.minSuccessful() != null && succeeded >= cc.minSuccessful()) {
@@ -278,6 +297,46 @@ public final class DagExecutor {
             return DagCompletionReason.FAILURE_TOLERANCE_EXCEEDED;
         }
         return null;
+    }
+
+    /**
+     * Builds the live progress snapshot passed to a custom {@code shouldComplete} predicate: every task in registration
+     * order, keyed by name, reflecting exactly what has settled so far (tasks with no entry in {@code results} yet are
+     * reported with an empty status, i.e. not yet started).
+     */
+    private static DagCompletionStatus buildCompletionStatus(
+            List<TaskHandleImpl<?>> tasks, Map<String, TaskExecution<?>> results, int totalTaskCount) {
+        List<DagCompletionItemStatus> items = new ArrayList<>(tasks.size());
+        Map<String, DagCompletionItemStatus> byName = new LinkedHashMap<>();
+        int succeeded = 0;
+        int failed = 0;
+        int skipped = 0;
+        for (TaskHandleImpl<?> task : tasks) {
+            TaskExecution<?> exec = results.get(task.name());
+            DagCompletionItemStatus item;
+            if (exec == null) {
+                item = new DagCompletionItemStatus(task.name(), Optional.empty(), Optional.empty(), Optional.empty());
+            } else {
+                item = new DagCompletionItemStatus(
+                        task.name(),
+                        Optional.of(exec.status()),
+                        Optional.ofNullable(exec.result().orElse(null)),
+                        exec.skipReason());
+                switch (exec.status()) {
+                    case SUCCEEDED -> succeeded++;
+                    case FAILED -> failed++;
+                    case SKIPPED -> skipped++;
+                    default -> {
+                        // STARTED tasks are never present in `results` (only terminal states are recorded there),
+                        // so this branch is unreachable; kept for exhaustiveness.
+                    }
+                }
+            }
+            items.add(item);
+            byName.put(task.name(), item);
+        }
+        int completedCount = succeeded + failed + skipped;
+        return new DagCompletionStatus(succeeded, failed, skipped, completedCount, totalTaskCount, items, byName);
     }
 
     private static CompletionConfig unwrap(DagCompletionConfig dcc) {

@@ -9,8 +9,10 @@ import software.amazon.lambda.durable.serde.SerDes;
 /**
  * Configuration for a DAG. All fields are optional.
  *
- * <p>Note: unlike the JS spec's {@code DagConfig}, there is no {@code summaryGenerator} — it has no native precedent in
- * the Java SDK, and large-result handling relies on native child-context re-execution rather than a summary envelope.
+ * <p>Note: there is deliberately no {@code summaryGenerator}. The DAG container checkpoints a single SDK-owned envelope
+ * that is readable on its own, so no customer-supplied summary string is ever written into a payload the SDK parses
+ * back. Oversize aggregates degrade by dropping the per-task {@code tasks} array (its absence is the offload signal)
+ * while the counts, completion reason and in-flight task names always survive.
  *
  * @param maxConcurrency maximum number of top-level tasks running concurrently; must be {@code >= 1} if present. When
  *     unset, the DAG scheduler defaults to {@code 40} (previously unlimited). This bounds the DAG scheduler only — the

@@ -373,6 +373,182 @@ class DagIntegrationTest {
     }
 
     @Test
+    void customCompletionShortCircuitsOnRejectedVerdict() {
+        // DAG-18-style rules engine: a linear chain r1 -> r2 -> r3, maxConcurrency 1, where each task returns a
+        // verdict. The custom predicate inspects SUCCEEDED items' RESULTS (not just counts) and stops the moment any
+        // task's verdict is REJECT -- something no threshold config can express, since thresholds only ever see
+        // aggregate counts. r2 rejects, so r3 must never run.
+        var config = DagConfig.builder()
+                .maxConcurrency(1)
+                .completionConfig(DagCompletionConfig.custom(status -> {
+                    boolean anyRejected = status.items().stream()
+                            .anyMatch(item -> item.status().isPresent()
+                                    && item.status().get() == TaskStatus.SUCCEEDED
+                                    && item.result().isPresent()
+                                    && "REJECT".equals(item.result().get()));
+                    return anyRejected
+                            ? software.amazon.lambda.durable.dag.DagCompletionDecision.complete(
+                                    software.amazon.lambda.durable.dag.DagCompletionOutcome.FAILED)
+                            : software.amazon.lambda.durable.dag.DagCompletionDecision.continueDag();
+                }))
+                .build();
+        var ran = new java.util.concurrent.ConcurrentSkipListSet<String>();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "rules-engine",
+                    d -> {
+                        var r1 = d.step("r1", String.class, (deps, s) -> {
+                            ran.add("r1");
+                            return "ACCEPT";
+                        });
+                        var r2 = d.step("r2", String.class, (deps, s) -> {
+                                    ran.add("r2");
+                                    return "REJECT";
+                                })
+                                .reads(r1);
+                        d.step("r3", String.class, (deps, s) -> {
+                                    ran.add("r3");
+                                    return "ACCEPT";
+                                })
+                                .reads(r2);
+                    },
+                    config);
+            return r.completionReason().name() + "|" + r.successCount();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(DagCompletionReason.CUSTOM_COMPLETION_FAILED.name() + "|2", result.getResult(String.class));
+        assertTrue(ran.contains("r1"));
+        assertTrue(ran.contains("r2"));
+        assertTrue(
+                !ran.contains("r3"),
+                "r3 must not run: the custom predicate should have stopped the DAG after r2's REJECT verdict");
+    }
+
+    @Test
+    void customCompletionFailedThrowsFromThrowIfErrorEvenWithZeroTaskFailures() {
+        // CUSTOM_COMPLETION_FAILED means the DAG failed by the predicate's verdict, not because any individual
+        // task threw. throwIfError() must still honour that verdict -- failureCount() alone is not the contract.
+        var config = DagConfig.builder()
+                .maxConcurrency(1)
+                .completionConfig(DagCompletionConfig.custom(status -> {
+                    boolean anyRejected = status.items().stream()
+                            .anyMatch(item -> item.status().isPresent()
+                                    && item.status().get() == TaskStatus.SUCCEEDED
+                                    && item.result().isPresent()
+                                    && "REJECT".equals(item.result().get()));
+                    return anyRejected
+                            ? software.amazon.lambda.durable.dag.DagCompletionDecision.complete(
+                                    software.amazon.lambda.durable.dag.DagCompletionOutcome.FAILED)
+                            : software.amazon.lambda.durable.dag.DagCompletionDecision.continueDag();
+                }))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "rules-engine-throw",
+                    d -> {
+                        var r1 = d.step("r1", String.class, (deps, s) -> "ACCEPT");
+                        d.step("r2", String.class, (deps, s) -> "REJECT").reads(r1);
+                    },
+                    config);
+            assertEquals(0, r.failureCount());
+            assertEquals(DagCompletionReason.CUSTOM_COMPLETION_FAILED, r.completionReason());
+            try {
+                r.throwIfError();
+                return "no-throw";
+            } catch (software.amazon.lambda.durable.dag.DagExecutionException e) {
+                return "threw";
+            }
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("threw", result.getResult(String.class));
+    }
+
+    @Test
+    void customCompletionSucceedsWhenPredicateNeverRejects() {
+        var config = DagConfig.builder()
+                .completionConfig(DagCompletionConfig.custom(status -> status.completedCount() >= status.totalCount()
+                        ? software.amazon.lambda.durable.dag.DagCompletionDecision.completeSuccessfully()
+                        : software.amazon.lambda.durable.dag.DagCompletionDecision.continueDag()))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "all-accept",
+                    d -> {
+                        d.step("a", String.class, (deps, s) -> "ACCEPT");
+                        d.step("b", String.class, (deps, s) -> "ACCEPT");
+                    },
+                    config);
+            return r.completionReason().name() + "|" + r.successCount();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(DagCompletionReason.CUSTOM_COMPLETION_SUCCEEDED.name() + "|2", result.getResult(String.class));
+    }
+
+    @Test
+    void customCompletionPredicateSeesAccurateLiveSnapshotAtEachSettlement() {
+        // The predicate must see exactly what has settled so far: unsettled tasks report an empty status, settled
+        // tasks report their real result/skip reason, and the aggregate counts always match the per-item list.
+        // Asserted by recording every snapshot the predicate observes and checking the LAST one (the one that ends
+        // the DAG) against the graph's known final shape: a, b succeed; c is skipped (ALL_FAILED trigger rule with
+        // no failed upstream); d never gets a chance to run because completion fires as soon as a and b (its only
+        // unblocking dependencies) are both terminal and c has resolved to SKIPPED.
+        var snapshots =
+                new java.util.concurrent.CopyOnWriteArrayList<software.amazon.lambda.durable.dag.DagCompletionStatus>();
+        var config = DagConfig.builder()
+                .completionConfig(DagCompletionConfig.custom(status -> {
+                    snapshots.add(status);
+                    return status.completedCount() >= 3
+                            ? software.amazon.lambda.durable.dag.DagCompletionDecision.completeSuccessfully()
+                            : software.amazon.lambda.durable.dag.DagCompletionDecision.continueDag();
+                }))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            DagResult r = ctx.dag(
+                    "snapshot-accuracy",
+                    d -> {
+                        var a = d.step("a", String.class, (deps, s) -> "A");
+                        var b = d.step("b", String.class, (deps, s) -> "B");
+                        d.step("c", String.class, (deps, s) -> "C").reads(a).triggerRule(TriggerRule.ALL_FAILED);
+                        d.step("d", String.class, (deps, s) -> "D").reads(b);
+                    },
+                    config);
+            return r.completionReason().name();
+        });
+
+        var result = runner.runUntilComplete("go");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(DagCompletionReason.CUSTOM_COMPLETION_SUCCEEDED.name(), result.getResult(String.class));
+        assertTrue(!snapshots.isEmpty(), "the predicate must have been invoked at least once");
+        var last = snapshots.get(snapshots.size() - 1);
+        // Aggregate counts must always agree with the per-item list, at every observed snapshot -- not just the
+        // last one -- since a stale/inconsistent snapshot would be a real correctness bug for a predicate that
+        // trusts the counts without re-deriving them from items.
+        for (var snap : snapshots) {
+            long derivedSucceeded = snap.items().stream()
+                    .filter(i -> i.status().isPresent() && i.status().get() == TaskStatus.SUCCEEDED)
+                    .count();
+            long derivedSkipped = snap.items().stream()
+                    .filter(i -> i.status().isPresent() && i.status().get() == TaskStatus.SKIPPED)
+                    .count();
+            assertEquals(derivedSucceeded, snap.successCount());
+            assertEquals(derivedSkipped, snap.skippedCount());
+            assertEquals(snap.items().size(), snap.results().size());
+            assertEquals(4, snap.totalCount());
+        }
+        assertEquals(2, last.successCount(), "a and b succeed");
+        assertEquals(1, last.skippedCount(), "c is skipped: ALL_FAILED with no failed upstream");
+        assertTrue(
+                last.results().get("c").skipReason().isPresent(),
+                "c's snapshot entry must carry its skip reason once settled");
+    }
+
+    @Test
     void maxConcurrencyThrottlesConcurrentTasks() {
         var active = new java.util.concurrent.atomic.AtomicInteger(0);
         var maxObserved = new java.util.concurrent.atomic.AtomicInteger(0);

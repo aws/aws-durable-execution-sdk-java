@@ -201,5 +201,13 @@ public final class DagResultImpl implements DagResult {
             }
             throw new DagExecutionException(message);
         }
+        if (completionReason() == DagCompletionReason.CUSTOM_COMPLETION_FAILED) {
+            // A custom shouldComplete predicate stopped the DAG as a failure even though no individual task
+            // FAILED (e.g. a rules-engine rejection based on a SUCCEEDED task's result). throwIfError() must
+            // still honour that verdict rather than silently reporting success.
+            throw new DagExecutionException(
+                    "DAG completed with reason CUSTOM_COMPLETION_FAILED (a custom completion predicate"
+                            + " completed the DAG as a failure)");
+        }
     }
 }

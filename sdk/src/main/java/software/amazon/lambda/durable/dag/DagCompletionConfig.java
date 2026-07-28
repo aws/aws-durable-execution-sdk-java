@@ -2,19 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.dag;
 
+import java.util.function.Function;
 import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.config.CompletionConfig;
 
 /**
- * Controls when a DAG completes. In v1 only threshold-based completion is available, exposed via the six factory
- * methods below (mirroring the base SDK's {@code CompletionConfig} factories). Custom-predicate completion is deferred
- * to v2, so this sealed interface permits only {@link ThresholdDagCompletion}.
+ * Controls when a DAG completes: threshold-based, via the six factory methods below (mirroring the base SDK's
+ * {@code CompletionConfig} factories), or a custom, results-aware predicate via {@link #custom(Function)}. This sealed
+ * interface permits {@link ThresholdDagCompletion} and {@link CustomDagCompletion}.
  *
  * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
  *     major-version bump.
  */
 @Experimental
-public sealed interface DagCompletionConfig permits ThresholdDagCompletion {
+public sealed interface DagCompletionConfig permits ThresholdDagCompletion, CustomDagCompletion {
 
     /** Every task must complete; failures tolerated (captured per-task). */
     static DagCompletionConfig allCompleted() {
@@ -44,5 +45,20 @@ public sealed interface DagCompletionConfig permits ThresholdDagCompletion {
     /** Complete when the failure percentage exceeds {@code p} (0.0 to 1.0). */
     static DagCompletionConfig toleratedFailurePercentage(double p) {
         return new ThresholdDagCompletion(CompletionConfig.toleratedFailurePercentage(p));
+    }
+
+    /**
+     * Complete based on a custom, results-aware predicate evaluated after every task settlement.
+     *
+     * <p>Unlike the threshold factories above, this predicate can inspect individual tasks' results (via
+     * {@link DagCompletionStatus#items()} / {@link DagCompletionStatus#results()}), not just aggregate counts — for
+     * example, stopping the moment any task's result matches a business condition.
+     *
+     * @param shouldComplete receives a live {@link DagCompletionStatus} snapshot; return
+     *     {@link DagCompletionDecision#continueDag()} to keep scheduling or
+     *     {@link DagCompletionDecision#complete(DagCompletionOutcome)} to stop the DAG now
+     */
+    static DagCompletionConfig custom(Function<DagCompletionStatus, DagCompletionDecision> shouldComplete) {
+        return new CustomDagCompletion(shouldComplete);
     }
 }

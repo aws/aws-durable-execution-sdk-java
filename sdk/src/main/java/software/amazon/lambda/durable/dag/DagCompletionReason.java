@@ -8,9 +8,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * Why a DAG finished. A DAG-local superset of the base SDK's {@code ConcurrencyCompletionStatus} (which cannot express
  * the {@link #COMPLETED_WITH_FAILURES} distinction).
  *
- * <p>In v1 only threshold completion is supported (custom-predicate result-based completion is deferred to v2 in Java,
- * so no custom-completion members are defined here).
- *
  * @apiNote <b>Experimental.</b> This API is experimental and may be changed or removed in future releases without a
  *     major-version bump.
  */
@@ -23,5 +20,9 @@ public enum DagCompletionReason {
     /** Early completion: a {@code minSuccessful} threshold was reached. */
     MIN_SUCCESSFUL_REACHED,
     /** Early completion: a tolerated-failure threshold was exceeded. */
-    FAILURE_TOLERANCE_EXCEEDED
+    FAILURE_TOLERANCE_EXCEEDED,
+    /** Early completion: a custom {@code shouldComplete} predicate completed the DAG as a success. */
+    CUSTOM_COMPLETION_SUCCEEDED,
+    /** Early completion: a custom {@code shouldComplete} predicate completed the DAG as a failure. */
+    CUSTOM_COMPLETION_FAILED
 }
