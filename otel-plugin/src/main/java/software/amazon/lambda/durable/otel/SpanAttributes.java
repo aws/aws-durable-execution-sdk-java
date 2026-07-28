@@ -15,6 +15,7 @@ final class SpanAttributes {
     private SpanAttributes() {}
 
     static final AttributeKey<String> DURABLE_EXECUTION_ARN = AttributeKey.stringKey("durable.execution.arn");
+    static final AttributeKey<String> DURABLE_EXECUTION_STATUS = AttributeKey.stringKey("durable.execution.status");
     static final AttributeKey<String> DURABLE_OPERATION_ID = AttributeKey.stringKey("durable.operation.id");
     static final AttributeKey<String> DURABLE_OPERATION_TYPE = AttributeKey.stringKey("durable.operation.type");
     static final AttributeKey<String> DURABLE_OPERATION_NAME = AttributeKey.stringKey("durable.operation.name");

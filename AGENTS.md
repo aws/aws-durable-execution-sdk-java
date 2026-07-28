@@ -160,7 +160,7 @@ sdk-integration-tests/src/test/  # SDK components working together via LocalDura
 ├── MapIntegrationTest
 ├── ParallelIntegrationTest
 ├── WaitForConditionIntegrationTest
-└── OtelPluginIntegrationTest
+└── InvocationOtelPluginIntegrationTest
 
 otel-plugin/src/test/            # OpenTelemetry plugin unit tests
 
@@ -272,7 +272,7 @@ void testAgainstRealLambda() {
 | `ParallelOperation` | Runs named child-context branches concurrently |
 | `ConcurrencyOperation` | Shared base for map/parallel concurrency limiting and completion evaluation |
 | `DurableExecutionPlugin` | Preview lifecycle hook interface |
-| `OtelPlugin` | OpenTelemetry plugin implementation in `otel-plugin` |
+| `InvocationOtelPlugin` | OpenTelemetry plugin implementation in `otel-plugin` |
 
 ### Serialization
 

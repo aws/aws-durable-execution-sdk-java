@@ -16,16 +16,16 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
-class OtelPluginTest {
+class InvocationOtelPluginTest {
 
     private InMemorySpanExporter spanExporter;
-    private OtelPlugin plugin;
+    private InvocationOtelPlugin plugin;
 
     @BeforeEach
     void setUp() {
         spanExporter = InMemorySpanExporter.create();
 
-        plugin = new OtelPlugin(
+        plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
@@ -34,7 +34,7 @@ class OtelPluginTest {
     @Test
     void invocationStart_and_end_createsSpan() {
         plugin.onInvocationStart(new InvocationInfo(
-                "req-123", "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1", true));
+                "req-123", "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo(
                 "req-123",
                 "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1",
@@ -47,12 +47,12 @@ class OtelPluginTest {
 
         var span = spans.get(0);
         assertEquals("invocation", span.getName());
-        assertEquals(StatusCode.UNSET, span.getStatus().getStatusCode());
+        assertEquals(StatusCode.OK, span.getStatus().getStatusCode());
     }
 
     @Test
     void invocationSpan_hasInternalKind() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var span = spanExporter.getFinishedSpanItems().get(0);
@@ -61,7 +61,7 @@ class OtelPluginTest {
 
     @Test
     void operationSpanName_usesOperationName_withoutPrefix() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "create-greeting", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -90,7 +90,7 @@ class OtelPluginTest {
 
     @Test
     void attemptSpanName_usesOperationNameWithAttemptNumber() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -109,7 +109,7 @@ class OtelPluginTest {
 
     @Test
     void operationEnd_withAttempt_stampsAttemptNumberOnOperationSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onOperationStart(new OperationInfo("op-1", "flaky", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -128,7 +128,7 @@ class OtelPluginTest {
 
     @Test
     void attemptSpan_carriesOperationSubtype() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -147,7 +147,7 @@ class OtelPluginTest {
 
     @Test
     void operationEnd_withoutMatchingStart_stampsAttemptNumberOnContinuationSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         // No onOperationStart in this invocation → onOperationEnd takes the continuation-span branch.
         plugin.onOperationEnd(new OperationEndInfo(
@@ -170,7 +170,7 @@ class OtelPluginTest {
 
     @Test
     void invocationEnd_withFailure_setsErrorStatus() {
-        plugin.onInvocationStart(new InvocationInfo("req-123", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-123", "arn:exec1", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo(
                 "req-123", "arn:exec1", true, InvocationStatus.FAILED, new RuntimeException("boom")));
 
@@ -180,8 +180,22 @@ class OtelPluginTest {
     }
 
     @Test
+    void invocationEnd_withRetrying_leavesStatusUnset() {
+        plugin.onInvocationStart(new InvocationInfo("req-123", "arn:exec1", true, Instant.now()));
+        plugin.onInvocationEnd(new InvocationEndInfo(
+                "req-123", "arn:exec1", true, InvocationStatus.RETRYING, new RuntimeException("transient")));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+        assertEquals(
+                StatusCode.UNSET,
+                spans.get(0).getStatus().getStatusCode(),
+                "RETRYING invocation span is UNSET (interface cannot distinguish STOPPED/TIMED_OUT)");
+    }
+
+    @Test
     void operationStart_createsSpan_operationEnd_endsIt() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         var start = Instant.parse("2026-06-01T10:00:00Z");
         var end = Instant.parse("2026-06-01T10:00:05Z");
@@ -207,7 +221,7 @@ class OtelPluginTest {
 
     @Test
     void userFunctionStart_and_end_createsAttemptSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
@@ -230,7 +244,7 @@ class OtelPluginTest {
 
     @Test
     void userFunctionEnd_withFailure_setsErrorOnAttemptSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "failing", "STEP", "Step", null, Instant.now(), false, 1));
@@ -260,7 +274,7 @@ class OtelPluginTest {
     @Test
     void fullLifecycle_producesCorrectSpanHierarchy() {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
-        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
 
         // Step 1: operation starts, user function runs, operation completes
         plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
@@ -295,14 +309,14 @@ class OtelPluginTest {
     void deterministicIds_sameExecutionProducesSameTraceId() {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
 
-        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
 
         var firstTraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
         spanExporter.reset();
 
         // Second invocation of same execution
-        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false));
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
 
         var secondTraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
@@ -312,7 +326,7 @@ class OtelPluginTest {
 
     @Test
     void operationNotCompleted_spanEndedAtInvocationEnd() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         // Operation starts but never completes (e.g., wait operation, invocation suspends)
         plugin.onOperationStart(new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, false));
@@ -334,14 +348,14 @@ class OtelPluginTest {
     @Test
     void sampling_disabled_producesNoSpans() {
         spanExporter = InMemorySpanExporter.create();
-        var sampledPlugin = new OtelPlugin(
+        var sampledPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
 
-        sampledPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        sampledPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         sampledPlugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1));
         sampledPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -362,12 +376,12 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
 
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -381,12 +395,12 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
 
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onUserFunctionStart(
@@ -411,12 +425,12 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, parentSpanId);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
 
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -436,12 +450,12 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
 
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -466,13 +480,13 @@ class OtelPluginTest {
         var extractedContext = new ExtractedContext(xrayTraceId, "53995c3f42cd8ad8");
 
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
 
         // First invocation
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
@@ -480,7 +494,7 @@ class OtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
 
         // Second invocation (same execution, same X-Ray Root from backend)
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-2", "arn:exec1", false));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-2", "arn:exec1", false, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-2", "step-2", "STEP", "Step", null, Instant.now(), null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
@@ -500,13 +514,13 @@ class OtelPluginTest {
     @Test
     void xrayExtraction_nullExtractor_fallsBackToArnDerived() {
         spanExporter = InMemorySpanExporter.create();
-        var noXrayPlugin = new OtelPlugin(
+        var noXrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
 
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
-        noXrayPlugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        noXrayPlugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
         noXrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -531,12 +545,12 @@ class OtelPluginTest {
         // Now feed it through the plugin
         var extractedContext = new ExtractedContext(convertedId, null);
         spanExporter = InMemorySpanExporter.create();
-        var xrayPlugin = new OtelPlugin(
+        var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> extractedContext,
                 false);
 
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -547,7 +561,7 @@ class OtelPluginTest {
 
     @Test
     void operationEnd_withoutMatchingStart_createsContinuationSpanWithLink() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         // onOperationEnd without a prior onOperationStart — operation completed between invocations
         plugin.onOperationEnd(new OperationEndInfo(
@@ -578,7 +592,7 @@ class OtelPluginTest {
 
     @Test
     void operationEnd_withoutMatchingStart_usesOperationStartTimestamp() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         var operationStart = Instant.parse("2026-01-15T08:30:00Z");
         var operationEnd = Instant.parse("2026-01-15T09:00:00Z");
@@ -612,7 +626,7 @@ class OtelPluginTest {
 
     @Test
     void operationEnd_withoutMatchingStart_withError_setsErrorStatus() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-cb-1",
@@ -641,7 +655,7 @@ class OtelPluginTest {
 
     @Test
     void contextOperation_doesNotCreateAttemptSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         // Create operation span first so the CONTEXT user function has a parent
         plugin.onOperationStart(new OperationInfo(
@@ -676,7 +690,7 @@ class OtelPluginTest {
 
     @Test
     void attemptSpan_endedAtInvocationEnd_whenUserFunctionEndNotCalled() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         // Start attempt but never call onUserFunctionEnd (simulates crash before end hook)
         plugin.onUserFunctionStart(
@@ -697,7 +711,7 @@ class OtelPluginTest {
 
     @Test
     void childOperation_parentedToParentOperationSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         // Parent context operation
         plugin.onOperationStart(new OperationInfo(
@@ -758,7 +772,7 @@ class OtelPluginTest {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
 
         // Invocation 1: step completes, wait starts
-        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), false, 1));
@@ -776,7 +790,7 @@ class OtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: wait completed between invocations, new step runs
-        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false));
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, Instant.now()));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-2", "pause", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
         plugin.onOperationStart(new OperationInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), null, false));
@@ -811,7 +825,7 @@ class OtelPluginTest {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
 
         // Invocation 1: step starts, attempt 1 fails, invocation suspended during retry poll
-        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true));
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onUserFunctionStart(
@@ -853,7 +867,7 @@ class OtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: step is replayed (continuation), attempt 2 executes and succeeds
-        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false));
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, Instant.now()));
         // isReplay=true: this operation already exists in the execution state
         plugin.onOperationStart(
                 new OperationInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), null, true));

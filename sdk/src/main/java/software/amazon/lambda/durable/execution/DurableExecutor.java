@@ -66,7 +66,12 @@ public class DurableExecutor {
 
                         // onInvocationStart runs on the user thread so plugins can
                         // inject ThreadLocal objects, update MDC, etc.
-                        pluginRunner.onInvocationStart(new InvocationInfo(requestId, executionArn, isFirstInvocation));
+                        // executionStartTime comes from the initial EXECUTION operation in the first backend event.
+                        pluginRunner.onInvocationStart(new InvocationInfo(
+                                requestId,
+                                executionArn,
+                                isFirstInvocation,
+                                executionManager.getExecutionOperation().startTimestamp()));
 
                         var userInput = extractUserInput(
                                 executionManager.getExecutionOperation(), config.getSerDes(), inputType);

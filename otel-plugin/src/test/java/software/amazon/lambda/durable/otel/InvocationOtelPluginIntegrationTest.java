@@ -27,7 +27,7 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
  * Integration tests verifying the OTel plugin produces correct spans when running with the real SDK execution engine
  * (LocalDurableTestRunner).
  */
-class OtelPluginIntegrationTest {
+class InvocationOtelPluginIntegrationTest {
 
     private InMemorySpanExporter spanExporter;
     private DurableConfig otelConfig;
@@ -36,7 +36,7 @@ class OtelPluginIntegrationTest {
     void setUp() {
         spanExporter = InMemorySpanExporter.create();
 
-        var plugin = new OtelPlugin(
+        var plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
@@ -307,7 +307,7 @@ class OtelPluginIntegrationTest {
     void sampling_off_producesNoSpans() {
         var sampledExporter = InMemorySpanExporter.create();
 
-        var noSamplePlugin = new OtelPlugin(
+        var noSamplePlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder()
                         .setSampler(Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter)),

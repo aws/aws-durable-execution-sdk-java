@@ -26,7 +26,6 @@ import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
 import software.amazon.lambda.durable.plugin.OperationInfo;
 import software.amazon.lambda.durable.plugin.UserFunctionEndInfo;
@@ -68,9 +67,9 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
 @Deprecated
-public class OtelPlugin implements DurableExecutionPlugin {
+public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
-    private static final Logger logger = LoggerFactory.getLogger(OtelPlugin.class);
+    private static final Logger logger = LoggerFactory.getLogger(InvocationOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
 
     private final SdkTracerProvider tracerProvider;
@@ -103,13 +102,13 @@ public class OtelPlugin implements DurableExecutionPlugin {
      *
      * <pre>{@code
      * var otlpExporter = OtlpGrpcSpanExporter.getDefault(); // sends to localhost:4317
-     * var plugin = new OtelPlugin(
+     * var plugin = new InvocationOtelPlugin(
      *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(otlpExporter)));
      * }</pre>
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
-    public OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
+    public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
         this(tracerProviderBuilder, new XRayContextExtractor(), true);
     }
 
@@ -119,7 +118,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
      */
-    public OtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor) {
+    public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor) {
         this(tracerProviderBuilder, contextExtractor, true);
     }
 
@@ -130,7 +129,7 @@ public class OtelPlugin implements DurableExecutionPlugin {
      * @param contextExtractor extracts parent trace context from the Lambda environment
      * @param enableMdc if true, injects traceId/spanId/traceSampled into SLF4J MDC for log correlation
      */
-    public OtelPlugin(
+    public InvocationOtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
         this.idGenerator = new DeterministicIdGenerator();
 
@@ -218,9 +217,26 @@ public class OtelPlugin implements DurableExecutionPlugin {
         invocationSpan.setAttribute(
                 DURABLE_INVOCATION_STATUS, info.invocationStatus().name());
 
-        if (info.invocationStatus() == InvocationStatus.FAILED && info.executionError() != null) {
-            invocationSpan.setStatus(StatusCode.ERROR, info.executionError().getMessage());
-            invocationSpan.recordException(info.executionError());
+        // Invocation span status mapping:
+        //   SUCCEEDED, PENDING -> OK
+        //   FAILED             -> ERROR (records the execution error when present)
+        //   RETRYING           -> UNSET
+        // RETRYING is left UNSET on purpose: the plugin interface does not expose whether the invocation/workflow
+        // was STOPPED or TIMED_OUT versus retried for a transient error, so an ERROR status cannot be asserted
+        // reliably for a retrying invocation.
+        switch (info.invocationStatus()) {
+            case SUCCEEDED, PENDING -> invocationSpan.setStatus(StatusCode.OK);
+            case FAILED -> {
+                var message =
+                        info.executionError() != null ? info.executionError().getMessage() : null;
+                invocationSpan.setStatus(StatusCode.ERROR, message);
+                if (info.executionError() != null) {
+                    invocationSpan.recordException(info.executionError());
+                }
+            }
+            case RETRYING -> {
+                // UNSET — see note above.
+            }
         }
 
         invocationSpan.end();
