@@ -2,9 +2,10 @@ name: Conformance Tests
 
 # Full-integration conformance run: builds the SDK + Java handlers, installs the
 # pinned language-agnostic runner from PyPI, then deploys + invokes + validates
-# one SAM stack per suite. Each suite runs as its own parallel matrix job. To add
-# a suite later, add its name to `strategy.matrix.suite` (and ship its
-# template_<suite>.yaml + handlers under conformance-tests/).
+# one SAM stack per suite. Suites are discovered from the module's
+# template_<suite>.yaml files (see conformance-tests/scripts/discover_suites.py)
+# and each runs as its own parallel matrix job, so adding a suite only requires
+# shipping its template + handlers under conformance-tests/.
 
 on:
   pull_request:
@@ -28,24 +29,30 @@ permissions:
   id-token: write # Required for AWS OIDC credentials
 
 jobs:
+  discover_suites:
+    name: discover conformance suites
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.discover.outputs.suites }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Discover suites from templates
+        id: discover
+        working-directory: conformance-tests
+        run: echo "suites=$(python3 scripts/discover_suites.py)" >> "$GITHUB_OUTPUT"
+
   conformance:
     name: conformance (${{ matrix.suite }})
+    needs: discover_suites
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-west-2
     strategy:
       fail-fast: false
       matrix:
-        suite:
-          - step
-          - wait
-          - child
-          - callback
-          - invoke
-          - parallel
-          - wait_for_callback
-          - wait_for_condition
-          - map
+        suite: ${{ fromJSON(needs.discover_suites.outputs.suites) }}
     defaults:
       run:
         working-directory: conformance-tests
