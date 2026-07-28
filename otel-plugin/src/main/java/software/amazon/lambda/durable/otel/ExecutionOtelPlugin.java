@@ -263,6 +263,9 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 .setAttribute(DURABLE_OPERATION_TYPE, info.type());
         addInvocationLink(spanBuilder);
 
+        if (info.startTimestamp() != null) {
+            spanBuilder.setStartTimestamp(info.startTimestamp());
+        }
         if (info.name() != null) {
             spanBuilder.setAttribute(DURABLE_OPERATION_NAME, info.name());
         }

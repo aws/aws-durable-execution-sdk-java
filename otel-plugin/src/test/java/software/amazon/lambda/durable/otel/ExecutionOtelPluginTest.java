@@ -156,6 +156,23 @@ class ExecutionOtelPluginTest {
     // ─── Operation topology: parented to Workflow, linked to invocation ──
 
     @Test
+    void operationSpan_startsAtOperationStartTimestamp() {
+        var opStart = Instant.parse("2026-02-01T10:00:00Z");
+        var opEnd = Instant.parse("2026-02-01T10:00:03Z");
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, opStart, null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, opStart, opEnd, "SUCCEEDED", null, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-a");
+        assertEquals(
+                opStart.toEpochMilli(),
+                operationSpan.getStartEpochNanos() / 1_000_000,
+                "Operation span should start at OperationInfo.startTimestamp()");
+    }
+
+    @Test
     void operationSpan_parentedToWorkflow_linkedToInvocation() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
