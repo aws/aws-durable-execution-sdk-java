@@ -219,18 +219,25 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         invocationSpan.setAttribute(
                 DURABLE_INVOCATION_STATUS, info.invocationStatus().name());
 
-        // Status mapping (parity with Python/JS references):
-        //   SUCCEEDED, PENDING  -> OK
-        //   RETRYING, FAILED    -> ERROR (records the execution error when present)
+        // Invocation span status mapping:
+        //   SUCCEEDED, PENDING -> OK
+        //   FAILED             -> ERROR (records the execution error when present)
+        //   RETRYING           -> UNSET
+        // RETRYING is left UNSET on purpose: the plugin interface does not expose whether the invocation/workflow
+        // was STOPPED or TIMED_OUT versus retried for a transient error, so an ERROR status cannot be asserted
+        // reliably for a retrying invocation.
         switch (info.invocationStatus()) {
             case SUCCEEDED, PENDING -> invocationSpan.setStatus(StatusCode.OK);
-            case RETRYING, FAILED -> {
+            case FAILED -> {
                 var message =
                         info.executionError() != null ? info.executionError().getMessage() : null;
                 invocationSpan.setStatus(StatusCode.ERROR, message);
                 if (info.executionError() != null) {
                     invocationSpan.recordException(info.executionError());
                 }
+            }
+            case RETRYING -> {
+                // UNSET — see note above.
             }
         }
 

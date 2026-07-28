@@ -125,7 +125,7 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void retryingInvocation_invocationSpanError_workflowNotExported() {
+    void retryingInvocation_invocationSpanUnset_workflowNotExported() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true));
         plugin.onInvocationEnd(new InvocationEndInfo(
                 "req-1", ARN, true, InvocationStatus.RETRYING, new RuntimeException("transient")));
@@ -134,7 +134,10 @@ class ExecutionOtelPluginTest {
         assertEquals(1, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
         var invocationSpan = spans.get(0);
         assertEquals("invocation", invocationSpan.getName());
-        assertEquals(StatusCode.ERROR, invocationSpan.getStatus().getStatusCode());
+        assertEquals(
+                StatusCode.UNSET,
+                invocationSpan.getStatus().getStatusCode(),
+                "RETRYING invocation span is UNSET (interface cannot distinguish STOPPED/TIMED_OUT)");
     }
 
     // ─── Operation topology: parented to Workflow, linked to invocation ──

@@ -120,6 +120,20 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void invocationEnd_withRetrying_leavesStatusUnset() {
+        plugin.onInvocationStart(new InvocationInfo("req-123", "arn:exec1", true));
+        plugin.onInvocationEnd(new InvocationEndInfo(
+                "req-123", "arn:exec1", true, InvocationStatus.RETRYING, new RuntimeException("transient")));
+
+        var spans = spanExporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+        assertEquals(
+                StatusCode.UNSET,
+                spans.get(0).getStatus().getStatusCode(),
+                "RETRYING invocation span is UNSET (interface cannot distinguish STOPPED/TIMED_OUT)");
+    }
+
+    @Test
     void operationStart_createsSpan_operationEnd_endsIt() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true));
 

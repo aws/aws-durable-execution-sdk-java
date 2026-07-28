@@ -61,11 +61,13 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Status mapping (parity with the Python/JS references):
  *
  * <ul>
- *   <li>Invocation span: {@code SUCCEEDED}/{@code PENDING} → {@link StatusCode#OK}; {@code RETRYING}/{@code FAILED} →
- *       {@link StatusCode#ERROR}.
+ *   <li>Invocation span: {@code SUCCEEDED}/{@code PENDING} → {@link StatusCode#OK}; {@code FAILED} →
+ *       {@link StatusCode#ERROR}; {@code RETRYING} → {@link StatusCode#UNSET}. {@code RETRYING} is left {@code UNSET}
+ *       because the plugin interface does not expose whether the invocation/workflow was STOPPED or TIMED_OUT versus
+ *       retried for a transient error, so an ERROR status cannot be asserted reliably.
  *   <li>Workflow span (terminal only): {@code SUCCEEDED} → {@link StatusCode#OK}; {@code FAILED} →
- *       {@link StatusCode#ERROR}. Non-terminal statuses never end the Workflow span, so it is not exported this
- *       invocation.
+ *       {@link StatusCode#ERROR}. Non-terminal statuses ({@code PENDING}/{@code RETRYING}) never end the Workflow span,
+ *       so it is not exported this invocation (effectively {@link StatusCode#UNSET}).
  * </ul>
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
@@ -418,15 +420,25 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     // ─── Helpers ─────────────────────────────────────────────────────────
 
     private void applyInvocationStatus(Span span, InvocationEndInfo info) {
+        // Invocation span status mapping:
+        //   SUCCEEDED, PENDING -> OK
+        //   FAILED             -> ERROR (records the execution error when present)
+        //   RETRYING           -> UNSET (left unset)
+        // RETRYING is left UNSET on purpose: the plugin interface does not expose whether the invocation/workflow
+        // was STOPPED or TIMED_OUT versus retried for a transient error, so an ERROR status cannot be asserted
+        // reliably for a retrying invocation.
         switch (info.invocationStatus()) {
             case SUCCEEDED, PENDING -> span.setStatus(StatusCode.OK);
-            case RETRYING, FAILED -> {
+            case FAILED -> {
                 var message =
                         info.executionError() != null ? info.executionError().getMessage() : null;
                 span.setStatus(StatusCode.ERROR, message);
                 if (info.executionError() != null) {
                     span.recordException(info.executionError());
                 }
+            }
+            case RETRYING -> {
+                // UNSET — see note above.
             }
         }
     }
