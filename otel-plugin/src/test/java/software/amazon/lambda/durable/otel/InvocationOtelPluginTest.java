@@ -1028,6 +1028,28 @@ class InvocationOtelPluginTest {
                 "Default 'Workflow' name should not appear when a custom name is configured");
     }
 
+    @Test
+    void failedInvocation_setsErrorOnBothWorkflowAndInvocationSpans() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        plugin.onInvocationEnd(new InvocationEndInfo(
+                "req-1", "arn:exec1", true, InvocationStatus.FAILED, new RuntimeException("boom")));
+
+        var workflowSpan = spanByName("Workflow");
+        var invocationSpan = spanByName("Invocation");
+
+        assertEquals(
+                StatusCode.ERROR,
+                workflowSpan.getStatus().getStatusCode(),
+                "Workflow span should be ERROR on a FAILED invocation");
+        assertEquals(
+                StatusCode.ERROR,
+                invocationSpan.getStatus().getStatusCode(),
+                "Invocation span should be ERROR on a FAILED invocation");
+        assertTrue(
+                workflowSpan.getEvents().stream().anyMatch(e -> e.getName().equals("exception")),
+                "Workflow span should record the execution exception on FAILED");
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────
 
     private io.opentelemetry.sdk.trace.data.SpanData spanByName(String name) {
