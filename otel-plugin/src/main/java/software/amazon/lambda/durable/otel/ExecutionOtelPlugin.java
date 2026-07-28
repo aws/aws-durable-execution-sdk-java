@@ -52,10 +52,10 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * </ul>
  *
  * <p>Contrast with {@link InvocationOtelPlugin} (the invocation-rooted variant, equivalent to the reference
- * {@code InvocationInvocationOtelPlugin}): there the invocation span is the root and there is no Workflow span. Here
- * the Workflow span is the root, operations hang off the Workflow span, and each operation/attempt links to the
- * invocation that ran it. Both plugins share {@link DeterministicIdGenerator}, {@link ContextExtractor},
- * {@link SpanAttributes}, and {@link MdcSpanEnricher}.
+ * {@code InvocationOtelPlugin}): there the invocation span is the root and there is no Workflow span. Here the workflow
+ * span is the root, operations hang off the Workflow span, and each operation/attempt links to the invocation that ran
+ * it. Both plugins share {@link DeterministicIdGenerator}, {@link ContextExtractor}, {@link SpanAttributes}, and
+ * {@link MdcSpanEnricher}.
  *
  * <p>Trace ID resolution matches {@link InvocationOtelPlugin}: the X-Ray trace ID from {@code _X_AMZN_TRACE_ID} when
  * available (the backend propagates the same Root to all invocations, unifying the trace), else a deterministic trace
@@ -66,7 +66,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <ul>
  *   <li>Invocation span: {@code SUCCEEDED}/{@code PENDING} → {@link StatusCode#OK}; {@code FAILED} →
  *       {@link StatusCode#ERROR}; {@code RETRYING} → {@link StatusCode#UNSET}. {@code RETRYING} is left {@code UNSET}
- *       because the plugin interface does not expose whether the invocation/workflow was STOPPED or TIMED_OUT versus
+ *       because the plugin interface does not expose whether the invocation/Workflow was STOPPED or TIMED_OUT versus
  *       retried for a transient error, so an ERROR status cannot be asserted reliably.
  *   <li>Workflow span (terminal only): {@code SUCCEEDED} → {@link StatusCode#OK}; {@code FAILED} →
  *       {@link StatusCode#ERROR}. Non-terminal statuses ({@code PENDING}/{@code RETRYING}) never end the Workflow span,
@@ -109,7 +109,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private final ConcurrentHashMap<String, SpanContext> operationContexts = new ConcurrentHashMap<>();
 
     /**
-     * Creates a workflow-rooted OTel plugin with default settings: X-Ray context extraction, MDC enabled, root span
+     * Creates a Workflow-rooted OTel plugin with default settings: X-Ray context extraction, MDC enabled, root span
      * named {@code "Workflow"}.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
@@ -119,7 +119,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     /**
-     * Creates a workflow-rooted OTel plugin with a custom context extractor, MDC enabled, root span named
+     * Creates a Workflow-rooted OTel plugin with a custom context extractor, MDC enabled, root span named
      * {@code "Workflow"}.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
@@ -130,7 +130,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     /**
-     * Creates a workflow-rooted OTel plugin with full configuration.
+     * Creates a Workflow-rooted OTel plugin with full configuration.
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
@@ -184,7 +184,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         workflowSpan = workflowSpanBuilder.startSpan();
 
         // Invocation span — child of the Workflow span, INTERNAL kind, random span ID (new every invocation).
-        var spanBuilder = tracer.spanBuilder("invocation")
+        var spanBuilder = tracer.spanBuilder("Invocation")
                 .setSpanKind(SpanKind.INTERNAL)
                 .setParent(Context.root().with(workflowSpan))
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())

@@ -43,10 +43,10 @@ class InvocationOtelPluginTest {
                 null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size()); // invocation + Workflow
 
         var span = spans.get(0);
-        assertEquals("invocation", span.getName());
+        assertEquals("Invocation", span.getName());
         assertEquals(StatusCode.OK, span.getStatus().getStatusCode());
     }
 
@@ -175,7 +175,7 @@ class InvocationOtelPluginTest {
                 "req-123", "arn:exec1", true, InvocationStatus.FAILED, new RuntimeException("boom")));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size()); // invocation + Workflow
         assertEquals(StatusCode.ERROR, spans.get(0).getStatus().getStatusCode());
     }
 
@@ -210,7 +210,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size());
+        assertEquals(3, spans.size()); // operation + invocation + Workflow
 
         var operationSpan = spans.stream()
                 .filter(s -> s.getName().contains("step"))
@@ -232,7 +232,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size());
+        assertEquals(3, spans.size()); // attempt + invocation + Workflow
 
         var attemptSpan = spans.stream()
                 .filter(s -> s.getName().contains("attempt"))
@@ -297,8 +297,8 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // 2 attempt spans + 2 operation spans + 1 invocation span = 5
-        assertEquals(5, spans.size());
+        // 2 attempt spans + 2 operation spans + 1 invocation span + 1 Workflow span = 6
+        assertEquals(6, spans.size());
 
         // All spans should share the same trace ID
         var traceId = spans.get(0).getTraceId();
@@ -385,7 +385,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size()); // invocation + Workflow
         assertEquals(xrayTraceId, spans.get(0).getTraceId(), "Span should use the extracted X-Ray trace ID");
     }
 
@@ -434,7 +434,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size()); // invocation + Workflow
 
         var invocationSpan = spans.get(0);
         assertEquals(xrayTraceId, invocationSpan.getTraceId());
@@ -459,7 +459,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size()); // invocation + Workflow
 
         var invocationSpan = spans.get(0);
         assertEquals(xrayTraceId, invocationSpan.getTraceId());
@@ -524,7 +524,7 @@ class InvocationOtelPluginTest {
         noXrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size()); // invocation + Workflow
 
         var traceId = spans.get(0).getTraceId();
         assertNotNull(traceId);
@@ -580,7 +580,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size());
+        assertEquals(3, spans.size()); // continuation + invocation + Workflow
 
         var continuationSpan = spans.stream()
                 .filter(s -> s.getName().contains("wait"))
@@ -803,8 +803,8 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
 
         var inv2Spans = spanExporter.getFinishedSpanItems();
-        // wait continuation + step-B op + step-B attempt + invocation = 4
-        assertEquals(4, inv2Spans.size());
+        // wait continuation + step-B op + step-B attempt + invocation + Workflow = 5
+        assertEquals(5, inv2Spans.size());
 
         // Same trace ID across invocations
         var inv2TraceId = inv2Spans.get(0).getTraceId();
@@ -890,8 +890,8 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
 
         var inv2Spans = spanExporter.getFinishedSpanItems();
-        // operation span + attempt 2 span + invocation span = 3
-        assertEquals(3, inv2Spans.size());
+        // operation span + attempt 2 span + invocation span + Workflow span = 4
+        assertEquals(4, inv2Spans.size());
 
         var inv2OperationSpan = inv2Spans.stream()
                 .filter(s ->
@@ -927,5 +927,140 @@ class InvocationOtelPluginTest {
         assertTrue(
                 allSpans.stream().allMatch(s -> s.getTraceId().equals(traceId)),
                 "All spans across invocations should share the same trace ID");
+    }
+
+    // ─── Workflow span + links ───────────────────────────────────────────
+
+    @Test
+    void workflowSpan_exportedOnTerminal_internal_deterministicId() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-wf", true, Instant.now()));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec-wf", true, InvocationStatus.SUCCEEDED, null));
+
+        var workflow = spanByName("Workflow");
+        assertEquals(SpanKind.INTERNAL, workflow.getKind(), "Workflow span must be INTERNAL");
+        assertEquals(StatusCode.OK, workflow.getStatus().getStatusCode());
+        assertTrue(workflow.getSpanId().matches("[0-9a-f]{16}"), "Workflow span ID should be 16 hex chars");
+    }
+
+    @Test
+    void workflowSpan_notExportedOnNonTerminal() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+
+        assertTrue(
+                spanExporter.getFinishedSpanItems().stream()
+                        .noneMatch(s -> s.getName().equals("Workflow")),
+                "Workflow span must not be exported on a non-terminal invocation");
+    }
+
+    @Test
+    void operationAndAttemptSpans_linkToWorkflowSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-wf", true, Instant.now()));
+        plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 1, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec-wf", true, InvocationStatus.SUCCEEDED, null));
+
+        var workflowId = spanByName("Workflow").getSpanId();
+        var operationSpan = spanByName("step-a");
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("attempt"))
+                .findFirst()
+                .orElseThrow();
+
+        assertTrue(hasLinkTo(operationSpan, workflowId), "Operation span should link to the Workflow span");
+        assertTrue(hasLinkTo(attemptSpan, workflowId), "Attempt span should link to the Workflow span");
+    }
+
+    @Test
+    void operationLinksToWorkflow_withXRayContext() {
+        // "Other case": invocation span is parented to the X-Ray segment, but operation spans still link to Workflow.
+        var exporter = InMemorySpanExporter.create();
+        var xrayPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                () -> new ExtractedContext("5759e988bd862e3fe1be46a994272793", "53995c3f42cd8ad8"),
+                false);
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        xrayPlugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
+        xrayPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var workflowId = exporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().equals("Workflow"))
+                .findFirst()
+                .orElseThrow()
+                .getSpanId();
+        var operationSpan = exporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().equals("step-a"))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(
+                operationSpan.getLinks().stream()
+                        .anyMatch(l -> l.getSpanContext().getSpanId().equals(workflowId)),
+                "Operation span should link to Workflow span even when the invocation is parented to the X-Ray segment");
+    }
+
+    @Test
+    void workflowSpanName_isConfigurable() {
+        var exporter = InMemorySpanExporter.create();
+        var customPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                () -> null,
+                false,
+                "MyWorkflow");
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        customPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        assertTrue(
+                exporter.getFinishedSpanItems().stream()
+                        .anyMatch(s -> s.getName().equals("MyWorkflow")),
+                "Workflow span should use the configured name");
+        assertTrue(
+                exporter.getFinishedSpanItems().stream()
+                        .noneMatch(s -> s.getName().equals("Workflow")),
+                "Default 'Workflow' name should not appear when a custom name is configured");
+    }
+
+    @Test
+    void failedInvocation_setsErrorOnBothWorkflowAndInvocationSpans() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        plugin.onInvocationEnd(new InvocationEndInfo(
+                "req-1", "arn:exec1", true, InvocationStatus.FAILED, new RuntimeException("boom")));
+
+        var workflowSpan = spanByName("Workflow");
+        var invocationSpan = spanByName("Invocation");
+
+        assertEquals(
+                StatusCode.ERROR,
+                workflowSpan.getStatus().getStatusCode(),
+                "Workflow span should be ERROR on a FAILED invocation");
+        assertEquals(
+                StatusCode.ERROR,
+                invocationSpan.getStatus().getStatusCode(),
+                "Invocation span should be ERROR on a FAILED invocation");
+        assertTrue(
+                workflowSpan.getEvents().stream().anyMatch(e -> e.getName().equals("exception")),
+                "Workflow span should record the execution exception on FAILED");
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────
+
+    private io.opentelemetry.sdk.trace.data.SpanData spanByName(String name) {
+        return spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().equals(name))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No span named '" + name + "'"));
+    }
+
+    private static boolean hasLinkTo(io.opentelemetry.sdk.trace.data.SpanData span, String spanId) {
+        return span.getLinks().stream()
+                .anyMatch(l -> l.getSpanContext().getSpanId().equals(spanId));
     }
 }

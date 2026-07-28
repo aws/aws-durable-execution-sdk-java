@@ -58,7 +58,7 @@ class InvocationOtelPluginIntegrationTest {
         assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
 
         // Verify span names
-        assertSpanExists(spans, "invocation");
+        assertSpanExists(spans, "Invocation");
         assertSpanExists(spans, "greet");
         assertSpanExists(spans, "greet attempt 1");
 
@@ -157,7 +157,7 @@ class InvocationOtelPluginIntegrationTest {
 
         // Verify both invocations produced invocation spans
         var invocationSpans =
-                allSpans.stream().filter(s -> s.getName().equals("invocation")).toList();
+                allSpans.stream().filter(s -> s.getName().equals("Invocation")).toList();
         assertEquals(2, invocationSpans.size(), "Should have 2 invocation spans (one per run)");
     }
 
@@ -294,7 +294,7 @@ class InvocationOtelPluginIntegrationTest {
 
         // Invocation span should have error status
         var invocationSpan = spans.stream()
-                .filter(s -> s.getName().equals("invocation"))
+                .filter(s -> s.getName().equals("Invocation"))
                 .findFirst()
                 .orElseThrow();
         assertEquals(
@@ -477,7 +477,7 @@ class InvocationOtelPluginIntegrationTest {
 
         // Should have 3 invocation spans
         var invocationSpans =
-                allSpans.stream().filter(s -> s.getName().equals("invocation")).toList();
+                allSpans.stream().filter(s -> s.getName().equals("Invocation")).toList();
         assertEquals(3, invocationSpans.size(), "Should have 3 invocation spans");
 
         // Should have wait-A and wait-B spans

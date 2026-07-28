@@ -42,7 +42,7 @@ class ExecutionOtelPluginTest {
         assertEquals(2, spans.size(), "Terminal invocation should export the Workflow span and the invocation span");
 
         var workflowSpan = spanByName(spans, "Workflow");
-        var invocationSpan = spanByName(spans, "invocation");
+        var invocationSpan = spanByName(spans, "Invocation");
 
         assertEquals(StatusCode.OK, workflowSpan.getStatus().getStatusCode());
         assertEquals(StatusCode.OK, invocationSpan.getStatus().getStatusCode());
@@ -93,7 +93,7 @@ class ExecutionOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");
-        var invocationSpan = spanByName(spans, "invocation");
+        var invocationSpan = spanByName(spans, "Invocation");
 
         assertFalse(
                 invocationSpan.getParentSpanContext().getSpanId().equals("0000000000000000"),
@@ -113,7 +113,7 @@ class ExecutionOtelPluginTest {
         var spans = spanExporter.getFinishedSpanItems();
         // Only the invocation span is exported; the Workflow span is not ended on non-terminal status.
         assertEquals(1, spans.size());
-        assertEquals("invocation", spans.get(0).getName());
+        assertEquals("Invocation", spans.get(0).getName());
         assertEquals(StatusCode.OK, spans.get(0).getStatus().getStatusCode(), "PENDING invocation span maps to OK");
     }
 
@@ -148,7 +148,7 @@ class ExecutionOtelPluginTest {
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(StatusCode.ERROR, spanByName(spans, "Workflow").getStatus().getStatusCode());
         assertEquals(
-                StatusCode.ERROR, spanByName(spans, "invocation").getStatus().getStatusCode());
+                StatusCode.ERROR, spanByName(spans, "Invocation").getStatus().getStatusCode());
     }
 
     @Test
@@ -160,7 +160,7 @@ class ExecutionOtelPluginTest {
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(1, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
         var invocationSpan = spans.get(0);
-        assertEquals("invocation", invocationSpan.getName());
+        assertEquals("Invocation", invocationSpan.getName());
         assertEquals(
                 StatusCode.UNSET,
                 invocationSpan.getStatus().getStatusCode(),
@@ -230,7 +230,7 @@ class ExecutionOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");
-        var invocationSpan = spanByName(spans, "invocation");
+        var invocationSpan = spanByName(spans, "Invocation");
         var operationSpan = spanByName(spans, "step-a");
 
         assertEquals(
@@ -257,7 +257,7 @@ class ExecutionOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         var operationSpan = spanByName(spans, "compute");
-        var invocationSpan = spanByName(spans, "invocation");
+        var invocationSpan = spanByName(spans, "Invocation");
         var attemptSpan = spans.stream()
                 .filter(s -> s.getName().contains("attempt"))
                 .findFirst()
@@ -354,7 +354,7 @@ class ExecutionOtelPluginTest {
         // Only the invocation span is exported. The still-open operation span is NOT force-ended (no PENDING
         // span here), and the Workflow span is not exported on a non-terminal invocation.
         assertEquals(1, spans.size());
-        assertEquals("invocation", spans.get(0).getName());
+        assertEquals("Invocation", spans.get(0).getName());
         assertTrue(
                 spans.stream().noneMatch(s -> s.getName().equals("my-wait")),
                 "An operation still open at invocation end must not be ended/exported in onInvocationEnd");
@@ -382,7 +382,7 @@ class ExecutionOtelPluginTest {
         var waitSpans =
                 spans.stream().filter(s -> s.getName().equals("my-wait")).toList();
         assertEquals(1, waitSpans.size(), "The operation must be exported exactly once, when it completes");
-        var invocationSpan = spanByName(spans, "invocation");
+        var invocationSpan = spanByName(spans, "Invocation");
         assertTrue(
                 waitSpans.get(0).getLinks().stream()
                         .anyMatch(l -> l.getSpanContext().getSpanId().equals(invocationSpan.getSpanId())),
@@ -430,7 +430,7 @@ class ExecutionOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         var continuationSpan = spanByName(spans, "my-wait");
-        var invocationSpan = spanByName(spans, "invocation");
+        var invocationSpan = spanByName(spans, "Invocation");
         assertFalse(continuationSpan.getLinks().isEmpty(), "Continuation span should have a link");
         assertTrue(
                 continuationSpan.getLinks().stream()
