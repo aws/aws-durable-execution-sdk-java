@@ -136,7 +136,8 @@ class PluginRunnerTest {
     // ─── Helper methods ──────────────────────────────────────────────────
 
     private static InvocationInfo invocationInfo() {
-        return new InvocationInfo("req-123", "arn:aws:lambda:us-east-1:123456789012:function:test", false);
+        return new InvocationInfo(
+                "req-123", "arn:aws:lambda:us-east-1:123456789012:function:test", false, Instant.now());
     }
 
     private static InvocationEndInfo invocationEndInfo() {
