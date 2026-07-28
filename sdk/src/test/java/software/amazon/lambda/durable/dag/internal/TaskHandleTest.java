@@ -55,7 +55,7 @@ class TaskHandleTest {
                         Optional.empty(),
                         Optional.empty()));
 
-        Deps deps = new DepsImpl(b.inlineDeps(), results);
+        Deps deps = new DepsImpl("b", b.inlineDeps(), results);
         assertEquals(Optional.of("hello"), deps.get(a));
     }
 
@@ -63,8 +63,14 @@ class TaskHandleTest {
     void depsGetOnUndeclaredHandleThrows() {
         var a = handle("a");
         var b = handle("b"); // b does NOT read a
-        Deps deps = new DepsImpl(b.inlineDeps(), new LinkedHashMap<>());
-        assertThrows(IllegalStateException.class, () -> deps.get(a));
+        Deps deps = new DepsImpl("b", b.inlineDeps(), new LinkedHashMap<>());
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> deps.get(a));
+        // The message must name both the offending task and the handle, and
+        // point at .reads(...) on the OFFENDING task's own registration --
+        // not on the dependency's -- since that is the one-line fix.
+        assertTrue(ex.getMessage().contains("'b'"));
+        assertTrue(ex.getMessage().contains("'a'"));
+        assertTrue(ex.getMessage().contains(".reads("));
     }
 
     @Test
@@ -83,7 +89,7 @@ class TaskHandleTest {
                         Optional.empty(),
                         Optional.empty(),
                         Optional.empty()));
-        Deps deps = new DepsImpl(b.inlineDeps(), results);
+        Deps deps = new DepsImpl("b", b.inlineDeps(), results);
         assertTrue(deps.get(a).isEmpty());
     }
 
@@ -112,7 +118,7 @@ class TaskHandleTest {
                         Optional.empty(),
                         Optional.empty()));
 
-        Deps deps = new DepsImpl(compensate.inlineDeps(), results);
+        Deps deps = new DepsImpl("compensate", compensate.inlineDeps(), results);
 
         Optional<String> result = deps.get(upstream);
         assertTrue(result.isEmpty(), "failed upstream under ALL_DONE must surface as Optional.empty()");

@@ -204,7 +204,7 @@ public final class DagExecutor {
                 for (TaskHandle<?> dep : task.inlineDeps()) {
                     depsSnapshot.put(dep.name(), results.get(dep.name()));
                 }
-                Deps deps = new DepsImpl(task.inlineDeps(), Collections.unmodifiableMap(depsSnapshot));
+                Deps deps = new DepsImpl(task.name(), task.inlineDeps(), Collections.unmodifiableMap(depsSnapshot));
                 if (task.runIfOpt().isPresent()) {
                     boolean run;
                     try {

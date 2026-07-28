@@ -21,10 +21,12 @@ import software.amazon.lambda.durable.dag.TaskStatus;
  */
 final class DepsImpl implements Deps {
 
+    private final String taskName;
     private final Set<TaskHandle<?>> inlineDeps;
     private final Map<String, TaskExecution<?>> results;
 
-    DepsImpl(java.util.List<TaskHandle<?>> inlineDeps, Map<String, TaskExecution<?>> results) {
+    DepsImpl(String taskName, java.util.List<TaskHandle<?>> inlineDeps, Map<String, TaskExecution<?>> results) {
+        this.taskName = taskName;
         Set<TaskHandle<?>> set = Collections.newSetFromMap(new IdentityHashMap<>());
         set.addAll(inlineDeps);
         this.inlineDeps = set;
@@ -44,8 +46,12 @@ final class DepsImpl implements Deps {
 
     private void requireDeclared(TaskHandle<?> handle) {
         if (!inlineDeps.contains(handle)) {
-            throw new IllegalStateException("Task result for '" + handle.name()
-                    + "' is not retrievable: it was not declared as an inline dependency via reads(...)");
+            throw new IllegalStateException("Task '" + taskName + "' called deps.get(...) for '" + handle.name()
+                    + "' but never declared it as an inline dependency. Java cannot inspect a lambda body to see"
+                    + " which handles it reads, so chain .reads(...) with the '" + handle.name()
+                    + "' handle onto '" + taskName + "'s own registration (the TaskHandle returned when '" + taskName
+                    + "' was registered, e.g. d.step(\"" + taskName + "\", ...).reads(...)) -- not onto '"
+                    + handle.name() + "'s registration.");
         }
     }
 }
