@@ -141,6 +141,15 @@ public final class DagResultSerDes implements SerDes {
 
     private DagResultImpl fromEnvelope(SerializedDagResult s, DagResultTypes scope) {
         Map<String, TaskExecution<?>> results = new LinkedHashMap<>();
+        // NOTE ON REACHABILITY: `tasks() == null` is the offloaded-envelope case (see `offloadPayloads`), which pairs
+        // with `ReplayChildren=true` on the checkpoint. `ChildContextOperation.replay()` always re-executes the child
+        // body (re-deriving a fully-populated DagResultImpl in-memory) BEFORE `get()` could ever be called when
+        // `replayChildren` is true, so `get()`'s stored-envelope fallback — the only real caller of `deserialize()`,
+        // and therefore of this method — is currently unreachable for `tasks() == null` via the production replay
+        // path. This branch is kept anyway: it is exercised directly by `DagEnvelopeConvergenceTest`/`DagResultTest`
+        // to pin the offloaded envelope's shape and contract rule 1 (see below), and it keeps this method correct and
+        // symmetric with `toEnvelope`'s two candidate shapes should a future caller ever deserialize a stored
+        // offloaded envelope directly (e.g. tooling, migration, or a change to the replay strategy above).
         List<SerializedTaskExecution> tasks = s.tasks() == null ? List.of() : s.tasks();
         for (var ste : tasks) {
             Optional<Object> result = Optional.empty();
