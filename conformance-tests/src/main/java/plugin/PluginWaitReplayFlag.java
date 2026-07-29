@@ -20,13 +20,15 @@ import software.amazon.lambda.durable.plugin.OperationInfo;
 /**
  * 10-19: Plugin replay flag for a non-terminal wait.
  *
- * <p>A parallel operation named "waits" with two branches running concurrently (max-concurrency 2): branch 0 waits 2
- * seconds and returns "short-done"; branch 1 waits 8 seconds and returns "long-done". Both waits are pending
- * simultaneously in the first invocation. The plugin, filtering to wait-type operations, logs operation-start with
- * the SDK's is-replayed indicator ({@code OperationInfo#isReplay()}) and operation-end with the terminal status. When
- * the execution replays after the 2-second wait completes, the still-NON-terminal 8-second wait MUST be re-observed
- * with replay=true. Operation ids are deliberately not logged (branch event ids are nondeterministic under
- * concurrency); the wait type + replay flag identify the behavior under test.
+ * <p>A parallel operation named "waits" with two branches running concurrently (max-concurrency 2): branch 0 runs a
+ * wait named "short" of 2 seconds and returns "short-done"; branch 1 runs a wait named "long" of 8 seconds and
+ * returns "long-done" (each wait's stable name is supplied via the SDK's real operation-name parameter). Both waits
+ * are pending simultaneously in the first invocation. Filtering to wait-type operations, the plugin logs
+ * operation-start with the stable wait name and the SDK's is-replayed indicator ({@code OperationInfo#isReplay()}),
+ * plus operation-end with the wait name and terminal status. When the execution replays after the 2-second wait
+ * completes, the still-NON-terminal 8-second wait MUST be re-observed with replay=true. Operation ids are deliberately
+ * not logged because branch event ids are nondeterministic under concurrency; stable wait name + replay flag identify
+ * the behavior under test without depending on warm-container state.
  */
 @SuppressWarnings("deprecation")
 public class PluginWaitReplayFlag extends DurableHandler<Object, List<String>> {
@@ -43,11 +45,11 @@ public class PluginWaitReplayFlag extends DurableHandler<Object, List<String>> {
         ParallelDurableFuture parallel = context.parallel("waits", config);
         try (parallel) {
             futures.add(parallel.branch("branch-0", String.class, branch -> {
-                branch.wait(null, Duration.ofSeconds(2));
+                branch.wait("short", Duration.ofSeconds(2));
                 return "short-done";
             }));
             futures.add(parallel.branch("branch-1", String.class, branch -> {
-                branch.wait(null, Duration.ofSeconds(8));
+                branch.wait("long", Duration.ofSeconds(8));
                 return "long-done";
             }));
         }
@@ -68,8 +70,12 @@ public class PluginWaitReplayFlag extends DurableHandler<Object, List<String>> {
                 return;
             }
             System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-start\", \"type\": \"%s\", \"replay\": %b%s}",
-                    info.type().toUpperCase(Locale.ROOT), info.isReplay(), PluginSupport.arnField(executionArn)));
+                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-start\", \"type\": \"%s\", \"name\": \"%s\", "
+                            + "\"replay\": %b%s}",
+                    info.type().toUpperCase(Locale.ROOT),
+                    info.name(),
+                    info.isReplay(),
+                    PluginSupport.arnField(executionArn)));
         }
 
         @Override
@@ -78,8 +84,12 @@ public class PluginWaitReplayFlag extends DurableHandler<Object, List<String>> {
                 return;
             }
             System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-end\", \"type\": \"%s\", \"status\": \"%s\"%s}",
-                    info.type().toUpperCase(Locale.ROOT), info.status(), PluginSupport.arnField(executionArn)));
+                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-end\", \"type\": \"%s\", \"name\": \"%s\", "
+                            + "\"status\": \"%s\"%s}",
+                    info.type().toUpperCase(Locale.ROOT),
+                    info.name(),
+                    info.status(),
+                    PluginSupport.arnField(executionArn)));
         }
     }
 }
