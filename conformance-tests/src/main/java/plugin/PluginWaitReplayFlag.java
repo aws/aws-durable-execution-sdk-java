@@ -18,7 +18,7 @@ import software.amazon.lambda.durable.plugin.OperationEndInfo;
 import software.amazon.lambda.durable.plugin.OperationInfo;
 
 /**
- * 10-19: Plugin replay flag for a non-terminal wait.
+ * 10-18: Plugin replay flag for a non-terminal wait.
  *
  * <p>A parallel operation named "waits" with two branches running concurrently (max-concurrency 2): branch 0 runs a
  * wait named "short" of 2 seconds and returns "short-done"; branch 1 runs a wait named "long" of 8 seconds and

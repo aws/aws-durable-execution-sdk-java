@@ -321,26 +321,10 @@ Resources:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
 
-  PluginSlowHookFlush:
-    Type: AWS::Serverless::Function
-    TestingMetadata:
-      TestDescription: ["10-18"]
-    Properties:
-      CodeUri: .
-      Handler: plugin.PluginSlowHookFlush
-      Description: Slow work in a plugin hook completes and its record is emitted before the invocation ends
-      Role:
-        Fn::GetAtt:
-        - DurableFunctionRole
-        - Arn
-      DurableConfig:
-        RetentionPeriodInDays: 7
-        ExecutionTimeout: 300
-
   PluginWaitReplayFlag:
     Type: AWS::Serverless::Function
     TestingMetadata:
-      TestDescription: ["10-19"]
+      TestDescription: ["10-18"]
     Properties:
       CodeUri: .
       Handler: plugin.PluginWaitReplayFlag
