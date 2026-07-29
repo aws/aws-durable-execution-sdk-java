@@ -64,6 +64,12 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
     }
 
     private void startInvocation() {
+        // The ClientContext member of ChainedInvokeOptions is not yet present in the released AWS SDK for Java Lambda
+        // client model (Lambda API model CR-274238062, feature:dar-cc). Until that model ships the setter, the value
+        // configured via InvokeConfig#clientContext() cannot be attached to the START checkpoint update and therefore
+        // does not reach the service. When the model exposes it, add
+        // `.clientContext(invokeConfig.clientContext())` to the builder below. We do NOT hand-roll a bypass here so the
+        // gap stays visible rather than silently transmitting the field through an unsupported path.
         var update = OperationUpdate.builder()
                 .action(OperationAction.START)
                 .chainedInvokeOptions(ChainedInvokeOptions.builder()
