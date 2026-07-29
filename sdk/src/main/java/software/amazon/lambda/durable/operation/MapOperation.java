@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import org.slf4j.Logger;
+import java.util.function.BiFunction;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -46,6 +47,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
+    private final BiFunction<Object, Integer, String> itemNamer;
     private volatile MapResult<O> cachedResult;
 
     public MapOperation(
@@ -73,6 +75,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         this.function = function;
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
+        this.itemNamer = config.itemNamer();
     }
 
     private void addAllItems() {
@@ -83,7 +86,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         // Enqueue all items first.
         // If the map is completed when replaying, mapResult != null and the items that have been skipped
         // will be skipped during replay.
-        var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
         for (int i = 0; i < items.size(); i++) {
             var index = i;
             var item = items.get(i);
@@ -91,8 +93,17 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             // the item will be skipped by ConcurrencyOperation if skip=true
             var skip = status == MapResult.MapResultItem.Status.SKIPPED;
 
+            // Determine iteration name: use itemNamer if provided, else default naming
+            String iterationName;
+            if (itemNamer != null) {
+                iterationName = itemNamer.apply(item, i);
+            } else {
+                var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
+                iterationName = branchPrefix + i;
+            }
+
             enqueueItem(
-                    branchPrefix + i,
+                    iterationName,
                     childCtx -> function.apply(item, index, childCtx),
                     itemResultType,
                     serDes,

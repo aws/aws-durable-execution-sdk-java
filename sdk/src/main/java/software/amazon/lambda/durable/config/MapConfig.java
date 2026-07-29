@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.config;
 
 import java.util.Objects;
+import java.util.function.BiFunction;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -15,12 +16,14 @@ public class MapConfig {
     private final CompletionConfig completionConfig;
     private final SerDes serDes;
     private final NestingType nestingType;
+    private final BiFunction<Object, Integer, String> itemNamer;
 
     private MapConfig(Builder builder) {
         this.maxConcurrency = Objects.requireNonNullElse(builder.maxConcurrency, Integer.MAX_VALUE);
         this.completionConfig = Objects.requireNonNullElse(builder.completionConfig, CompletionConfig.allCompleted());
         this.nestingType = Objects.requireNonNullElse(builder.nestingType, NestingType.NESTED);
         this.serDes = builder.serDes;
+        this.itemNamer = builder.itemNamer;
     }
 
     /** @return max concurrent items, or null for unlimited */
@@ -43,6 +46,20 @@ public class MapConfig {
         return nestingType;
     }
 
+    /**
+     * Returns the item namer function, which generates custom names for each map iteration.
+     *
+     * <p>When provided, the namer is called for each item with the item value and its index.
+     * The returned string is used as the operation name for that iteration, replacing the
+     * default "map-item-N" naming. The item parameter is typed as {@code Object} and will
+     * receive the map item at runtime.
+     *
+     * @return the item namer function, or null if not set
+     */
+    public BiFunction<Object, Integer, String> itemNamer() {
+        return itemNamer;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -52,15 +69,17 @@ public class MapConfig {
                 .maxConcurrency(maxConcurrency)
                 .completionConfig(completionConfig)
                 .serDes(serDes)
-                .nestingType(nestingType);
+                .nestingType(nestingType)
+                .itemNamer(itemNamer);
     }
 
     /** Builder for creating MapConfig instances. */
     public static class Builder {
-        public NestingType nestingType;
+        private NestingType nestingType;
         private Integer maxConcurrency;
         private CompletionConfig completionConfig;
         private SerDes serDes;
+        private BiFunction<Object, Integer, String> itemNamer;
 
         private Builder() {}
 
@@ -102,6 +121,20 @@ public class MapConfig {
          */
         public Builder nestingType(NestingType nestingType) {
             this.nestingType = nestingType;
+            return this;
+        }
+
+        /**
+         * Sets the item namer function for generating custom iteration names.
+         *
+         * <p>The namer receives the item (as {@code Object}) and its index, and returns a string to use as the
+         * operation name for that iteration. If null, the default "map-item-N" naming is used.
+         *
+         * @param itemNamer the item namer function, or null to use default naming
+         * @return this builder for method chaining
+         */
+        public Builder itemNamer(BiFunction<Object, Integer, String> itemNamer) {
+            this.itemNamer = itemNamer;
             return this;
         }
 
