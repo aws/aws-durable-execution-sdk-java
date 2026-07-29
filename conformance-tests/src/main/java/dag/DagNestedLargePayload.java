@@ -75,7 +75,7 @@ public class DagNestedLargePayload extends DurableHandler<Object, Map<String, Ob
                         r.getResult("inner").orElseThrow()));
 
         // The whole point: end this invocation so the next one replays both completed (offloaded) containers.
-        context.wait("wait", Duration.ofSeconds(2));
+        context.wait("settle", Duration.ofSeconds(2));
 
         // Recomputed from the REPLAYED inner DagResult after the resume. Equality with digestBefore proves the inner
         // per-task detail round-tripped intact through the offload of both containers.
