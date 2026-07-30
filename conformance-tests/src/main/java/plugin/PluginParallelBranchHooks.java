@@ -20,8 +20,8 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *
  * <p>A parallel operation named "parallel" with two branches (max-concurrency 1, so they run sequentially in index
  * order); each branch returns a constant directly. The plugin, filtering to parallel-branch operations, logs fn-start
- * and fn-end (with outcome) from the real user-function hooks, carrying the branch operation id and the parallel
- * parent id. These hooks run on the branch's own thread, so start-before-end order per branch is deterministic.
+ * and fn-end (with outcome) from the real user-function hooks, carrying the branch operation id and the parallel parent
+ * id. These hooks run on the branch's own thread, so start-before-end order per branch is deterministic.
  */
 @SuppressWarnings("deprecation")
 public class PluginParallelBranchHooks extends DurableHandler<Object, List<String>> {

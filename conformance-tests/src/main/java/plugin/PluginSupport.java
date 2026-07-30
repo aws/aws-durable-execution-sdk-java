@@ -5,16 +5,19 @@ package plugin;
 /**
  * Shared helpers for the plugin conformance handlers (requirements 10-8..10-18).
  *
- * <p>Every plugin captures the durable execution ARN from the invocation-start hook's info parameter and stamps it as
- * a top-level {@code durableExecutionArn} field on every stdout JSON record, so the runner's execution-scoped
- * CloudWatch filter ({@code $.durableExecutionArn = "<arn>"}) locates the records. These helpers only format that
- * field and classify operation types reported by the real SDK; no behavior is fabricated here.
+ * <p>Every plugin captures the durable execution ARN from the invocation-start hook's info parameter and stamps it as a
+ * top-level {@code durableExecutionArn} field on every stdout JSON record, so the runner's execution-scoped CloudWatch
+ * filter ({@code $.durableExecutionArn = "<arn>"}) locates the records. These helpers only format that field and
+ * classify operation types reported by the real SDK; no behavior is fabricated here.
  */
 final class PluginSupport {
 
     private PluginSupport() {}
 
-    /** Operation type token for step operations as reported by {@code OperationInfo#type()} (AWS SDK {@code OperationType}). */
+    /**
+     * Operation type token for step operations as reported by {@code OperationInfo#type()} (AWS SDK
+     * {@code OperationType}).
+     */
     static boolean isStep(String type) {
         return "STEP".equals(type);
     }

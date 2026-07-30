@@ -231,11 +231,52 @@ new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor);
 new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 ```
 
+### InvocationOtelPlugin
+
+```java
+// Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
+new InvocationOtelPlugin();
+
+// Custom tracer provider pipeline
+new InvocationOtelPlugin(tracerProviderBuilder);
+
+// Custom context extractor, MDC enabled
+new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor);
+
+// Full configuration
+new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
+```
+
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Not used by `new InvocationOtelPlugin()`; the default constructor uses the ADOT Java agent provider |
 | `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
 | `enableMdc` | If true, injects `trace_id`/`span_id`/`traceSampled` into SLF4J MDC | `true` |
+
+### ExecutionOtelPlugin
+
+The `ExecutionOtelPlugin` renders the Workflow span as the trace root with operations as siblings of the invocation span. It supports the same constructor options:
+
+```java
+// Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
+new ExecutionOtelPlugin();
+
+// Custom tracer provider pipeline
+new ExecutionOtelPlugin(tracerProviderBuilder);
+
+// Custom context extractor, MDC enabled
+new ExecutionOtelPlugin(tracerProviderBuilder, contextExtractor);
+
+// Full configuration
+new ExecutionOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc, workflowSpanName);
+```
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Not used by `new ExecutionOtelPlugin()`; the default constructor uses the ADOT Java agent provider |
+| `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
+| `enableMdc` | If true, injects `trace_id`/`span_id`/`traceSampled` into SLF4J MDC | `true` |
+| `workflowSpanName` | Name for the Workflow root span | `"Workflow"` |
 
 ## Known Limitations
 

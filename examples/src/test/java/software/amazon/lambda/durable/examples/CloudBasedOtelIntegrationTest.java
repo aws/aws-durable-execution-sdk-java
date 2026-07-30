@@ -127,35 +127,8 @@ class CloudBasedOtelIntegrationTest {
         // 2. Wait for X-Ray ingestion
         Thread.sleep(XRAY_INGESTION_DELAY.toMillis());
 
-        // 3. Query X-Ray for the trace
-        var traces = queryTracesWithRetry(startTime, Instant.now(), "otel-xray-step-example");
-
-        assertFalse(traces.isEmpty(), "Expected at least one trace in X-Ray after execution");
-
-        // Get full trace details (batch in groups of 5 — X-Ray API limit)
-        var traceIds = traces.stream().map(TraceSummary::id).toList();
-        var allTraces = new java.util.ArrayList<software.amazon.awssdk.services.xray.model.Trace>();
-        for (int i = 0; i < traceIds.size(); i += 5) {
-            var batch = traceIds.subList(i, Math.min(i + 5, traceIds.size()));
-            var batchResult = xrayClient.batchGetTraces(
-                    BatchGetTracesRequest.builder().traceIds(batch).build());
-            allTraces.addAll(batchResult.traces());
-        }
-
-        // Find the trace that contains our durable spans
-        var durableTrace = allTraces.stream()
-                .filter(trace -> trace.segments().stream().anyMatch(seg -> segmentContains(seg, "create-greeting")))
-                .findFirst()
-                .orElse(null);
-
-        assertNotNull(
-                durableTrace,
-                "Expected to find a trace with create-greeting segment. " + "Found " + traces.size()
-                        + " traces in the time window. Segment names: "
-                        + allTraces.stream()
-                                .flatMap(t -> t.segments().stream())
-                                .map(seg -> getSegmentName(seg))
-                                .collect(Collectors.joining(", ")));
+        // 3. Query X-Ray for the trace, retrying until durable spans appear
+        var durableTrace = queryTraceWithDurableSpans(startTime, "otel-xray-step-example", "create-greeting");
 
         // 5. Verify span structure
         var segmentDocuments =
@@ -198,31 +171,8 @@ class CloudBasedOtelIntegrationTest {
         // 2. Wait for X-Ray ingestion (extra time since multi-invocation takes longer)
         Thread.sleep(XRAY_INGESTION_DELAY.plus(Duration.ofSeconds(5)).toMillis());
 
-        // 3. Query X-Ray for the trace
-        var traces = queryTracesWithRetry(startTime, Instant.now(), "otel-xray-wait-example");
-
-        assertFalse(traces.isEmpty(), "Expected at least one trace in X-Ray after multi-invocation execution");
-
-        // Get full trace details (batch in groups of 5 — X-Ray API limit)
-        var traceIds = traces.stream().map(TraceSummary::id).toList();
-        var allTraces = new java.util.ArrayList<software.amazon.awssdk.services.xray.model.Trace>();
-        for (int i = 0; i < traceIds.size(); i += 5) {
-            var batch = traceIds.subList(i, Math.min(i + 5, traceIds.size()));
-            var batchResult = xrayClient.batchGetTraces(
-                    BatchGetTracesRequest.builder().traceIds(batch).build());
-            allTraces.addAll(batchResult.traces());
-        }
-
-        // Find the trace containing our durable spans
-        var durableTrace = allTraces.stream()
-                .filter(trace -> trace.segments().stream().anyMatch(seg -> segmentContains(seg, "before-wait")))
-                .findFirst()
-                .orElse(null);
-
-        assertNotNull(
-                durableTrace,
-                "Expected to find a trace with before-wait segment. " + "Found " + traces.size()
-                        + " traces in the time window.");
+        // 3. Query X-Ray for the trace, retrying until durable spans appear
+        var durableTrace = queryTraceWithDurableSpans(startTime, "otel-xray-wait-example", "before-wait");
 
         // 4. Verify multi-invocation trace structure
         var segmentDocuments =
@@ -329,5 +279,51 @@ class CloudBasedOtelIntegrationTest {
     /** Creates a brief summary of segment names for assertion error messages. */
     private static String summarizeSegments(List<String> segmentDocuments) {
         return extractSegmentNames(segmentDocuments).stream().collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    /**
+     * Queries X-Ray for a trace containing durable spans, retrying until the expected span appears or timeout is
+     * reached. Handles eventual consistency where the trace exists but OTLP-exported spans haven't been ingested yet.
+     */
+    private software.amazon.awssdk.services.xray.model.Trace queryTraceWithDurableSpans(
+            Instant startTime, String functionName, String expectedSpanName) throws InterruptedException {
+        var maxAttempts = 5;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            var traces = queryTracesWithRetry(startTime, Instant.now(), functionName);
+            if (traces.isEmpty()) {
+                fail("Expected at least one trace in X-Ray after execution of " + functionName);
+            }
+
+            var traceIds = traces.stream().map(TraceSummary::id).toList();
+            var allTraces = new java.util.ArrayList<software.amazon.awssdk.services.xray.model.Trace>();
+            for (int i = 0; i < traceIds.size(); i += 5) {
+                var batch = traceIds.subList(i, Math.min(i + 5, traceIds.size()));
+                var batchResult = xrayClient.batchGetTraces(
+                        BatchGetTracesRequest.builder().traceIds(batch).build());
+                allTraces.addAll(batchResult.traces());
+            }
+
+            var durableTrace = allTraces.stream()
+                    .filter(trace -> trace.segments().stream().anyMatch(seg -> segmentContains(seg, expectedSpanName)))
+                    .findFirst()
+                    .orElse(null);
+
+            if (durableTrace != null) {
+                return durableTrace;
+            }
+
+            if (attempt < maxAttempts) {
+                var segmentNames = allTraces.stream()
+                        .flatMap(t -> t.segments().stream())
+                        .map(CloudBasedOtelIntegrationTest::getSegmentName)
+                        .collect(Collectors.joining(", "));
+                System.out.println("⏳ Trace found but missing '" + expectedSpanName + "' span (attempt " + attempt + "/"
+                        + maxAttempts + "). Current segments: " + segmentNames + ". Retrying in 10s...");
+                Thread.sleep(XRAY_RETRY_DELAY.toMillis());
+            }
+        }
+
+        fail("Expected to find a trace with '" + expectedSpanName + "' span after " + maxAttempts + " attempts");
+        return null; // unreachable
     }
 }

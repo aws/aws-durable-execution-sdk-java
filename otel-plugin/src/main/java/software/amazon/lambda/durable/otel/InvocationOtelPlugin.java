@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.otel;
 
 import static software.amazon.lambda.durable.otel.SpanAttributes.*;
 
-import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
@@ -19,8 +18,6 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -200,7 +197,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private InvocationOtelPlugin(TracerProvider tracerProvider, DeterministicIdGenerator idGenerator) {
         this.idGenerator = idGenerator;
-        this.sdkTracerProvider = getSdkTracerProviderForFlush(tracerProvider);
+        this.sdkTracerProvider = OtelPluginSupport.getSdkTracerProviderForFlush(tracerProvider, "InvocationOtelPlugin");
         this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
 
         this.contextExtractor = new XRayContextExtractor();
@@ -634,80 +631,14 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     }
 
     private static ExtractedContext extractCurrentSpanContext() {
-        var spanContext = Span.current().getSpanContext();
-        if (!spanContext.isValid()) {
-            return null;
-        }
-        return new ExtractedContext(spanContext.getTraceId(), spanContext.getSpanId());
+        return OtelPluginSupport.extractCurrentSpanContext();
     }
 
     private static TracerProvider getDefaultTracerProvider() {
-        validateAutoConfigurationCustomizerProviderInstalled();
-
-        var globalTracerProvider = GlobalOpenTelemetry.getTracerProvider();
-        if (globalTracerProvider == TracerProvider.noop()) {
-            throw new IllegalStateException("InvocationOtelPlugin() requires GlobalOpenTelemetry to be initialized by "
-                    + "OtelPluginAutoConfigurationCustomizerProvider through the OpenTelemetry Java agent.");
-        }
-        logger.info(
-                "InvocationOtelPlugin initialized from existing GlobalOpenTelemetry tracer provider {}; assuming "
-                        + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider",
-                globalTracerProvider.getClass().getName());
-        return globalTracerProvider;
+        return OtelPluginSupport.getDefaultTracerProvider("InvocationOtelPlugin");
     }
 
     private static DeterministicIdGenerator createDefaultIdGenerator() {
-        // This is intentionally a separate instance from the SPI provider's generator. The Java agent extension and
-        // application may load this plugin in different class loaders, so DeterministicIdGenerator bridges invocation
-        // state through system properties that the SPI-installed generator can read when spans are started.
-        return new DeterministicIdGenerator();
-    }
-
-    private static void validateAutoConfigurationCustomizerProviderInstalled() {
-        if (OtelPluginAutoConfigurationState.isInstalled()) {
-            return;
-        }
-        throw new IllegalStateException(
-                "InvocationOtelPlugin() requires OtelPluginAutoConfigurationCustomizerProvider to be installed by the "
-                        + "OpenTelemetry Java agent. Package this plugin jar as an agent extension and set "
-                        + "OTEL_JAVAAGENT_EXTENSIONS or -Dotel.javaagent.extensions to that jar before constructing "
-                        + "InvocationOtelPlugin(). "
-                        + javaAgentExtensionsDiagnostic());
-    }
-
-    private static String javaAgentExtensionsDiagnostic() {
-        var propertyValue = System.getProperty("otel.javaagent.extensions");
-        var environmentValue = System.getenv("OTEL_JAVAAGENT_EXTENSIONS");
-        var configuredPath = propertyValue != null ? propertyValue : environmentValue;
-        return "otel.javaagent.extensions="
-                + valueOrUnset(propertyValue)
-                + ", OTEL_JAVAAGENT_EXTENSIONS="
-                + valueOrUnset(environmentValue)
-                + ", configured extension path exists="
-                + extensionPathExists(configuredPath);
-    }
-
-    private static String valueOrUnset(String value) {
-        return value != null ? value : "<unset>";
-    }
-
-    private static boolean extensionPathExists(String configuredPath) {
-        if (configuredPath == null || configuredPath.isBlank()) {
-            return false;
-        }
-        var firstPath = configuredPath.split(",", 2)[0];
-        return Files.exists(Path.of(firstPath));
-    }
-
-    private static SdkTracerProvider getSdkTracerProviderForFlush(TracerProvider tracerProvider) {
-        if (tracerProvider instanceof SdkTracerProvider sdkTracerProvider) {
-            return sdkTracerProvider;
-        }
-        logger.info(
-                "InvocationOtelPlugin forceFlush is not available because GlobalOpenTelemetry provider {} is not an "
-                        + "SdkTracerProvider visible to the application class loader; spans will rely on the "
-                        + "provider's own flushing.",
-                tracerProvider.getClass().getName());
-        return null;
+        return OtelPluginSupport.createDefaultIdGenerator();
     }
 }

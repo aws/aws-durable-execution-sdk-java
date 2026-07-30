@@ -14,6 +14,7 @@ import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.resources.Resource;
@@ -22,8 +23,10 @@ import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.semconv.ServiceAttributes;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -86,7 +89,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
     private static final String SERVICE_NAME = "workflow";
 
-    private final SdkTracerProvider tracerProvider;
+    private final SdkTracerProvider sdkTracerProvider;
     private final Tracer tracer;
     private final DeterministicIdGenerator idGenerator;
     private final ContextExtractor contextExtractor;
@@ -112,10 +115,23 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * Creates a Workflow-rooted OTel plugin with default settings: X-Ray context extraction, MDC enabled, root span
      * named {@code "Workflow"}.
      *
+     * <p>Uses the provided tracer provider builder. For ADOT Java agent usage, prefer {@link #ExecutionOtelPlugin()}
+     * with the plugin jar configured through {@code OTEL_JAVAAGENT_EXTENSIONS}.
+     *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
     public ExecutionOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
         this(tracerProviderBuilder, new XRayContextExtractor(), true, DEFAULT_WORKFLOW_SPAN_NAME);
+    }
+
+    /**
+     * Creates a Workflow-rooted OTel plugin with default settings: X-Ray context extraction and MDC enabled.
+     *
+     * <p>Uses {@code GlobalOpenTelemetry} directly and assumes deterministic ID generation was installed by
+     * {@code OtelPluginAutoConfigurationCustomizerProvider}.
+     */
+    public ExecutionOtelPlugin() {
+        this(getDefaultTracerProvider(), createDefaultIdGenerator());
     }
 
     /**
@@ -144,16 +160,26 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             String workflowSpanName) {
         this.idGenerator = new DeterministicIdGenerator();
 
-        // Set service.name so this plugin's spans group under a distinct "workflow" node in X-Ray/OTLP backends
-        // (parity with InvocationOtelPlugin, which sets "invocation"). Applies to all spans from this provider.
+        // Set service.name so this plugin's spans group under a distinct "workflow" node in X-Ray/OTLP backends.
         var resource = Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, SERVICE_NAME));
         tracerProviderBuilder.addResource(resource);
 
-        this.tracerProvider = tracerProviderBuilder.setIdGenerator(idGenerator).build();
-        this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
+        this.sdkTracerProvider =
+                tracerProviderBuilder.setIdGenerator(idGenerator).build();
+        this.tracer = sdkTracerProvider.get(INSTRUMENTATION_NAME);
         this.contextExtractor = contextExtractor;
         this.enableMdc = enableMdc;
         this.workflowSpanName = workflowSpanName != null ? workflowSpanName : DEFAULT_WORKFLOW_SPAN_NAME;
+    }
+
+    private ExecutionOtelPlugin(TracerProvider tracerProvider, DeterministicIdGenerator idGenerator) {
+        this.idGenerator = idGenerator;
+        this.sdkTracerProvider = OtelPluginSupport.getSdkTracerProviderForFlush(tracerProvider, "ExecutionOtelPlugin");
+        this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
+
+        this.contextExtractor = new XRayContextExtractor();
+        this.enableMdc = true;
+        this.workflowSpanName = DEFAULT_WORKFLOW_SPAN_NAME;
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────
@@ -168,8 +194,13 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // Extract trace context from environment (X-Ray header). Only the trace ID is used — the Workflow span is a
         // true root, so the X-Ray parent span ID is intentionally not used for parenting (unlike InvocationOtelPlugin).
         var extractedContext = contextExtractor.extract();
+        if (extractedContext == null) {
+            extractedContext = extractCurrentSpanContext();
+        }
         if (extractedContext != null) {
             idGenerator.setExtractedTraceId(extractedContext.traceId());
+        } else {
+            idGenerator.setExtractedTraceId(null);
         }
 
         // Workflow root span — deterministic span ID from the ARN, no parent. Recreated every invocation with the
@@ -195,10 +226,21 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         }
 
         invocationSpan = spanBuilder.startSpan();
+
+        // Inject MDC on the handler thread so handler-level logs (between steps) have trace context.
+        if (enableMdc) {
+            var traceId = idGenerator.generateTraceId();
+            MDC.put(MdcSpanEnricher.MDC_TRACE_ID, traceId);
+        }
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
+        // Clear invocation-level MDC
+        if (enableMdc) {
+            MdcSpanEnricher.clear();
+        }
+
         // Reset per-invocation operation state WITHOUT ending open operation spans. Matching the JS/Python
         // ExecutionOtelPlugin, an operation span is only ended in onOperationEnd. An operation still open when the
         // invocation suspends is left un-exported here and is re-materialized once (with its deterministic span ID,
@@ -248,9 +290,11 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         }
 
         // Flush spans before Lambda freezes
-        var flushResult = tracerProvider.forceFlush().join(5, java.util.concurrent.TimeUnit.SECONDS);
-        if (!flushResult.isSuccess()) {
-            logger.warn("OTel span flush failed or timed out — some spans may be lost");
+        if (sdkTracerProvider != null) {
+            var flushResult = sdkTracerProvider.forceFlush().join(5, TimeUnit.SECONDS);
+            if (!flushResult.isSuccess()) {
+                logger.warn("OTel span flush failed or timed out — some spans may be lost");
+            }
         }
     }
 
@@ -420,10 +464,6 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             scope.close();
         }
 
-        if (enableMdc) {
-            MdcSpanEnricher.clear();
-        }
-
         // CONTEXT operations don't have attempt spans — scope cleanup is all we need
         if ("CONTEXT".equals(info.type())) {
             return;
@@ -529,5 +569,17 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static String attemptKey(String operationId, Integer attempt) {
         return operationId + "-" + (attempt != null ? attempt : "ctx");
+    }
+
+    private static ExtractedContext extractCurrentSpanContext() {
+        return OtelPluginSupport.extractCurrentSpanContext();
+    }
+
+    private static TracerProvider getDefaultTracerProvider() {
+        return OtelPluginSupport.getDefaultTracerProvider("ExecutionOtelPlugin");
+    }
+
+    private static DeterministicIdGenerator createDefaultIdGenerator() {
+        return OtelPluginSupport.createDefaultIdGenerator();
     }
 }
