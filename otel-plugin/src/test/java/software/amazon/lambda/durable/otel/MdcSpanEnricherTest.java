@@ -64,12 +64,17 @@ class MdcSpanEnricherTest {
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
 
-        // MDC should be cleared after onUserFunctionEnd
-        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
-        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
-        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
+        // After onUserFunctionEnd: span_id is cleared, but trace_id remains for handler-level logs between steps
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID), "trace_id should persist between steps");
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID), "span_id should be cleared after step");
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED), "trace_flags should persist between steps");
 
         plugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec-mdc-test", true, InvocationStatus.SUCCEEDED, null));
+
+        // After onInvocationEnd: all MDC fields are cleared
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
     }
 }
