@@ -13,10 +13,10 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
 /**
  * Shared instrumentation plugin for the plugin conformance suite.
  *
- * <p>Emits lifecycle log lines with a configurable prefix (e.g. {@code CONFPLUGIN}, {@code CONFPLUGIN-A}) so one
- * plugin — or two, for the multiple-plugins case — can be registered on a handler. Operation- and attempt-level hooks
- * are filtered to step-type operations to match the requirement vocabulary. All lines are emitted from the real SDK
- * plugin hooks; nothing is hand-rolled.
+ * <p>Emits lifecycle log lines with a configurable prefix (e.g. {@code CONFPLUGIN}, {@code CONFPLUGIN-A}) so one plugin
+ * — or two, for the multiple-plugins case — can be registered on a handler. Operation- and attempt-level hooks are
+ * filtered to step-type operations to match the requirement vocabulary. All lines are emitted from the real SDK plugin
+ * hooks; nothing is hand-rolled.
  */
 @SuppressWarnings("deprecation")
 public class ConformanceLoggingPlugin implements DurableExecutionPlugin {

@@ -11,9 +11,9 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 /**
  * 10-7: Plugin invocation-end hook receives FAILED status when execution fails.
  *
- * <p>A single step that always throws, configured with no retries and {@link ConformanceLoggingPlugin}. The plugin
- * logs {@code invocation-start first=true}; the step throws, no retry is attempted, and the plugin's invocation-end
- * hook fires with {@code status=FAILED}.
+ * <p>A single step that always throws, configured with no retries and {@link ConformanceLoggingPlugin}. The plugin logs
+ * {@code invocation-start first=true}; the step throws, no retry is attempted, and the plugin's invocation-end hook
+ * fires with {@code status=FAILED}.
  */
 @SuppressWarnings("deprecation")
 public class PluginTerminalFailure extends DurableHandler<Object, String> {

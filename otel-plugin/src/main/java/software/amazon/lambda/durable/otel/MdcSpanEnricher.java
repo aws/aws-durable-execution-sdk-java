@@ -9,13 +9,13 @@ import org.slf4j.MDC;
  * Injects OTel trace/span IDs into SLF4J MDC for log-trace correlation.
  *
  * <p>When used with structured logging (Log4j2 JSON, Logback JSON), these MDC fields appear in every log line, enabling
- * tools like CloudWatch Logs Insights and Datadog to correlate logs with traces.
+ * tools like CloudWatch Application Signals and Datadog to correlate logs with traces.
  *
  * <p>MDC keys injected:
  *
  * <ul>
- *   <li>{@code traceId} — the W3C trace ID (32 hex chars)
- *   <li>{@code spanId} — the current span ID (16 hex chars)
+ *   <li>{@code trace_id} — the W3C trace ID (32 hex chars)
+ *   <li>{@code span_id} — the current span ID (16 hex chars)
  *   <li>{@code traceSampled} — whether the trace is sampled (true/false)
  * </ul>
  *
@@ -28,8 +28,8 @@ import org.slf4j.MDC;
 @Deprecated
 public final class MdcSpanEnricher {
 
-    public static final String MDC_TRACE_ID = "traceId";
-    public static final String MDC_SPAN_ID = "spanId";
+    public static final String MDC_TRACE_ID = "trace_id";
+    public static final String MDC_SPAN_ID = "span_id";
     public static final String MDC_TRACE_SAMPLED = "traceSampled";
 
     private MdcSpanEnricher() {}

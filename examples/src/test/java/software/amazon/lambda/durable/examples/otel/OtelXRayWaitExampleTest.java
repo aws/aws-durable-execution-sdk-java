@@ -4,12 +4,24 @@ package software.amazon.lambda.durable.examples.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class OtelXRayWaitExampleTest {
+
+    @BeforeEach
+    void setUp() {
+        OtelXRayExampleTestSupport.installGlobalOpenTelemetry();
+    }
+
+    @AfterEach
+    void tearDown() {
+        OtelXRayExampleTestSupport.resetGlobalOpenTelemetry();
+    }
 
     @Test
     void testFirstInvocation_suspendsOnWait() {

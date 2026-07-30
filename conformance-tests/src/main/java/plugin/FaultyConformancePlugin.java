@@ -35,23 +35,23 @@ public class FaultyConformancePlugin implements DurableExecutionPlugin {
     @Override
     public void onInvocationStart(InvocationInfo info) {
         this.executionArn = info.durableExecutionArn();
-        System.out.println(String.format(
-                "{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"invocation-start\"%s}", arnField()));
+        System.out.println(
+                String.format("{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"invocation-start\"%s}", arnField()));
         throw new RuntimeException("faulty invocation-start");
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
-        System.out.println(String.format(
-                "{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"invocation-end\"%s}", arnField()));
+        System.out.println(
+                String.format("{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"invocation-end\"%s}", arnField()));
         throw new RuntimeException("faulty invocation-end");
     }
 
     @Override
     public void onOperationStart(OperationInfo info) {
         if (isStep(info.type())) {
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"operation-start\"%s}", arnField()));
+            System.out.println(
+                    String.format("{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"operation-start\"%s}", arnField()));
             throw new RuntimeException("faulty operation-start");
         }
     }
@@ -59,8 +59,8 @@ public class FaultyConformancePlugin implements DurableExecutionPlugin {
     @Override
     public void onOperationEnd(OperationEndInfo info) {
         if (isStep(info.type())) {
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"operation-end\"%s}", arnField()));
+            System.out.println(
+                    String.format("{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"operation-end\"%s}", arnField()));
             throw new RuntimeException("faulty operation-end");
         }
     }
@@ -68,8 +68,8 @@ public class FaultyConformancePlugin implements DurableExecutionPlugin {
     @Override
     public void onUserFunctionStart(UserFunctionStartInfo info) {
         if (isStep(info.type())) {
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"attempt-start\"%s}", arnField()));
+            System.out.println(
+                    String.format("{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"attempt-start\"%s}", arnField()));
             throw new RuntimeException("faulty attempt-start");
         }
     }
@@ -77,8 +77,8 @@ public class FaultyConformancePlugin implements DurableExecutionPlugin {
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
         if (isStep(info.type())) {
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"attempt-end\"%s}", arnField()));
+            System.out.println(
+                    String.format("{\"plugin\": \"CONFPLUGIN-FAULTY\", \"hook\": \"attempt-end\"%s}", arnField()));
             throw new RuntimeException("faulty attempt-end");
         }
     }
