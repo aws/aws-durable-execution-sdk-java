@@ -53,6 +53,14 @@ public class MapConfig {
      * used as the operation name for that iteration, replacing the default {@code "<mapName>-iteration-N"} naming. The
      * item parameter is typed as {@code Object} and will receive the map item at runtime.
      *
+     * <p>The returned name must satisfy the same constraints as any other operation name: non-empty, within the maximum
+     * operation-name length, and printable ASCII only. An invalid name fails fast with {@link IllegalArgumentException}
+     * when the iteration is enqueued, rather than failing later at checkpoint time. Returning {@code null} is permitted
+     * and falls back to the default naming for that iteration.
+     *
+     * <p>The namer must be deterministic: replay regenerates iteration names and compares them against the checkpointed
+     * names, so a namer whose output varies between invocations risks a non-deterministic replay failure.
+     *
      * @return the item namer function, or null if not set
      */
     public BiFunction<Object, Integer, String> itemNamer() {
@@ -127,7 +135,12 @@ public class MapConfig {
          * Sets the item namer function for generating custom iteration names.
          *
          * <p>The namer receives the item (as {@code Object}) and its index, and returns a string to use as the
-         * operation name for that iteration. If null, the default {@code "<mapName>-iteration-N"} naming is used.
+         * operation name for that iteration. If the namer is null, or returns null for an item, the default
+         * {@code "<mapName>-iteration-N"} naming is used for that iteration.
+         *
+         * <p>A non-null name must be non-empty, within the maximum operation-name length, and printable ASCII only;
+         * otherwise an {@link IllegalArgumentException} is thrown when the iteration is enqueued. The namer must also
+         * be deterministic across replays.
          *
          * @param itemNamer the item namer function, or null to use default naming
          * @return this builder for method chaining

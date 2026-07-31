@@ -1982,7 +1982,7 @@ class MapIntegrationTest {
     }
 
     @Test
-    void testItemNamerReturningNullPassesNullThroughAsOperationName() {
+    void testItemNamerReturningNullFallsBackToDefaultNaming() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var result = context.map(
                     "null-namer",
@@ -2000,15 +2000,66 @@ class MapIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("A,B", result.getResult(String.class));
 
-        // A namer that returns null does NOT fall back to the default naming -- the null is
-        // passed through as the iteration's operation name. Pinned so the behavior is visible
-        // and any future decision to validate or fall back is a deliberate, tested change.
+        // A namer returning null must not checkpoint a nameless iteration; it falls back to the
+        // default naming so iterations stay addressable by name.
+        assertNotNull(result.getOperation("null-namer-iteration-0"));
+        assertNotNull(result.getOperation("null-namer-iteration-1"));
         assertEquals(
-                2,
+                0,
                 result.getOperations().stream()
                         .filter(op -> op.getName() == null)
                         .count(),
-                "null from the namer is used as-is");
-        assertNull(result.getOperation("null-namer-iteration-0"), "no fallback to default naming");
+                "no iteration should be left without a name");
+    }
+
+    @Test
+    void testItemNamerReturningPartialNullFallsBackPerItem() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "partial-namer",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder()
+                            .maxConcurrency(1)
+                            .itemNamer((item, index) -> index == 0 ? "named-first" : null)
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // The fallback is per-item, not all-or-nothing.
+        assertNotNull(result.getOperation("named-first"));
+        assertNotNull(result.getOperation("partial-namer-iteration-1"));
+    }
+
+    @Test
+    void testItemNamerReturningInvalidNameFailsFast() {
+        // Empty, over-long and non-ASCII names are rejected the same way the map's own name is,
+        // instead of being sent to the backend and failing at checkpoint time.
+        assertInvalidItemNamerName(index -> "");
+        assertInvalidItemNamerName(index -> "n\u00e9me-with-non-ascii");
+        assertInvalidItemNamerName(index -> "x".repeat(1024));
+    }
+
+    private void assertInvalidItemNamerName(java.util.function.Function<Integer, String> nameFor) {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "invalid-namer",
+                    List.of("a"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder()
+                            .maxConcurrency(1)
+                            .itemNamer((item, index) -> nameFor.apply(index))
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertNotEquals(
+                ExecutionStatus.SUCCEEDED, result.getStatus(), "an invalid custom iteration name must not succeed");
     }
 }

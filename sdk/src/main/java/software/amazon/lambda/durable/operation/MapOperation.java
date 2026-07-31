@@ -26,6 +26,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
+import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
  * Executes a map operation: applies a function to each item in a collection concurrently, with each item running in its
@@ -93,13 +94,17 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             // the item will be skipped by ConcurrencyOperation if skip=true
             var skip = status == MapResult.MapResultItem.Status.SKIPPED;
 
-            // Determine iteration name: use itemNamer if provided, else default naming
-            String iterationName;
-            if (itemNamer != null) {
-                iterationName = itemNamer.apply(item, i);
-            } else {
+            // Determine the iteration name. A configured itemNamer takes precedence, but a null
+            // result falls back to the default naming rather than checkpointing a nameless
+            // iteration. Custom names skip the validation that DurableContextImpl.mapAsync
+            // applies to the map's own name, so validate here to fail fast at map time instead
+            // of at checkpoint time.
+            String iterationName = itemNamer == null ? null : itemNamer.apply(item, i);
+            if (iterationName == null) {
                 var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
                 iterationName = branchPrefix + i;
+            } else {
+                ParameterValidator.validateOperationName(iterationName);
             }
 
             enqueueItem(
