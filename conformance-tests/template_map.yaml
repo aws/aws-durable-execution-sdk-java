@@ -59,8 +59,6 @@ Resources:
         reason: "items-only form (no name): every Java context.map overload requires a name argument"
       - id: "9-6"
         reason: "throw-if-error rethrow: MapResult has no throw-if-error and map exposes no per-item futures"
-      - id: "9-13"
-        reason: "custom item namer: Java MapConfig has no item-namer field"
       - id: "9-14"
         reason: "custom per-item serdes: Java MapConfig has a single serDes (no separate item-level serdes distinct from the result serde)"
       - id: "9-19"
@@ -87,6 +85,22 @@ Resources:
       CodeUri: .
       Handler: map.MapItemIndex
       Description: Map function receives item and index
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  MapItemNamer:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["9-13"]
+    Properties:
+      CodeUri: .
+      Handler: map.MapItemNamer
+      Description: Map with a custom item namer
       Role:
         Fn::GetAtt:
         - DurableFunctionRole
