@@ -69,12 +69,15 @@ public class PluginWaitReplayFlag extends DurableHandler<Object, List<String>> {
             if (!PluginSupport.isWait(info.type())) {
                 return;
             }
+            // pending := non-terminal at hook time, from the hook info's own operation state (no end timestamp
+            // yet) — no cross-invocation state.
             System.out.println(String.format(
                     "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-start\", \"type\": \"%s\", \"name\": \"%s\", "
-                            + "\"replay\": %b%s}",
+                            + "\"replay\": %b, \"pending\": %b%s}",
                     info.type().toUpperCase(Locale.ROOT),
                     info.name(),
                     info.isReplay(),
+                    info.endTimestamp() == null,
                     PluginSupport.arnField(executionArn)));
         }
 

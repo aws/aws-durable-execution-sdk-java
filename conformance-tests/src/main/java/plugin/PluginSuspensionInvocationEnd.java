@@ -48,9 +48,12 @@ public class PluginSuspensionInvocationEnd extends DurableHandler<Object, String
         public void onInvocationEnd(InvocationEndInfo info) {
             InvocationStatus status = info.invocationStatus();
             boolean terminal = status == InvocationStatus.SUCCEEDED || status == InvocationStatus.FAILED;
+            // Same-invocation flag from the SDK's own end-hook info: ties this record to the invocation that
+            // emitted it.
             System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"invocation-end\", \"terminal\": %b, \"status\": \"%s\"%s}",
-                    terminal, status.name(), PluginSupport.arnField(executionArn)));
+                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"invocation-end\", \"first\": %b, \"terminal\": %b, "
+                            + "\"status\": \"%s\"%s}",
+                    info.isFirstInvocation(), terminal, status.name(), PluginSupport.arnField(executionArn)));
         }
     }
 }
