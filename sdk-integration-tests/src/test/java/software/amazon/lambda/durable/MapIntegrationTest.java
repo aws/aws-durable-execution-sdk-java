@@ -2044,6 +2044,33 @@ class MapIntegrationTest {
         assertInvalidItemNamerName(index -> "x".repeat(1024));
     }
 
+    @Test
+    void testTypedItemNamerReceivesDomainObjectWithoutCast() {
+        record Order(String id) {}
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            // MapConfig<Order> flows through map(...) and the namer sees Order, not Object.
+            MapConfig<Order> config = MapConfig.<Order>builder()
+                    .maxConcurrency(1)
+                    .itemNamer((order, index) -> "order-" + order.id())
+                    .build();
+
+            var result = context.map(
+                    "typed-map",
+                    List.of(new Order("A17"), new Order("B42")),
+                    String.class,
+                    (order, index, ctx) -> order.id().toLowerCase(),
+                    config);
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("a17,b42", result.getResult(String.class));
+        assertNotNull(result.getOperation("order-A17"));
+        assertNotNull(result.getOperation("order-B42"));
+    }
+
     private void assertInvalidItemNamerName(java.util.function.Function<Integer, String> nameFor) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var result = context.map(

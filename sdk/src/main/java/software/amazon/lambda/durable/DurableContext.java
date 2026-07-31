@@ -482,24 +482,37 @@ public interface DurableContext extends BaseContext {
                         items,
                         TypeToken.get(resultType),
                         function,
-                        MapConfig.builder().build())
+                        MapConfig.<I>builder().build())
                 .get();
     }
 
     default <I, O> MapResult<O> map(
-            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
+            String name,
+            Collection<I> items,
+            Class<O> resultType,
+            MapFunction<I, O> function,
+            MapConfig<? super I> config) {
         return mapAsync(name, items, TypeToken.get(resultType), function, config)
                 .get();
     }
 
     default <I, O> MapResult<O> map(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
-        return mapAsync(name, items, resultType, function, MapConfig.builder().build())
+        return mapAsync(
+                        name,
+                        items,
+                        resultType,
+                        function,
+                        MapConfig.<I>builder().build())
                 .get();
     }
 
     default <I, O> MapResult<O> map(
-            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
+            String name,
+            Collection<I> items,
+            TypeToken<O> resultType,
+            MapFunction<I, O> function,
+            MapConfig<? super I> config) {
         return mapAsync(name, items, resultType, function, config).get();
     }
 
@@ -510,21 +523,30 @@ public interface DurableContext extends BaseContext {
                 items,
                 TypeToken.get(resultType),
                 function,
-                MapConfig.builder().build());
+                MapConfig.<I>builder().build());
     }
 
     default <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function, MapConfig config) {
+            String name,
+            Collection<I> items,
+            Class<O> resultType,
+            MapFunction<I, O> function,
+            MapConfig<? super I> config) {
         return mapAsync(name, items, TypeToken.get(resultType), function, config);
     }
 
     default <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function) {
-        return mapAsync(name, items, resultType, function, MapConfig.builder().build());
+        return mapAsync(
+                name, items, resultType, function, MapConfig.<I>builder().build());
     }
 
     <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config);
+            String name,
+            Collection<I> items,
+            TypeToken<O> resultType,
+            MapFunction<I, O> function,
+            MapConfig<? super I> config);
 
     /**
      * Creates a {@link ParallelDurableFuture} for executing multiple branches concurrently with default config

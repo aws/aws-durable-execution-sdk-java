@@ -48,7 +48,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
-    private final BiFunction<Object, Integer, String> itemNamer;
+    private final BiFunction<? super I, Integer, String> itemNamer;
     private final List<String> iterationNames;
     private volatile MapResult<O> cachedResult;
 
@@ -57,7 +57,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             List<I> items,
             DurableContext.MapFunction<I, O> function,
             TypeToken<O> itemResultType,
-            MapConfig config,
+            MapConfig<? super I> config,
             DurableContextImpl durableContext) {
         super(
                 operationIdentifier,

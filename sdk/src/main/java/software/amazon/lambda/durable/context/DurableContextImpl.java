@@ -254,7 +254,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     public <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
+            String name,
+            Collection<I> items,
+            TypeToken<O> resultType,
+            MapFunction<I, O> function,
+            MapConfig<? super I> config) {
         Objects.requireNonNull(items, "items cannot be null");
         Objects.requireNonNull(function, "function cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
