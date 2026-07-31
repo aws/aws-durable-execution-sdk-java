@@ -82,7 +82,7 @@ public class MapConfig {
 
     /** Builder for creating MapConfig instances. */
     public static class Builder {
-        private NestingType nestingType;
+        public NestingType nestingType;
         private Integer maxConcurrency;
         private CompletionConfig completionConfig;
         private SerDes serDes;

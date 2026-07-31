@@ -49,6 +49,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
     private final BiFunction<Object, Integer, String> itemNamer;
+    private final List<String> iterationNames;
     private volatile MapResult<O> cachedResult;
 
     public MapOperation(
@@ -77,6 +78,33 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
         this.itemNamer = config.itemNamer();
+        // Resolved here, before execute() checkpoints START and fires the start plugin hook. If the
+        // namer throws or yields an invalid name, failing in the constructor leaves no half-open
+        // operation behind; failing later would leave a permanently STARTED map and an unbalanced
+        // plugin lifecycle whenever the caller catches the exception.
+        this.iterationNames = resolveIterationNames();
+    }
+
+    /**
+     * Resolves the operation name for every iteration.
+     *
+     * <p>A configured itemNamer takes precedence, but a null result falls back to the default naming rather than
+     * checkpointing a nameless iteration. Custom names skip the validation that {@code DurableContextImpl.mapAsync}
+     * applies to the map's own name, so they are validated here.
+     */
+    private List<String> resolveIterationNames() {
+        var names = new ArrayList<String>(items.size());
+        var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
+        for (int i = 0; i < items.size(); i++) {
+            var name = itemNamer == null ? null : itemNamer.apply(items.get(i), i);
+            if (name == null) {
+                name = branchPrefix + i;
+            } else {
+                ParameterValidator.validateOperationName(name);
+            }
+            names.add(name);
+        }
+        return List.copyOf(names);
     }
 
     private void addAllItems() {
@@ -94,21 +122,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             // the item will be skipped by ConcurrencyOperation if skip=true
             var skip = status == MapResult.MapResultItem.Status.SKIPPED;
 
-            // Determine the iteration name. A configured itemNamer takes precedence, but a null
-            // result falls back to the default naming rather than checkpointing a nameless
-            // iteration. Custom names skip the validation that DurableContextImpl.mapAsync
-            // applies to the map's own name, so validate here to fail fast at map time instead
-            // of at checkpoint time.
-            String iterationName = itemNamer == null ? null : itemNamer.apply(item, i);
-            if (iterationName == null) {
-                var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
-                iterationName = branchPrefix + i;
-            } else {
-                ParameterValidator.validateOperationName(iterationName);
-            }
-
             enqueueItem(
-                    iterationName,
+                    iterationNames.get(i),
                     childCtx -> function.apply(item, index, childCtx),
                     itemResultType,
                     serDes,

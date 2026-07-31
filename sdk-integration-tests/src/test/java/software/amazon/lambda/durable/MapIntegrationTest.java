@@ -2062,4 +2062,45 @@ class MapIntegrationTest {
         assertNotEquals(
                 ExecutionStatus.SUCCEEDED, result.getStatus(), "an invalid custom iteration name must not succeed");
     }
+
+    @Test
+    void testCaughtItemNamerValidationLeavesNoHalfOpenMap() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            // The handler swallows the validation failure, which is the case that would previously
+            // strand a STARTED map with an unbalanced plugin lifecycle.
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> context.map(
+                            "caught-invalid",
+                            List.of("a", "b"),
+                            String.class,
+                            (item, index, ctx) -> item.toUpperCase(),
+                            MapConfig.builder()
+                                    .maxConcurrency(1)
+                                    .itemNamer((item, index) -> "")
+                                    .build()));
+
+            // The execution must still be able to make progress afterwards.
+            var recovered = context.map(
+                    "recovered",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder().maxConcurrency(1).build());
+            return String.join(",", recovered.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("A,B", result.getResult(String.class));
+
+        // The rejected map must not have checkpointed anything at all.
+        assertNull(result.getOperation("caught-invalid"), "failed map should not be checkpointed");
+        assertNotNull(result.getOperation("recovered"));
+
+        // Replay must also succeed, proving no STARTED operation was left behind.
+        var replay = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertNull(replay.getOperation("caught-invalid"));
+    }
 }
