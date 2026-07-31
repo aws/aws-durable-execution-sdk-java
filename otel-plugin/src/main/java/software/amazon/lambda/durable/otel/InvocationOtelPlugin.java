@@ -370,6 +370,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             if (info.error() != null) {
                 span.setStatus(StatusCode.ERROR, info.error().getMessage());
                 span.recordException(info.error());
+            } else {
+                span.setStatus(StatusCode.OK);
             }
             span.end();
         } else {
@@ -413,6 +415,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             if (info.error() != null) {
                 continuationSpan.setStatus(StatusCode.ERROR, info.error().getMessage());
                 continuationSpan.recordException(info.error());
+            } else {
+                continuationSpan.setStatus(StatusCode.OK);
             }
 
             continuationSpan.end();
@@ -508,6 +512,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         if (!info.succeeded() && info.error() != null) {
             span.setStatus(StatusCode.ERROR, info.error().getMessage());
             span.recordException(info.error());
+        } else if (info.succeeded()) {
+            span.setStatus(StatusCode.OK);
         }
 
         if (info.endTimestamp() != null) {

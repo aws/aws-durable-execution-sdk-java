@@ -272,6 +272,41 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void userFunctionEnd_withSuccess_setsOkOnAttemptSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("attempt"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(StatusCode.OK, attemptSpan.getStatus().getStatusCode());
+    }
+
+    @Test
+    void operationEnd_withSuccess_setsOkOnOperationSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+
+        plugin.onOperationStart(new OperationInfo("op-1", "step-ok", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step-ok", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> "step-ok".equals(s.getName()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(StatusCode.OK, operationSpan.getStatus().getStatusCode());
+    }
+
+    @Test
     void fullLifecycle_producesCorrectSpanHierarchy() {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
         plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
