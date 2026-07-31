@@ -72,7 +72,7 @@ jobs:
       - name: Build artifacts
         run: mvn clean install -q -Dlog4j2.level=WARN -Dlog4j.configurationFile=log4j2-quiet.xml --no-transfer-progress
 
-      - name: Sign and publish to Maven Central
+      - name: Sign and upload to Sonatype Central Portal
         run: bash .github/scripts/maven_publish.sh
         env:
           MVN_GPG_KEYS_GPGPRIVATEKEY: ${{ secrets.MVN_GPG_KEYS_GPGPRIVATEKEY }}
