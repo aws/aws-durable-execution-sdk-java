@@ -206,6 +206,19 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     /**
+     * Looks up a checkpointed operation without touching replay state.
+     *
+     * <p>Unlike {@link #getOperationAndUpdateReplayState(String)} this performs no REPLAY to EXECUTION transition, so
+     * it is safe to call for read-only validation of operations that are not being executed.
+     *
+     * @param operationId the globally unique operation ID
+     * @return the checkpointed operation, or null if not present
+     */
+    public Operation peekOperation(String operationId) {
+        return operationStorage.get(operationId);
+    }
+
+    /**
      * Checks whether there are any cached operations for the given parent context ID. Used to initialize per-context
      * replay state — a context starts in replay mode if the ExecutionManager has cached operations belonging to it.
      *

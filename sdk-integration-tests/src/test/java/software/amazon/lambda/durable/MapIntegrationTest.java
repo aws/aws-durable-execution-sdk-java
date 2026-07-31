@@ -2071,6 +2071,63 @@ class MapIntegrationTest {
         assertNotNull(result.getOperation("order-B42"));
     }
 
+    @Test
+    void testChangedItemNamerOnCachedReplayIsRejected() {
+        // A completed map with a small result replays from the payload: children are enqueued but
+        // never executed, so per-operation replay validation never compares their names. The map
+        // must still reject names that changed between invocations.
+        var invocation = new AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var suffix = invocation.get() == 0 ? "first" : "second";
+            var result = context.map(
+                    "changing-namer",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.<String>builder()
+                            .maxConcurrency(1)
+                            .itemNamer((item, index) -> item + "-" + suffix)
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var first = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+        assertNotNull(first.getOperation("a-first"));
+        assertNotNull(first.getOperation("b-first"));
+
+        // Second invocation regenerates different names for the same checkpointed iterations.
+        invocation.incrementAndGet();
+        var replay = runner.run("test");
+        assertNotEquals(
+                ExecutionStatus.SUCCEEDED,
+                replay.getStatus(),
+                "a changed itemNamer must not replay silently under the checkpointed names");
+    }
+
+    @Test
+    void testStableItemNamerReplaysCleanlyFromCache() {
+        // Control for the test above: an unchanged namer must still replay from cache without error.
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "stable-namer",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.<String>builder()
+                            .maxConcurrency(1)
+                            .itemNamer((item, index) -> item + "-stable")
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        var replay = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertNotNull(replay.getOperation("a-stable"));
+        assertNotNull(replay.getOperation("b-stable"));
+    }
+
     private void assertInvalidItemNamerName(java.util.function.Function<Integer, String> nameFor) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var result = context.map(

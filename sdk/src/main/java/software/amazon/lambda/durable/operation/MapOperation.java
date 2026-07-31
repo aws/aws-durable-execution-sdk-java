@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -111,6 +113,28 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         addUnskippedItems(Collections.nCopies(items.size(), null));
     }
 
+    /**
+     * Compares the freshly generated iteration names against the checkpointed child operations.
+     *
+     * <p>When a completed map's result is small enough to be replayed from the payload, its children are enqueued but
+     * never executed, so the per-operation {@code validateReplay} name check never runs. Without this, a namer whose
+     * output changed between invocations would replay silently under the old names.
+     */
+    private void validateIterationNamesAgainstCheckpoint() {
+        for (var branch : getBranches()) {
+            var checkpointed = executionManager.peekOperation(branch.getOperationId());
+            if (checkpointed == null || checkpointed.name() == null) {
+                continue;
+            }
+            if (!Objects.equals(checkpointed.name(), branch.getName())) {
+                throw terminateExecution(new NonDeterministicExecutionException(String.format(
+                        "Map iteration name mismatch for \"%s\". Expected \"%s\", got \"%s\". "
+                                + "The map's itemNamer must be deterministic across replays.",
+                        branch.getOperationId(), checkpointed.name(), branch.getName())));
+            }
+        }
+    }
+
     private void addUnskippedItems(List<MapResult.MapResultItem.Status> resultItems) {
         // Enqueue all items first.
         // If the map is completed when replaying, mapResult != null and the items that have been skipped
@@ -181,6 +205,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                     throw terminateExecutionWithIllegalDurableOperationException(
                             "Missing result in completed Map operation");
                 }
+                validateIterationNamesAgainstCheckpoint();
                 if (Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute children to reconstruct MapResult
                     var expected = new ExpectedCompletionStatus(
