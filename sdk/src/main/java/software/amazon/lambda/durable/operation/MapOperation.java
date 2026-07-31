@@ -5,7 +5,9 @@ package software.amazon.lambda.durable.operation;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
@@ -17,6 +19,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -46,6 +49,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
+    private final List<String> iterationNames;
+    private final boolean validateIterationNamesOnReplay;
     private volatile MapResult<O> cachedResult;
 
     public MapOperation(
@@ -54,6 +59,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             DurableContext.MapFunction<I, O> function,
             TypeToken<O> itemResultType,
             MapConfig config,
+            List<String> iterationNames,
             DurableContextImpl durableContext) {
         super(
                 operationIdentifier,
@@ -73,6 +79,11 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         this.function = function;
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
+        this.iterationNames = Collections.unmodifiableList(new ArrayList<>(iterationNames));
+        if (this.iterationNames.size() != this.items.size()) {
+            throw new IllegalArgumentException("iterationNames must have one entry per item");
+        }
+        this.validateIterationNamesOnReplay = config.itemNamer() != null;
     }
 
     private void addAllItems() {
@@ -83,7 +94,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         // Enqueue all items first.
         // If the map is completed when replaying, mapResult != null and the items that have been skipped
         // will be skipped during replay.
-        var branchPrefix = getName() == null ? "map-iteration-" : getName() + "-iteration-";
         for (int i = 0; i < items.size(); i++) {
             var index = i;
             var item = items.get(i);
@@ -92,12 +102,30 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             var skip = status == MapResult.MapResultItem.Status.SKIPPED;
 
             enqueueItem(
-                    branchPrefix + i,
+                    iterationNames.get(i),
                     childCtx -> function.apply(item, index, childCtx),
                     itemResultType,
                     serDes,
                     OperationSubType.MAP_ITERATION,
                     skip);
+        }
+    }
+
+    private void validateIterationNamesAgainstCheckpoint() {
+        if (!validateIterationNamesOnReplay) {
+            return;
+        }
+        var checkpointedById = new HashMap<String, Operation>();
+        for (var child : getChildOperations()) {
+            checkpointedById.put(child.id(), child);
+        }
+        for (var branch : getBranches()) {
+            var checkpointed = checkpointedById.get(branch.getOperationId());
+            if (checkpointed != null && !Objects.equals(checkpointed.name(), branch.getName())) {
+                throw terminateExecution(new NonDeterministicExecutionException(String.format(
+                        "Map iteration name mismatch for \"%s\". Expected \"%s\", got \"%s\"",
+                        branch.getOperationId(), checkpointed.name(), branch.getName())));
+            }
         }
     }
 
@@ -150,6 +178,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                     throw terminateExecutionWithIllegalDurableOperationException(
                             "Missing result in completed Map operation");
                 }
+                validateIterationNamesAgainstCheckpoint();
                 if (Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     // Large result: re-execute children to reconstruct MapResult
                     var expected = new ExpectedCompletionStatus(
@@ -167,6 +196,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 // Map was in progress when interrupted — re-create children without sending
                 // another START (the backend rejects duplicate START for existing operations)
                 addAllItems();
+                validateIterationNamesAgainstCheckpoint();
                 executeItems();
             }
             default ->

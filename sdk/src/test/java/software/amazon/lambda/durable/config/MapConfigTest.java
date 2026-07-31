@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.config;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
@@ -60,6 +61,24 @@ class MapConfigTest {
     }
 
     @Test
+    void builderWithItemNamer() {
+        BiFunction<Object, Integer, String> namer = (item, index) -> item + "-" + index;
+
+        var config = MapConfig.builder().itemNamer(namer).build();
+
+        assertSame(namer, config.itemNamer());
+    }
+
+    @Test
+    void builderRejectsItemNamerWithFlatNesting() {
+        var builder = MapConfig.builder().nestingType(NestingType.FLAT).itemNamer((item, index) -> "item-" + index);
+
+        var exception = assertThrows(IllegalArgumentException.class, builder::build);
+
+        assertEquals("itemNamer is not supported with FLAT map nesting", exception.getMessage());
+    }
+
+    @Test
     void builderChaining() {
         var completion = CompletionConfig.firstSuccessful();
         var serDes = new JacksonSerDes();
@@ -79,10 +98,12 @@ class MapConfigTest {
     void toBuilder_preservesValues() {
         var completion = CompletionConfig.minSuccessful(2);
         var serDes = new JacksonSerDes();
+        BiFunction<Object, Integer, String> namer = (item, index) -> "item-" + index;
         var original = MapConfig.builder()
                 .maxConcurrency(4)
                 .completionConfig(completion)
                 .serDes(serDes)
+                .itemNamer(namer)
                 .build();
 
         var copy = original.toBuilder().build();
@@ -90,6 +111,7 @@ class MapConfigTest {
         assertEquals(4, copy.maxConcurrency());
         assertSame(completion, copy.completionConfig());
         assertSame(serDes, copy.serDes());
+        assertSame(namer, copy.itemNamer());
     }
 
     @Test

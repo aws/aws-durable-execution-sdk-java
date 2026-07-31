@@ -268,6 +268,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Convert to List for deterministic index-based access
         var itemList = List.copyOf(items);
+        var iterationNames = resolveMapIterationNames(name, itemList, config);
         var operationId = nextOperationId();
 
         var operation = new MapOperation<>(
@@ -276,9 +277,26 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 function,
                 resultType,
                 config,
+                iterationNames,
                 this);
         operation.execute();
         return operation;
+    }
+
+    private static List<String> resolveMapIterationNames(String mapName, List<?> items, MapConfig config) {
+        var namer = config.itemNamer();
+        var branchPrefix = mapName == null ? "map-iteration-" : mapName + "-iteration-";
+        var names = new java.util.ArrayList<String>(items.size());
+        for (int i = 0; i < items.size(); i++) {
+            if (namer == null) {
+                names.add(branchPrefix + i);
+            } else {
+                var iterationName = namer.apply(items.get(i), i);
+                ParameterValidator.validateOperationName(iterationName);
+                names.add(iterationName);
+            }
+        }
+        return names;
     }
 
     @Override
