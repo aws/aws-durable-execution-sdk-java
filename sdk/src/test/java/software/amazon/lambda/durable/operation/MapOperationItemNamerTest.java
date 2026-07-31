@@ -27,14 +27,12 @@ class MapOperationItemNamerTest {
         DurableContextImpl mockContext = mock(DurableContextImpl.class);
         ExecutionManager mockExecutionManager = mock(ExecutionManager.class);
         when(mockContext.getExecutionManager()).thenReturn(mockExecutionManager);
-        
+
         // Create custom item namer
         BiFunction<Object, Integer, String> itemNamer = (item, idx) -> "process-" + item + "-" + idx;
 
-        MapConfig config = MapConfig.builder()
-                .itemNamer(itemNamer)
-                .maxConcurrency(2)
-                .build();
+        MapConfig config =
+                MapConfig.builder().itemNamer(itemNamer).maxConcurrency(2).build();
 
         List<String> items = List.of("order-101", "order-102", "order-103");
 
@@ -45,8 +43,7 @@ class MapOperationItemNamerTest {
                 (item, index, ctx) -> "processed-" + item,
                 TypeToken.get(String.class),
                 config,
-                mockContext
-        );
+                mockContext);
 
         // Verify the operation was created
         assertNotNull(operation);
@@ -73,8 +70,7 @@ class MapOperationItemNamerTest {
                 (item, index, ctx) -> item,
                 TypeToken.get(String.class),
                 config,
-                mockContext
-        );
+                mockContext);
 
         assertNotNull(operation);
     }
@@ -82,9 +78,7 @@ class MapOperationItemNamerTest {
     @Test
     void mapOperation_withNullItemNamer_constructsSuccessfully() {
         // Explicitly null itemNamer
-        MapConfig config = MapConfig.builder()
-                .itemNamer(null)
-                .build();
+        MapConfig config = MapConfig.builder().itemNamer(null).build();
 
         assertNull(config.itemNamer());
 
@@ -98,8 +92,7 @@ class MapOperationItemNamerTest {
                 (item, index, ctx) -> item,
                 TypeToken.get(String.class),
                 config,
-                mockContext
-        );
+                mockContext);
 
         assertNotNull(operation);
     }

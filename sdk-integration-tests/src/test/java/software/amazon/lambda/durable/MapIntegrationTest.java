@@ -1888,4 +1888,127 @@ class MapIntegrationTest {
         assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
         assertEquals(events, result2.getHistoryEvents().size());
     }
+
+    @Test
+    void testMapWithItemNamerNamesChildOperations() {
+        var executionCount = new AtomicInteger(0);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "named-map",
+                    List.of("alpha", "beta"),
+                    String.class,
+                    (item, index, ctx) -> {
+                        executionCount.incrementAndGet();
+                        return item.toUpperCase();
+                    },
+                    MapConfig.builder()
+                            .maxConcurrency(1)
+                            .itemNamer((item, index) -> "item-" + item)
+                            .build());
+
+            assertTrue(result.allSucceeded());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("ALPHA,BETA", result.getResult(String.class));
+
+        // The custom names must actually reach the child operations.
+        assertNotNull(result.getOperation("item-alpha"), "custom iteration name should be checkpointed");
+        assertNotNull(result.getOperation("item-beta"), "custom iteration name should be checkpointed");
+
+        // ...and the default naming must no longer be used for those iterations.
+        assertNull(result.getOperation("named-map-iteration-0"));
+        assertNull(result.getOperation("named-map-iteration-1"));
+
+        // Replay must resolve the custom-named operations without re-executing them.
+        var firstRunCount = executionCount.get();
+        var replay = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
+        assertNotNull(replay.getOperation("item-alpha"));
+        assertNotNull(replay.getOperation("item-beta"));
+    }
+
+    @Test
+    void testMapWithoutItemNamerUsesDefaultIterationNames() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "default-named-map",
+                    List.of("alpha", "beta"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder().maxConcurrency(1).build());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // Pins the documented default naming so the Javadoc and runtime cannot drift apart.
+        assertNotNull(result.getOperation("default-named-map-iteration-0"));
+        assertNotNull(result.getOperation("default-named-map-iteration-1"));
+    }
+
+    @Test
+    void testItemNamerReturningDuplicateNamesStillProducesCorrectResults() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "dup-namer",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder()
+                            .maxConcurrency(1)
+                            .itemNamer((item, index) -> "same")
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // Duplicate names are tolerated: operation ids are counter-derived, so results stay
+        // correctly ordered. The tradeoff is that name-based lookup becomes ambiguous.
+        assertEquals("A,B", result.getResult(String.class));
+        assertEquals(
+                2,
+                result.getOperations().stream()
+                        .filter(op -> "same".equals(op.getName()))
+                        .count(),
+                "both iterations should carry the duplicated name");
+        assertNotNull(result.getOperation("same"), "lookup resolves to one of the duplicates");
+    }
+
+    @Test
+    void testItemNamerReturningNullPassesNullThroughAsOperationName() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "null-namer",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder()
+                            .maxConcurrency(1)
+                            .itemNamer((item, index) -> null)
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("A,B", result.getResult(String.class));
+
+        // A namer that returns null does NOT fall back to the default naming -- the null is
+        // passed through as the iteration's operation name. Pinned so the behavior is visible
+        // and any future decision to validate or fall back is a deliberate, tested change.
+        assertEquals(
+                2,
+                result.getOperations().stream()
+                        .filter(op -> op.getName() == null)
+                        .count(),
+                "null from the namer is used as-is");
+        assertNull(result.getOperation("null-namer-iteration-0"), "no fallback to default naming");
+    }
 }

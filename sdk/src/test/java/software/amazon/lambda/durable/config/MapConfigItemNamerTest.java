@@ -35,10 +35,8 @@ class MapConfigItemNamerTest {
     @Test
     void toBuilder_preservesItemNamer() {
         BiFunction<Object, Integer, String> namer = (item, idx) -> "custom-" + idx;
-        MapConfig original = MapConfig.builder()
-                .maxConcurrency(5)
-                .itemNamer(namer)
-                .build();
+        MapConfig original =
+                MapConfig.builder().maxConcurrency(5).itemNamer(namer).build();
 
         MapConfig rebuilt = original.toBuilder().build();
         assertEquals(5, rebuilt.maxConcurrency());
@@ -50,13 +48,9 @@ class MapConfigItemNamerTest {
         BiFunction<Object, Integer, String> namer1 = (item, idx) -> "first-" + idx;
         BiFunction<Object, Integer, String> namer2 = (item, idx) -> "second-" + idx;
 
-        MapConfig config = MapConfig.builder()
-                .itemNamer(namer1)
-                .build();
+        MapConfig config = MapConfig.builder().itemNamer(namer1).build();
 
-        MapConfig updated = config.toBuilder()
-                .itemNamer(namer2)
-                .build();
+        MapConfig updated = config.toBuilder().itemNamer(namer2).build();
 
         assertSame(namer2, updated.itemNamer());
     }
@@ -64,13 +58,9 @@ class MapConfigItemNamerTest {
     @Test
     void toBuilder_canRemoveItemNamer() {
         BiFunction<Object, Integer, String> namer = (item, idx) -> "name-" + idx;
-        MapConfig config = MapConfig.builder()
-                .itemNamer(namer)
-                .build();
+        MapConfig config = MapConfig.builder().itemNamer(namer).build();
 
-        MapConfig withoutNamer = config.toBuilder()
-                .itemNamer(null)
-                .build();
+        MapConfig withoutNamer = config.toBuilder().itemNamer(null).build();
 
         assertNull(withoutNamer.itemNamer());
     }
@@ -96,7 +86,7 @@ class MapConfigItemNamerTest {
         MapConfig stringConfig = MapConfig.builder().itemNamer(stringNamer).build();
         assertEquals("str-hello", stringConfig.itemNamer().apply("hello", 0));
 
-        // Integer items  
+        // Integer items
         BiFunction<Object, Integer, String> intNamer = (item, idx) -> "num-" + item;
         MapConfig intConfig = MapConfig.builder().itemNamer(intNamer).build();
         assertEquals("num-123", intConfig.itemNamer().apply(123, 1));
@@ -119,9 +109,7 @@ class MapConfigItemNamerTest {
                 .build();
 
         BiFunction<Object, Integer, String> namer = (item, idx) -> "named-" + idx;
-        MapConfig withNamer = base.toBuilder()
-                .itemNamer(namer)
-                .build();
+        MapConfig withNamer = base.toBuilder().itemNamer(namer).build();
 
         assertEquals(10, withNamer.maxConcurrency());
         assertEquals(NestingType.FLAT, withNamer.nestingType());

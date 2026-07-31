@@ -49,10 +49,9 @@ public class MapConfig {
     /**
      * Returns the item namer function, which generates custom names for each map iteration.
      *
-     * <p>When provided, the namer is called for each item with the item value and its index.
-     * The returned string is used as the operation name for that iteration, replacing the
-     * default "map-item-N" naming. The item parameter is typed as {@code Object} and will
-     * receive the map item at runtime.
+     * <p>When provided, the namer is called for each item with the item value and its index. The returned string is
+     * used as the operation name for that iteration, replacing the default {@code "<mapName>-iteration-N"} naming. The
+     * item parameter is typed as {@code Object} and will receive the map item at runtime.
      *
      * @return the item namer function, or null if not set
      */
@@ -128,7 +127,7 @@ public class MapConfig {
          * Sets the item namer function for generating custom iteration names.
          *
          * <p>The namer receives the item (as {@code Object}) and its index, and returns a string to use as the
-         * operation name for that iteration. If null, the default "map-item-N" naming is used.
+         * operation name for that iteration. If null, the default {@code "<mapName>-iteration-N"} naming is used.
          *
          * @param itemNamer the item namer function, or null to use default naming
          * @return this builder for method chaining
