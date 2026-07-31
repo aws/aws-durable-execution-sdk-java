@@ -3,16 +3,38 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.javaagent.testing.FakeJavaAgentTracerProvider;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizer;
+import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider;
+import io.opentelemetry.sdk.autoconfigure.spi.ConfigProperties;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import java.util.ServiceLoader;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
@@ -23,12 +45,175 @@ class InvocationOtelPluginTest {
 
     @BeforeEach
     void setUp() {
+        DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
         plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false);
+    }
+
+    @AfterEach
+    void tearDown() {
+        GlobalOpenTelemetry.resetForTest();
+        DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationState.resetInstalledForTest();
+    }
+
+    @Test
+    void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
+        GlobalOpenTelemetry.resetForTest();
+
+        var error = assertThrows(IllegalStateException.class, InvocationOtelPlugin::new);
+
+        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
+        assertTrue(error.getMessage().contains("OTEL_JAVAAGENT_EXTENSIONS"));
+    }
+
+    @Test
+    void defaultConstructor_throwsWhenGlobalOpenTelemetryIsNotInitializedBySpi() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+
+        var error = assertThrows(IllegalStateException.class, InvocationOtelPlugin::new);
+
+        assertTrue(error.getMessage().contains("GlobalOpenTelemetry"));
+        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
+    }
+
+    @Test
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
+        var defaultPlugin = new InvocationOtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        defaultPlugin.onOperationStart(
+                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        // Plugin creates Workflow + Invocation + operation spans
+        assertEquals(3, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+    }
+
+    @Test
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withSeparateAutoConfiguredIdGenerator() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var javaAgentIdGenerator = new DeterministicIdGenerator();
+        var sdkTracerProvider = SdkTracerProvider.builder()
+                .setIdGenerator(javaAgentIdGenerator)
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
+        GlobalOpenTelemetry.set(new OpenTelemetry() {
+            @Override
+            public io.opentelemetry.api.trace.TracerProvider getTracerProvider() {
+                return javaAgentTracerProvider;
+            }
+
+            @Override
+            public ContextPropagators getPropagators() {
+                return ContextPropagators.noop();
+            }
+        });
+
+        var defaultPlugin = new InvocationOtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        defaultPlugin.onOperationStart(
+                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        // Plugin creates Workflow + Invocation + operation spans
+        assertEquals(3, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+        var expectedIds = new DeterministicIdGenerator();
+        expectedIds.setDurableExecutionArn("arn:exec1");
+        var stepSpan = spans.stream()
+                .filter(span -> span.getName().equals("step"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(expectedIds.generateSpanIdForOperation("op-1"), stepSpan.getSpanId());
+    }
+
+    @Test
+    void autoConfigurationCustomizerProvider_installsSharedDeterministicIdGenerator() {
+        OtelPluginAutoConfigurationState.resetInstalledForTest();
+        var exporter = InMemorySpanExporter.create();
+        var autoConfiguration = mock(AutoConfigurationCustomizer.class);
+        when(autoConfiguration.addTracerProviderCustomizer(any())).thenReturn(autoConfiguration);
+
+        new OtelPluginAutoConfigurationCustomizerProvider().customize(autoConfiguration);
+        assertTrue(OtelPluginAutoConfigurationState.isInstalled());
+
+        @SuppressWarnings("unchecked")
+        var customizer = ArgumentCaptor.forClass(BiFunction.class);
+        verify(autoConfiguration).addTracerProviderCustomizer(customizer.capture());
+
+        var pluginGenerator = new DeterministicIdGenerator();
+        pluginGenerator.setDurableExecutionArn("arn:spi");
+        pluginGenerator.setNextSpanOperationId("op-spi");
+
+        @SuppressWarnings("unchecked")
+        var tracerProviderCustomizer =
+                (BiFunction<SdkTracerProviderBuilder, ConfigProperties, SdkTracerProviderBuilder>)
+                        customizer.getValue();
+        var tracerProvider = tracerProviderCustomizer
+                .apply(SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)), null)
+                .build();
+
+        var span = tracerProvider.get("test").spanBuilder("step").startSpan();
+        span.end();
+        tracerProvider.forceFlush().join(5, TimeUnit.SECONDS);
+
+        var spans = exporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+        assertEquals(
+                pluginGenerator.generateSpanIdForOperation("op-spi"),
+                spans.get(0).getSpanId());
+    }
+
+    @Test
+    void autoConfigurationCustomizerProvider_isRegisteredAsServiceProvider() {
+        assertTrue(ServiceLoader.load(AutoConfigurationCustomizerProvider.class).stream()
+                .anyMatch(provider -> provider.type().equals(OtelPluginAutoConfigurationCustomizerProvider.class)));
+    }
+
+    @Test
+    void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
+        var traceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var parentSpanContext =
+                SpanContext.create(traceId, parentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+
+        try (var ignored = Span.wrap(parentSpanContext).makeCurrent()) {
+            plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var invocationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(span -> span.getName().equals("Invocation"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(traceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
     }
 
     @Test
