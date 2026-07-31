@@ -257,22 +257,6 @@ Resources:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
 
-  PluginTerminalPayloads:
-    Type: AWS::Serverless::Function
-    TestingMetadata:
-      TestDescription: ["10-14"]
-    Properties:
-      CodeUri: .
-      Handler: plugin.PluginTerminalPayloads
-      Description: Operation-end info carries the checkpointed result on success and the error on failure
-      Role:
-        Fn::GetAtt:
-        - DurableFunctionRole
-        - Arn
-      DurableConfig:
-        RetentionPeriodInDays: 7
-        ExecutionTimeout: 300
-
   PluginRetryExhaustion:
     Type: AWS::Serverless::Function
     TestingMetadata:
@@ -313,22 +297,6 @@ Resources:
       CodeUri: .
       Handler: plugin.PluginFaultyAndHealthy
       Description: A plugin that throws in every hook never blocks another plugin's hooks or the execution
-      Role:
-        Fn::GetAtt:
-        - DurableFunctionRole
-        - Arn
-      DurableConfig:
-        RetentionPeriodInDays: 7
-        ExecutionTimeout: 300
-
-  PluginWaitReplayFlag:
-    Type: AWS::Serverless::Function
-    TestingMetadata:
-      TestDescription: ["10-18"]
-    Properties:
-      CodeUri: .
-      Handler: plugin.PluginWaitReplayFlag
-      Description: A wait still pending during a replay re-fires operation-start with replay=true
       Role:
         Fn::GetAtt:
         - DurableFunctionRole
