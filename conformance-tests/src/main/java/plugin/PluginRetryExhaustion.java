@@ -18,8 +18,8 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 /**
  * 10-15: Attempt hooks fire for every attempt until exhaustion, then operation-end reports FAILED.
  *
- * <p>A single step that always throws, configured with the SDK's built-in exponential-backoff retry strategy allowing
- * 2 total attempts (1 initial + 1 retry, ~1s delay). The plugin, filtering to step-type operations, logs attempt-start
+ * <p>A single step that always throws, configured with the SDK's built-in exponential-backoff retry strategy allowing 2
+ * total attempts (1 initial + 1 retry, ~1s delay). The plugin, filtering to step-type operations, logs attempt-start
  * and attempt-end (with outcome) from the real user-function hooks (which carry the 1-based attempt number) and
  * operation-end when the step reaches its terminal FAILED status.
  */

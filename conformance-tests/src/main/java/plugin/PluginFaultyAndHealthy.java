@@ -18,9 +18,9 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *
  * <p>A single greeting step configured with TWO plugins registered together, in order: first a faulty plugin whose
  * every exercised hook (invocation-start, operation-start, attempt-start, attempt-end, operation-end, invocation-end)
- * logs a record then throws, then a healthy plugin that logs the corresponding six records normally. The SDK's {@code
- * PluginRunner} isolates each plugin at every hook boundary (swallows the faulty plugin's exceptions), so the healthy
- * plugin still receives every hook and the execution result/history are identical to running without the faulty
+ * logs a record then throws, then a healthy plugin that logs the corresponding six records normally. The SDK's
+ * {@code PluginRunner} isolates each plugin at every hook boundary (swallows the faulty plugin's exceptions), so the
+ * healthy plugin still receives every hook and the execution result/history are identical to running without the faulty
  * plugin. Attempt boundaries are the real user-function hooks ({@code onUserFunctionStart}/{@code onUserFunctionEnd},
  * filtered to step attempts); the healthy attempt-end reports the SDK's real success/failure outcome.
  */
