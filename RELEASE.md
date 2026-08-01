@@ -46,9 +46,10 @@ The publication workflow:
 2. Builds, signs, and uploads the SDK, testing library, and OpenTelemetry plugin
    to Sonatype Central Portal.
 3. Uploads the three JARs to the existing GitHub release.
-4. Increments the patch version, adds the `-SNAPSHOT` suffix, and opens a pull
-   request for the next development version. For example, release `2.1.1`
-   produces `2.1.2-SNAPSHOT`.
+4. Opens a pull request for the next development version. A final release
+   increments the patch version, so `2.1.1` produces `2.1.2-SNAPSHOT`. A
+   prerelease keeps the same base version, so `2.1.1-rc1` produces
+   `2.1.1-SNAPSHOT` until the final `2.1.1` release.
 
 After **Publish Maven Release** succeeds:
 

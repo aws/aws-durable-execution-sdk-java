@@ -39,7 +39,11 @@ jobs:
           patch="${BASH_REMATCH[3]}"
           suffix="${BASH_REMATCH[4]}"
           release_version="${major}.${minor}.${patch}${suffix}"
-          next_version="${major}.${minor}.$((10#$patch + 1))-SNAPSHOT"
+          if [ -n "$suffix" ]; then
+            next_version="${major}.${minor}.${patch}-SNAPSHOT"
+          else
+            next_version="${major}.${minor}.$((10#$patch + 1))-SNAPSHOT"
+          fi
 
           echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
           echo "NEXT_VERSION=$next_version" >> "$GITHUB_ENV"
