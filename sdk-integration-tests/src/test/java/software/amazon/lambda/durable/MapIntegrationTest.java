@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -2016,6 +2017,32 @@ class MapIntegrationTest {
 
         assertEquals(ExecutionStatus.PENDING, runner.run("test").getStatus());
         suffix.set("second");
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
+    void testRemovingItemNamerFailsCachedReplay() {
+        var useItemNamer = new AtomicBoolean(true);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var configBuilder = MapConfig.builder();
+            if (useItemNamer.get()) {
+                configBuilder.itemNamer((item, index) -> "custom-" + item);
+            }
+            var result = context.map(
+                    "removed-namer-map",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    configBuilder.build());
+            return String.join(",", result.results());
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        useItemNamer.set(false);
 
         var replay = runner.run("test");
 

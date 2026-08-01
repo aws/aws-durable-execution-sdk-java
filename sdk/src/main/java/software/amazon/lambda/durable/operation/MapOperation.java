@@ -28,6 +28,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
+import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
  * Executes a map operation: applies a function to each item in a collection concurrently, with each item running in its
@@ -50,8 +51,24 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
     private final List<String> iterationNames;
-    private final boolean validateIterationNamesOnReplay;
     private volatile MapResult<O> cachedResult;
+
+    public MapOperation(
+            OperationIdentifier operationIdentifier,
+            List<I> items,
+            DurableContext.MapFunction<I, O> function,
+            TypeToken<O> itemResultType,
+            MapConfig config,
+            DurableContextImpl durableContext) {
+        this(
+                operationIdentifier,
+                items,
+                function,
+                itemResultType,
+                config,
+                resolveIterationNames(operationIdentifier.name(), items, config),
+                durableContext);
+    }
 
     public MapOperation(
             OperationIdentifier operationIdentifier,
@@ -83,7 +100,22 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         if (this.iterationNames.size() != this.items.size()) {
             throw new IllegalArgumentException("iterationNames must have one entry per item");
         }
-        this.validateIterationNamesOnReplay = config.itemNamer() != null;
+    }
+
+    private static List<String> resolveIterationNames(String mapName, List<?> items, MapConfig config) {
+        var namer = config.itemNamer();
+        var branchPrefix = mapName == null ? "map-iteration-" : mapName + "-iteration-";
+        var names = new ArrayList<String>(items.size());
+        for (int i = 0; i < items.size(); i++) {
+            if (namer == null) {
+                names.add(branchPrefix + i);
+            } else {
+                var iterationName = namer.apply(items.get(i), i);
+                ParameterValidator.validateOperationName(iterationName);
+                names.add(iterationName);
+            }
+        }
+        return names;
     }
 
     private void addAllItems() {
@@ -112,9 +144,6 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     }
 
     private void validateIterationNamesAgainstCheckpoint() {
-        if (!validateIterationNamesOnReplay) {
-            return;
-        }
         var checkpointedById = new HashMap<String, Operation>();
         for (var child : getChildOperations()) {
             checkpointedById.put(child.id(), child);
