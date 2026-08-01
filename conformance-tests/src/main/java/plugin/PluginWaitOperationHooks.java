@@ -16,8 +16,8 @@ import software.amazon.lambda.durable.plugin.OperationInfo;
  * 10-10: Plugin operation-start and operation-end hooks fire for wait-type operations.
  *
  * <p>A single 2-second wait. The plugin, filtering to wait-type operations, logs operation-start when the wait's
- * STARTED checkpoint is observed and operation-end with the terminal status. The type token is normalized to
- * upper-case (WAIT).
+ * STARTED checkpoint is observed and operation-end with the terminal status. The type token is normalized to upper-case
+ * (WAIT).
  */
 @SuppressWarnings("deprecation")
 public class PluginWaitOperationHooks extends DurableHandler<Object, String> {

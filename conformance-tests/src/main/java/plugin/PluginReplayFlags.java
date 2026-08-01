@@ -17,10 +17,10 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 /**
  * 10-13: Non-terminal operations replay with replay=true; terminal operations are not re-emitted.
  *
- * <p>Two sequential steps. Step A succeeds on its first attempt (terminal before the retry invocation). Step B fails
- * on its first attempt and succeeds on the second, using the SDK's built-in exponential-backoff retry strategy
- * (~1s delay). The plugin, filtering to step-type operations, logs operation-start with the SDK's is-replayed
- * indicator ({@code OperationInfo#isReplay()}) and operation-end with the terminal status.
+ * <p>Two sequential steps. Step A succeeds on its first attempt (terminal before the retry invocation). Step B fails on
+ * its first attempt and succeeds on the second, using the SDK's built-in exponential-backoff retry strategy (~1s
+ * delay). The plugin, filtering to step-type operations, logs operation-start with the SDK's is-replayed indicator
+ * ({@code OperationInfo#isReplay()}) and operation-end with the terminal status.
  */
 @SuppressWarnings("deprecation")
 public class PluginReplayFlags extends DurableHandler<Object, String> {
