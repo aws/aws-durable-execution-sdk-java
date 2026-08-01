@@ -112,6 +112,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 - [<u>Error Handling</u>](docs/advanced/error-handling.md) - SDK exceptions for handling failures
 - [<u>Logging</u>](docs/advanced/logging.md) - How to use DurableLogger
 - [<u>Migrating from 1.x to 2.x</u>](docs/migration-1.x-to-2.x.md) - Upgrade guide for breaking changes since `v1.2.1`
+- [<u>Release Process</u>](RELEASE.md) - Prepare and publish Maven releases
 - [<u>Testing</u>](docs/advanced/testing.md) - Utilities for local development and cloud-based integration testing
 
 ## Related SDKs

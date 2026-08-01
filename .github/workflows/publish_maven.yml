@@ -1,0 +1,139 @@
+name: Publish Maven Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: publish-maven-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      BASE_BRANCH: ${{ github.event.repository.default_branch }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Determine release versions
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "Release tag must be a semantic version prefixed with v (for example, v1.2.0)." >&2
+            exit 1
+          fi
+
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          suffix="${BASH_REMATCH[4]}"
+          release_version="${major}.${minor}.${patch}${suffix}"
+          if [ -n "$suffix" ]; then
+            next_version="${major}.${minor}.${patch}-SNAPSHOT"
+          else
+            next_version="${major}.${minor}.$((10#$patch + 1))-SNAPSHOT"
+          fi
+
+          echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
+          echo "NEXT_VERSION=$next_version" >> "$GITHUB_ENV"
+
+      - name: Verify release source
+        shell: bash
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          if ! git merge-base --is-ancestor "${RELEASE_TAG}^{commit}" "origin/${BASE_BRANCH}"; then
+            echo "Release tag $RELEASE_TAG does not point to a commit on $BASE_BRANCH." >&2
+            exit 1
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          pom_version="$(mvn -q help:evaluate -Dexpression=project.version -DforceStdout)"
+          if [ "$pom_version" != "$RELEASE_VERSION" ]; then
+            echo "Release tag $RELEASE_TAG points to Maven version $pom_version, expected $RELEASE_VERSION." >&2
+            exit 1
+          fi
+
+      - name: Build artifacts
+        run: mvn clean install -q -Dlog4j2.level=WARN -Dlog4j.configurationFile=log4j2-quiet.xml --no-transfer-progress
+
+      - name: Sign and upload to Sonatype Central Portal
+        run: bash .github/scripts/maven_publish.sh
+        env:
+          MVN_GPG_KEYS_GPGPRIVATEKEY: ${{ secrets.MVN_GPG_KEYS_GPGPRIVATEKEY }}
+          MVN_GPG_KEYS_GPGPASSPHRASE: ${{ secrets.MVN_GPG_KEYS_GPGPASSPHRASE }}
+          MVN_ACCOUNT_KEYS_USERNAME: ${{ secrets.MVN_ACCOUNT_KEYS_USERNAME }}
+          MVN_ACCOUNT_KEYS_PASSWORD: ${{ secrets.MVN_ACCOUNT_KEYS_PASSWORD }}
+
+      - name: Upload GitHub release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "sdk/target/aws-durable-execution-sdk-java-${RELEASE_VERSION}.jar" \
+            "sdk-testing/target/aws-durable-execution-sdk-java-testing-${RELEASE_VERSION}.jar" \
+            "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${RELEASE_VERSION}.jar" \
+            --clobber
+
+      - name: Checkout default branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set next development version
+        shell: bash
+        run: |
+          pom_version="$(mvn -q help:evaluate -Dexpression=project.version -DforceStdout)"
+          if [ "$pom_version" != "$RELEASE_VERSION" ]; then
+            echo "Default branch Maven version is $pom_version, expected $RELEASE_VERSION." >&2
+            exit 1
+          fi
+
+          BRANCH_NAME="release/v${NEXT_VERSION}"
+          git switch --create "$BRANCH_NAME"
+          mvn -q versions:set -DnewVersion="$NEXT_VERSION" -DgenerateBackupPoms=false
+          echo "BRANCH_NAME=$BRANCH_NAME" >> "$GITHUB_ENV"
+
+      - name: Commit next development version
+        env:
+          GIT_ACTOR: ${{ github.actor }}
+        run: |
+          git config user.email "${GIT_ACTOR}+github-actions[bot]@users.noreply.github.com"
+          git config user.name "${GIT_ACTOR}+github-actions[bot]"
+          git add -- ':(glob)**/pom.xml'
+          git commit -m "chore: bump version to ${NEXT_VERSION}"
+
+      - name: Push next development branch
+        run: git push --set-upstream origin "$BRANCH_NAME"
+
+      - name: Create next development version pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_url="$(gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH_NAME" \
+            --title "chore: bump version to ${NEXT_VERSION}" \
+            --body "Bumps the Maven project version to ${NEXT_VERSION} after publishing ${RELEASE_TAG}.")"
+          echo "Created next development version pull request: $pr_url"
+          echo "Next development version pull request: $pr_url" >> "$GITHUB_STEP_SUMMARY"
