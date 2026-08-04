@@ -2049,4 +2049,29 @@ class MapIntegrationTest {
         assertEquals(ExecutionStatus.FAILED, replay.getStatus());
         assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
     }
+
+    @Test
+    void testTypedItemNamerNamesIterationsEndToEnd() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var orders = List.of(new Order("a1"), new Order("b2"));
+            var result = context.map(
+                    "typed-namer-map",
+                    orders,
+                    String.class,
+                    (order, index, ctx) -> order.id().toUpperCase(),
+                    MapConfig.builder()
+                            .itemNamer(Order.class, (order, index) -> "order-" + order.id())
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("A1,B2", result.getResult(String.class));
+        assertNotNull(result.getOperation("order-a1"));
+        assertNotNull(result.getOperation("order-b2"));
+    }
+
+    public record Order(String id) {}
 }

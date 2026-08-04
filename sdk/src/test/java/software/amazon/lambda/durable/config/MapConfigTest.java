@@ -70,6 +70,69 @@ class MapConfigTest {
     }
 
     @Test
+    void builderWithTypedItemNamer_receivesItemWithoutCast() {
+        // The lambda parameter is the domain type, so no cast is needed to reach its members.
+        var config = MapConfig.builder()
+                .itemNamer(Order.class, (order, index) -> order.id() + "-" + index)
+                .build();
+
+        assertEquals("a1-0", config.itemNamer().apply(new Order("a1"), 0));
+    }
+
+    @Test
+    void builderWithTypedItemNamer_acceptsAlreadyTypedFunction() {
+        // A BiFunction<Order, ...> is rejected by itemNamer(BiFunction) but accepted here.
+        BiFunction<Order, Integer, String> namer = (order, index) -> order.id();
+
+        var config = MapConfig.builder().itemNamer(Order.class, namer).build();
+
+        assertEquals("a1", config.itemNamer().apply(new Order("a1"), 0));
+    }
+
+    @Test
+    void builderWithTypedItemNamer_preservesNullResult() {
+        var config = MapConfig.builder()
+                .itemNamer(Order.class, (order, index) -> null)
+                .build();
+
+        assertNull(config.itemNamer().apply(new Order("a1"), 0));
+    }
+
+    @Test
+    void builderWithTypedItemNamer_nullNamerLeavesDefaultNaming() {
+        var config = MapConfig.builder().itemNamer(Order.class, null).build();
+
+        assertNull(config.itemNamer());
+    }
+
+    @Test
+    void builderWithTypedItemNamer_nullItemTypeThrows() {
+        var exception = assertThrows(
+                NullPointerException.class, () -> MapConfig.builder().itemNamer(null, (order, index) -> "x"));
+
+        assertEquals("itemType cannot be null", exception.getMessage());
+    }
+
+    @Test
+    void builderWithTypedItemNamer_mismatchedItemTypeThrows() {
+        var config = MapConfig.builder()
+                .itemNamer(Order.class, (order, index) -> order.id())
+                .build();
+
+        assertThrows(ClassCastException.class, () -> config.itemNamer().apply("not-an-order", 0));
+    }
+
+    @Test
+    void builderRejectsTypedItemNamerWithFlatNesting() {
+        var builder =
+                MapConfig.builder().nestingType(NestingType.FLAT).itemNamer(Order.class, (order, index) -> order.id());
+
+        var exception = assertThrows(IllegalArgumentException.class, builder::build);
+
+        assertEquals("itemNamer is not supported with FLAT map nesting", exception.getMessage());
+    }
+
+    @Test
     void builderRejectsItemNamerWithFlatNesting() {
         var builder = MapConfig.builder().nestingType(NestingType.FLAT).itemNamer((item, index) -> "item-" + index);
 
@@ -145,4 +208,6 @@ class MapConfigTest {
         var config = MapConfig.builder().maxConcurrency(null).build();
         assertEquals(Integer.MAX_VALUE, config.maxConcurrency());
     }
+
+    private record Order(String id) {}
 }

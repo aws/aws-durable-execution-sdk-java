@@ -140,6 +140,30 @@ public class MapConfig {
             return this;
         }
 
+        /**
+         * Sets a function that names each nested map iteration, typed to the map's item class.
+         *
+         * <p>Equivalent to {@link #itemNamer(BiFunction)}, but the item type is declared explicitly so the namer can
+         * accept the item directly instead of {@link Object}:
+         *
+         * <pre>{@code
+         * MapConfig.builder().itemNamer(Order.class, (order, index) -> order.id()).build();
+         * }</pre>
+         *
+         * <p>Each item is passed through {@link Class#cast}, so supplying a class that does not match the map's items
+         * fails with a {@link ClassCastException} naming the offending type.
+         *
+         * @param itemType the class of the map's items
+         * @param itemNamer the item namer, or null to use default iteration naming
+         * @param <I> the map item type accepted by the namer
+         * @return this builder for method chaining
+         */
+        public <I> Builder itemNamer(Class<I> itemType, BiFunction<? super I, Integer, String> itemNamer) {
+            Objects.requireNonNull(itemType, "itemType cannot be null");
+            this.itemNamer = itemNamer == null ? null : (item, index) -> itemNamer.apply(itemType.cast(item), index);
+            return this;
+        }
+
         public MapConfig build() {
             return new MapConfig(this);
         }
