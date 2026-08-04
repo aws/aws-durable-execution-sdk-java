@@ -21,6 +21,16 @@ class MdcSpanEnricherTest {
     }
 
     @Test
+    void mdcKeyNames_matchJsAndPythonSchema() {
+        // The JS (enrichLogContext) and Python (OtelContextLogFilter) plugins emit
+        // traceId / spanId / otelTraceSampled. Java's MDC keys must match so all
+        // three SDKs share one log-trace-correlation field schema.
+        assertEquals("traceId", MdcSpanEnricher.MDC_TRACE_ID);
+        assertEquals("spanId", MdcSpanEnricher.MDC_SPAN_ID);
+        assertEquals("otelTraceSampled", MdcSpanEnricher.MDC_TRACE_SAMPLED);
+    }
+
+    @Test
     void clear_removesAllMdcKeys() {
         MDC.put(MdcSpanEnricher.MDC_TRACE_ID, "abc123");
         MDC.put(MdcSpanEnricher.MDC_SPAN_ID, "def456");
