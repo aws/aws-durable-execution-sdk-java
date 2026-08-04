@@ -4,12 +4,15 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.plugin.*;
@@ -23,12 +26,57 @@ class ExecutionOtelPluginTest {
 
     @BeforeEach
     void setUp() {
+        DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
         plugin = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false,
                 "Workflow");
+    }
+
+    @AfterEach
+    void tearDown() {
+        GlobalOpenTelemetry.resetForTest();
+        DeterministicIdGenerator.clearSharedStateForTest();
+        OtelPluginAutoConfigurationState.resetInstalledForTest();
+    }
+
+    // ─── Default constructor ─────────────────────────────────────────────
+
+    @Test
+    void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
+        GlobalOpenTelemetry.resetForTest();
+        var error = assertThrows(IllegalStateException.class, ExecutionOtelPlugin::new);
+        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
+    }
+
+    @Test
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
+        var defaultPlugin = new ExecutionOtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        defaultPlugin.onOperationStart(
+                new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        // Workflow + Invocation + operation = 3
+        assertEquals(3, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Workflow")));
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Invocation")));
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
     }
 
     // ─── Workflow root span lifecycle ────────────────────────────────────

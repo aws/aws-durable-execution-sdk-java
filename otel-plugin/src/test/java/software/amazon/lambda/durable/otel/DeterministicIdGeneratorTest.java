@@ -140,6 +140,18 @@ class DeterministicIdGeneratorTest {
     }
 
     @Test
+    void rawSpanId_isSharedAcrossGeneratorInstances() {
+        var pluginGenerator = new DeterministicIdGenerator();
+        var agentGenerator = new DeterministicIdGenerator();
+
+        pluginGenerator.setDurableExecutionArn("arn:exec1");
+        var workflowSpanId = pluginGenerator.generateWorkflowSpanId();
+        pluginGenerator.setNextSpanId(workflowSpanId);
+
+        assertEquals(workflowSpanId, agentGenerator.generateSpanId());
+    }
+
+    @Test
     void traceId_isValidHex() {
         generator.setDurableExecutionArn("arn:exec1");
         var traceId = generator.generateTraceId();

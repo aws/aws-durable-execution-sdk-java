@@ -34,6 +34,7 @@ public class DeterministicIdGenerator implements IdGenerator {
     private static final String EXTRACTED_TRACE_ID_PROPERTY = PROPERTY_PREFIX + "extractedTraceId";
     private static final String DURABLE_EXECUTION_ARN_PROPERTY = PROPERTY_PREFIX + "durableExecutionArn";
     private static final String PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX = PROPERTY_PREFIX + "pendingSpanOperationId.";
+    private static final String PENDING_RAW_SPAN_ID_PROPERTY_PREFIX = PROPERTY_PREFIX + "pendingRawSpanId.";
 
     private final AtomicReference<String> extractedTraceId = new AtomicReference<>(null);
     private final AtomicReference<String> arnDerivedTraceId = new AtomicReference<>(null);
@@ -83,6 +84,7 @@ public class DeterministicIdGenerator implements IdGenerator {
      */
     public void setNextSpanId(String spanId) {
         this.pendingRawSpanId.set(spanId);
+        setOrClearProperty(pendingRawSpanIdProperty(), spanId);
     }
 
     /**
@@ -139,8 +141,12 @@ public class DeterministicIdGenerator implements IdGenerator {
     @Override
     public String generateSpanId() {
         var raw = pendingRawSpanId.get();
+        if (raw == null) {
+            raw = System.getProperty(pendingRawSpanIdProperty());
+        }
         if (raw != null) {
             pendingRawSpanId.remove();
+            System.clearProperty(pendingRawSpanIdProperty());
             return raw;
         }
         var operationId = pendingSpanOperationId.get();
@@ -192,7 +198,8 @@ public class DeterministicIdGenerator implements IdGenerator {
         System.clearProperty(EXTRACTED_TRACE_ID_PROPERTY);
         System.clearProperty(DURABLE_EXECUTION_ARN_PROPERTY);
         System.getProperties().stringPropertyNames().stream()
-                .filter(name -> name.startsWith(PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX))
+                .filter(name -> name.startsWith(PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX)
+                        || name.startsWith(PENDING_RAW_SPAN_ID_PROPERTY_PREFIX))
                 .toList()
                 .forEach(System::clearProperty);
     }
@@ -200,6 +207,10 @@ public class DeterministicIdGenerator implements IdGenerator {
     private static String pendingSpanOperationIdProperty() {
         return PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX
                 + Thread.currentThread().getId();
+    }
+
+    private static String pendingRawSpanIdProperty() {
+        return PENDING_RAW_SPAN_ID_PROPERTY_PREFIX + Thread.currentThread().getId();
     }
 
     private static void setOrClearProperty(String key, String value) {
