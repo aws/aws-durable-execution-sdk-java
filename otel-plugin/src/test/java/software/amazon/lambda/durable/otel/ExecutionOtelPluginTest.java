@@ -393,6 +393,80 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
+    void userFunctionSuccess_setsOkOnAttemptSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("attempt"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(StatusCode.OK, attemptSpan.getStatus().getStatusCode());
+    }
+
+    @Test
+    void operationSuccess_setsOkOnOperationSpan() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(new OperationInfo("op-1", "step-ok", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1", "step-ok", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-ok");
+        assertEquals(StatusCode.OK, operationSpan.getStatus().getStatusCode());
+    }
+
+    @Test
+    void operationEnd_withNonSuccessStatusAndNoError_leavesOperationSpanUnset() {
+        // onOperationEnd fires for every terminal status. A CANCELLED operation (or an error-less
+        // FAILED/TIMED_OUT/STOPPED) carries a non-null, non-SUCCEEDED status with a null error. It must NOT be
+        // stamped OK — the span status stays UNSET.
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(
+                new OperationInfo("op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), Instant.now(), "CANCELLED", null,
+                false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-cancel");
+        assertEquals(StatusCode.UNSET, operationSpan.getStatus().getStatusCode());
+    }
+
+    @Test
+    void operationEnd_withoutStart_nonSuccessStatusAndNoError_leavesContinuationSpanUnset() {
+        // Same guard on the continuation-span branch (operation completed between invocations): an error-less
+        // TIMED_OUT terminal status must NOT be stamped OK.
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-cb-timeout", "my-callback", "CALLBACK", "Callback", null, Instant.now(), Instant.now(),
+                "TIMED_OUT", null, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+
+        var continuationSpan = spanByName(spanExporter.getFinishedSpanItems(), "my-callback");
+        assertEquals(StatusCode.UNSET, continuationSpan.getStatus().getStatusCode());
+    }
+
+    @Test
+    void operationEnd_withNullStatusAndNoError_setsOkOnOperationSpan() {
+        // A successful statusless virtual (FLAT CONTEXT) operation fires onOperationEnd with a null operation ->
+        // null status and null error. This is genuine success and must be stamped OK.
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(
+                new OperationInfo("op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), Instant.now(), null, null, false, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "my-ctx");
+        assertEquals(StatusCode.OK, operationSpan.getStatus().getStatusCode());
+    }
+
+    @Test
     void operationNotCompleted_notEndedAtInvocationEnd() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, false));
