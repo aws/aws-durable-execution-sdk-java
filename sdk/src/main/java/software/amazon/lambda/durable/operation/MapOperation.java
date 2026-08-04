@@ -102,7 +102,21 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         }
     }
 
-    private static List<String> resolveIterationNames(String mapName, List<?> items, MapConfig config) {
+    /**
+     * Resolves the operation name for every iteration of a map, applying the config's item namer when present and the
+     * default {@code "<mapName>-iteration-N"} naming otherwise. A namer that returns null yields an unnamed iteration;
+     * any non-null name is validated here.
+     *
+     * <p>SDK-internal. This is the single source of iteration naming for both construction paths: the caller resolves
+     * names before an operation ID is allocated, and the legacy constructor resolves them on behalf of callers that do
+     * not.
+     *
+     * @param mapName the map operation's name, or null
+     * @param items the map's items, in iteration order
+     * @param config the map configuration supplying the optional item namer
+     * @return one name per item, in iteration order
+     */
+    public static List<String> resolveIterationNames(String mapName, List<?> items, MapConfig config) {
         var namer = config.itemNamer();
         var branchPrefix = mapName == null ? "map-iteration-" : mapName + "-iteration-";
         var names = new ArrayList<String>(items.size());
