@@ -429,8 +429,17 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), Instant.now(), "CANCELLED", null,
-                false, null));
+                "op-cancel",
+                "step-cancel",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "CANCELLED",
+                null,
+                false,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-cancel");
@@ -443,8 +452,17 @@ class ExecutionOtelPluginTest {
         // TIMED_OUT terminal status must NOT be stamped OK.
         plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-cb-timeout", "my-callback", "CALLBACK", "Callback", null, Instant.now(), Instant.now(),
-                "TIMED_OUT", null, false, null));
+                "op-cb-timeout",
+                "my-callback",
+                "CALLBACK",
+                "Callback",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "TIMED_OUT",
+                null,
+                false,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var continuationSpan = spanByName(spanExporter.getFinishedSpanItems(), "my-callback");

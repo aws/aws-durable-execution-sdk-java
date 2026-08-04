@@ -5,19 +5,25 @@
 #   proper import ordering, and license headers.
 #   Fails the build if any violations are found.
 #
+#   Deliberately has no `paths` filter: `mvn spotless:check` runs across every
+#   Maven module, so filtering by path would skip the job for changes it still
+#   validates. A module missing from such a filter (e.g. otel-plugin) can merge
+#   unformatted code and then break this check on unrelated pull requests.
+#
 # Triggers:
-#   - pull_request
+#   - pull_request: every PR targeting main
+#   - push: main, to catch any formatting drift that lands
+#   - workflow_dispatch: manual run
 name: Spotless
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
-    paths:
-      - 'sdk/**'
-      - 'sdk-testing/**'
-      - 'sdk-integration-tests/**'
-      - 'examples/**'
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read

@@ -501,8 +501,17 @@ class InvocationOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), Instant.now(), "CANCELLED", null,
-                false, null));
+                "op-cancel",
+                "step-cancel",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "CANCELLED",
+                null,
+                false,
+                null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -520,8 +529,17 @@ class InvocationOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-cb-timeout", "my-callback", "CALLBACK", "Callback", null, Instant.now(), Instant.now(),
-                "TIMED_OUT", null, false, null));
+                "op-cb-timeout",
+                "my-callback",
+                "CALLBACK",
+                "Callback",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "TIMED_OUT",
+                null,
+                false,
+                null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
