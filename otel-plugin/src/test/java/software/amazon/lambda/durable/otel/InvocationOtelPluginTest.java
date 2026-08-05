@@ -51,8 +51,10 @@ class InvocationOtelPluginTest {
 
         plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
     }
 
     @AfterEach
@@ -240,10 +242,12 @@ class InvocationOtelPluginTest {
         var exporter = InMemorySpanExporter.create();
         var customPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> null,
-                false,
-                "Workflow",
-                "my-custom-scope");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .instrumentationName("my-custom-scope")
+                        .build());
         customPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         customPlugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -671,8 +675,10 @@ class InvocationOtelPluginTest {
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
 
         sampledPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         sampledPlugin.onUserFunctionStart(
@@ -697,8 +703,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -716,8 +724,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onOperationStart(
@@ -746,8 +756,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -771,8 +783,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -801,8 +815,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         // First invocation
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
@@ -835,8 +851,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var noXrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
 
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
         noXrayPlugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
@@ -866,8 +884,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -1301,8 +1321,11 @@ class InvocationOtelPluginTest {
         var exporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> new ExtractedContext("5759e988bd862e3fe1be46a994272793", "53995c3f42cd8ad8"),
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(
+                                () -> new ExtractedContext("5759e988bd862e3fe1be46a994272793", "53995c3f42cd8ad8"))
+                        .enableMdc(false)
+                        .build());
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, false));
@@ -1330,9 +1353,11 @@ class InvocationOtelPluginTest {
         var exporter = InMemorySpanExporter.create();
         var customPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> null,
-                false,
-                "MyWorkflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("MyWorkflow")
+                        .build());
         customPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         customPlugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));

@@ -117,7 +117,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      */
     public ExecutionOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
-        this(tracerProviderBuilder, new XRayContextExtractor(), true, DEFAULT_WORKFLOW_SPAN_NAME);
+        this(tracerProviderBuilder, OtelPluginConfig.defaults());
     }
 
     /**
@@ -131,56 +131,30 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     /**
-     * Creates a Workflow-rooted OTel plugin with a custom context extractor, MDC enabled, root span named
-     * {@code "Workflow"}.
+     * Creates a Workflow-rooted OTel plugin from the given tracer provider builder and configuration.
+     *
+     * <p>Customers configure exporters and span processors on the builder; all other tunables (context extractor, MDC
+     * toggle, Workflow span name, instrumentation scope name) come from {@link OtelPluginConfig}. Use
+     * {@link OtelPluginConfig#builder()} for readable, named configuration:
+     *
+     * <pre>{@code
+     * var plugin = new ExecutionOtelPlugin(
+     *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+     *     OtelPluginConfig.builder().enableMdc(false).workflowSpanName("Workflow").build());
+     * }</pre>
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
-     * @param contextExtractor extracts parent trace context from the Lambda environment
+     * @param config the plugin configuration
      */
-    public ExecutionOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor) {
-        this(tracerProviderBuilder, contextExtractor, true, DEFAULT_WORKFLOW_SPAN_NAME);
-    }
-
-    /**
-     * Creates a Workflow-rooted OTel plugin with full configuration.
-     *
-     * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
-     * @param contextExtractor extracts parent trace context from the Lambda environment
-     * @param enableMdc if true, injects traceId/spanId/otelTraceSampled into SLF4J MDC for log correlation
-     * @param workflowSpanName the name for the Workflow root span
-     */
-    public ExecutionOtelPlugin(
-            SdkTracerProviderBuilder tracerProviderBuilder,
-            ContextExtractor contextExtractor,
-            boolean enableMdc,
-            String workflowSpanName) {
-        this(tracerProviderBuilder, contextExtractor, enableMdc, workflowSpanName, INSTRUMENTATION_NAME);
-    }
-
-    /**
-     * Creates an OTel plugin with full configuration, including a custom instrumentation scope name.
-     *
-     * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
-     * @param contextExtractor extracts parent trace context from the Lambda environment
-     * @param enableMdc if true, injects traceId/spanId/otelTraceSampled into SLF4J MDC for log correlation
-     * @param workflowSpanName the name for the Workflow root span
-     * @param instrumentationName the instrumentation scope name registered with the tracer (defaults to
-     *     "aws-durable-execution-sdk-java" when null)
-     */
-    public ExecutionOtelPlugin(
-            SdkTracerProviderBuilder tracerProviderBuilder,
-            ContextExtractor contextExtractor,
-            boolean enableMdc,
-            String workflowSpanName,
-            String instrumentationName) {
+    public ExecutionOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
         this.idGenerator = new DeterministicIdGenerator();
 
         this.sdkTracerProvider =
                 tracerProviderBuilder.setIdGenerator(idGenerator).build();
-        this.tracer = sdkTracerProvider.get(instrumentationName != null ? instrumentationName : INSTRUMENTATION_NAME);
-        this.contextExtractor = contextExtractor;
-        this.enableMdc = enableMdc;
-        this.workflowSpanName = workflowSpanName != null ? workflowSpanName : DEFAULT_WORKFLOW_SPAN_NAME;
+        this.tracer = sdkTracerProvider.get(config.instrumentationName());
+        this.contextExtractor = config.contextExtractor();
+        this.enableMdc = config.enableMdc();
+        this.workflowSpanName = config.workflowSpanName();
     }
 
     private ExecutionOtelPlugin(TracerProvider tracerProvider, DeterministicIdGenerator idGenerator) {

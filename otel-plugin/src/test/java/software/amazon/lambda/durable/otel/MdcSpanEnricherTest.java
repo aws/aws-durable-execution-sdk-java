@@ -58,8 +58,10 @@ class MdcSpanEnricherTest {
 
         var plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                true);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(true)
+                        .build());
 
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-mdc-test", true, Instant.now()));
 
