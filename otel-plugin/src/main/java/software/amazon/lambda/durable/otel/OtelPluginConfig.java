@@ -26,8 +26,8 @@ import java.util.Map;
  * }</pre>
  *
  * <p>Defaults: {@code contextExtractor = new XRayContextExtractor()}, {@code enableMdc = true}, {@code workflowSpanName
- * = "Workflow"}, {@code instrumentationName = "aws-durable-execution-sdk-java"}. A {@code null} passed to any builder
- * setter falls back to the corresponding default.
+ * = "Workflow"}, {@code instrumentationName = "aws-durable-execution-sdk-java"}, {@code providerSource =
+ * ProviderSource.AUTO_OTLP}. A {@code null} passed to any builder setter falls back to the corresponding default.
  *
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
@@ -41,7 +41,7 @@ public final class OtelPluginConfig {
     private final boolean enableMdc;
     private final String workflowSpanName;
     private final String instrumentationName;
-    private final boolean useDefaultTracerProvider;
+    private final ProviderSource providerSource;
     private final String otlpEndpoint;
     private final Map<String, String> otlpHeaders;
 
@@ -53,7 +53,7 @@ public final class OtelPluginConfig {
                 builder.workflowSpanName != null ? builder.workflowSpanName : DEFAULT_WORKFLOW_SPAN_NAME;
         this.instrumentationName =
                 builder.instrumentationName != null ? builder.instrumentationName : DEFAULT_INSTRUMENTATION_NAME;
-        this.useDefaultTracerProvider = builder.useDefaultTracerProvider;
+        this.providerSource = builder.providerSource != null ? builder.providerSource : ProviderSource.AUTO_OTLP;
         this.otlpEndpoint = builder.otlpEndpoint;
         this.otlpHeaders = builder.otlpHeaders != null ? Map.copyOf(builder.otlpHeaders) : Map.of();
     }
@@ -89,11 +89,15 @@ public final class OtelPluginConfig {
     }
 
     /**
-     * Whether to use the globally configured (ADOT) provider instead of an auto-configured OTLP provider. Only
-     * consulted when no {@code SdkTracerProviderBuilder} was supplied. Defaults to {@code false}.
+     * The tracer-provider source to use when no {@code SdkTracerProviderBuilder} is supplied (the config-only
+     * constructors). {@link ProviderSource#GLOBAL} uses the globally configured (ADOT) provider;
+     * {@link ProviderSource#AUTO_OTLP} (the default) makes the plugin build and own an OTLP/HTTP provider.
+     *
+     * <p>{@link ProviderSource#EXPLICIT} is not valid here — it is implied by using a {@code (SdkTracerProviderBuilder,
+     * OtelPluginConfig)} constructor and is rejected by the config-only constructors.
      */
-    public boolean useDefaultTracerProvider() {
-        return useDefaultTracerProvider;
+    public ProviderSource providerSource() {
+        return providerSource;
     }
 
     /** OTLP/HTTP endpoint for the auto-configured provider, or {@code null} to use the OTel default / env var. */
@@ -104,17 +108,6 @@ public final class OtelPluginConfig {
     /** Extra headers sent by the auto-configured OTLP exporter (never {@code null}). */
     public Map<String, String> otlpHeaders() {
         return otlpHeaders;
-    }
-
-    /**
-     * The provider source selected by this config when no {@code SdkTracerProviderBuilder} is supplied.
-     *
-     * <p>Returns {@link ProviderSource#GLOBAL} when {@link #useDefaultTracerProvider()} is true, otherwise
-     * {@link ProviderSource#AUTO_OTLP}. (A supplied builder is always {@link ProviderSource#EXPLICIT}, decided by the
-     * constructor rather than the config.)
-     */
-    public ProviderSource resolveSource() {
-        return useDefaultTracerProvider ? ProviderSource.GLOBAL : ProviderSource.AUTO_OTLP;
     }
 
     /**
@@ -129,7 +122,7 @@ public final class OtelPluginConfig {
         private boolean enableMdc = true;
         private String workflowSpanName;
         private String instrumentationName;
-        private boolean useDefaultTracerProvider = false;
+        private ProviderSource providerSource = ProviderSource.AUTO_OTLP;
         private String otlpEndpoint;
         private Map<String, String> otlpHeaders;
 
@@ -181,14 +174,18 @@ public final class OtelPluginConfig {
         }
 
         /**
-         * Sets whether to use the globally configured (ADOT) provider instead of an auto-configured OTLP provider. Only
-         * consulted when no {@code SdkTracerProviderBuilder} is supplied. Defaults to {@code false} (auto-OTLP).
+         * Sets the tracer-provider source used when no {@code SdkTracerProviderBuilder} is supplied. Defaults to
+         * {@link ProviderSource#AUTO_OTLP} (a plugin-owned OTLP/HTTP provider); pass {@link ProviderSource#GLOBAL} to
+         * use the globally configured (ADOT) provider. A {@code null} falls back to {@link ProviderSource#AUTO_OTLP}.
          *
-         * @param useDefaultTracerProvider if true, resolve to {@link ProviderSource#GLOBAL}
+         * <p>{@link ProviderSource#EXPLICIT} is not accepted through the config-only constructors — supply a
+         * {@code SdkTracerProviderBuilder} via the two-arg constructor instead.
+         *
+         * @param providerSource the provider source, {@link ProviderSource#GLOBAL} or {@link ProviderSource#AUTO_OTLP}
          * @return this builder
          */
-        public Builder useDefaultTracerProvider(boolean useDefaultTracerProvider) {
-            this.useDefaultTracerProvider = useDefaultTracerProvider;
+        public Builder providerSource(ProviderSource providerSource) {
+            this.providerSource = providerSource != null ? providerSource : ProviderSource.AUTO_OTLP;
             return this;
         }
 

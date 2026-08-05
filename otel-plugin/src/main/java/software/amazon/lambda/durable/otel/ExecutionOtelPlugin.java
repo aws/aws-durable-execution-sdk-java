@@ -162,18 +162,24 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     /**
      * Creates a Workflow-rooted OTel plugin from configuration alone (no caller-supplied tracer provider builder).
      *
-     * <p>The provider is resolved from {@link OtelPluginConfig#resolveSource()}: {@link ProviderSource#GLOBAL} when
-     * {@code useDefaultTracerProvider(true)} (the ADOT/global provider), otherwise the default
-     * {@link ProviderSource#AUTO_OTLP} — a plugin-owned OTLP/HTTP provider (matching the JavaScript and Python SDK
-     * plugins).
+     * <p>The provider is taken from {@link OtelPluginConfig#providerSource()}: {@link ProviderSource#GLOBAL} uses the
+     * ADOT/global provider, otherwise the default {@link ProviderSource#AUTO_OTLP} builds a plugin-owned OTLP/HTTP
+     * provider (matching the JavaScript and Python SDK plugins). {@link ProviderSource#EXPLICIT} is rejected here —
+     * supply a {@code SdkTracerProviderBuilder} via the two-arg constructor for that.
      *
      * @param config the plugin configuration
+     * @throws IllegalArgumentException if {@code config.providerSource()} is {@link ProviderSource#EXPLICIT}
      */
     public ExecutionOtelPlugin(OtelPluginConfig config) {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
-        this.providerSource = config.resolveSource();
+        this.providerSource = config.providerSource();
+
+        if (this.providerSource == ProviderSource.EXPLICIT) {
+            throw new IllegalArgumentException("OtelPluginConfig.providerSource(EXPLICIT) requires a caller-supplied "
+                    + "SdkTracerProviderBuilder; use the (SdkTracerProviderBuilder, OtelPluginConfig) constructor.");
+        }
 
         if (this.providerSource == ProviderSource.GLOBAL) {
             this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();

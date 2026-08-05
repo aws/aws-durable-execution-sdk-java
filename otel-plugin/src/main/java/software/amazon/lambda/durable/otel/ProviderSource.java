@@ -11,10 +11,14 @@ package software.amazon.lambda.durable.otel;
  *   <li>{@link #EXPLICIT} — the caller supplied a {@link io.opentelemetry.sdk.trace.SdkTracerProviderBuilder} (the
  *       {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructors); the plugin builds and owns that provider.
  *   <li>{@link #GLOBAL} — {@code GlobalOpenTelemetry} / the ADOT Java agent (the no-arg constructor, or a config with
- *       {@code useDefaultTracerProvider(true)}); the plugin does not own the provider.
- *   <li>{@link #AUTO_OTLP} — the default when only an {@link OtelPluginConfig} is supplied and
- *       {@code useDefaultTracerProvider} is false: the plugin builds and owns an OTLP/HTTP provider.
+ *       {@code providerSource(GLOBAL)}); the plugin does not own the provider.
+ *   <li>{@link #AUTO_OTLP} — the default when only an {@link OtelPluginConfig} is supplied (its {@code providerSource}
+ *       left at {@code AUTO_OTLP}): the plugin builds and owns an OTLP/HTTP provider.
  * </ul>
+ *
+ * <p>This is the single knob that selects a plugin's tracer provider. {@link OtelPluginConfig#providerSource()} carries
+ * it for the config-only constructors; the {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructors always
+ * report {@link #EXPLICIT}.
  *
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
@@ -25,10 +29,5 @@ public enum ProviderSource {
     /** Globally configured provider (ADOT Java agent); not plugin-owned. */
     GLOBAL,
     /** Auto-configured OTLP/HTTP provider; plugin-owned. */
-    AUTO_OTLP;
-
-    /** True when the plugin created (and therefore manages/flushes) the provider. */
-    public boolean ownsProvider() {
-        return this == EXPLICIT || this == AUTO_OTLP;
-    }
+    AUTO_OTLP
 }

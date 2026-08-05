@@ -263,7 +263,6 @@ class InvocationOtelPluginTest {
     void configOnlyConstructor_defaultsToAutoOtlpProvider() {
         var plugin = new InvocationOtelPlugin(OtelPluginConfig.defaults());
         assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
-        assertTrue(plugin.providerSource().ownsProvider());
     }
 
     @Test
@@ -273,14 +272,23 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void configResolveSource_reflectsUseDefaultTracerProvider() {
-        assertEquals(ProviderSource.AUTO_OTLP, OtelPluginConfig.defaults().resolveSource());
+    void configProviderSource_defaultsToAutoOtlpAndHonorsGlobal() {
+        assertEquals(ProviderSource.AUTO_OTLP, OtelPluginConfig.defaults().providerSource());
         assertEquals(
                 ProviderSource.GLOBAL,
                 OtelPluginConfig.builder()
-                        .useDefaultTracerProvider(true)
+                        .providerSource(ProviderSource.GLOBAL)
                         .build()
-                        .resolveSource());
+                        .providerSource());
+    }
+
+    @Test
+    void configOnlyConstructor_rejectsExplicitProviderSource() {
+        var config = OtelPluginConfig.builder()
+                .providerSource(ProviderSource.EXPLICIT)
+                .build();
+        var error = assertThrows(IllegalArgumentException.class, () -> new InvocationOtelPlugin(config));
+        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
     }
 
     @Test

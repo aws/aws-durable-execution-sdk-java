@@ -80,13 +80,32 @@ class ExecutionOtelPluginTest {
     void configOnlyConstructor_defaultsToAutoOtlpProvider() {
         var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
         assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
-        assertTrue(plugin.providerSource().ownsProvider());
     }
 
     @Test
     void builderConstructor_isExplicitSource() {
         var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
         assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
+    }
+
+    @Test
+    void configProviderSource_defaultsToAutoOtlpAndHonorsGlobal() {
+        assertEquals(ProviderSource.AUTO_OTLP, OtelPluginConfig.defaults().providerSource());
+        assertEquals(
+                ProviderSource.GLOBAL,
+                OtelPluginConfig.builder()
+                        .providerSource(ProviderSource.GLOBAL)
+                        .build()
+                        .providerSource());
+    }
+
+    @Test
+    void configOnlyConstructor_rejectsExplicitProviderSource() {
+        var config = OtelPluginConfig.builder()
+                .providerSource(ProviderSource.EXPLICIT)
+                .build();
+        var error = assertThrows(IllegalArgumentException.class, () -> new ExecutionOtelPlugin(config));
+        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
     }
 
     @Test
