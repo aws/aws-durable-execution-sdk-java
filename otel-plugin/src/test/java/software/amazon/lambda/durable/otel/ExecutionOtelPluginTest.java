@@ -5,9 +5,12 @@ package software.amazon.lambda.durable.otel;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
@@ -20,6 +23,8 @@ import software.amazon.lambda.durable.plugin.*;
 class ExecutionOtelPluginTest {
 
     private static final String ARN = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
+    private static final AttributeKey<String> SERVICE_NAME = AttributeKey.stringKey("service.name");
+    private static final String CONFIGURED_SERVICE_NAME = "durable-execution-conformance";
 
     private InMemorySpanExporter spanExporter;
     private ExecutionOtelPlugin plugin;
@@ -29,8 +34,11 @@ class ExecutionOtelPluginTest {
         DeterministicIdGenerator.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
+        var resource = Resource.create(Attributes.of(SERVICE_NAME, CONFIGURED_SERVICE_NAME));
         plugin = new ExecutionOtelPlugin(
-                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                SdkTracerProvider.builder()
+                        .setResource(resource)
+                        .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 () -> null,
                 false,
                 "Workflow");
@@ -116,17 +124,16 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void spans_carryWorkflowServiceName() {
+    void spans_preserveConfiguredServiceName() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
-        var workflowSpan = spanByName(spanExporter.getFinishedSpanItems(), "Workflow");
-        assertEquals(
-                "workflow",
-                workflowSpan
-                        .getResource()
-                        .getAttribute(io.opentelemetry.api.common.AttributeKey.stringKey("service.name")),
-                "Spans should carry service.name=workflow");
+        for (var span : spanExporter.getFinishedSpanItems()) {
+            assertEquals(
+                    CONFIGURED_SERVICE_NAME,
+                    span.getResource().getAttribute(SERVICE_NAME),
+                    "Plugin must preserve the caller-configured service.name");
+        }
     }
 
     @Test
