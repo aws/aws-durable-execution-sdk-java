@@ -18,12 +18,12 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  * fails. The plugin, filtering to step-type operations, logs operation-end with the operation's status, its
  * checkpointed serialized result, and its error message.
  *
- * <p>SDK CAPABILITY GAP (Java): {@link OperationEndInfo} exposes no serialized-result field — its record is
- * {@code (id, name, type, subType, parentId, startTimestamp, endTimestamp, status, attempt, isReplay, error)}. The
- * result of a successful operation is therefore not available to the hook, so this handler honestly logs
- * {@code result: NONE} for step A. The requirement expects {@code result: "task-a"}; that assertion will fail, which
- * is the correct signal that the Java plugin API does not surface operation results at the operation-end boundary.
- * The error path (step B, {@code error: boom}) is fully supported via {@link OperationEndInfo#error()}.
+ * <p>SDK CAPABILITY GAP (Java): {@link OperationEndInfo} exposes no serialized-result field — its record is {@code (id,
+ * name, type, subType, parentId, startTimestamp, endTimestamp, status, attempt, isReplay, error)}. The result of a
+ * successful operation is therefore not available to the hook, so this handler honestly logs {@code result: NONE} for
+ * step A. The requirement expects {@code result: "task-a"}; that assertion will fail, which is the correct signal that
+ * the Java plugin API does not surface operation results at the operation-end boundary. The error path (step B,
+ * {@code error: boom}) is fully supported via {@link OperationEndInfo#error()}.
  */
 @SuppressWarnings("deprecation")
 public class PluginTerminalPayloads extends DurableHandler<Object, String> {
