@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.otel;
 import static software.amazon.lambda.durable.otel.SpanAttributes.*;
 
 import io.opentelemetry.api.common.AttributeKey;
-import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.SpanContext;
@@ -17,10 +16,8 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
-import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
-import io.opentelemetry.semconv.ServiceAttributes;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -87,7 +84,6 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
     private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
     private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
-    private static final String SERVICE_NAME = "workflow";
 
     private final SdkTracerProvider sdkTracerProvider;
     private final Tracer tracer;
@@ -159,10 +155,6 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             boolean enableMdc,
             String workflowSpanName) {
         this.idGenerator = new DeterministicIdGenerator();
-
-        // Set service.name so this plugin's spans group under a distinct "workflow" node in X-Ray/OTLP backends.
-        var resource = Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, SERVICE_NAME));
-        tracerProviderBuilder.addResource(resource);
 
         this.sdkTracerProvider =
                 tracerProviderBuilder.setIdGenerator(idGenerator).build();
