@@ -165,7 +165,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
-     * @param enableMdc if true, injects traceId/spanId/traceSampled into SLF4J MDC for log correlation
+     * @param enableMdc if true, injects traceId/spanId/otelTraceSampled into SLF4J MDC for log correlation
      */
     public InvocationOtelPlugin(
             SdkTracerProviderBuilder tracerProviderBuilder, ContextExtractor contextExtractor, boolean enableMdc) {
@@ -177,7 +177,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      *
      * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
      * @param contextExtractor extracts parent trace context from the Lambda environment
-     * @param enableMdc if true, injects traceId/spanId/traceSampled into SLF4J MDC for log correlation
+     * @param enableMdc if true, injects traceId/spanId/otelTraceSampled into SLF4J MDC for log correlation
      * @param workflowSpanName the name for the Workflow span
      */
     public InvocationOtelPlugin(
