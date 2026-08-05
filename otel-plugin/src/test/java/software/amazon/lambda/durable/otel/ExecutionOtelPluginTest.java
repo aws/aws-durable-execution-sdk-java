@@ -75,7 +75,18 @@ class ExecutionOtelPluginTest {
         defaultPlugin.onOperationStart(
                 new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, null, false));
         defaultPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         defaultPlugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -230,7 +241,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-1", "flaky", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 3, false, null));
+                "op-1",
+                "flaky",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                3,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
@@ -247,7 +269,18 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
         // No matching onOperationStart in this invocation — continuation branch.
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 2, false, null));
+                "op-1",
+                "flaky",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                2,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
@@ -266,7 +299,7 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, opStart, null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, opStart, opEnd, "SUCCEEDED", null, false, null));
+                "op-1", "step-a", "STEP", "Step", null, opStart, opEnd, "SUCCEEDED", null, false, null, null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-a");
@@ -282,7 +315,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -310,7 +354,18 @@ class ExecutionOtelPluginTest {
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "compute",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -350,6 +405,7 @@ class ExecutionOtelPluginTest {
                 "SUCCEEDED",
                 null,
                 false,
+                null,
                 null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-parent",
@@ -362,6 +418,7 @@ class ExecutionOtelPluginTest {
                 "SUCCEEDED",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
@@ -424,7 +481,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-ok", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-ok", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-ok",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-ok");
@@ -450,6 +518,7 @@ class ExecutionOtelPluginTest {
                 "CANCELLED",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
@@ -473,6 +542,7 @@ class ExecutionOtelPluginTest {
                 "TIMED_OUT",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
@@ -488,7 +558,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), Instant.now(), null, null, false, null));
+                "op-ctx",
+                "my-ctx",
+                "CONTEXT",
+                null,
+                null,
+                Instant.now(),
+                Instant.now(),
+                null,
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "my-ctx");
@@ -528,7 +609,18 @@ class ExecutionOtelPluginTest {
         // Invocation 2: the operation completes → materialized once via onOperationEnd, linked to this invocation.
         plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "my-wait",
+                "WAIT",
+                "Wait",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -550,7 +642,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-1", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-1",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
         var firstTraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
         spanExporter.reset();
@@ -579,6 +682,7 @@ class ExecutionOtelPluginTest {
                 "SUCCEEDED",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
@@ -650,7 +754,18 @@ class ExecutionOtelPluginTest {
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();

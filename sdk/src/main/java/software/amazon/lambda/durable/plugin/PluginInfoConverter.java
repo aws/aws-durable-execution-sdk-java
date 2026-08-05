@@ -69,7 +69,33 @@ public final class PluginInfoConverter {
                         ? operation.stepDetails().attempt()
                         : null,
                 isReplay,
-                error);
+                error,
+                extractResult(operation));
+    }
+
+    /**
+     * Extracts the serialized result from an operation based on its type. Returns null if the operation has no result
+     * (e.g., failed or still running).
+     */
+    private static String extractResult(Operation operation) {
+        if (operation == null || operation.type() == null) {
+            return null;
+        }
+        return switch (operation.type()) {
+            case STEP ->
+                operation.stepDetails() != null ? operation.stepDetails().result() : null;
+            case CHAINED_INVOKE ->
+                operation.chainedInvokeDetails() != null
+                        ? operation.chainedInvokeDetails().result()
+                        : null;
+            case CALLBACK ->
+                operation.callbackDetails() != null
+                        ? operation.callbackDetails().result()
+                        : null;
+            case CONTEXT ->
+                operation.contextDetails() != null ? operation.contextDetails().result() : null;
+            default -> null;
+        };
     }
 
     /**

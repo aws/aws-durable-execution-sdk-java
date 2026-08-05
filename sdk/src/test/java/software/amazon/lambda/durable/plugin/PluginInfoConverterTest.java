@@ -8,6 +8,8 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 
@@ -94,6 +96,35 @@ class PluginInfoConverterTest {
         var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
 
         assertNull(info.error());
+    }
+
+    @Test
+    void toOperationEndInfo_extractsResult_fromSucceededStep() {
+        var operation = Operation.builder()
+                .startTimestamp(START)
+                .endTimestamp(END)
+                .type(OperationType.STEP)
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder().result("\"hello\"").build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
+
+        assertEquals("\"hello\"", info.result());
+    }
+
+    @Test
+    void toOperationEndInfo_resultIsNull_whenOperationHasNoResult() {
+        var operation = Operation.builder()
+                .startTimestamp(START)
+                .endTimestamp(END)
+                .type(OperationType.WAIT)
+                .status(OperationStatus.SUCCEEDED)
+                .build();
+
+        var info = PluginInfoConverter.toOperationEndInfo(operation, WAIT_IDENTIFIER, null, false, null);
+
+        assertNull(info.result());
     }
 
     // ─── toUserFunctionStartInfo ────────────────────────────────────────
