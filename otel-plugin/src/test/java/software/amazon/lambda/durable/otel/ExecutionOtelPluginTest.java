@@ -77,6 +77,19 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
+    void configOnlyConstructor_defaultsToAutoOtlpProvider() {
+        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
+        assertTrue(plugin.providerSource().ownsProvider());
+    }
+
+    @Test
+    void builderConstructor_isExplicitSource() {
+        var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
+    }
+
+    @Test
     void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
         GlobalOpenTelemetry.resetForTest();
         var error = assertThrows(IllegalStateException.class, ExecutionOtelPlugin::new);

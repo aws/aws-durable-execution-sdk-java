@@ -33,12 +33,18 @@
             <version>${opentelemetry.version}</version>
         </dependency>
 
-        <!-- OpenTelemetry SDK (provided — users bring their own SDK configuration) -->
+        <!-- OpenTelemetry SDK (compile — needed for the auto-configured OTLP provider default;
+             the ADOT agent / a custom builder still override it at runtime). -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk</artifactId>
             <version>${opentelemetry.version}</version>
-            <scope>provided</scope>
+        </dependency>
+        <!-- OTLP/HTTP span exporter for the auto-configured provider (ProviderSource.AUTO_OTLP). -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <version>${opentelemetry.version}</version>
         </dependency>
         <!-- OpenTelemetry Java agent supplies this SPI when loading OTEL_JAVAAGENT_EXTENSIONS. -->
         <dependency>

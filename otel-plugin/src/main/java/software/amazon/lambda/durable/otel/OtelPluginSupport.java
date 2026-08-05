@@ -3,9 +3,15 @@
 package software.amazon.lambda.durable.otel;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.TracerProvider;
+import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
+import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
+import io.opentelemetry.semconv.ServiceAttributes;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.slf4j.Logger;
@@ -43,6 +49,92 @@ final class OtelPluginSupport {
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {
         return new DeterministicIdGenerator();
+    }
+
+    /**
+     * Builds a plugin-owned {@link SdkTracerProvider} that exports over OTLP/HTTP (the {@link ProviderSource#AUTO_OTLP}
+     * default). Mirrors the auto-configured provider in the JavaScript and Python SDK plugins: an OTLP/HTTP exporter, a
+     * batch span processor, an env-driven sampler, Lambda resource attributes, and the deterministic ID generator.
+     *
+     * @param config the plugin configuration (endpoint + headers)
+     * @param idGenerator the deterministic ID generator to install
+     * @param additionalResource extra resource attributes to merge (e.g. ExecutionOtelPlugin's service.name), or null
+     */
+    static SdkTracerProvider buildAutoOtlpProvider(
+            OtelPluginConfig config, DeterministicIdGenerator idGenerator, Resource additionalResource) {
+        var exporterBuilder = OtlpHttpSpanExporter.builder();
+        var endpoint = resolveOtlpEndpoint(config);
+        if (endpoint != null) {
+            exporterBuilder.setEndpoint(endpoint);
+        }
+        for (var header : config.otlpHeaders().entrySet()) {
+            exporterBuilder.addHeader(header.getKey(), header.getValue());
+        }
+
+        var resource = buildLambdaResource();
+        if (additionalResource != null) {
+            resource = resource.merge(additionalResource);
+        }
+
+        return SdkTracerProvider.builder()
+                .setIdGenerator(idGenerator)
+                .setSampler(resolveSampler())
+                .setResource(resource)
+                .addSpanProcessor(
+                        BatchSpanProcessor.builder(exporterBuilder.build()).build())
+                .build();
+    }
+
+    /** Resolves the OTLP/HTTP traces endpoint (config -> env -> exporter default), appending the signal path. */
+    private static String resolveOtlpEndpoint(OtelPluginConfig config) {
+        if (config.otlpEndpoint() != null && !config.otlpEndpoint().isBlank()) {
+            return config.otlpEndpoint();
+        }
+        var envEndpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+        if (envEndpoint != null && !envEndpoint.isBlank()) {
+            var base = envEndpoint.endsWith("/") ? envEndpoint.substring(0, envEndpoint.length() - 1) : envEndpoint;
+            return base.endsWith("/v1/traces") ? base : base + "/v1/traces";
+        }
+        // null -> the OTLP/HTTP exporter's own default (http://localhost:4318/v1/traces)
+        return null;
+    }
+
+    /** Builds the sampler from {@code OTEL_DURABLE_SAMPLING_RATIO}, falling back to always-on. */
+    private static Sampler resolveSampler() {
+        var raw = System.getenv("OTEL_DURABLE_SAMPLING_RATIO");
+        if (raw != null) {
+            try {
+                var ratio = Double.parseDouble(raw);
+                if (ratio >= 0.0 && ratio <= 1.0) {
+                    return Sampler.traceIdRatioBased(ratio);
+                }
+            } catch (NumberFormatException ignored) {
+                // fall through to always-on
+            }
+        }
+        return Sampler.alwaysOn();
+    }
+
+    /** Builds Lambda resource attributes from AWS_* env vars, merged onto the default resource. */
+    private static Resource buildLambdaResource() {
+        var functionName = System.getenv("AWS_LAMBDA_FUNCTION_NAME");
+        if (functionName == null || functionName.isBlank()) {
+            return Resource.getDefault();
+        }
+        var attributes = Attributes.builder()
+                .put(ServiceAttributes.SERVICE_NAME, functionName)
+                .put("faas.name", functionName)
+                .put("cloud.provider", "aws")
+                .put("cloud.platform", "aws_lambda");
+        var region = System.getenv("AWS_REGION");
+        if (region != null && !region.isBlank()) {
+            attributes.put("cloud.region", region);
+        }
+        var version = System.getenv("AWS_LAMBDA_FUNCTION_VERSION");
+        if (version != null && !version.isBlank()) {
+            attributes.put("faas.version", version);
+        }
+        return Resource.getDefault().merge(Resource.create(attributes.build()));
     }
 
     /** Extracts trace context from the current OTel span (fallback when X-Ray header is unavailable). */

@@ -91,6 +91,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private final ContextExtractor contextExtractor;
     private final boolean enableMdc;
     private final String workflowSpanName;
+    private final ProviderSource providerSource;
 
     // Per-invocation state
     private volatile Span workflowSpan;
@@ -155,6 +156,36 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
+        this.providerSource = ProviderSource.EXPLICIT;
+    }
+
+    /**
+     * Creates a Workflow-rooted OTel plugin from configuration alone (no caller-supplied tracer provider builder).
+     *
+     * <p>The provider is resolved from {@link OtelPluginConfig#resolveSource()}: {@link ProviderSource#GLOBAL} when
+     * {@code useDefaultTracerProvider(true)} (the ADOT/global provider), otherwise the default
+     * {@link ProviderSource#AUTO_OTLP} — a plugin-owned OTLP/HTTP provider (matching the JavaScript and Python SDK
+     * plugins).
+     *
+     * @param config the plugin configuration
+     */
+    public ExecutionOtelPlugin(OtelPluginConfig config) {
+        this.contextExtractor = config.contextExtractor();
+        this.enableMdc = config.enableMdc();
+        this.workflowSpanName = config.workflowSpanName();
+        this.providerSource = config.resolveSource();
+
+        if (this.providerSource == ProviderSource.GLOBAL) {
+            this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();
+            var tracerProvider = getDefaultTracerProvider();
+            this.sdkTracerProvider =
+                    OtelPluginSupport.getSdkTracerProviderForFlush(tracerProvider, "ExecutionOtelPlugin");
+            this.tracer = tracerProvider.get(config.instrumentationName());
+        } else {
+            this.idGenerator = new DeterministicIdGenerator();
+            this.sdkTracerProvider = OtelPluginSupport.buildAutoOtlpProvider(config, this.idGenerator, null);
+            this.tracer = this.sdkTracerProvider.get(config.instrumentationName());
+        }
     }
 
     private ExecutionOtelPlugin(TracerProvider tracerProvider, DeterministicIdGenerator idGenerator) {
@@ -165,6 +196,12 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.contextExtractor = new XRayContextExtractor();
         this.enableMdc = true;
         this.workflowSpanName = DEFAULT_WORKFLOW_SPAN_NAME;
+        this.providerSource = ProviderSource.GLOBAL;
+    }
+
+    /** The tier that produced this plugin's tracer provider. */
+    public ProviderSource providerSource() {
+        return providerSource;
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────

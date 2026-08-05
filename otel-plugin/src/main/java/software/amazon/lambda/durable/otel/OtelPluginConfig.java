@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import java.util.Map;
+
 /**
  * Immutable configuration for {@link InvocationOtelPlugin} and {@link ExecutionOtelPlugin}.
  *
@@ -39,6 +41,9 @@ public final class OtelPluginConfig {
     private final boolean enableMdc;
     private final String workflowSpanName;
     private final String instrumentationName;
+    private final boolean useDefaultTracerProvider;
+    private final String otlpEndpoint;
+    private final Map<String, String> otlpHeaders;
 
     private OtelPluginConfig(Builder builder) {
         this.contextExtractor =
@@ -48,6 +53,9 @@ public final class OtelPluginConfig {
                 builder.workflowSpanName != null ? builder.workflowSpanName : DEFAULT_WORKFLOW_SPAN_NAME;
         this.instrumentationName =
                 builder.instrumentationName != null ? builder.instrumentationName : DEFAULT_INSTRUMENTATION_NAME;
+        this.useDefaultTracerProvider = builder.useDefaultTracerProvider;
+        this.otlpEndpoint = builder.otlpEndpoint;
+        this.otlpHeaders = builder.otlpHeaders != null ? Map.copyOf(builder.otlpHeaders) : Map.of();
     }
 
     /** Returns a new builder with all fields defaulted. */
@@ -81,6 +89,35 @@ public final class OtelPluginConfig {
     }
 
     /**
+     * Whether to use the globally configured (ADOT) provider instead of an auto-configured OTLP provider. Only
+     * consulted when no {@code SdkTracerProviderBuilder} was supplied. Defaults to {@code false}.
+     */
+    public boolean useDefaultTracerProvider() {
+        return useDefaultTracerProvider;
+    }
+
+    /** OTLP/HTTP endpoint for the auto-configured provider, or {@code null} to use the OTel default / env var. */
+    public String otlpEndpoint() {
+        return otlpEndpoint;
+    }
+
+    /** Extra headers sent by the auto-configured OTLP exporter (never {@code null}). */
+    public Map<String, String> otlpHeaders() {
+        return otlpHeaders;
+    }
+
+    /**
+     * The provider source selected by this config when no {@code SdkTracerProviderBuilder} is supplied.
+     *
+     * <p>Returns {@link ProviderSource#GLOBAL} when {@link #useDefaultTracerProvider()} is true, otherwise
+     * {@link ProviderSource#AUTO_OTLP}. (A supplied builder is always {@link ProviderSource#EXPLICIT}, decided by the
+     * constructor rather than the config.)
+     */
+    public ProviderSource resolveSource() {
+        return useDefaultTracerProvider ? ProviderSource.GLOBAL : ProviderSource.AUTO_OTLP;
+    }
+
+    /**
      * Builder for {@link OtelPluginConfig}.
      *
      * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
@@ -92,6 +129,9 @@ public final class OtelPluginConfig {
         private boolean enableMdc = true;
         private String workflowSpanName;
         private String instrumentationName;
+        private boolean useDefaultTracerProvider = false;
+        private String otlpEndpoint;
+        private Map<String, String> otlpHeaders;
 
         private Builder() {}
 
@@ -137,6 +177,41 @@ public final class OtelPluginConfig {
          */
         public Builder instrumentationName(String instrumentationName) {
             this.instrumentationName = instrumentationName;
+            return this;
+        }
+
+        /**
+         * Sets whether to use the globally configured (ADOT) provider instead of an auto-configured OTLP provider. Only
+         * consulted when no {@code SdkTracerProviderBuilder} is supplied. Defaults to {@code false} (auto-OTLP).
+         *
+         * @param useDefaultTracerProvider if true, resolve to {@link ProviderSource#GLOBAL}
+         * @return this builder
+         */
+        public Builder useDefaultTracerProvider(boolean useDefaultTracerProvider) {
+            this.useDefaultTracerProvider = useDefaultTracerProvider;
+            return this;
+        }
+
+        /**
+         * Sets the OTLP/HTTP endpoint for the auto-configured provider. When null, the OTel default (or
+         * {@code OTEL_EXPORTER_OTLP_ENDPOINT}) is used.
+         *
+         * @param otlpEndpoint the OTLP/HTTP traces endpoint
+         * @return this builder
+         */
+        public Builder otlpEndpoint(String otlpEndpoint) {
+            this.otlpEndpoint = otlpEndpoint;
+            return this;
+        }
+
+        /**
+         * Sets extra headers for the auto-configured OTLP exporter (e.g. auth headers for a third-party endpoint).
+         *
+         * @param otlpHeaders header name/value pairs; null is treated as empty
+         * @return this builder
+         */
+        public Builder otlpHeaders(Map<String, String> otlpHeaders) {
+            this.otlpHeaders = otlpHeaders;
             return this;
         }
 

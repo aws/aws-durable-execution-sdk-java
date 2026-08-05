@@ -260,6 +260,30 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void configOnlyConstructor_defaultsToAutoOtlpProvider() {
+        var plugin = new InvocationOtelPlugin(OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
+        assertTrue(plugin.providerSource().ownsProvider());
+    }
+
+    @Test
+    void builderConstructor_isExplicitSource() {
+        var plugin = new InvocationOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
+    }
+
+    @Test
+    void configResolveSource_reflectsUseDefaultTracerProvider() {
+        assertEquals(ProviderSource.AUTO_OTLP, OtelPluginConfig.defaults().resolveSource());
+        assertEquals(
+                ProviderSource.GLOBAL,
+                OtelPluginConfig.builder()
+                        .useDefaultTracerProvider(true)
+                        .build()
+                        .resolveSource());
+    }
+
+    @Test
     void invocationSpan_hasInternalKind() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
