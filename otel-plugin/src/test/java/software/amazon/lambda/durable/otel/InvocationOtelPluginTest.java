@@ -236,6 +236,26 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void customInstrumentationName_isUsedForTracerScope() {
+        var exporter = InMemorySpanExporter.create();
+        var customPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                () -> null,
+                false,
+                "Workflow",
+                "my-custom-scope");
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        customPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        assertFalse(spans.isEmpty());
+        for (var span : spans) {
+            assertEquals("my-custom-scope", span.getInstrumentationScopeInfo().getName());
+        }
+    }
+
+    @Test
     void invocationSpan_hasInternalKind() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));

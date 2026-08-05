@@ -46,6 +46,25 @@ class ExecutionOtelPluginTest {
     // ─── Default constructor ─────────────────────────────────────────────
 
     @Test
+    void customInstrumentationName_isUsedForTracerScope() {
+        var exporter = InMemorySpanExporter.create();
+        var customPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                () -> null,
+                false,
+                "Workflow",
+                "my-custom-scope");
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        customPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        assertFalse(spans.isEmpty());
+        for (var span : spans) {
+            assertEquals("my-custom-scope", span.getInstrumentationScopeInfo().getName());
+        }
+    }
+
+    @Test
     void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
         GlobalOpenTelemetry.resetForTest();
         var error = assertThrows(IllegalStateException.class, ExecutionOtelPlugin::new);

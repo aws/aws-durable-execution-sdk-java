@@ -185,11 +185,30 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             ContextExtractor contextExtractor,
             boolean enableMdc,
             String workflowSpanName) {
+        this(tracerProviderBuilder, contextExtractor, enableMdc, workflowSpanName, INSTRUMENTATION_NAME);
+    }
+
+    /**
+     * Creates an OTel plugin with full configuration, including a custom instrumentation scope name.
+     *
+     * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
+     * @param contextExtractor extracts parent trace context from the Lambda environment
+     * @param enableMdc if true, injects traceId/spanId/otelTraceSampled into SLF4J MDC for log correlation
+     * @param workflowSpanName the name for the Workflow span
+     * @param instrumentationName the instrumentation scope name registered with the tracer (defaults to
+     *     "aws-durable-execution-sdk-java" when null)
+     */
+    public InvocationOtelPlugin(
+            SdkTracerProviderBuilder tracerProviderBuilder,
+            ContextExtractor contextExtractor,
+            boolean enableMdc,
+            String workflowSpanName,
+            String instrumentationName) {
         this.idGenerator = new DeterministicIdGenerator();
 
         this.sdkTracerProvider =
                 tracerProviderBuilder.setIdGenerator(idGenerator).build();
-        this.tracer = sdkTracerProvider.get(INSTRUMENTATION_NAME);
+        this.tracer = sdkTracerProvider.get(instrumentationName != null ? instrumentationName : INSTRUMENTATION_NAME);
         this.contextExtractor = contextExtractor;
         this.enableMdc = enableMdc;
         this.workflowSpanName = workflowSpanName != null ? workflowSpanName : DEFAULT_WORKFLOW_SPAN_NAME;
