@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -1888,4 +1890,188 @@ class MapIntegrationTest {
         assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
         assertEquals(events, result2.getHistoryEvents().size());
     }
+
+    @Test
+    void testItemNamerUsesCustomAndNullIterationNames() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "named-map",
+                    List.of("a", "b", "c"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder()
+                            .itemNamer((item, index) -> index == 1 ? null : item + "-" + index)
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var first = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+        assertEquals("A,B,C", first.getResult(String.class));
+        var iterationNames = first.getOperations().stream()
+                .filter(operation -> OperationSubType.MAP_ITERATION.getValue().equals(operation.getSubtype()))
+                .map(operation -> operation.getName())
+                .toList();
+        assertEquals(3, iterationNames.size());
+        assertTrue(iterationNames.contains("a-0"));
+        assertTrue(iterationNames.contains("c-2"));
+        assertEquals(
+                1, iterationNames.stream().filter(name -> name == null).count(), "iteration names: " + iterationNames);
+        assertFalse(iterationNames.contains("named-map-iteration-1"));
+
+        var replay = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+    }
+
+    @Test
+    void testInvalidItemNameDoesNotConsumeOperationId() {
+        var withRejectedMap = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            try {
+                context.map(
+                        "invalid-map",
+                        List.of("a"),
+                        String.class,
+                        (item, index, ctx) -> item,
+                        MapConfig.builder().itemNamer((item, index) -> "").build());
+            } catch (IllegalArgumentException expected) {
+                // Continue so the next operation exposes whether the rejected map consumed an ID.
+            }
+            return context.step("after", String.class, stepContext -> "done");
+        });
+        var control = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("after", String.class, stepContext -> "done"));
+
+        var attempted = withRejectedMap.runUntilComplete("test");
+        var baseline = control.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, attempted.getStatus());
+        assertNull(attempted.getOperation("invalid-map"));
+        assertEquals(
+                baseline.getOperation("after").getId(),
+                attempted.getOperation("after").getId());
+    }
+
+    @Test
+    void testChangedItemNameFailsCachedReplay() {
+        var suffix = new AtomicReference<>("first");
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "replay-map",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    MapConfig.builder()
+                            .itemNamer((item, index) -> item + "-" + suffix.get())
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        suffix.set("second");
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
+    void testEmptyMapDoesNotInvokeItemNamer() {
+        var namerCalls = new AtomicInteger();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            context.map(
+                    "empty-map",
+                    List.<String>of(),
+                    String.class,
+                    (item, index, ctx) -> item,
+                    MapConfig.builder()
+                            .itemNamer((item, index) -> {
+                                namerCalls.incrementAndGet();
+                                return "unused";
+                            })
+                            .build());
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(0, namerCalls.get());
+    }
+
+    @Test
+    void testChangedItemNameFailsStartedMapReplay() {
+        var suffix = new AtomicReference<>("first");
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "started-replay-map",
+                    List.of("a"),
+                    String.class,
+                    (item, index, ctx) ->
+                            ctx.waitForCallback("approval", String.class, (callbackId, stepContext) -> {}),
+                    MapConfig.builder()
+                            .itemNamer((item, index) -> item + "-" + suffix.get())
+                            .build());
+            return result.getResult(0);
+        });
+
+        assertEquals(ExecutionStatus.PENDING, runner.run("test").getStatus());
+        suffix.set("second");
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
+    void testRemovingItemNamerFailsCachedReplay() {
+        var useItemNamer = new AtomicBoolean(true);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var configBuilder = MapConfig.builder();
+            if (useItemNamer.get()) {
+                configBuilder.itemNamer((item, index) -> "custom-" + item);
+            }
+            var result = context.map(
+                    "removed-namer-map",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    configBuilder.build());
+            return String.join(",", result.results());
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        useItemNamer.set(false);
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
+    void testTypedItemNamerNamesIterationsEndToEnd() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var orders = List.of(new Order("a1"), new Order("b2"));
+            var result = context.map(
+                    "typed-namer-map",
+                    orders,
+                    String.class,
+                    (order, index, ctx) -> order.id().toUpperCase(),
+                    MapConfig.builder()
+                            .itemNamer(Order.class, (order, index) -> "order-" + order.id())
+                            .build());
+            return String.join(",", result.results());
+        });
+
+        var result = runner.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("A1,B2", result.getResult(String.class));
+        assertNotNull(result.getOperation("order-a1"));
+        assertNotNull(result.getOperation("order-b2"));
+    }
+
+    public record Order(String id) {}
 }
