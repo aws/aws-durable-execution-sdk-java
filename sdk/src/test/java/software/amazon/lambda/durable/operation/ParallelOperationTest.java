@@ -8,9 +8,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -32,6 +35,7 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -48,12 +52,14 @@ class ParallelOperationTest {
     // Tests pre-populate this; doAnswer writes here before firing onCheckpointComplete,
     // guaranteeing visibility to any thread that reads after the future unblocks.
     private ConcurrentHashMap<String, Operation> operationStore;
+    private CountDownLatch parallelCheckpointLatch;
 
     @BeforeEach
     void setUp() {
         durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
         operationStore = new ConcurrentHashMap<>();
+        parallelCheckpointLatch = new CountDownLatch(1);
 
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(null, ThreadType.CONTEXT));
         // Delegate to operationStore so all reads see the latest write, regardless of thread.
@@ -106,6 +112,7 @@ class ParallelOperationTest {
                         if (op != null) {
                             op.onCheckpointComplete(succeededParallelOp);
                         }
+                        parallelCheckpointLatch.countDown();
                     }
                     return CompletableFuture.completedFuture(null);
                 })
@@ -257,6 +264,40 @@ class ParallelOperationTest {
         assertEquals(0, result.failed());
         assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
         assertTrue(result.completionStatus().isSucceeded());
+    }
+
+    @Test
+    void minSuccessful_branchRegisteredAfterCheckpointIsIncludedAsSkipped() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState(CHILD_OP_1))
+                .thenReturn(Operation.builder()
+                        .id(CHILD_OP_1)
+                        .name("branch-1")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.PARALLEL_BRANCH.getValue())
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(
+                                ContextDetails.builder().result("\"r1\"").build())
+                        .build());
+
+        var op = createOperation(CompletionConfig.minSuccessful(1));
+        op.enqueueItem(
+                "branch-1", ctx -> "r1", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH, false);
+
+        assertTrue(parallelCheckpointLatch.await(5, TimeUnit.SECONDS));
+
+        op.enqueueItem(
+                "branch-2", ctx -> "r2", TypeToken.get(String.class), SER_DES, OperationSubType.PARALLEL_BRANCH, false);
+
+        var result = op.get();
+
+        assertEquals(2, result.size());
+        assertEquals(1, result.succeeded());
+        assertEquals(0, result.failed());
+        assertEquals(1, result.skipped());
+        assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
+        assertEquals(List.of(ParallelResult.Status.SUCCEEDED, ParallelResult.Status.SKIPPED), result.statuses());
+        assertEquals(result.size(), result.statuses().size());
+        assertEquals(result.size(), result.succeeded() + result.failed() + result.skipped());
     }
 
     @Test

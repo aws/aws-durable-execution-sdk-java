@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
@@ -107,16 +108,28 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     }
 
     private ParallelResult rebuildParallelResult() {
-        if (cachedResult != null && cachedResult.size() != getBranches().size()) {
-            return new ParallelResult(
-                    getBranches().size(), // size might be updated after cached result is built
-                    cachedResult.succeeded(),
-                    cachedResult.failed(),
-                    cachedResult.skipped(),
-                    cachedResult.completionStatus(),
-                    cachedResult.statuses());
+        if (cachedResult == null) {
+            return null;
         }
-        return cachedResult;
+
+        var statuses = new ArrayList<>(cachedResult.statuses());
+        while (statuses.size() < getBranches().size()) {
+            statuses.add(ParallelResult.Status.SKIPPED);
+        }
+
+        int succeededCount = Math.toIntExact(statuses.stream()
+                .filter(status -> status == ParallelResult.Status.SUCCEEDED)
+                .count());
+        int failedCount = Math.toIntExact(statuses.stream()
+                .filter(status -> status == ParallelResult.Status.FAILED)
+                .count());
+        return new ParallelResult(
+                statuses.size(),
+                succeededCount,
+                failedCount,
+                statuses.size() - succeededCount - failedCount,
+                cachedResult.completionStatus(),
+                List.copyOf(statuses));
     }
 
     @Override
