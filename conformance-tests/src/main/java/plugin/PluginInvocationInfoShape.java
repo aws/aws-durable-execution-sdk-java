@@ -3,6 +3,7 @@
 package plugin;
 
 import java.time.Duration;
+import java.time.Instant;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
@@ -12,15 +13,20 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 /**
- * 10-19: Invocation hook info field shape.
+ * 10-19: Invocation hook info field shape (CANONICAL DUMP).
  *
- * <p>A single 2-second wait that then returns {@code "done-" + input}. INTERFACE-SHAPE probe: every logged field is
- * read from the CURRENT hook's own info parameter only — never reconstructed from another hook or from plugin state.
- * Java's {@link InvocationInfo} exposes {@code requestId} and {@code executionStartTime} but does NOT expose the
- * execution input, the execution operations map, or an externally-updated-operations collection; those are honestly
- * emitted as {@code has_*: false} with the value key omitted. Likewise {@link InvocationEndInfo} exposes
- * {@code invocationStatus} and {@code executionError} but not the execution's final result, so {@code has_result} is
- * honestly false. Those omissions are the parity signals the requirement exists to produce.
+ * <p>A single 2-second wait that then returns {@code "done-" + input}. The instrumentation plugin emits ONE single-line
+ * JSON record per invocation hook event: a canonical dump of that hook's OWN info parameter, every exposed component
+ * mapped one-to-one to its canonical camelCase name, null / unexposed fields OMITTED (a missing key fails its assertion
+ * — the parity signal).
+ *
+ * <p>Java's {@link InvocationInfo} exposes only {@code requestId}, {@code executionStartTime} (→
+ * {@code executionStartTimestamp}) and {@code isFirstInvocation}; it does NOT expose the execution input, the
+ * operations map, or an externally-updated-operations collection, so {@code executionInput}, {@code operationsCount}
+ * and {@code updatedOperationsCount} are absent. Java's {@link InvocationEndInfo} exposes {@code isFirstInvocation},
+ * {@code invocationStatus} (→ {@code status}) and {@code executionError}; it does NOT expose the execution input or the
+ * final result, so {@code executionInput} and {@code executionResult} are absent. The single derived scalar
+ * {@code terminal} := status in (SUCCEEDED, FAILED). Those omissions are the honest reds the requirement produces.
  */
 @SuppressWarnings("deprecation")
 public class PluginInvocationInfoShape extends DurableHandler<String, String> {
@@ -42,40 +48,102 @@ public class PluginInvocationInfoShape extends DurableHandler<String, String> {
         @Override
         public void onInvocationStart(InvocationInfo info) {
             this.executionArn = info.durableExecutionArn();
-            boolean hasRequestId = info.requestId() != null;
-            boolean hasInput = false; // no execution-input accessor on InvocationInfo
-            boolean hasOperations = false; // no operations map on InvocationInfo
-            boolean updatedNonempty = false; // no externally-updated-operations collection on InvocationInfo
-            boolean hasStartTime = info.executionStartTime() != null;
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"invocation-start\", \"first\": %b, "
-                            + "\"has_request_id\": %b, \"has_input\": %b, \"has_operations\": %b, "
-                            + "\"updated_nonempty\": %b, \"has_start_time\": %b%s}",
-                    info.isFirstInvocation(),
-                    hasRequestId,
-                    hasInput,
-                    hasOperations,
-                    updatedNonempty,
-                    hasStartTime,
-                    PluginSupport.arnField(executionArn)));
+            new Rec("invocation-start")
+                    .bool("isFirstInvocation", info.isFirstInvocation())
+                    .str("requestId", info.requestId())
+                    .time("executionStartTimestamp", info.executionStartTime())
+                    .emit(executionArn);
         }
 
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
             InvocationStatus status = info.invocationStatus();
-            // terminal := status in (SUCCEEDED, FAILED); first is read from the END info parameter itself.
             boolean terminal = status == InvocationStatus.SUCCEEDED || status == InvocationStatus.FAILED;
-            boolean hasResult = false; // no final-result accessor on InvocationEndInfo
-            boolean hasError = info.executionError() != null;
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"invocation-end\", \"first\": %b, \"terminal\": %b, "
-                            + "\"status\": \"%s\", \"has_result\": %b, \"has_error\": %b%s}",
-                    info.isFirstInvocation(),
-                    terminal,
-                    status.name(),
-                    hasResult,
-                    hasError,
-                    PluginSupport.arnField(executionArn)));
+            new Rec("invocation-end")
+                    .bool("isFirstInvocation", info.isFirstInvocation())
+                    .str("requestId", info.requestId())
+                    .str("status", status == null ? null : status.name())
+                    .bool("terminal", terminal)
+                    .str("executionError", Rec.msg(info.executionError()))
+                    .emit(executionArn);
+        }
+    }
+
+    /** Single-line JSON record builder: emits every provided key, skipping nulls, then stamps durableExecutionArn. */
+    private static final class Rec {
+        private final StringBuilder sb = new StringBuilder("{");
+
+        Rec(String hook) {
+            raw("plugin", "\"CONFPLUGIN\"");
+            raw("hook", "\"" + hook + "\"");
+        }
+
+        Rec str(String key, String value) {
+            if (value != null) {
+                raw(key, quote(value));
+            }
+            return this;
+        }
+
+        Rec bool(String key, boolean value) {
+            raw(key, value ? "true" : "false");
+            return this;
+        }
+
+        Rec time(String key, Instant value) {
+            if (value != null) {
+                raw(key, quote(value.toString()));
+            }
+            return this;
+        }
+
+        private void raw(String key, String jsonValue) {
+            if (sb.length() > 1) {
+                sb.append(", ");
+            }
+            sb.append('"').append(key).append("\": ").append(jsonValue);
+        }
+
+        void emit(String executionArn) {
+            System.out.println(sb.append(PluginSupport.arnField(executionArn)).append('}'));
+        }
+
+        static String msg(Throwable t) {
+            if (t == null) {
+                return null;
+            }
+            return t.getMessage() != null ? t.getMessage() : t.toString();
+        }
+
+        static String quote(String s) {
+            StringBuilder b = new StringBuilder("\"");
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"':
+                        b.append("\\\"");
+                        break;
+                    case '\\':
+                        b.append("\\\\");
+                        break;
+                    case '\n':
+                        b.append("\\n");
+                        break;
+                    case '\r':
+                        b.append("\\r");
+                        break;
+                    case '\t':
+                        b.append("\\t");
+                        break;
+                    default:
+                        if (c < 0x20) {
+                            b.append(String.format("\\u%04x", (int) c));
+                        } else {
+                            b.append(c);
+                        }
+                }
+            }
+            return b.append('"').toString();
         }
     }
 }
