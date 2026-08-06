@@ -304,3 +304,67 @@ Resources:
       DurableConfig:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
+
+  PluginInvocationInfoShape:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-19"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginInvocationInfoShape
+      Description: Invocation-start and invocation-end hook info carries the full invocation field set
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginOperationInfoShape:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-20"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginOperationInfoShape
+      Description: Operation-start and operation-end hook info carries the full operation field set
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginAttemptInfoShape:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-21"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginAttemptInfoShape
+      Description: Attempt-start and attempt-end hook info carries the full attempt field set
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
+  PluginOperationChangeShape:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-22"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginOperationChangeShape
+      Description: Operation-change hook info carries full operation items in the delta and full map
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
