@@ -32,23 +32,4 @@ public record OperationInfo(
         Instant startTimestamp,
         Instant endTimestamp,
         String status,
-        boolean isReplay) {
-
-    /**
-     * Creates operation information without a status.
-     *
-     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
-     */
-    @Deprecated
-    public OperationInfo(
-            String id,
-            String name,
-            String type,
-            String subType,
-            String parentId,
-            Instant startTimestamp,
-            Instant endTimestamp,
-            boolean isReplay) {
-        this(id, name, type, subType, parentId, startTimestamp, endTimestamp, null, isReplay);
-    }
-}
+        boolean isReplay) {}
