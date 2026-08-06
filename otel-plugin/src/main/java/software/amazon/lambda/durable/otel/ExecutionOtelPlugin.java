@@ -13,7 +13,6 @@ import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
-import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -82,8 +81,6 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
 public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
-    private static final String INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
-    private static final String DEFAULT_WORKFLOW_SPAN_NAME = "Workflow";
 
     private final SdkTracerProvider sdkTracerProvider;
     private final Tracer tracer;
@@ -128,7 +125,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * {@code OtelPluginAutoConfigurationCustomizerProvider}.
      */
     public ExecutionOtelPlugin() {
-        this(getDefaultTracerProvider(), createDefaultIdGenerator());
+        this(OtelPluginConfig.defaults());
     }
 
     /**
@@ -180,17 +177,6 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.idGenerator = setup.idGenerator();
         this.sdkTracerProvider = setup.sdkTracerProvider();
         this.tracer = setup.tracer();
-    }
-
-    private ExecutionOtelPlugin(TracerProvider tracerProvider, DeterministicIdGenerator idGenerator) {
-        this.idGenerator = idGenerator;
-        this.sdkTracerProvider = OtelPluginSupport.getSdkTracerProviderForFlush(tracerProvider, "ExecutionOtelPlugin");
-        this.tracer = tracerProvider.get(INSTRUMENTATION_NAME);
-
-        this.contextExtractor = new XRayContextExtractor();
-        this.enableMdc = true;
-        this.workflowSpanName = DEFAULT_WORKFLOW_SPAN_NAME;
-        this.providerSource = ProviderSource.GLOBAL;
     }
 
     /** The tier that produced this plugin's tracer provider. */
@@ -601,13 +587,5 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static ExtractedContext extractCurrentSpanContext() {
         return OtelPluginSupport.extractCurrentSpanContext();
-    }
-
-    private static TracerProvider getDefaultTracerProvider() {
-        return OtelPluginSupport.getDefaultTracerProvider("ExecutionOtelPlugin");
-    }
-
-    private static DeterministicIdGenerator createDefaultIdGenerator() {
-        return OtelPluginSupport.createDefaultIdGenerator();
     }
 }
