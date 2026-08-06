@@ -194,24 +194,12 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
-        this.providerSource = config.providerSource();
 
-        if (this.providerSource == ProviderSource.EXPLICIT) {
-            throw new IllegalArgumentException("OtelPluginConfig.providerSource(EXPLICIT) requires a caller-supplied "
-                    + "SdkTracerProviderBuilder; use the (SdkTracerProviderBuilder, OtelPluginConfig) constructor.");
-        }
-
-        if (this.providerSource == ProviderSource.GLOBAL) {
-            this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();
-            var tracerProvider = getDefaultTracerProvider();
-            this.sdkTracerProvider =
-                    OtelPluginSupport.getSdkTracerProviderForFlush(tracerProvider, "InvocationOtelPlugin");
-            this.tracer = tracerProvider.get(config.instrumentationName());
-        } else {
-            this.idGenerator = new DeterministicIdGenerator();
-            this.sdkTracerProvider = OtelPluginSupport.buildAutoOtlpProvider(config, this.idGenerator, null);
-            this.tracer = this.sdkTracerProvider.get(config.instrumentationName());
-        }
+        var setup = OtelPluginSupport.resolveConfiguredProvider(config, "InvocationOtelPlugin");
+        this.providerSource = setup.source();
+        this.idGenerator = setup.idGenerator();
+        this.sdkTracerProvider = setup.sdkTracerProvider();
+        this.tracer = setup.tracer();
     }
 
     private InvocationOtelPlugin(TracerProvider tracerProvider, DeterministicIdGenerator idGenerator) {

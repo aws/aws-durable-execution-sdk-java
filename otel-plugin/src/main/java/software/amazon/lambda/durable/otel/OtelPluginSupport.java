@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.otel;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
 import io.opentelemetry.sdk.resources.Resource;
@@ -83,6 +84,65 @@ final class OtelPluginSupport {
                 .addSpanProcessor(
                         BatchSpanProcessor.builder(exporterBuilder.build()).build())
                 .build();
+    }
+
+    /**
+     * The tracer provider, tracer, and ID generator resolved for a config-only plugin constructor, plus the
+     * {@link ProviderSource} that produced them.
+     *
+     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+     */
+    @Deprecated
+    record ProviderSetup(
+            ProviderSource source,
+            SdkTracerProvider sdkTracerProvider,
+            Tracer tracer,
+            DeterministicIdGenerator idGenerator) {}
+
+    /**
+     * Resolves the tracer provider for the config-only plugin constructors from
+     * {@link OtelPluginConfig#providerSource()}, centralizing the {@link ProviderSource} branching shared by
+     * {@link InvocationOtelPlugin} and {@link ExecutionOtelPlugin}:
+     *
+     * <ul>
+     *   <li>{@link ProviderSource#GLOBAL} — binds to the ADOT/global provider (not plugin-owned); the deterministic ID
+     *       generator is created for the application-side state bridge.
+     *   <li>{@link ProviderSource#AUTO_OTLP} — builds a plugin-owned OTLP/HTTP provider (see
+     *       {@link #buildAutoOtlpProvider}).
+     *   <li>{@link ProviderSource#EXPLICIT} — rejected: an explicit provider requires the
+     *       {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructor.
+     * </ul>
+     *
+     * @param config the plugin configuration
+     * @param pluginName the plugin name used in diagnostics/flush logging
+     * @return the resolved provider, tracer, ID generator, and source
+     * @throws IllegalArgumentException if {@code config.providerSource()} is {@link ProviderSource#EXPLICIT}
+     */
+    static ProviderSetup resolveConfiguredProvider(OtelPluginConfig config, String pluginName) {
+        return switch (config.providerSource()) {
+            case GLOBAL -> {
+                var idGenerator = createDefaultIdGenerator();
+                var tracerProvider = getDefaultTracerProvider(pluginName);
+                yield new ProviderSetup(
+                        ProviderSource.GLOBAL,
+                        getSdkTracerProviderForFlush(tracerProvider, pluginName),
+                        tracerProvider.get(config.instrumentationName()),
+                        idGenerator);
+            }
+            case AUTO_OTLP -> {
+                var idGenerator = new DeterministicIdGenerator();
+                var sdkTracerProvider = buildAutoOtlpProvider(config, idGenerator, null);
+                yield new ProviderSetup(
+                        ProviderSource.AUTO_OTLP,
+                        sdkTracerProvider,
+                        sdkTracerProvider.get(config.instrumentationName()),
+                        idGenerator);
+            }
+            case EXPLICIT ->
+                throw new IllegalArgumentException(
+                        "OtelPluginConfig.providerSource(EXPLICIT) requires a caller-supplied SdkTracerProviderBuilder; "
+                                + "use the (SdkTracerProviderBuilder, OtelPluginConfig) constructor.");
+        };
     }
 
     /** Resolves the OTLP/HTTP traces endpoint (config -> env -> exporter default), appending the signal path. */
