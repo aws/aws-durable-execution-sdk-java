@@ -139,13 +139,12 @@ public abstract class BaseDurableOperation {
                 validateReplay(existing);
                 if (ExecutionManager.isTerminalStatus(existing.status())) {
                     replayCompletedOperation.set(true);
-                } else if (getType() == OperationType.STEP || getType() == OperationType.CONTEXT) {
-                    // Non-terminal STEP/CONTEXT operations are being re-executed (user code runs again).
-                    // Fire onOperationStart so the OTel plugin can create a parent span for attempt spans.
+                } else {
+                    // Non-terminal operations are being replayed. Fire onOperationStart so plugins
+                    // can observe all in-progress operations during replay, including WAIT/INVOKE/CALLBACK
+                    // that are still pending.
                     fireOnOperationStart(existing);
                 }
-                // WAIT/INVOKE/CALLBACK in non-terminal status just poll — no onOperationStart needed.
-                // They'll get a continuation span via onOperationEnd when they complete.
 
                 // Fire onOperationEnd for operations that completed during suspension (between invocations).
                 // The OTel plugin handles the missing onOperationStart by creating a continuation span linked
