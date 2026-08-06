@@ -77,8 +77,22 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void configOnlyConstructor_defaultsToAutoOtlpProvider() {
+    void configOnlyConstructor_defaultsToGlobalProvider() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        OpenTelemetrySdk.builder()
+                .setTracerProvider(SdkTracerProvider.builder().build())
+                .buildAndRegisterGlobal();
+
         var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
+    }
+
+    @Test
+    void configWithAutoOtlp_buildsPluginOwnedProvider() {
+        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.builder()
+                .providerSource(ProviderSource.AUTO_OTLP)
+                .build());
         assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
     }
 
@@ -89,12 +103,12 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void configProviderSource_defaultsToAutoOtlpAndHonorsGlobal() {
-        assertEquals(ProviderSource.AUTO_OTLP, OtelPluginConfig.defaults().providerSource());
+    void configProviderSource_defaultsToGlobalAndHonorsAutoOtlp() {
+        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
         assertEquals(
-                ProviderSource.GLOBAL,
+                ProviderSource.AUTO_OTLP,
                 OtelPluginConfig.builder()
-                        .providerSource(ProviderSource.GLOBAL)
+                        .providerSource(ProviderSource.AUTO_OTLP)
                         .build()
                         .providerSource());
     }
