@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package plugin;
 
+import java.time.Instant;
 import java.util.Locale;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -12,15 +13,17 @@ import software.amazon.lambda.durable.plugin.OperationEndInfo;
 import software.amazon.lambda.durable.plugin.OperationInfo;
 
 /**
- * 10-20: Operation hook info field shape.
+ * 10-20: Operation hook info field shape (CANONICAL DUMP).
  *
- * <p>A single step named {@code "greet"} returning the constant {@code "task-a"}. INTERFACE-SHAPE probe filtering to
- * step-type operations: every logged field is read from the CURRENT hook's own info parameter only. Java's
- * {@link OperationInfo} carries identity, {@code startTimestamp}, {@code status}, and {@code isReplay}; at
- * operation-start {@code has_status} is emitted for observability but not asserted. Java's {@link OperationEndInfo}
- * carries {@code status}, {@code attempt}, {@code endTimestamp}, and {@code error} but does NOT expose the operation's
- * checkpointed serialized result, so {@code has_result} is honestly false and the {@code result} value key is omitted —
- * that omission is the parity signal the requirement exists to produce.
+ * <p>A single step named {@code "greet"} returning the constant {@code "task-a"}. The instrumentation plugin (filtering
+ * to step-type operations) emits ONE single-line JSON record per operation hook event: a canonical dump of that hook's
+ * OWN info parameter, every exposed component mapped to its canonical camelCase name, null / unexposed fields OMITTED.
+ *
+ * <p>Java's {@link OperationInfo} (operation-start) exposes id/name/type/subType/parentId/startTimestamp/endTimestamp/
+ * status/isReplay; at a LIVE first start {@code status}/{@code startTimestamp} may be unset and are simply omitted, and
+ * the record has no {@code attempt}/{@code result}/{@code error} at all. Java's {@link OperationEndInfo}
+ * (operation-end) adds {@code attempt} and {@code error} but does NOT expose the checkpointed serialized result, so
+ * {@code result} is absent on the end record — that omission is the honest red the requirement produces.
  */
 @SuppressWarnings("deprecation")
 public class PluginOperationInfoShape extends DurableHandler<Object, String> {
@@ -48,18 +51,17 @@ public class PluginOperationInfoShape extends DurableHandler<Object, String> {
             if (!PluginSupport.isStep(info.type())) {
                 return;
             }
-            boolean hasStartTime = info.startTimestamp() != null;
-            boolean hasStatus = info.status() != null; // emitted for observability, not asserted at start
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-start\", \"op\": \"%s\", \"name\": \"%s\", "
-                            + "\"type\": \"%s\", \"replay\": %b, \"has_start_time\": %b, \"has_status\": %b%s}",
-                    info.id(),
-                    info.name(),
-                    info.type().toUpperCase(Locale.ROOT),
-                    info.isReplay(),
-                    hasStartTime,
-                    hasStatus,
-                    PluginSupport.arnField(executionArn)));
+            new Rec("operation-start")
+                    .str("id", info.id())
+                    .str("name", info.name())
+                    .str("type", Rec.upper(info.type()))
+                    .str("subType", info.subType())
+                    .str("parentId", info.parentId())
+                    .str("status", Rec.upper(info.status()))
+                    .time("startTimestamp", info.startTimestamp())
+                    .time("endTimestamp", info.endTimestamp())
+                    .bool("isReplay", info.isReplay())
+                    .emit(executionArn);
         }
 
         @Override
@@ -67,23 +69,108 @@ public class PluginOperationInfoShape extends DurableHandler<Object, String> {
             if (!PluginSupport.isStep(info.type())) {
                 return;
             }
-            boolean hasResult = false; // no checkpointed-result accessor on OperationEndInfo; result key omitted
-            boolean hasError = info.error() != null;
-            boolean hasEndTime = info.endTimestamp() != null;
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-end\", \"op\": \"%s\", \"name\": \"%s\", "
-                            + "\"type\": \"%s\", \"replay\": %b, \"status\": \"%s\", \"has_result\": %b, "
-                            + "\"has_error\": %b, \"attempt\": %s, \"has_end_time\": %b%s}",
-                    info.id(),
-                    info.name(),
-                    info.type().toUpperCase(Locale.ROOT),
-                    info.isReplay(),
-                    info.status(),
-                    hasResult,
-                    hasError,
-                    info.attempt(),
-                    hasEndTime,
-                    PluginSupport.arnField(executionArn)));
+            new Rec("operation-end")
+                    .str("id", info.id())
+                    .str("name", info.name())
+                    .str("type", Rec.upper(info.type()))
+                    .str("subType", info.subType())
+                    .str("parentId", info.parentId())
+                    .str("status", Rec.upper(info.status()))
+                    .time("startTimestamp", info.startTimestamp())
+                    .time("endTimestamp", info.endTimestamp())
+                    .num("attempt", info.attempt())
+                    .bool("isReplay", info.isReplay())
+                    .str("error", Rec.msg(info.error()))
+                    .emit(executionArn);
+        }
+    }
+
+    /** Single-line JSON record builder: emits every provided key, skipping nulls, then stamps durableExecutionArn. */
+    private static final class Rec {
+        private final StringBuilder sb = new StringBuilder("{");
+
+        Rec(String hook) {
+            raw("plugin", "\"CONFPLUGIN\"");
+            raw("hook", "\"" + hook + "\"");
+        }
+
+        Rec str(String key, String value) {
+            if (value != null) {
+                raw(key, quote(value));
+            }
+            return this;
+        }
+
+        Rec num(String key, Integer value) {
+            if (value != null) {
+                raw(key, value.toString());
+            }
+            return this;
+        }
+
+        Rec bool(String key, boolean value) {
+            raw(key, value ? "true" : "false");
+            return this;
+        }
+
+        Rec time(String key, Instant value) {
+            if (value != null) {
+                raw(key, quote(value.toString()));
+            }
+            return this;
+        }
+
+        private void raw(String key, String jsonValue) {
+            if (sb.length() > 1) {
+                sb.append(", ");
+            }
+            sb.append('"').append(key).append("\": ").append(jsonValue);
+        }
+
+        void emit(String executionArn) {
+            System.out.println(sb.append(PluginSupport.arnField(executionArn)).append('}'));
+        }
+
+        static String upper(String s) {
+            return s == null ? null : s.toUpperCase(Locale.ROOT);
+        }
+
+        static String msg(Throwable t) {
+            if (t == null) {
+                return null;
+            }
+            return t.getMessage() != null ? t.getMessage() : t.toString();
+        }
+
+        static String quote(String s) {
+            StringBuilder b = new StringBuilder("\"");
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"':
+                        b.append("\\\"");
+                        break;
+                    case '\\':
+                        b.append("\\\\");
+                        break;
+                    case '\n':
+                        b.append("\\n");
+                        break;
+                    case '\r':
+                        b.append("\\r");
+                        break;
+                    case '\t':
+                        b.append("\\t");
+                        break;
+                    default:
+                        if (c < 0x20) {
+                            b.append(String.format("\\u%04x", (int) c));
+                        } else {
+                            b.append(c);
+                        }
+                }
+            }
+            return b.append('"').toString();
         }
     }
 }
