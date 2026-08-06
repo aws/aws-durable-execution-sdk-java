@@ -108,10 +108,6 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     }
 
     private ParallelResult rebuildParallelResult() {
-        if (cachedResult == null) {
-            return null;
-        }
-
         var statuses = new ArrayList<>(cachedResult.statuses());
         while (statuses.size() < getBranches().size()) {
             statuses.add(ParallelResult.Status.SKIPPED);
