@@ -85,3 +85,8 @@ var runner = CloudDurableTestRunner.create(
 var result = runner.run(new Order("order-123", items));
 assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 ```
+
+
+### Conformance Tests
+
+Conformance tests verify cross-SDK behavioral parity and live in a separate repository: [aws-durable-execution-conformance-tests](https://github.com/aws/aws-durable-execution-conformance-tests). Contributors do not need to add conformance tests. If you believe a change warrants one, mention it in your PR description or [open an issue](https://github.com/aws/aws-durable-execution-conformance-tests/issues/new?template=new_requirement.yml) in that repository.
