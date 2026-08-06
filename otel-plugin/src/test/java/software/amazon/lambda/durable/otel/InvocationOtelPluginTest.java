@@ -489,6 +489,8 @@ class InvocationOtelPluginTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(StatusCode.OK, operationSpan.getStatus().getStatusCode());
+        assertEquals(
+                "SUCCEEDED", operationSpan.getAttributes().get(AttributeKey.stringKey("durable.operation.status")));
     }
 
     @Test
@@ -642,6 +644,22 @@ class InvocationOtelPluginTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals("my-wait", operationSpan.getName());
+        assertEquals("STARTED", operationSpan.getAttributes().get(AttributeKey.stringKey("durable.operation.status")));
+    }
+
+    @Test
+    void operationStart_withStatus_preservesStatus() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", false, Instant.now()));
+
+        plugin.onOperationStart(
+                new OperationInfo("op-1", "my-step", "STEP", "Step", null, Instant.now(), null, "PENDING", true));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", false, InvocationStatus.PENDING, null));
+
+        var operationSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> "my-step".equals(s.getName()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("PENDING", operationSpan.getAttributes().get(AttributeKey.stringKey("durable.operation.status")));
     }
 
     @Test

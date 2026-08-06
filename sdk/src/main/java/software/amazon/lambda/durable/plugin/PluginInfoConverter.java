@@ -36,6 +36,9 @@ public final class PluginInfoConverter {
                 parentId,
                 operation != null ? operation.startTimestamp() : Instant.now(),
                 operation != null ? operation.endTimestamp() : null,
+                operation != null && operation.status() != null
+                        ? operation.status().toString()
+                        : null,
                 operation != null);
     }
 

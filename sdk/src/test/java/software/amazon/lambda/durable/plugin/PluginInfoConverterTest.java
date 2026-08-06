@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 
@@ -31,8 +32,11 @@ class PluginInfoConverterTest {
 
     @Test
     void toOperationInfo_withIdentifier_mapsAllFields() {
-        var operation =
-                Operation.builder().startTimestamp(START).endTimestamp(END).build();
+        var operation = Operation.builder()
+                .startTimestamp(START)
+                .endTimestamp(END)
+                .status(OperationStatus.STARTED)
+                .build();
 
         var info = PluginInfoConverter.toOperationInfo(operation, WAIT_FOR_CONDITION_IDENTIFIER, PARENT_ID);
 
@@ -43,6 +47,7 @@ class PluginInfoConverterTest {
         assertEquals(PARENT_ID, info.parentId());
         assertEquals(START, info.startTimestamp());
         assertEquals(END, info.endTimestamp());
+        assertEquals("STARTED", info.status());
     }
 
     @Test
@@ -58,6 +63,7 @@ class PluginInfoConverterTest {
         assertNotNull(info.startTimestamp());
         assertFalse(info.startTimestamp().isBefore(before));
         assertNull(info.endTimestamp());
+        assertNull(info.status());
     }
 
     // ─── toOperationEndInfo ──────────────────────────────────────────────

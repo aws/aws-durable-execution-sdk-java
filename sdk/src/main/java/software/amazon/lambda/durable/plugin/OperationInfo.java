@@ -17,6 +17,7 @@ import java.time.Instant;
  * @param startTimestamp when the operation started — on first execution this is a local {@code Instant.now()} which may
  *     slightly differ from the timestamp recorded by the backend; on replay it comes from the backend checkpoint
  * @param endTimestamp when the operation ended (null if still running)
+ * @param status current operation status (may be null before the first checkpoint)
  * @param isReplay true if this operation already exists in the execution state from a prior invocation. Plugins can use
  *     this to avoid generating duplicate span IDs.
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
@@ -30,4 +31,24 @@ public record OperationInfo(
         String parentId,
         Instant startTimestamp,
         Instant endTimestamp,
-        boolean isReplay) {}
+        String status,
+        boolean isReplay) {
+
+    /**
+     * Creates operation information without a status.
+     *
+     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+     */
+    @Deprecated
+    public OperationInfo(
+            String id,
+            String name,
+            String type,
+            String subType,
+            String parentId,
+            Instant startTimestamp,
+            Instant endTimestamp,
+            boolean isReplay) {
+        this(id, name, type, subType, parentId, startTimestamp, endTimestamp, null, isReplay);
+    }
+}
