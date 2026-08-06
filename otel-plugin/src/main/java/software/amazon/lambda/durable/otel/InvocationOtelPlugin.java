@@ -285,9 +285,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
         if (invocationSpan == null) return;
 
-        // End still-open operation spans without stamping a status — no terminal
-        // durable.operation.status means still running (STARTED). A later invocation's
-        // onOperationEnd emits a continuation span with the real terminal status.
+        // End still-open operation spans with the STARTED status set in onOperationStart.
+        // A later invocation's onOperationEnd emits a continuation span with the real terminal status.
         for (var entry : operationSpans.entrySet()) {
             entry.getValue().end();
         }
@@ -377,7 +376,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 .setParent(parentContext)
                 .setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn)
                 .setAttribute(DURABLE_OPERATION_ID, info.id())
-                .setAttribute(DURABLE_OPERATION_TYPE, info.type());
+                .setAttribute(DURABLE_OPERATION_TYPE, info.type())
+                .setAttribute(DURABLE_OPERATION_STATUS, info.status() != null ? info.status() : "STARTED");
 
         if (info.isReplay()) {
             // Operation was already started in a prior invocation — use a random span ID
