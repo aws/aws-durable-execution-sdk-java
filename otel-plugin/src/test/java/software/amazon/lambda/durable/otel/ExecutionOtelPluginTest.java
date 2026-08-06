@@ -402,6 +402,25 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
+    void attemptSpan_carriesOperationSubtype() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("process-order"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                "Step",
+                attemptSpan.getAttributes().get(AttributeKey.stringKey("durable.operation.subtype")),
+                "Attempt span should carry durable.operation.subtype from the operation");
+    }
+
+    @Test
     void childOperation_parentedToParentOperationSpan() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo(

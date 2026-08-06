@@ -450,6 +450,9 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (info.name() != null) {
             spanBuilder.setAttribute(DURABLE_OPERATION_NAME, info.name());
         }
+        if (info.subType() != null) {
+            spanBuilder.setAttribute(DURABLE_OPERATION_SUBTYPE, info.subType());
+        }
         if (info.attempt() != null) {
             spanBuilder.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
         }
