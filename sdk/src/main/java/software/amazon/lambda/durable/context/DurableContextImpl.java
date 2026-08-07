@@ -268,6 +268,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         // Convert to List for deterministic index-based access
         var itemList = List.copyOf(items);
+        var iterationNames = MapOperation.resolveIterationNames(name, itemList, config);
         var operationId = nextOperationId();
 
         var operation = new MapOperation<>(
@@ -276,6 +277,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 function,
                 resultType,
                 config,
+                iterationNames,
                 this);
         operation.execute();
         return operation;

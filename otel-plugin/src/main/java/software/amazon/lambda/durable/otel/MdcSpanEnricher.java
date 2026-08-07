@@ -9,14 +9,14 @@ import org.slf4j.MDC;
  * Injects OTel trace/span IDs into SLF4J MDC for log-trace correlation.
  *
  * <p>When used with structured logging (Log4j2 JSON, Logback JSON), these MDC fields appear in every log line, enabling
- * tools like CloudWatch Logs Insights and Datadog to correlate logs with traces.
+ * tools like CloudWatch Application Signals and Datadog to correlate logs with traces.
  *
- * <p>MDC keys injected:
+ * <p>MDC keys injected (aligned with the JS and Python SDK OTel plugins):
  *
  * <ul>
  *   <li>{@code traceId} — the W3C trace ID (32 hex chars)
  *   <li>{@code spanId} — the current span ID (16 hex chars)
- *   <li>{@code traceSampled} — whether the trace is sampled (true/false)
+ *   <li>{@code otelTraceSampled} — whether the trace is sampled (true/false)
  * </ul>
  *
  * <p>Usage: Call {@link #inject()} in {@code onUserFunctionStart} (after span is active) and {@link #clear()} in
@@ -28,9 +28,14 @@ import org.slf4j.MDC;
 @Deprecated
 public final class MdcSpanEnricher {
 
+    // MDC key names are aligned with the JS and Python SDK OTel plugins
+    // (enrichLogContext -> traceId/spanId/otelTraceSampled) so log-trace
+    // correlation uses one consistent field schema across all three SDKs.
+    // Note: SLF4J MDC values are always strings, so otelTraceSampled is the
+    // string "true"/"false" here (a boolean in the JS/Python log records).
     public static final String MDC_TRACE_ID = "traceId";
     public static final String MDC_SPAN_ID = "spanId";
-    public static final String MDC_TRACE_SAMPLED = "traceSampled";
+    public static final String MDC_TRACE_SAMPLED = "otelTraceSampled";
 
     private MdcSpanEnricher() {}
 

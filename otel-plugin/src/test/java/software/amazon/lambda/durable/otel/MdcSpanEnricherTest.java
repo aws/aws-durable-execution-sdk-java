@@ -21,6 +21,16 @@ class MdcSpanEnricherTest {
     }
 
     @Test
+    void mdcKeyNames_matchJsAndPythonSchema() {
+        // The JS (enrichLogContext) and Python (OtelContextLogFilter) plugins emit
+        // traceId / spanId / otelTraceSampled. Java's MDC keys must match so all
+        // three SDKs share one log-trace-correlation field schema.
+        assertEquals("traceId", MdcSpanEnricher.MDC_TRACE_ID);
+        assertEquals("spanId", MdcSpanEnricher.MDC_SPAN_ID);
+        assertEquals("otelTraceSampled", MdcSpanEnricher.MDC_TRACE_SAMPLED);
+    }
+
+    @Test
     void clear_removesAllMdcKeys() {
         MDC.put(MdcSpanEnricher.MDC_TRACE_ID, "abc123");
         MDC.put(MdcSpanEnricher.MDC_SPAN_ID, "def456");
@@ -64,12 +74,17 @@ class MdcSpanEnricherTest {
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
 
-        // MDC should be cleared after onUserFunctionEnd
-        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
-        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
-        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
+        // After onUserFunctionEnd: span_id is cleared, but trace_id remains for handler-level logs between steps
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID), "trace_id should persist between steps");
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID), "span_id should be cleared after step");
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED), "trace_flags should persist between steps");
 
         plugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec-mdc-test", true, InvocationStatus.SUCCEEDED, null));
+
+        // After onInvocationEnd: all MDC fields are cleared
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
     }
 }

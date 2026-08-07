@@ -10,8 +10,8 @@ import software.amazon.lambda.durable.DurableHandler;
  * 10-1: Plugin invocation lifecycle hooks (start and end on a single invocation).
  *
  * <p>A single greeting step configured with {@link ConformanceLoggingPlugin}. The plugin's invocation-start hook logs
- * {@code first=true} before the handler runs and its invocation-end hook logs {@code status=SUCCEEDED} after the
- * result is finalized. The step body logs its running line via the context logger.
+ * {@code first=true} before the handler runs and its invocation-end hook logs {@code status=SUCCEEDED} after the result
+ * is finalized. The step body logs its running line via the context logger.
  */
 @SuppressWarnings("deprecation")
 public class PluginInvocationLifecycle extends DurableHandler<String, String> {

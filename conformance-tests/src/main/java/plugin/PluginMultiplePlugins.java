@@ -38,8 +38,8 @@ public class PluginMultiplePlugins extends DurableHandler<String, String> {
         @Override
         public void onInvocationStart(InvocationInfo info) {
             this.executionArn = info.durableExecutionArn();
-            System.out.println(String.format(
-                    "{\"plugin\": \"%s\", \"hook\": \"invocation-start\"%s}", prefix, arnField()));
+            System.out.println(
+                    String.format("{\"plugin\": \"%s\", \"hook\": \"invocation-start\"%s}", prefix, arnField()));
         }
 
         @Override
@@ -53,8 +53,7 @@ public class PluginMultiplePlugins extends DurableHandler<String, String> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-                .withPlugins(
-                        new InvocationLoggingPlugin("CONFPLUGIN-A"), new InvocationLoggingPlugin("CONFPLUGIN-B"))
+                .withPlugins(new InvocationLoggingPlugin("CONFPLUGIN-A"), new InvocationLoggingPlugin("CONFPLUGIN-B"))
                 .build();
     }
 
