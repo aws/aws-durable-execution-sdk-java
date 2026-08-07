@@ -1207,9 +1207,26 @@ class ParallelIntegrationTest {
             }
             assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
             assertTrue(result.completionStatus().isSucceeded());
-            assertTrue(result.size() >= 2 && result.size() <= 5);
-            assertEquals(ParallelResult.Status.SKIPPED, result.statuses().get(0));
-            assertEquals(ParallelResult.Status.SKIPPED, result.statuses().get(1));
+            assertEquals(5, result.size());
+            assertTrue(result.succeeded() >= 2);
+            assertEquals(0, result.failed());
+            assertEquals(result.size(), result.statuses().size());
+            assertEquals(result.size(), result.succeeded() + result.failed() + result.skipped());
+            assertEquals(
+                    result.succeeded(),
+                    result.statuses().stream()
+                            .filter(status -> status == ParallelResult.Status.SUCCEEDED)
+                            .count());
+            assertEquals(
+                    result.failed(),
+                    result.statuses().stream()
+                            .filter(status -> status == ParallelResult.Status.FAILED)
+                            .count());
+            assertEquals(
+                    result.skipped(),
+                    result.statuses().stream()
+                            .filter(status -> status == ParallelResult.Status.SKIPPED)
+                            .count());
 
             return "done";
         });

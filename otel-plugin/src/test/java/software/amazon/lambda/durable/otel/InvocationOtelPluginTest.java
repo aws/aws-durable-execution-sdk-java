@@ -1000,11 +1000,11 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void operationEnd_withoutMatchingStart_usesOperationStartTimestamp() {
+    void operationEnd_withoutMatchingStart_startsWithinCurrentInvocation() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
-        var operationStart = Instant.parse("2026-01-15T08:30:00Z");
-        var operationEnd = Instant.parse("2026-01-15T09:00:00Z");
+        var operationStart = Instant.EPOCH;
+        var operationEnd = operationStart.plusSeconds(60);
 
         // onOperationEnd without a prior onOperationStart — continuation span
         plugin.onOperationEnd(new OperationEndInfo(
@@ -1022,15 +1022,19 @@ class InvocationOtelPluginTest {
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
-        var continuationSpan = spanExporter.getFinishedSpanItems().stream()
+        var spans = spanExporter.getFinishedSpanItems();
+        var continuationSpan = spans.stream()
                 .filter(s -> s.getName().contains("wait"))
                 .findFirst()
                 .orElseThrow();
+        var invocationSpan = spans.stream()
+                .filter(s -> s.getName().equals("Invocation"))
+                .findFirst()
+                .orElseThrow();
 
-        assertEquals(
-                operationStart.toEpochMilli(),
-                continuationSpan.getStartEpochNanos() / 1_000_000,
-                "Continuation span should use the operation's startTimestamp");
+        assertEquals(invocationSpan.getSpanId(), continuationSpan.getParentSpanId());
+        assertTrue(continuationSpan.getStartEpochNanos() >= invocationSpan.getStartEpochNanos());
+        assertTrue(continuationSpan.getEndEpochNanos() <= invocationSpan.getEndEpochNanos());
     }
 
     @Test
