@@ -18,6 +18,7 @@ import java.time.Instant;
  * @param attempt the total number of attempts for retriable operations (STEP, WAIT_FOR_CONDITION) — null for others
  * @param isReplay true if this operation already existed in the execution state (completed in a prior invocation)
  * @param error non-null if the operation failed
+ * @param result the serialized result of the operation (may be null if the operation failed or has no result)
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
 @Deprecated
@@ -32,4 +33,5 @@ public record OperationEndInfo(
         String status,
         Integer attempt,
         boolean isReplay,
-        Throwable error) {}
+        Throwable error,
+        String result) {}
