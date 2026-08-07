@@ -19,6 +19,7 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -116,6 +117,9 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     // Store operation span contexts for parent resolution (keyed by operationId)
     private final ConcurrentHashMap<String, SpanContext> operationContexts = new ConcurrentHashMap<>();
+
+    // Operation start order, drained in reverse so children end before parents
+    private final ConcurrentLinkedDeque<String> operationStartOrder = new ConcurrentLinkedDeque<>();
 
     /**
      * Creates an OTel plugin with default settings: X-Ray context extraction, MDC enabled.
@@ -284,23 +288,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
         if (invocationSpan == null) return;
 
-        // End still-open operation spans with the STARTED status set in onOperationStart.
-        // A later invocation's onOperationEnd emits a continuation span with the real terminal status.
-        for (var entry : operationSpans.entrySet()) {
-            entry.getValue().end();
-        }
-        operationSpans.clear();
-        operationContexts.clear();
-
-        // End any attempt spans that are still open (e.g., crash before onUserFunctionEnd)
-        for (var entry : attemptScopes.entrySet()) {
-            entry.getValue().close();
-        }
-        attemptScopes.clear();
-        for (var entry : attemptSpans.entrySet()) {
-            entry.getValue().end();
-        }
-        attemptSpans.clear();
+        endOpenSpansChildFirst();
 
         // End invocation span
         invocationSpan.setAttribute(
@@ -406,6 +394,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         // Store the open span — will be ended in onOperationEnd or onInvocationEnd
         operationSpans.put(info.id(), span);
         operationContexts.put(info.id(), span.getSpanContext());
+        operationStartOrder.addLast(info.id());
     }
 
     @Override
@@ -582,6 +571,30 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
+
+    private void endOpenSpansChildFirst() {
+        // Attempt spans are children of operation spans.
+        for (var scope : attemptScopes.values()) {
+            scope.close();
+        }
+        attemptScopes.clear();
+        for (var span : attemptSpans.values()) {
+            span.end();
+        }
+        attemptSpans.clear();
+
+        // End still-open operation spans with the STARTED status set in onOperationStart.
+        // A later invocation's onOperationEnd emits a continuation span with the real terminal status.
+        String operationId;
+        while ((operationId = operationStartOrder.pollLast()) != null) {
+            var span = operationSpans.remove(operationId);
+            if (span != null) {
+                span.end();
+            }
+        }
+        operationSpans.clear();
+        operationContexts.clear();
+    }
 
     private Context resolveParentContext(String parentId) {
         if (parentId != null) {

@@ -739,6 +739,38 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void invocationEnd_closesNestedSpansChildFirst() {
+        var parentId = "op-parent";
+        var childId = "op-child";
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        plugin.onOperationStart(new OperationInfo(
+                parentId, "parent-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null, null, false));
+        plugin.onOperationStart(
+                new OperationInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), null, null, false));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), false, 1));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+
+        var parentSpan = spanByName("parent-context");
+        var childSpan = spanByName("child-step");
+        var attemptSpan = spanByName("child-step attempt 1");
+        var spans = spanExporter.getFinishedSpanItems();
+        assertTrue(
+                spans.indexOf(attemptSpan) < spans.indexOf(childSpan),
+                "Attempt span must be exported before its operation span");
+        assertTrue(
+                spans.indexOf(childSpan) < spans.indexOf(parentSpan),
+                "Child operation span must be exported before its parent operation span");
+        assertTrue(
+                attemptSpan.getEndEpochNanos() <= childSpan.getEndEpochNanos(),
+                "Attempt span must end before its operation span");
+        assertTrue(
+                childSpan.getEndEpochNanos() <= parentSpan.getEndEpochNanos(),
+                "Child operation span must end before its parent operation span");
+    }
+
+    @Test
     void sampling_disabled_producesNoSpans() {
         spanExporter = InMemorySpanExporter.create();
         var sampledPlugin = new InvocationOtelPlugin(
