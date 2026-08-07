@@ -197,6 +197,19 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void invocationOtelPluginProvider_isRegisteredAsServiceProvider() {
+        var provider = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
+                .filter(candidate -> candidate.type().equals(InvocationOtelPluginProvider.class))
+                .findFirst()
+                .orElseThrow()
+                .get();
+
+        assertEquals("otel-invocation", provider.getName());
+        assertEquals(DurableExecutionPluginProvider.API_VERSION, provider.getApiVersion());
+        assertEquals(InvocationOtelPlugin.class, provider.getPluginType());
+    }
+
+    @Test
     void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
         var traceId = "5759e988bd862e3fe1be46a994272793";
         var parentSpanId = "53995c3f42cd8ad8";

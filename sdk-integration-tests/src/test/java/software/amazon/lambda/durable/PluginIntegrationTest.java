@@ -27,6 +27,29 @@ class PluginIntegrationTest {
     // ─── Invocation-level hooks ──────────────────────────────────────────
 
     @Test
+    void pluginsFromConfigurationAndEnvironment_receiveLifecycleEvents() {
+        var configuredPlugin = new RecordingPlugin();
+        var dynamicPlugin = new RecordingPlugin();
+        var provider = new RecordingPluginProvider(dynamicPlugin);
+        var plugins =
+                DynamicPluginLoader.loadConfiguredPlugins("recording", List.of(provider), List.of(configuredPlugin));
+        var config = DurableConfig.builder()
+                .withPlugins(plugins.toArray(DurableExecutionPlugin[]::new))
+                .build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step("greet", String.class, stepCtx -> "Hello " + input),
+                config);
+
+        var result = runner.runUntilComplete("World");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertPluginReceivedLifecycleEvents(configuredPlugin);
+        assertPluginReceivedLifecycleEvents(dynamicPlugin);
+    }
+
+    @Test
     void plugin_receivesInvocationStartAndEnd_onSuccessfulExecution() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
@@ -782,6 +805,34 @@ class PluginIntegrationTest {
         public void onOperationChange(OperationChangeInfo info) {
             operationChanges.add(info);
         }
+    }
+
+    private record RecordingPluginProvider(RecordingPlugin plugin) implements DurableExecutionPluginProvider {
+        @Override
+        public String getName() {
+            return "recording";
+        }
+
+        @Override
+        public int getApiVersion() {
+            return API_VERSION;
+        }
+
+        @Override
+        public Class<? extends DurableExecutionPlugin> getPluginType() {
+            return RecordingPlugin.class;
+        }
+
+        @Override
+        public DurableExecutionPlugin createPlugin() {
+            return plugin;
+        }
+    }
+
+    private static void assertPluginReceivedLifecycleEvents(RecordingPlugin plugin) {
+        assertEquals(1, plugin.invocationStarts.size());
+        assertTrue(plugin.operationStarts.stream().anyMatch(info -> "greet".equals(info.name())));
+        assertEquals(1, plugin.invocationEnds.size());
     }
 
     /** Plugin that throws on every hook to verify error isolation. */

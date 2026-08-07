@@ -15,6 +15,7 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import java.util.ServiceLoader;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -85,6 +86,19 @@ class ExecutionOtelPluginTest {
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Workflow")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Invocation")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+    }
+
+    @Test
+    void executionOtelPluginProvider_isRegisteredAsServiceProvider() {
+        var provider = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
+                .filter(candidate -> candidate.type().equals(ExecutionOtelPluginProvider.class))
+                .findFirst()
+                .orElseThrow()
+                .get();
+
+        assertEquals("otel-execution", provider.getName());
+        assertEquals(DurableExecutionPluginProvider.API_VERSION, provider.getApiVersion());
+        assertEquals(ExecutionOtelPlugin.class, provider.getPluginType());
     }
 
     // ─── Workflow root span lifecycle ────────────────────────────────────

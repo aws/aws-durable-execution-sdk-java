@@ -1,0 +1,2 @@
+software.amazon.lambda.durable.otel.InvocationOtelPluginProvider
+software.amazon.lambda.durable.otel.ExecutionOtelPluginProvider
