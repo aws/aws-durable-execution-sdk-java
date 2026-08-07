@@ -103,6 +103,7 @@ public final class DurableConfig {
     private final PluginRunner pluginRunner;
 
     private DurableConfig(Builder builder) {
+        var plugins = DynamicPluginLoader.loadConfiguredPlugins(builder.plugins);
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
@@ -113,7 +114,7 @@ public final class DurableConfig {
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
         this.deserializeAfterSerialization = builder.deserializeAfterSerialization;
         this.checkpointEmptyMap = builder.checkpointEmptyMap;
-        this.pluginRunner = builder.plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(builder.plugins);
+        this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
 
         validateConfiguration();
     }
@@ -216,7 +217,7 @@ public final class DurableConfig {
     /**
      * Gets the plugin runner that dispatches lifecycle events to registered plugins.
      *
-     * <p>Returns a no-op runner if no plugins were registered via the builder.
+     * <p>Returns a no-op runner if no plugins were registered via the builder or loaded dynamically.
      *
      * @return PluginRunner instance (never null)
      * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
