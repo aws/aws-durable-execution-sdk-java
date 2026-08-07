@@ -46,8 +46,10 @@ class InvocationOtelPluginIntegrationTest {
 
         var plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
 
         otelConfig = DurableConfig.builder().withPlugins(plugin).build();
     }
@@ -326,8 +328,10 @@ class InvocationOtelPluginIntegrationTest {
                 SdkTracerProvider.builder()
                         .setSampler(Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
 
         var noSampleConfig = DurableConfig.builder().withPlugins(noSamplePlugin).build();
 
