@@ -40,9 +40,11 @@ class ExecutionOtelPluginTest {
                 SdkTracerProvider.builder()
                         .setResource(resource)
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
     }
 
     @AfterEach
@@ -53,6 +55,73 @@ class ExecutionOtelPluginTest {
     }
 
     // ─── Default constructor ─────────────────────────────────────────────
+
+    @Test
+    void customInstrumentationName_isUsedForTracerScope() {
+        var exporter = InMemorySpanExporter.create();
+        var customPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .instrumentationName("my-custom-scope")
+                        .build());
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        customPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        assertFalse(spans.isEmpty());
+        for (var span : spans) {
+            assertEquals("my-custom-scope", span.getInstrumentationScopeInfo().getName());
+        }
+    }
+
+    @Test
+    void configOnlyConstructor_defaultsToGlobalProvider() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        OpenTelemetrySdk.builder()
+                .setTracerProvider(SdkTracerProvider.builder().build())
+                .buildAndRegisterGlobal();
+
+        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
+    }
+
+    @Test
+    void configWithAutoOtlp_buildsPluginOwnedProvider() {
+        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.builder()
+                .providerSource(ProviderSource.AUTO_OTLP)
+                .build());
+        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
+    }
+
+    @Test
+    void builderConstructor_isExplicitSource() {
+        var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
+    }
+
+    @Test
+    void configProviderSource_defaultsToGlobalAndHonorsAutoOtlp() {
+        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
+        assertEquals(
+                ProviderSource.AUTO_OTLP,
+                OtelPluginConfig.builder()
+                        .providerSource(ProviderSource.AUTO_OTLP)
+                        .build()
+                        .providerSource());
+    }
+
+    @Test
+    void configOnlyConstructor_rejectsExplicitProviderSource() {
+        var config = OtelPluginConfig.builder()
+                .providerSource(ProviderSource.EXPLICIT)
+                .build();
+        var error = assertThrows(IllegalArgumentException.class, () -> new ExecutionOtelPlugin(config));
+        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
+    }
 
     @Test
     void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
@@ -637,9 +706,11 @@ class ExecutionOtelPluginTest {
         var exporter2 = InMemorySpanExporter.create();
         var plugin2 = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter2)),
-                () -> null,
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
         plugin2.onInvocationStart(new InvocationInfo("req-9", ARN, true, Instant.now()));
         plugin2.onInvocationEnd(new InvocationEndInfo("req-9", ARN, true, InvocationStatus.SUCCEEDED, null));
         var secondWorkflowSpanId =
@@ -660,9 +731,11 @@ class ExecutionOtelPluginTest {
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> null,
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
         sampledPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         sampledPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
         assertTrue(exporter.getFinishedSpanItems().isEmpty(), "No spans should be exported with 0% sampling");
@@ -676,9 +749,11 @@ class ExecutionOtelPluginTest {
         var exporter = InMemorySpanExporter.create();
         var xrayPlugin = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> new ExtractedContext(xrayTraceId, null),
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, null))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
