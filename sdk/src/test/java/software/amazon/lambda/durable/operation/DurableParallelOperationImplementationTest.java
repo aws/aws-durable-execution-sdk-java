@@ -75,7 +75,7 @@ class DurableParallelOperationImplementationTest {
                         parentConfig.capture());
         assertFalse(parentConfig.getValue().emitUserFunctionEvents());
         assertTrue(parentConfig.getValue().suppressLateChildCheckpoints());
-        assertSame(serDes, parentConfig.getValue().childContextConfig().serDes());
+        assertSame(serDes, parentConfig.getValue().serDes());
 
         var child = mock(CurrentContext.class);
         var first = mock(ExtensionOperation.class);
@@ -117,8 +117,8 @@ class DurableParallelOperationImplementationTest {
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         branchConfig.capture());
-        assertTrue(branchConfig.getValue().childContextConfig().isVirtual());
-        assertSame(serDes, branchConfig.getValue().childContextConfig().serDes());
+        assertTrue(branchConfig.getValue().isVirtual());
+        assertSame(serDes, branchConfig.getValue().serDes());
     }
 
     @Test

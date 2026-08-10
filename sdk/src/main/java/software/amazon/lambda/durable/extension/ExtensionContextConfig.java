@@ -2,27 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.extension;
 
-import java.util.Objects;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
+import software.amazon.lambda.durable.serde.SerDes;
 
 /** Extension-only policies for an advanced CONTEXT primitive. */
 public final class ExtensionContextConfig {
-    private final RunInChildContextConfig childContextConfig;
+    private final SerDes serDes;
+    private final boolean virtual;
     private final ExtensionContextErrorHandler errorHandler;
     private final boolean emitUserFunctionEvents;
     private final boolean suppressLateChildCheckpoints;
 
     private ExtensionContextConfig(Builder builder) {
-        childContextConfig =
-                Objects.requireNonNullElseGet(builder.childContextConfig, () -> RunInChildContextConfig.builder()
-                        .build());
+        serDes = builder.serDes;
+        virtual = builder.virtual;
         errorHandler = builder.errorHandler;
         emitUserFunctionEvents = builder.emitUserFunctionEvents;
         suppressLateChildCheckpoints = builder.suppressLateChildCheckpoints;
     }
 
-    public RunInChildContextConfig childContextConfig() {
-        return childContextConfig;
+    public SerDes serDes() {
+        return serDes;
+    }
+
+    public boolean isVirtual() {
+        return virtual;
     }
 
     public ExtensionContextErrorHandler errorHandler() {
@@ -39,7 +42,8 @@ public final class ExtensionContextConfig {
 
     public Builder toBuilder() {
         return new Builder()
-                .childContextConfig(childContextConfig)
+                .serDes(serDes)
+                .isVirtual(virtual)
                 .errorHandler(errorHandler)
                 .emitUserFunctionEvents(emitUserFunctionEvents)
                 .suppressLateChildCheckpoints(suppressLateChildCheckpoints);
@@ -50,15 +54,21 @@ public final class ExtensionContextConfig {
     }
 
     public static final class Builder {
-        private RunInChildContextConfig childContextConfig;
+        private SerDes serDes;
+        private boolean virtual;
         private ExtensionContextErrorHandler errorHandler;
         private boolean emitUserFunctionEvents = true;
         private boolean suppressLateChildCheckpoints;
 
         private Builder() {}
 
-        public Builder childContextConfig(RunInChildContextConfig childContextConfig) {
-            this.childContextConfig = Objects.requireNonNull(childContextConfig, "childContextConfig cannot be null");
+        public Builder serDes(SerDes serDes) {
+            this.serDes = serDes;
+            return this;
+        }
+
+        public Builder isVirtual(boolean virtual) {
+            this.virtual = virtual;
             return this;
         }
 

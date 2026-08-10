@@ -4,20 +4,22 @@ package software.amazon.lambda.durable.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextErrorHandler;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class ExtensionContextConfigTest {
     @Test
     void builderUsesOrdinaryChildContextDefaults() {
         var config = ExtensionContextConfig.builder().build();
 
-        assertNotNull(config.childContextConfig());
+        assertNull(config.serDes());
+        assertFalse(config.isVirtual());
         assertNull(config.errorHandler());
         assertTrue(config.emitUserFunctionEvents());
         assertFalse(config.suppressLateChildCheckpoints());
@@ -25,16 +27,18 @@ class ExtensionContextConfigTest {
 
     @Test
     void builderRetainsExtensionPolicies() {
-        var childConfig = RunInChildContextConfig.builder().isVirtual(true).build();
+        var serDes = new JacksonSerDes();
         ExtensionContextErrorHandler handler = failure -> new RuntimeException(failure.contextName());
         var config = ExtensionContextConfig.builder()
-                .childContextConfig(childConfig)
+                .serDes(serDes)
+                .isVirtual(true)
                 .errorHandler(handler)
                 .emitUserFunctionEvents(false)
                 .suppressLateChildCheckpoints(true)
                 .build();
 
-        assertEquals(childConfig, config.childContextConfig());
+        assertSame(serDes, config.serDes());
+        assertTrue(config.isVirtual());
         assertEquals(handler, config.errorHandler());
         assertFalse(config.emitUserFunctionEvents());
         assertTrue(config.suppressLateChildCheckpoints());

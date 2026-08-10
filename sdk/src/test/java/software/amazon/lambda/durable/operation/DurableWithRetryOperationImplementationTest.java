@@ -75,7 +75,7 @@ class DurableWithRetryOperationImplementationTest {
                         any(TypeToken.class),
                         function.capture(),
                         contextConfig.capture());
-        assertFalse(contextConfig.getValue().childContextConfig().isVirtual());
+        assertFalse(contextConfig.getValue().isVirtual());
 
         var child = mock(CurrentExtensionContext.class);
         var wait = mock(ExtensionOperation.class);

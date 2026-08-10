@@ -20,7 +20,6 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
@@ -173,10 +172,8 @@ public final class DurableMapOperation {
         var context = ExtensionContext.getCurrentContext();
         var registeredItems = new ArrayList<OperationConcurrencyCoordinator.Item<O>>(items.size());
         var iterationConfig = ExtensionContextConfig.builder()
-                .childContextConfig(RunInChildContextConfig.builder()
-                        .serDes(config.serDes())
-                        .isVirtual(config.nestingType() == FLAT)
-                        .build())
+                .serDes(config.serDes())
+                .isVirtual(config.nestingType() == FLAT)
                 .build();
 
         for (int index = 0; index < items.size(); index++) {
@@ -258,10 +255,8 @@ public final class DurableMapOperation {
 
     private static ExtensionContextConfig parentConfig(MapConfig config, boolean virtualEmptyMap) {
         return ExtensionContextConfig.builder()
-                .childContextConfig(RunInChildContextConfig.builder()
-                        .serDes(config.serDes())
-                        .isVirtual(virtualEmptyMap)
-                        .build())
+                .serDes(config.serDes())
+                .isVirtual(virtualEmptyMap)
                 .emitUserFunctionEvents(false)
                 .suppressLateChildCheckpoints(true)
                 .build();

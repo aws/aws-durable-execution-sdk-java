@@ -230,6 +230,7 @@ class DurableOperationFacadeTest {
         var future = mockStringFuture();
         var reservation = mock(ExtensionOperation.class);
         var context = mockDurableContext();
+        var serDes = mock(SerDes.class);
         when(((ExtensionContext) context).reserve("child")).thenReturn(reservation);
         when(reservation.runInChildContextAsync(
                         eq(RUN_IN_CHILD_CONTEXT.getValue()),
@@ -242,9 +243,18 @@ class DurableOperationFacadeTest {
                 "child",
                 TypeToken.get(String.class),
                 ignored -> "result",
-                RunInChildContextConfig.builder().build());
+                RunInChildContextConfig.builder().serDes(serDes).isVirtual(true).build());
 
         assertSame(future, result);
+        var extensionConfig = ArgumentCaptor.forClass(ExtensionContextConfig.class);
+        verify(reservation)
+                .runInChildContextAsync(
+                        eq(RUN_IN_CHILD_CONTEXT.getValue()),
+                        eq(TypeToken.get(String.class)),
+                        any(ExtensionContextFunction.class),
+                        extensionConfig.capture());
+        assertSame(serDes, extensionConfig.getValue().serDes());
+        assertTrue(extensionConfig.getValue().isVirtual());
     }
 
     @Test

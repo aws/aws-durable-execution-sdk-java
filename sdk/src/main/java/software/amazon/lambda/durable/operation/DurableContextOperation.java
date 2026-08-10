@@ -82,7 +82,8 @@ public final class DurableContextOperation {
                         () -> ExtensionContextResult.replayChildrenAboveSize(
                                 function.apply(DurableContext.getCurrentContext()), null, LARGE_RESULT_THRESHOLD),
                         ExtensionContextConfig.builder()
-                                .childContextConfig(OperationConfigAdapters.toLegacy(config))
+                                .serDes(config.serDes())
+                                .isVirtual(config.isVirtual())
                                 .build());
     }
 

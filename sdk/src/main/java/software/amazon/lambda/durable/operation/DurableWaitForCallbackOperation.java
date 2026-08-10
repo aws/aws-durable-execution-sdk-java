@@ -13,7 +13,6 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackSubmitterException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
@@ -126,9 +125,7 @@ public final class DurableWaitForCallbackOperation {
 
     private static ExtensionContextConfig extensionConfig(WaitForCallbackConfig config) {
         return ExtensionContextConfig.builder()
-                .childContextConfig(RunInChildContextConfig.builder()
-                        .serDes(config.stepConfig().serDes())
-                        .build())
+                .serDes(config.stepConfig().serDes())
                 .errorHandler(DurableWaitForCallbackOperation::translateFailure)
                 .build();
     }

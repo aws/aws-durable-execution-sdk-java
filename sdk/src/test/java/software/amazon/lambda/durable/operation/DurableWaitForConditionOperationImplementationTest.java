@@ -113,7 +113,7 @@ class DurableWaitForConditionOperationImplementationTest {
             throw new StepFailedException(operation);
         };
 
-        var future = new WaitForConditionFuture<>(delegate);
+        var future = createFuture(delegate);
 
         var failure = assertThrows(WaitForConditionFailedException.class, future::get);
         assertSame(operation, failure.getOperation());
@@ -134,7 +134,26 @@ class DurableWaitForConditionOperationImplementationTest {
             }
         };
 
-        assertSame(completion, new WaitForConditionFuture<>(delegate).completionFuture());
+        assertSame(completion, createFuture(delegate).completionFuture());
+    }
+
+    private DurableFuture<String> createFuture(DurableFuture<String> delegate) {
+        var context = mock(ExtensionContext.class);
+        var reservation = mock(ExtensionOperation.class);
+        var resultType = TypeToken.get(String.class);
+        when(context.reserve("ready")).thenReturn(reservation);
+        when(reservation.stepAsync(
+                        eq(OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                        eq(resultType),
+                        any(ExtensionStepFunction.class),
+                        any(ExtensionStepConfig.class)))
+                .thenReturn(delegate);
+        return DurableWaitForConditionOperation.waitForConditionAsync(
+                context,
+                "ready",
+                resultType,
+                (state, step) -> WaitForConditionResult.stopPolling(state),
+                WaitForConditionConfig.<String>builder().build().toOperationConfig());
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

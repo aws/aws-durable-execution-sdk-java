@@ -244,7 +244,8 @@ Supported result policies are:
 On replay, the framework function receives the stored replay state through scoped TLS. This supports large map
 results and parallel branch reconstruction without exposing checkpoint APIs.
 
-`ExtensionContextConfig` composes the existing `RunInChildContextConfig` and adds extension-only behavior:
+`ExtensionContextConfig` directly owns the child context serializer and virtual-context flag, plus extension-only
+behavior:
 
 - context failure translation
 - whether the framework function emits user-function plugin events

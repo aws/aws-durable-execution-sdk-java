@@ -9,7 +9,6 @@ import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
@@ -62,9 +61,7 @@ public final class DurableWithRetryOperation {
                         new TypeToken<Object>() {},
                         () -> ExtensionContextResult.completed(executeRetryLoop(name, operation, config)),
                         ExtensionContextConfig.builder()
-                                .childContextConfig(RunInChildContextConfig.builder()
-                                        .isVirtual(!config.wrapInChildContext())
-                                        .build())
+                                .isVirtual(!config.wrapInChildContext())
                                 .build());
         return (DurableFuture<T>) future;
     }

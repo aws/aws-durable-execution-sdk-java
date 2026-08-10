@@ -127,12 +127,10 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
         Objects.requireNonNull(function, "function cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         claim();
-        var childConfig = config.childContextConfig();
-        if (childConfig.serDes() == null) {
-            childConfig = childConfig.toBuilder()
+        if (config.serDes() == null) {
+            config = config.toBuilder()
                     .serDes(context.getDurableConfig().getSerDes())
                     .build();
-            config = config.toBuilder().childContextConfig(childConfig).build();
         }
         var operation = new ChildContextPrimitive<>(
                 new OperationIdentifier(operationId, name, OperationType.CONTEXT, subType),

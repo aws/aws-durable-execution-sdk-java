@@ -63,7 +63,7 @@ class DurableMapOperationImplementationTest {
         verify(parent)
                 .runInChildContextAsync(
                         eq(MAP.getValue()), any(TypeToken.class), function.capture(), parentConfig.capture());
-        assertSame(serDes, parentConfig.getValue().childContextConfig().serDes());
+        assertSame(serDes, parentConfig.getValue().serDes());
         assertFalse(parentConfig.getValue().emitUserFunctionEvents());
         assertTrue(parentConfig.getValue().suppressLateChildCheckpoints());
 
@@ -98,8 +98,8 @@ class DurableMapOperationImplementationTest {
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         iterationConfig.capture());
-        assertTrue(iterationConfig.getValue().childContextConfig().isVirtual());
-        assertSame(serDes, iterationConfig.getValue().childContextConfig().serDes());
+        assertTrue(iterationConfig.getValue().isVirtual());
+        assertSame(serDes, iterationConfig.getValue().serDes());
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

@@ -292,8 +292,7 @@ class ChildContextPrimitiveTest {
         var capturedFailure = new AtomicReference<ExtensionContextFailure>();
         var translated = new IllegalStateException("translated");
         var config = ExtensionContextConfig.builder()
-                .childContextConfig(
-                        RunInChildContextConfig.builder().serDes(SERDES).build())
+                .serDes(SERDES)
                 .errorHandler(failure -> {
                     capturedFailure.set(failure);
                     return translated;
@@ -335,8 +334,7 @@ class ChildContextPrimitiveTest {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(failedContext);
         var handlerCalled = new AtomicBoolean();
         var config = ExtensionContextConfig.builder()
-                .childContextConfig(
-                        RunInChildContextConfig.builder().serDes(SERDES).build())
+                .serDes(SERDES)
                 .errorHandler(failure -> {
                     handlerCalled.set(true);
                     return new IllegalStateException("translated");
@@ -358,8 +356,7 @@ class ChildContextPrimitiveTest {
         var childContext = mock(DurableContextImpl.class);
         when(childContext.getDurableConfig()).thenReturn(createConfig());
         var config = ExtensionContextConfig.builder()
-                .childContextConfig(
-                        RunInChildContextConfig.builder().serDes(SERDES).build())
+                .serDes(SERDES)
                 .suppressLateChildCheckpoints(true)
                 .build();
         var operation = createExtensionOperation(config);

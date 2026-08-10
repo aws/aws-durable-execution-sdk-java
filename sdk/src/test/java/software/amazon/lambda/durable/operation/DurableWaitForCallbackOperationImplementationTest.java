@@ -63,7 +63,7 @@ class DurableWaitForCallbackOperationImplementationTest {
                         eq(resultType),
                         any(ExtensionContextFunction.class),
                         contextConfig.capture());
-        assertSame(serDes, contextConfig.getValue().childContextConfig().serDes());
+        assertSame(serDes, contextConfig.getValue().serDes());
     }
 
     @Test

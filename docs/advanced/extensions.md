@@ -308,10 +308,11 @@ Use `ExtensionContextResult.completed(result)` when children never need to repla
 `replayChildrenAboveSize(result, replayState, thresholdBytes)` to replay only when the serialized full result reaches
 the threshold. Replay metadata is scoped to the framework callback through `ExtensionContextReplayContext`.
 
-`ExtensionContextConfig` also composes `RunInChildContextConfig`, controls framework user-function plugin events, and
-can suppress child checkpoints that finish after the parent. If a context fails, the SDK first rethrows a
-deserialized original exception, then calls the configured error handler, and finally falls back to
-`ChildContextFailedException`. The handler receives read-only context metadata and child-operation summaries.
+`ExtensionContextConfig` directly configures the context serializer and whether the context is virtual. It also
+controls framework user-function plugin events and can suppress child checkpoints that finish after the parent. If a
+context fails, the SDK first rethrows a deserialized original exception, then calls the configured error handler, and
+finally falls back to `ChildContextFailedException`. The handler receives read-only context metadata and
+child-operation summaries.
 
 ## Explicit child contexts
 

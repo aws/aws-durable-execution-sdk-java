@@ -114,10 +114,10 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
         super(
                 operationIdentifier,
                 resultTypeToken,
-                config.childContextConfig().serDes(),
+                config.serDes(),
                 durableContext,
                 parentOperation,
-                config.childContextConfig().isVirtual());
+                config.isVirtual());
         this.function = null;
         this.extensionFunction = function;
         this.extensionConfig = config;

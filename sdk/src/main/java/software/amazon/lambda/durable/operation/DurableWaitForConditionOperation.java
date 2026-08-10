@@ -3,11 +3,14 @@
 package software.amazon.lambda.durable.operation;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.StepFailedException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
@@ -121,6 +124,28 @@ public final class DurableWaitForConditionOperation {
         }
         var delay = config.waitStrategy().evaluate(result.value(), stepContext.getAttempt());
         return ExtensionStepResult.retry(result.value(), delay);
+    }
+
+    private static final class WaitForConditionFuture<T> implements DurableFuture<T> {
+        private final DurableFuture<T> delegate;
+
+        WaitForConditionFuture(DurableFuture<T> delegate) {
+            this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
+        }
+
+        @Override
+        public T get() {
+            try {
+                return delegate.get();
+            } catch (StepFailedException e) {
+                throw new WaitForConditionFailedException(e.getOperation());
+            }
+        }
+
+        @Override
+        public CompletableFuture<Void> completionFuture() {
+            return delegate.completionFuture();
+        }
     }
 
     /** Configuration for durable wait-for-condition operations. */
