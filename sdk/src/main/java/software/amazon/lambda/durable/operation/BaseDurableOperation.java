@@ -25,6 +25,7 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
@@ -52,7 +53,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 public abstract class BaseDurableOperation {
     private static final Logger logger = LoggerFactory.getLogger(BaseDurableOperation.class);
 
-    private final OperationIdentifier operationIdentifier;
+    private final OperationDescriptor operationDescriptor;
     protected final ExecutionManager executionManager;
     protected final CompletableFuture<BaseDurableOperation> completionFuture;
     protected final BaseDurableOperation parentOperation;
@@ -65,7 +66,14 @@ public abstract class BaseDurableOperation {
             OperationIdentifier operationIdentifier,
             DurableContextImpl durableContext,
             BaseDurableOperation parentOperation) {
-        this(operationIdentifier, durableContext, parentOperation, false);
+        this(OperationDescriptor.from(operationIdentifier), durableContext, parentOperation, false);
+    }
+
+    protected BaseDurableOperation(
+            OperationDescriptor operationDescriptor,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation) {
+        this(operationDescriptor, durableContext, parentOperation, false);
     }
 
     /**
@@ -81,7 +89,15 @@ public abstract class BaseDurableOperation {
             DurableContextImpl durableContext,
             BaseDurableOperation parentOperation,
             boolean isVirtual) {
-        this.operationIdentifier = operationIdentifier;
+        this(OperationDescriptor.from(operationIdentifier), durableContext, parentOperation, isVirtual);
+    }
+
+    protected BaseDurableOperation(
+            OperationDescriptor operationDescriptor,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation,
+            boolean isVirtual) {
+        this.operationDescriptor = operationDescriptor;
         this.parentOperation = parentOperation;
         this.durableContext = durableContext;
         this.executionManager = durableContext.getExecutionManager();
@@ -108,17 +124,22 @@ public abstract class BaseDurableOperation {
 
     /** Gets the operation sub-type (e.g. RUN_IN_CHILD_CONTEXT, WAIT_FOR_CALLBACK). */
     public OperationSubType getSubType() {
-        return operationIdentifier.subType();
+        return operationDescriptor.standardSubType();
+    }
+
+    /** Gets the exact operation subtype string. */
+    public String getSubTypeValue() {
+        return operationDescriptor.subType();
     }
 
     /** Gets the unique identifier for this operation. */
     public String getOperationId() {
-        return operationIdentifier.operationId();
+        return operationDescriptor.operationId();
     }
 
     /** Gets the operation name (may be null). */
     public String getName() {
-        return operationIdentifier.name();
+        return operationDescriptor.name();
     }
 
     /** Gets the parent context. */
@@ -128,7 +149,7 @@ public abstract class BaseDurableOperation {
 
     /** Gets the operation type. */
     public OperationType getType() {
-        return operationIdentifier.operationType();
+        return operationDescriptor.operationType();
     }
 
     /**
@@ -359,7 +380,7 @@ public abstract class BaseDurableOperation {
     protected <T> T runUserFunction(Integer attempt, Supplier<T> userFunction) {
         var pluginRunner = getPluginRunner();
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
-                operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
+                operationDescriptor, durableContext.getParentId(), durableContext.isReplaying(), attempt);
         pluginRunner.onUserFunctionStart(startInfo);
         try {
             T result = userFunction.get();
@@ -492,7 +513,7 @@ public abstract class BaseDurableOperation {
         var updateBuilder = builder.id(getOperationId())
                 .name(getName())
                 .type(getType())
-                .subType(getSubType().getValue())
+                .subType(getSubTypeValue())
                 .parentId(durableContext.getParentId());
         var update = updateBuilder.build();
         if (replayCompletedOperation.get()) {
@@ -523,10 +544,10 @@ public abstract class BaseDurableOperation {
                     getOperationId(), checkpointed.name(), getName())));
         }
 
-        if (!Objects.equals(checkpointed.subType(), getSubType().getValue())) {
+        if (!Objects.equals(checkpointed.subType(), getSubTypeValue())) {
             throw terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation subType mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                    getOperationId(), checkpointed.subType(), getSubType())));
+                    getOperationId(), checkpointed.subType(), getSubTypeValue())));
         }
     }
 
@@ -544,14 +565,14 @@ public abstract class BaseDurableOperation {
 
     /** Fires onOperationStart plugin hook. */
     private void fireOnOperationStart(Operation existing) {
-        var info = PluginInfoConverter.toOperationInfo(existing, operationIdentifier, durableContext.getParentId());
+        var info = PluginInfoConverter.toOperationInfo(existing, operationDescriptor, durableContext.getParentId());
         getPluginRunner().onOperationStart(info);
     }
 
     /** Fires onOperationEnd plugin hook when an operation reaches terminal status. */
     protected void fireOnOperationEnd(Operation operation, Throwable error, boolean isReplay) {
         var info = PluginInfoConverter.toOperationEndInfo(
-                operation, operationIdentifier, durableContext.getParentId(), isReplay, error);
+                operation, operationDescriptor, durableContext.getParentId(), isReplay, error);
         getPluginRunner().onOperationEnd(info);
     }
 

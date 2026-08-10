@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 
 /**
@@ -30,6 +31,12 @@ public class WaitOperation extends BaseDurableOperation implements DurableFuture
     public WaitOperation(
             OperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
         super(operationIdentifier, durableContext, null);
+        this.duration = duration;
+    }
+
+    public WaitOperation(
+            OperationDescriptor operationDescriptor, Duration duration, DurableContextImpl durableContext) {
+        super(operationDescriptor, durableContext, null);
         this.duration = duration;
     }
 

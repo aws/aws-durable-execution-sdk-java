@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
@@ -28,11 +29,23 @@ public final class PluginInfoConverter {
      * @return an OperationInfo record
      */
     public static OperationInfo toOperationInfo(Operation operation, OperationIdentifier identifier, String parentId) {
+        return toOperationInfo(operation, OperationDescriptor.from(identifier), parentId);
+    }
+
+    /**
+     * Converts an SDK {@link Operation} to an {@link OperationInfo} using an {@link OperationDescriptor}.
+     *
+     * @param operation the SDK operation (may be null for first-start scenarios)
+     * @param descriptor the operation identity
+     * @param parentId the parent operation ID (may be null for root operations)
+     * @return an OperationInfo record
+     */
+    public static OperationInfo toOperationInfo(Operation operation, OperationDescriptor descriptor, String parentId) {
         return new OperationInfo(
-                identifier.operationId(),
-                identifier.name(),
-                identifier.operationType() != null ? identifier.operationType().toString() : null,
-                identifier.subType() != null ? identifier.subType().getValue() : null,
+                descriptor.operationId(),
+                descriptor.name(),
+                descriptor.operationType().toString(),
+                descriptor.subType(),
                 parentId,
                 operation != null ? operation.startTimestamp() : Instant.now(),
                 operation != null ? operation.endTimestamp() : null,
@@ -54,11 +67,20 @@ public final class PluginInfoConverter {
      */
     public static OperationEndInfo toOperationEndInfo(
             Operation operation, OperationIdentifier identifier, String parentId, boolean isReplay, Throwable error) {
+        return toOperationEndInfo(operation, OperationDescriptor.from(identifier), parentId, isReplay, error);
+    }
+
+    /**
+     * Creates an {@link OperationEndInfo} from an SDK {@link Operation}, an {@link OperationDescriptor}, and an
+     * optional error.
+     */
+    public static OperationEndInfo toOperationEndInfo(
+            Operation operation, OperationDescriptor descriptor, String parentId, boolean isReplay, Throwable error) {
         return new OperationEndInfo(
-                identifier.operationId(),
-                identifier.name(),
-                identifier.operationType() != null ? identifier.operationType().toString() : null,
-                identifier.subType() != null ? identifier.subType().getValue() : null,
+                descriptor.operationId(),
+                descriptor.name(),
+                descriptor.operationType().toString(),
+                descriptor.subType(),
                 parentId,
                 operation != null ? operation.startTimestamp() : null,
                 operation != null ? operation.endTimestamp() : null,
@@ -83,11 +105,17 @@ public final class PluginInfoConverter {
      */
     public static UserFunctionStartInfo toUserFunctionStartInfo(
             OperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
+        return toUserFunctionStartInfo(OperationDescriptor.from(identifier), parentId, isReplayingChildren, attempt);
+    }
+
+    /** Creates a user-function start record from an operation descriptor. */
+    public static UserFunctionStartInfo toUserFunctionStartInfo(
+            OperationDescriptor descriptor, String parentId, boolean isReplayingChildren, Integer attempt) {
         return new UserFunctionStartInfo(
-                identifier.operationId(),
-                identifier.name(),
-                identifier.operationType() != null ? identifier.operationType().toString() : null,
-                identifier.subType() != null ? identifier.subType().getValue() : null,
+                descriptor.operationId(),
+                descriptor.name(),
+                descriptor.operationType().toString(),
+                descriptor.subType(),
                 parentId,
                 Instant.now(),
                 isReplayingChildren,

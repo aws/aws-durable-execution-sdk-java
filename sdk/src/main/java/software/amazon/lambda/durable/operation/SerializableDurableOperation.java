@@ -9,6 +9,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -55,6 +56,14 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
         this(operationIdentifier, resultTypeToken, resultSerDes, durableContext, null, false);
     }
 
+    protected SerializableDurableOperation(
+            OperationDescriptor operationDescriptor,
+            TypeToken<T> resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext) {
+        this(operationDescriptor, resultTypeToken, resultSerDes, durableContext, null, false);
+    }
+
     /**
      * Constructs a new durable operation.
      *
@@ -73,6 +82,18 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
             BaseDurableOperation parentOperation,
             boolean isVirtual) {
         super(operationIdentifier, durableContext, parentOperation, isVirtual);
+        this.resultTypeToken = resultTypeToken;
+        this.resultSerDes = resultSerDes;
+    }
+
+    protected SerializableDurableOperation(
+            OperationDescriptor operationDescriptor,
+            TypeToken<T> resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation,
+            boolean isVirtual) {
+        super(operationDescriptor, durableContext, parentOperation, isVirtual);
         this.resultTypeToken = resultTypeToken;
         this.resultSerDes = resultSerDes;
     }

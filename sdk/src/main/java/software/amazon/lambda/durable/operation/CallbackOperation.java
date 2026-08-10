@@ -12,6 +12,7 @@ import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 
 /** Durable operation for creating and waiting on external callbacks. */
@@ -27,6 +28,15 @@ public class CallbackOperation<T> extends SerializableDurableOperation<T> implem
             CallbackConfig config,
             DurableContextImpl durableContext) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
+        this.config = config;
+    }
+
+    public CallbackOperation(
+            OperationDescriptor operationDescriptor,
+            TypeToken<T> resultTypeToken,
+            CallbackConfig config,
+            DurableContextImpl durableContext) {
+        super(operationDescriptor, resultTypeToken, config.serDes(), durableContext);
         this.config = config;
     }
 

@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.context;
 
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableCallbackFuture;
@@ -33,9 +34,24 @@ final class ExtensionOperationImpl implements ExtensionOperation {
     }
 
     @Override
+    public <T> DurableFuture<T> stepAsync(
+            String subType, TypeToken<T> resultType, Supplier<T> function, StepConfig config) {
+        validateSubType(subType);
+        claim();
+        return context.stepAsyncWithId(operationId, name, subType, resultType, ignored -> function.get(), config);
+    }
+
+    @Override
     public DurableFuture<Void> waitAsync(Duration duration) {
         claim();
         return context.waitAsyncWithId(operationId, name, duration);
+    }
+
+    @Override
+    public DurableFuture<Void> waitAsync(String subType, Duration duration) {
+        validateSubType(subType);
+        claim();
+        return context.waitAsyncWithId(operationId, name, subType, duration);
     }
 
     @Override
@@ -46,9 +62,24 @@ final class ExtensionOperationImpl implements ExtensionOperation {
     }
 
     @Override
+    public <T, U> DurableFuture<T> invokeAsync(
+            String subType, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config) {
+        validateSubType(subType);
+        claim();
+        return context.invokeAsyncWithId(operationId, name, subType, functionName, payload, resultType, config);
+    }
+
+    @Override
     public <T> DurableCallbackFuture<T> createCallback(TypeToken<T> resultType, CallbackConfig config) {
         claim();
         return context.createCallbackWithId(operationId, name, resultType, config);
+    }
+
+    @Override
+    public <T> DurableCallbackFuture<T> createCallback(String subType, TypeToken<T> resultType, CallbackConfig config) {
+        validateSubType(subType);
+        claim();
+        return context.createCallbackWithId(operationId, name, subType, resultType, config);
     }
 
     @Override
@@ -56,6 +87,22 @@ final class ExtensionOperationImpl implements ExtensionOperation {
             TypeToken<T> resultType, Supplier<T> function, RunInChildContextConfig config) {
         claim();
         return context.runInChildContextAsyncWithId(operationId, name, resultType, ignored -> function.get(), config);
+    }
+
+    @Override
+    public <T> DurableFuture<T> runInChildContextAsync(
+            String subType, TypeToken<T> resultType, Supplier<T> function, RunInChildContextConfig config) {
+        validateSubType(subType);
+        claim();
+        return context.runInChildContextAsyncWithId(
+                operationId, name, subType, resultType, ignored -> function.get(), config);
+    }
+
+    private void validateSubType(String subType) {
+        Objects.requireNonNull(subType, "subType cannot be null");
+        if (subType.isBlank()) {
+            throw new IllegalArgumentException("subType cannot be blank");
+        }
     }
 
     private void claim() {

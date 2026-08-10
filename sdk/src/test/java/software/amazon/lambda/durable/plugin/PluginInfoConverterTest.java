@@ -8,6 +8,8 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 
@@ -48,6 +50,16 @@ class PluginInfoConverterTest {
         assertEquals(START, info.startTimestamp());
         assertEquals(END, info.endTimestamp());
         assertEquals("STARTED", info.status());
+    }
+
+    @Test
+    void toOperationInfo_withDescriptor_preservesCustomSubtype() {
+        var descriptor = new OperationDescriptor(OPERATION_ID, OPERATION_NAME, OperationType.STEP, "AcmeStep");
+
+        var info = PluginInfoConverter.toOperationInfo(null, descriptor, PARENT_ID);
+
+        assertEquals("STEP", info.type());
+        assertEquals("AcmeStep", info.subType());
     }
 
     @Test

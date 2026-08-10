@@ -98,6 +98,21 @@ class ExtensionOperationImplTest {
     }
 
     @Test
+    void customSubtypeStepDelegatesExactSubtype() {
+        var context = mock(DurableContextImpl.class);
+        var future = mockStringFuture();
+        var resultType = TypeToken.get(String.class);
+        var config = StepConfig.builder().build();
+        when(context.stepAsyncWithId(eq("1"), eq("step"), eq("AcmeStep"), eq(resultType), any(), eq(config)))
+                .thenReturn(future);
+
+        var actual = new ExtensionOperationImpl(context, "1", "step")
+                .stepAsync("AcmeStep", resultType, () -> "result", config);
+
+        assertEquals(future, actual);
+    }
+
+    @Test
     void reservationDelegatesWaitInvokeAndCallback() {
         var duration = Duration.ofSeconds(2);
         var waitContext = mock(DurableContextImpl.class);
@@ -126,6 +141,63 @@ class ExtensionOperationImplTest {
                 callbackFuture,
                 new ExtensionOperationImpl(callbackContext, "3", "callback")
                         .createCallback(resultType, callbackConfig));
+    }
+
+    @Test
+    void customSubtypeSelectorsDelegateExactSubtype() {
+        var duration = Duration.ofSeconds(2);
+        var resultType = TypeToken.get(String.class);
+
+        var waitContext = mock(DurableContextImpl.class);
+        var waitFuture = mockFuture();
+        when(waitContext.waitAsyncWithId("1", "wait", "AcmeWait", duration)).thenReturn(waitFuture);
+        assertEquals(waitFuture, new ExtensionOperationImpl(waitContext, "1", "wait").waitAsync("AcmeWait", duration));
+
+        var invokeContext = mock(DurableContextImpl.class);
+        var invokeFuture = mockStringFuture();
+        var invokeConfig = InvokeConfig.builder().build();
+        when(invokeContext.invokeAsyncWithId(
+                        "2", "invoke", "AcmeInvoke", "target", "payload", resultType, invokeConfig))
+                .thenReturn(invokeFuture);
+        assertEquals(
+                invokeFuture,
+                new ExtensionOperationImpl(invokeContext, "2", "invoke")
+                        .invokeAsync("AcmeInvoke", "target", "payload", resultType, invokeConfig));
+
+        var callbackContext = mock(DurableContextImpl.class);
+        @SuppressWarnings("unchecked")
+        var callbackFuture = (DurableCallbackFuture<String>) mock(DurableCallbackFuture.class);
+        var callbackConfig = CallbackConfig.builder().build();
+        when(callbackContext.createCallbackWithId("3", "callback", "AcmeCallback", resultType, callbackConfig))
+                .thenReturn(callbackFuture);
+        assertEquals(
+                callbackFuture,
+                new ExtensionOperationImpl(callbackContext, "3", "callback")
+                        .createCallback("AcmeCallback", resultType, callbackConfig));
+
+        var childContext = mock(DurableContextImpl.class);
+        var childFuture = mockStringFuture();
+        var childConfig = RunInChildContextConfig.builder().build();
+        when(childContext.runInChildContextAsyncWithId(
+                        eq("4"), eq("child"), eq("AcmeContext"), eq(resultType), any(), eq(childConfig)))
+                .thenReturn(childFuture);
+        assertEquals(
+                childFuture,
+                new ExtensionOperationImpl(childContext, "4", "child")
+                        .runInChildContextAsync("AcmeContext", resultType, () -> "result", childConfig));
+    }
+
+    @Test
+    void invalidSubtypeDoesNotClaimReservation() {
+        var context = mock(DurableContextImpl.class);
+        var duration = Duration.ofSeconds(1);
+        var future = mockFuture();
+        when(context.waitAsyncWithId("1", "wait", duration)).thenReturn(future);
+        var operation = new ExtensionOperationImpl(context, "1", "wait");
+
+        assertThrows(NullPointerException.class, () -> operation.waitAsync(null, duration));
+        assertThrows(IllegalArgumentException.class, () -> operation.waitAsync(" ", duration));
+        assertEquals(future, operation.waitAsync(duration));
     }
 
     @Test

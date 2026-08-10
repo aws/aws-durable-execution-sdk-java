@@ -13,6 +13,7 @@ import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -37,6 +38,20 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
             DurableContextImpl durableContext) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 
+        this.functionName = functionName;
+        this.payload = payload;
+        this.invokeConfig = config;
+        this.payloadSerDes = config.payloadSerDes() != null ? config.payloadSerDes() : config.serDes();
+    }
+
+    public InvokeOperation(
+            OperationDescriptor operationDescriptor,
+            String functionName,
+            I payload,
+            TypeToken<T> resultTypeToken,
+            InvokeConfig config,
+            DurableContextImpl durableContext) {
+        super(operationDescriptor, resultTypeToken, config.serDes(), durableContext);
         this.functionName = functionName;
         this.payload = payload;
         this.invokeConfig = config;

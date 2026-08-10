@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -45,12 +46,8 @@ class ExtensionOperationIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var extension = ExtensionContext.getCurrentContext();
             var replay = invocations.incrementAndGet() > 1;
-            var first = replay
-                    ? extension.reserve("right", "right")
-                    : extension.reserve("left", "left");
-            var second = replay
-                    ? extension.reserve("left", "left")
-                    : extension.reserve("right", "right");
+            var first = replay ? extension.reserve("right", "right") : extension.reserve("left", "left");
+            var second = replay ? extension.reserve("left", "left") : extension.reserve("right", "right");
             first.step(String.class, () -> first == second ? "invalid" : "first");
             second.step(String.class, () -> "second");
             context.wait("replay", Duration.ofSeconds(1));
@@ -101,6 +98,27 @@ class ExtensionOperationIntegrationTest {
         assertEquals("nested", result.getResult(String.class));
         assertEquals(hash("1"), result.getOperation("child").getId());
         assertEquals(hash(hash("1") + "-node"), result.getOperation("value").getId());
+    }
+
+    @Test
+    void customPrimitiveSubtypesAreStoredWithoutChangingOperationTypes() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var extension = ExtensionContext.getCurrentContext();
+            extension.reserve("custom-step").step("AcmeStep", String.class, () -> "step");
+            extension.reserve("custom-wait").wait("AcmeWait", Duration.ofSeconds(1));
+            return extension.reserve("custom-context").runInChildContext("AcmeContext", String.class, () -> "done");
+        });
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(OperationType.STEP, result.getOperation("custom-step").getType());
+        assertEquals("AcmeStep", result.getOperation("custom-step").getSubtype());
+        assertEquals(OperationType.WAIT, result.getOperation("custom-wait").getType());
+        assertEquals("AcmeWait", result.getOperation("custom-wait").getSubtype());
+        assertEquals(
+                OperationType.CONTEXT, result.getOperation("custom-context").getType());
+        assertEquals("AcmeContext", result.getOperation("custom-context").getSubtype());
     }
 
     private static String hash(String value) {

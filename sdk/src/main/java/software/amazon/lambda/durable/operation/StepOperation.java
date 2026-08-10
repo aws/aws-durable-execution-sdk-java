@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionExc
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -49,6 +50,17 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             DurableContextImpl durableContext) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 
+        this.function = function;
+        this.config = config;
+    }
+
+    public StepOperation(
+            OperationDescriptor operationDescriptor,
+            Function<StepContext, T> function,
+            TypeToken<T> resultTypeToken,
+            StepConfig config,
+            DurableContextImpl durableContext) {
+        super(operationDescriptor, resultTypeToken, config.serDes(), durableContext);
         this.function = function;
         this.config = config;
     }

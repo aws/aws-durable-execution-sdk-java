@@ -34,7 +34,9 @@ import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -80,6 +82,16 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 durableContext,
                 parentOperation,
                 config.isVirtual());
+        this.function = function;
+    }
+
+    public ChildContextOperation(
+            OperationDescriptor operationDescriptor,
+            Function<DurableContext, T> function,
+            TypeToken<T> resultTypeToken,
+            RunInChildContextConfig config,
+            DurableContextImpl durableContext) {
+        super(operationDescriptor, resultTypeToken, config.serDes(), durableContext, null, config.isVirtual());
         this.function = function;
     }
 
@@ -252,16 +264,16 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         }
 
         // throw a general failed exception if a user exception is not reconstructed
-        return switch (getSubType()) {
-            case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure();
-            case MAP_ITERATION -> new MapIterationFailedException(op);
-            case PARALLEL_BRANCH -> new ParallelBranchFailedException(op);
-            case RUN_IN_CHILD_CONTEXT, WITH_RETRY -> new ChildContextFailedException(op);
-
-            // the following subtypes should not be able to reach here
-            case PARALLEL, MAP, WAIT_FOR_CONDITION, STEP, WAIT, CALLBACK, CHAINED_INVOKE ->
-                new IllegalStateException("Unexpected sub-type: " + getSubType());
-        };
+        if (OperationSubType.WAIT_FOR_CALLBACK.getValue().equals(getSubTypeValue())) {
+            return handleWaitForCallbackFailure();
+        }
+        if (OperationSubType.MAP_ITERATION.getValue().equals(getSubTypeValue())) {
+            return new MapIterationFailedException(op);
+        }
+        if (OperationSubType.PARALLEL_BRANCH.getValue().equals(getSubTypeValue())) {
+            return new ParallelBranchFailedException(op);
+        }
+        return new ChildContextFailedException(op);
     }
 
     private Operation createVirtualOperation(ErrorObject errorObject) {

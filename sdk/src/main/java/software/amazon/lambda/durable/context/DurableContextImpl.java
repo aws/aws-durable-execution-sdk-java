@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -34,6 +35,7 @@ import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -147,6 +149,16 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             TypeToken<T> resultType,
             Function<StepContext, T> func,
             StepConfig config) {
+        return stepAsyncWithId(operationId, name, OperationSubType.STEP.getValue(), resultType, func, config);
+    }
+
+    <T> DurableFuture<T> stepAsyncWithId(
+            String operationId,
+            String name,
+            String subType,
+            TypeToken<T> resultType,
+            Function<StepContext, T> func,
+            StepConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -156,7 +168,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         }
         // Create and start step operation with TypeToken
         var operation = new StepOperation<>(
-                OperationIdentifier.of(operationId, name, OperationSubType.STEP), func, resultType, config, this);
+                new OperationDescriptor(operationId, name, OperationType.STEP, subType),
+                func,
+                resultType,
+                config,
+                this);
 
         operation.execute(); // Start the step (returns immediately)
 
@@ -171,12 +187,16 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     DurableFuture<Void> waitAsyncWithId(String operationId, String name, Duration duration) {
+        return waitAsyncWithId(operationId, name, OperationSubType.WAIT.getValue(), duration);
+    }
+
+    DurableFuture<Void> waitAsyncWithId(String operationId, String name, String subType, Duration duration) {
         ParameterValidator.validateDuration(duration, "Wait duration");
         ParameterValidator.validateOperationName(name);
 
         // Create and start wait operation
-        var operation =
-                new WaitOperation(OperationIdentifier.of(operationId, name, OperationSubType.WAIT), duration, this);
+        var operation = new WaitOperation(
+                new OperationDescriptor(operationId, name, OperationType.WAIT, subType), duration, this);
 
         operation.execute(); // Checkpoint the wait
         return operation;
@@ -198,6 +218,24 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             U payload,
             TypeToken<T> resultType,
             InvokeConfig config) {
+        return invokeAsyncWithId(
+                operationId,
+                name,
+                OperationSubType.CHAINED_INVOKE.getValue(),
+                functionName,
+                payload,
+                resultType,
+                config);
+    }
+
+    <T, U> DurableFuture<T> invokeAsyncWithId(
+            String operationId,
+            String name,
+            String subType,
+            String functionName,
+            U payload,
+            TypeToken<T> resultType,
+            InvokeConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -212,7 +250,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         }
         // Create and start invoke operation
         var operation = new InvokeOperation<>(
-                OperationIdentifier.of(operationId, name, OperationSubType.CHAINED_INVOKE),
+                new OperationDescriptor(operationId, name, OperationType.CHAINED_INVOKE, subType),
                 functionName,
                 payload,
                 resultType,
@@ -233,6 +271,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     <T> DurableCallbackFuture<T> createCallbackWithId(
             String operationId, String name, TypeToken<T> resultType, CallbackConfig config) {
+        return createCallbackWithId(operationId, name, OperationSubType.CALLBACK.getValue(), resultType, config);
+    }
+
+    <T> DurableCallbackFuture<T> createCallbackWithId(
+            String operationId, String name, String subType, TypeToken<T> resultType, CallbackConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
         ParameterValidator.validateOperationName(name);
@@ -240,7 +283,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
         var operation = new CallbackOperation<>(
-                OperationIdentifier.of(operationId, name, OperationSubType.CALLBACK), resultType, config, this);
+                new OperationDescriptor(operationId, name, OperationType.CALLBACK, subType), resultType, config, this);
         operation.execute();
 
         return operation;
@@ -284,7 +327,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Function<DurableContext, T> func,
             RunInChildContextConfig config) {
         return runInChildContextAsyncWithId(
-                operationId, name, resultType, func, config, OperationSubType.RUN_IN_CHILD_CONTEXT);
+                operationId, name, OperationSubType.RUN_IN_CHILD_CONTEXT.getValue(), resultType, func, config);
     }
 
     private <T> DurableFuture<T> runInChildContextAsyncWithId(
@@ -294,6 +337,16 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             Function<DurableContext, T> func,
             RunInChildContextConfig config,
             OperationSubType subType) {
+        return runInChildContextAsyncWithId(operationId, name, subType.getValue(), resultType, func, config);
+    }
+
+    <T> DurableFuture<T> runInChildContextAsyncWithId(
+            String operationId,
+            String name,
+            String subType,
+            TypeToken<T> resultType,
+            Function<DurableContext, T> func,
+            RunInChildContextConfig config) {
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(func, "func cannot be null");
         Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
@@ -304,7 +357,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         }
 
         var operation = new ChildContextOperation<>(
-                OperationIdentifier.of(operationId, name, subType), func, resultType, config, this);
+                new OperationDescriptor(operationId, name, OperationType.CONTEXT, subType),
+                func,
+                resultType,
+                config,
+                this);
 
         operation.execute();
         return operation;
