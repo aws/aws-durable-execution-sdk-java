@@ -169,6 +169,30 @@ class PluginIntegrationTest {
     }
 
     @Test
+    void plugin_receivesPrimitiveLifecycleForCustomExtension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> customExtension(),
+                config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var operationNames =
+                plugin.operationStarts.stream().map(OperationInfo::name).toList();
+        assertTrue(operationNames.contains("inner-step"));
+        assertFalse(operationNames.contains("custom-extension"));
+    }
+
+    private static String customExtension() {
+        return ExtensionContext.getCurrentContext()
+                .reserve("inner-step")
+                .step(String.class, () -> "done");
+    }
+
+    @Test
     void plugin_operationEnd_notFiredOnReplay() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();

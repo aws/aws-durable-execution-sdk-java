@@ -119,7 +119,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      *
      * @param stepOperationId the ID of the step operation (used for thread registration)
      * @param stepOperationName the name of the step operation
-     * @param attempt the current retry attempt number (0-based)
+     * @param attempt the current retry attempt number (1-based)
      * @return a new StepContext instance
      */
     public StepContextImpl createStepContext(String stepOperationId, String stepOperationName, int attempt) {
