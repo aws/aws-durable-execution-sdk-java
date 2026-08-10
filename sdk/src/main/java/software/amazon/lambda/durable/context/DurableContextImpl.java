@@ -17,10 +17,12 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ExtensionContext;
 import software.amazon.lambda.durable.ExtensionOperation;
+import software.amazon.lambda.durable.ExtensionStepFunction;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
@@ -176,6 +178,34 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
         operation.execute(); // Start the step (returns immediately)
 
+        return operation;
+    }
+
+    <T> DurableFuture<T> extensionStepAsyncWithId(
+            String operationId,
+            String name,
+            String subType,
+            TypeToken<T> resultType,
+            ExtensionStepFunction<T> function,
+            ExtensionStepConfig<T> config) {
+        Objects.requireNonNull(resultType, "resultType cannot be null");
+        Objects.requireNonNull(function, "function cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+        ParameterValidator.validateOperationName(name);
+
+        if (config.serDes() == null) {
+            config = ExtensionStepConfig.<T>builder()
+                    .initialState(config.initialState())
+                    .serDes(getDurableConfig().getSerDes())
+                    .build();
+        }
+        var operation = new StepOperation<>(
+                new OperationDescriptor(operationId, name, OperationType.STEP, subType),
+                function,
+                resultType,
+                config,
+                this);
+        operation.execute();
         return operation;
     }
 

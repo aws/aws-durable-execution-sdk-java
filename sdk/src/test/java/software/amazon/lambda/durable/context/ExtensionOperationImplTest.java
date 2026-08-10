@@ -21,9 +21,11 @@ import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ExtensionOperation;
+import software.amazon.lambda.durable.ExtensionStepResult;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
@@ -108,6 +110,23 @@ class ExtensionOperationImplTest {
 
         var actual = new ExtensionOperationImpl(context, "1", "step")
                 .stepAsync("AcmeStep", resultType, () -> "result", config);
+
+        assertEquals(future, actual);
+    }
+
+    @Test
+    void statefulStepDelegatesWithoutExposingStepContext() {
+        var context = mock(DurableContextImpl.class);
+        var future = mockStringFuture();
+        var resultType = TypeToken.get(String.class);
+        var config =
+                ExtensionStepConfig.<String>builder().initialState("initial").build();
+        when(context.extensionStepAsyncWithId(
+                        eq("1"), eq("step"), eq("AcmeStateful"), eq(resultType), any(), eq(config)))
+                .thenReturn(future);
+
+        var actual = new ExtensionOperationImpl(context, "1", "step")
+                .stepAsync("AcmeStateful", resultType, state -> ExtensionStepResult.succeed(state + "-done"), config);
 
         assertEquals(future, actual);
     }

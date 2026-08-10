@@ -9,8 +9,10 @@ import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ExtensionOperation;
+import software.amazon.lambda.durable.ExtensionStepFunction;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
@@ -39,6 +41,16 @@ final class ExtensionOperationImpl implements ExtensionOperation {
         validateSubType(subType);
         claim();
         return context.stepAsyncWithId(operationId, name, subType, resultType, ignored -> function.get(), config);
+    }
+
+    @Override
+    public <T> DurableFuture<T> stepAsync(
+            String subType, TypeToken<T> resultType, ExtensionStepFunction<T> function, ExtensionStepConfig<T> config) {
+        validateSubType(subType);
+        Objects.requireNonNull(function, "function cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+        claim();
+        return context.extensionStepAsyncWithId(operationId, name, subType, resultType, function, config);
     }
 
     @Override

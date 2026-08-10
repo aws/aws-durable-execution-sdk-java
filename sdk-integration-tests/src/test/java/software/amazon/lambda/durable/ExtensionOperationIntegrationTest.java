@@ -18,6 +18,7 @@ import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -119,6 +120,29 @@ class ExtensionOperationIntegrationTest {
         assertEquals(
                 OperationType.CONTEXT, result.getOperation("custom-context").getType());
         assertEquals("AcmeContext", result.getOperation("custom-context").getSubtype());
+    }
+
+    @Test
+    void statefulExtensionStepCheckpointsStateAcrossRetries() {
+        var runner =
+                LocalDurableTestRunner.create(Integer.class, (input, context) -> ExtensionContext.getCurrentContext()
+                        .reserve("stateful")
+                        .step(
+                                "AcmeStateful",
+                                Integer.class,
+                                state -> state >= 2
+                                        ? ExtensionStepResult.succeed(state)
+                                        : ExtensionStepResult.retry(state + 1, Duration.ofSeconds(1)),
+                                ExtensionStepConfig.<Integer>builder()
+                                        .initialState(0)
+                                        .build()));
+
+        var result = runner.runUntilComplete(0);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(2, result.getResult(Integer.class));
+        assertEquals("AcmeStateful", result.getOperation("stateful").getSubtype());
+        assertEquals(3, result.getOperation("stateful").getAttempt());
     }
 
     private static String hash(String value) {

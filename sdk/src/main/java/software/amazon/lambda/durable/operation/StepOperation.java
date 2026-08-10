@@ -11,8 +11,11 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
+import software.amazon.lambda.durable.ExtensionStepFunction;
+import software.amazon.lambda.durable.ExtensionStepResult;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.context.BaseContextImpl;
@@ -41,6 +44,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     private final Function<StepContext, T> function;
     private final StepConfig config;
+    private final ExtensionStepFunction<T> extensionFunction;
+    private final ExtensionStepConfig<T> extensionConfig;
 
     public StepOperation(
             OperationIdentifier operationIdentifier,
@@ -52,6 +57,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
         this.function = function;
         this.config = config;
+        this.extensionFunction = null;
+        this.extensionConfig = null;
     }
 
     public StepOperation(
@@ -63,17 +70,40 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         super(operationDescriptor, resultTypeToken, config.serDes(), durableContext);
         this.function = function;
         this.config = config;
+        this.extensionFunction = null;
+        this.extensionConfig = null;
+    }
+
+    public StepOperation(
+            OperationDescriptor operationDescriptor,
+            ExtensionStepFunction<T> function,
+            TypeToken<T> resultTypeToken,
+            ExtensionStepConfig<T> config,
+            DurableContextImpl durableContext) {
+        super(operationDescriptor, resultTypeToken, config.serDes(), durableContext);
+        this.function = null;
+        this.config = null;
+        this.extensionFunction = function;
+        this.extensionConfig = config;
     }
 
     /** Starts the operation. */
     @Override
     protected void start() {
-        executeStepLogic(FIRST_ATTEMPT);
+        if (isExtensionStep()) {
+            executeExtensionStepLogic(extensionConfig.initialState(), FIRST_ATTEMPT);
+        } else {
+            executeStepLogic(FIRST_ATTEMPT);
+        }
     }
 
     /** Replays the operation. */
     @Override
     protected void replay(Operation existing) {
+        if (isExtensionStep()) {
+            replayExtensionStep(existing);
+            return;
+        }
         var attempt = existing.stepDetails() != null && existing.stepDetails().attempt() != null
                 ? existing.stepDetails().attempt() + 1
                 : FIRST_ATTEMPT;
@@ -103,6 +133,34 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
                 throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected step status: " + existing.status());
         }
+    }
+
+    private void replayExtensionStep(Operation existing) {
+        switch (existing.status()) {
+            case SUCCEEDED, FAILED -> markAlreadyCompleted();
+            case PENDING -> pollReadyAndResumeExtensionStep();
+            case STARTED, READY -> resumeExtensionStep(existing);
+            default ->
+                throw terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected extension step status: " + existing.status());
+        }
+    }
+
+    private void resumeExtensionStep(Operation existing) {
+        var details = existing.stepDetails();
+        var attempt = details != null && details.attempt() != null ? details.attempt() + 1 : FIRST_ATTEMPT;
+        var state = details != null && details.result() != null
+                ? deserializeResult(details.result())
+                : extensionConfig.initialState();
+        executeExtensionStepLogic(state, attempt);
+    }
+
+    private void pollReadyAndResumeExtensionStep() {
+        pollForOperationUpdates()
+                .thenCompose(op -> op.status() == OperationStatus.READY
+                        ? CompletableFuture.completedFuture(op)
+                        : pollForOperationUpdates())
+                .thenAccept(this::resumeExtensionStep);
     }
 
     private void pollReadyAndExecuteStepLogic(Instant nextAttemptInstant, int attempt) {
@@ -137,6 +195,67 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
         // Execute user provided step code in user-configured executor
         runUserHandler(userHandler, ThreadType.STEP);
+    }
+
+    private void executeExtensionStepLogic(T state, int attempt) {
+        Runnable userHandler = () -> {
+            var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
+            try (var ignoredContext = BaseContextImpl.attachCurrentContext(stepContext);
+                    var ignoredLogger = DurableLogger.attachContext()) {
+                try {
+                    checkpointStarted();
+                    var result = runUserFunction(attempt, () -> extensionFunction.apply(state));
+                    handleExtensionStepResult(result, attempt);
+                } catch (Throwable e) {
+                    handleExtensionStepFailure(e);
+                }
+            }
+        };
+        runUserHandler(userHandler, ThreadType.STEP);
+    }
+
+    private void handleExtensionStepResult(ExtensionStepResult<T> result, int attempt) {
+        if (result == null) {
+            throw new NullPointerException("Extension step function result cannot be null");
+        }
+        if (result instanceof ExtensionStepResult.Succeeded<T> succeeded) {
+            handleStepSucceeded(succeeded.value());
+            return;
+        }
+        var retry = (ExtensionStepResult.Retry<T>) result;
+        var serializedState = serializeAndDeserializeResult(retry.state());
+        var retryDelaySeconds = Math.toIntExact(retry.delay().toSeconds());
+        var update = OperationUpdate.builder()
+                .action(OperationAction.RETRY)
+                .payload(serializedState.serialized())
+                .stepOptions(StepOptions.builder()
+                        .nextAttemptDelaySeconds(retryDelaySeconds)
+                        .build());
+        sendOperationUpdate(update);
+        pollReadyAndExecuteExtensionStep(serializedState.deserialized(), attempt + 1);
+    }
+
+    private void pollReadyAndExecuteExtensionStep(T state, int attempt) {
+        pollForOperationUpdates()
+                .thenCompose(op -> op.status() == OperationStatus.READY
+                        ? CompletableFuture.completedFuture(op)
+                        : pollForOperationUpdates())
+                .thenRun(() -> executeExtensionStepLogic(state, attempt));
+    }
+
+    private void handleExtensionStepFailure(Throwable exception) {
+        exception = ExceptionHelper.unwrapCompletableFuture(exception);
+        if (exception instanceof SuspendExecutionException suspendExecutionException) {
+            throw suspendExecutionException;
+        }
+        if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {
+            throw terminateExecution(unrecoverable);
+        }
+        var error = exception instanceof DurableOperationException durableOperationException
+                ? durableOperationException.getErrorObject()
+                : serializeException(exception);
+        sendOperationUpdate(
+                OperationUpdate.builder().action(OperationAction.FAIL).error(error));
     }
 
     private void checkpointStarted() {
@@ -237,6 +356,10 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private boolean isAtMostOnce() {
-        return config.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
+        return config != null && config.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
+    }
+
+    private boolean isExtensionStep() {
+        return extensionFunction != null;
     }
 }

@@ -5,6 +5,7 @@ package software.amazon.lambda.durable;
 import java.time.Duration;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
@@ -76,6 +77,24 @@ public interface ExtensionOperation {
     }
 
     <T> DurableFuture<T> stepAsync(String subType, TypeToken<T> resultType, Supplier<T> function, StepConfig config);
+
+    default <T> T step(
+            String subType, Class<T> resultType, ExtensionStepFunction<T> function, ExtensionStepConfig<T> config) {
+        return step(subType, TypeToken.get(resultType), function, config);
+    }
+
+    default <T> T step(
+            String subType, TypeToken<T> resultType, ExtensionStepFunction<T> function, ExtensionStepConfig<T> config) {
+        return stepAsync(subType, resultType, function, config).get();
+    }
+
+    default <T> DurableFuture<T> stepAsync(
+            String subType, Class<T> resultType, ExtensionStepFunction<T> function, ExtensionStepConfig<T> config) {
+        return stepAsync(subType, TypeToken.get(resultType), function, config);
+    }
+
+    <T> DurableFuture<T> stepAsync(
+            String subType, TypeToken<T> resultType, ExtensionStepFunction<T> function, ExtensionStepConfig<T> config);
 
     default Void wait(Duration duration) {
         return waitAsync(duration).get();
