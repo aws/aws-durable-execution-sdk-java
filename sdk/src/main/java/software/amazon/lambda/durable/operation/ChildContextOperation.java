@@ -132,8 +132,8 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // we notify the parent BEFORE closing the child context. This ensures the parent
             // can trigger the next queued branch while the current child context is still valid.
             var childContext = getContext().createChildContext(contextId, getName(), isVirtual);
-            DurableContextImpl.setCurrentContext(childContext);
-            try (var ignored = DurableLogger.attachContext()) {
+            try (var ignoredContext = DurableContextImpl.attachCurrentContext(childContext);
+                    var ignoredLogger = DurableLogger.attachContext()) {
                 try {
                     // Run the user function inside the plugin hook boundary (attempt is null for contexts)
                     // so a failure is reported through onUserFunctionEnd; checkpointing stays outside.

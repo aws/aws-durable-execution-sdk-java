@@ -115,8 +115,8 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     private void executeCheckLogic(T currentState, int attempt) {
         Runnable userHandler = () -> {
             var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
-            BaseContextImpl.setCurrentContext(stepContext);
-            try (var ignored = DurableLogger.attachContext()) {
+            try (var ignoredContext = BaseContextImpl.attachCurrentContext(stepContext);
+                    var ignoredLogger = DurableLogger.attachContext()) {
                 try {
                     // Checkpoint START if not already started
                     var existing = getOperation();

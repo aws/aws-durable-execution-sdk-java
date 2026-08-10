@@ -76,9 +76,9 @@ public class DurableExecutor {
                         var userInput = extractUserInput(
                                 executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                         var context = DurableContextImpl.createRootContext(executionManager, config, lambdaContext);
-                        DurableContextImpl.setCurrentContext(context);
                         // use a try-with-resources to clear logger properties
-                        try (var ignored = DurableLogger.attachContext()) {
+                        try (var ignoredContext = DurableContextImpl.attachCurrentContext(context);
+                                var ignoredLogger = DurableLogger.attachContext()) {
                             return handler.apply(userInput, context);
                         }
                     },

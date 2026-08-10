@@ -8,6 +8,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.SafeCloseable;
 
 public abstract class BaseContextImpl implements BaseContext {
     private final ExecutionManager executionManager;
@@ -108,5 +109,23 @@ public abstract class BaseContextImpl implements BaseContext {
 
     public static void setCurrentContext(BaseContext context) {
         CONTEXT.set(context);
+    }
+
+    /**
+     * Sets the current SDK context until the returned scope is closed.
+     *
+     * @param context the context to attach
+     * @return a scope that restores the previous context
+     */
+    public static SafeCloseable attachCurrentContext(BaseContext context) {
+        var previous = CONTEXT.get();
+        CONTEXT.set(context);
+        return () -> {
+            if (previous == null) {
+                CONTEXT.remove();
+            } else {
+                CONTEXT.set(previous);
+            }
+        };
     }
 }

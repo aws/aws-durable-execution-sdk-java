@@ -22,8 +22,22 @@ import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 public interface DurableContext extends BaseContext {
+    /**
+     * Returns the durable context attached to the current SDK-managed context thread.
+     *
+     * @return the current durable context
+     * @throws IllegalStateException if called outside a durable context or from a step thread
+     */
     static DurableContext getCurrentContext() {
-        return (DurableContext) BaseContext.getCurrentContext();
+        var context = BaseContext.getCurrentContext();
+        if (context instanceof DurableContext durableContext) {
+            return durableContext;
+        }
+        if (context == null) {
+            throw new IllegalStateException("No DurableContext is active on the current thread");
+        }
+        throw new IllegalStateException(
+                "DurableContext is not available from a step thread; use StepContext.getCurrentContext() instead");
     }
 
     /** Returns whether this context is currently replaying checkpointed durable operations. */

@@ -107,9 +107,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             // - add thread id/type to thread local when the step starts
             // - clear logger properties when the step finishes
             StepContext stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
-            BaseContextImpl.setCurrentContext(stepContext);
-
-            try (var ignored = DurableLogger.attachContext()) {
+            try (var ignoredContext = BaseContextImpl.attachCurrentContext(stepContext);
+                    var ignoredLogger = DurableLogger.attachContext()) {
                 try {
                     checkpointStarted();
 
