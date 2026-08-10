@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.context.extension;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.lambda.durable.context.extension.ExtensionConcurrencyCoordinator.ItemStatus.FAILED;
 import static software.amazon.lambda.durable.context.extension.ExtensionConcurrencyCoordinator.ItemStatus.SKIPPED;
 import static software.amazon.lambda.durable.context.extension.ExtensionConcurrencyCoordinator.ItemStatus.SUCCEEDED;
@@ -14,6 +15,7 @@ import static software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.M
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableFuture;
@@ -45,6 +47,28 @@ class ExtensionConcurrencyCoordinatorTest {
         third.complete();
 
         assertEquals(ALL_COMPLETED, result.join().completionDecision().completionStatus());
+    }
+
+    @Test
+    void launchesNextItemAfterSynchronousReplayCompletion() throws Exception {
+        var coordinator = new ExtensionConcurrencyCoordinator(1, CompletionConfig.allCompleted());
+        var replayed = new TestFuture<>("replayed");
+        replayed.complete();
+        var next = new TestFuture<>("next");
+        var nextLaunched = new CountDownLatch(1);
+        coordinator.register(() -> replayed);
+        coordinator.register(() -> {
+            nextLaunched.countDown();
+            return next;
+        });
+
+        var result = CompletableFuture.supplyAsync(coordinator::awaitCompletion);
+        var launchedWithoutExternalSignal = nextLaunched.await(200, TimeUnit.MILLISECONDS);
+        coordinator.closeRegistration();
+        next.complete();
+        result.join();
+
+        assertTrue(launchedWithoutExternalSignal);
     }
 
     @Test

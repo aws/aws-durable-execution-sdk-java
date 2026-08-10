@@ -130,6 +130,9 @@ final class ExtensionConcurrencyCoordinator {
                     markIncompleteItemsSkipped();
                     return new Completion(decision, items);
                 }
+                if (running.size() < maxConcurrency && !pending.isEmpty()) {
+                    continue;
+                }
                 waiters = completionWaiters();
             }
             DurableFuture.anyOf(waiters);

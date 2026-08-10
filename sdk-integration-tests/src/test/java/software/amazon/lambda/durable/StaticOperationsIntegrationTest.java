@@ -12,11 +12,14 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.testing.TestResult;
 
 class StaticOperationsIntegrationTest {
     @Test
@@ -66,6 +69,40 @@ class StaticOperationsIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("[a0, b1]:[L, R]", result.getResult(String.class));
+    }
+
+    @Test
+    void staticMapMatchesLegacyCheckpointHistory() {
+        var mapConfig = MapConfig.builder()
+                .maxConcurrency(1)
+                .nestingType(NestingType.NESTED)
+                .build();
+        var legacyRunner = LocalDurableTestRunner.create(String.class, (input, context) -> context.map(
+                        "map",
+                        List.of("a", "b"),
+                        String.class,
+                        (item, index, child) -> child.step("work", String.class, step -> item + index),
+                        mapConfig)
+                .results()
+                .toString());
+        var staticRunner = LocalDurableTestRunner.create(String.class, (input, context) -> DurableMapOperations.map(
+                        "map",
+                        List.of("a", "b"),
+                        String.class,
+                        item -> {
+                            var index = MapItemContext.getCurrentContext().getIndex();
+                            return DurableCoreOperations.step("work", String.class, () -> item + index);
+                        },
+                        mapConfig)
+                .results()
+                .toString());
+
+        var legacyResult = legacyRunner.runUntilComplete("input");
+        var staticResult = staticRunner.runUntilComplete("input");
+
+        assertEquals("[a0, b1]", legacyResult.getResult(String.class));
+        assertEquals(legacyResult.getResult(String.class), staticResult.getResult(String.class));
+        assertEquals(operationHistory(legacyResult), operationHistory(staticResult));
     }
 
     @Test
@@ -120,5 +157,17 @@ class StaticOperationsIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, completed.getStatus());
         assertEquals("approved", completed.getResult(String.class));
+    }
+
+    private static List<String> operationHistory(TestResult<?> result) {
+        return result.getOperations().stream()
+                .map(operation -> String.join(
+                        ":",
+                        operation.getId(),
+                        operation.getName(),
+                        operation.getType().toString(),
+                        operation.getSubtype(),
+                        operation.getStatus().toString()))
+                .toList();
     }
 }

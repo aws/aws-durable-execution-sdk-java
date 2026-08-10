@@ -3,16 +3,29 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFunction;
+import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
+import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.OperationSubType;
 
 class DurableMapOperationsTest {
     @AfterEach
@@ -22,19 +35,77 @@ class DurableMapOperationsTest {
 
     @Test
     void mapExposesItemIndexThroughScopedContext() {
-        var context = mock(DurableContext.class);
+        var context = mock(CurrentContext.class);
+        var parent = mock(ExtensionOperation.class);
+        var iteration = mock(ExtensionOperation.class);
+        var expected = new MapResult<>(
+                List.of(MapResult.MapResultItem.succeeded("VALUE")),
+                software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.ALL_COMPLETED);
+        var parentFuture = new CompletedFuture<>(expected);
+        when(context.getDurableConfig()).thenReturn(DurableConfig.builder().build());
+        when(context.reserve("map")).thenReturn(parent);
+        when(parent.runInChildContextAsync(
+                        eq(OperationSubType.MAP.getValue()),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(parentFuture);
         BaseContextImpl.setCurrentContext(context);
 
-        DurableMapOperations.map("map", List.of("value"), String.class, item -> {
-            assertEquals(3, MapItemContext.getCurrentContext().getIndex());
+        var actual = DurableMapOperations.map("map", List.of("value"), String.class, item -> {
+            assertEquals(0, MapItemContext.getCurrentContext().getIndex());
             return item.toUpperCase();
         });
 
+        assertSame(expected, actual);
         @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<DurableContext.MapFunction<String, String>>)
-                (ArgumentCaptor<?>) ArgumentCaptor.forClass(DurableContext.MapFunction.class);
-        verify(context).map(eq("map"), eq(List.of("value")), eq(String.class), function.capture());
-        assertEquals("VALUE", function.getValue().apply("value", 3, mock(DurableContext.class)));
+        var parentFunction = (ArgumentCaptor<ExtensionContextFunction<MapResult<String>>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(ExtensionContextFunction.class);
+        verify(parent)
+                .runInChildContextAsync(
+                        eq(OperationSubType.MAP.getValue()),
+                        any(TypeToken.class),
+                        parentFunction.capture(),
+                        any(ExtensionContextConfig.class));
+
+        when(context.reserve("map-iteration-0")).thenReturn(iteration);
+        when(iteration.runInChildContextAsync(
+                        eq(OperationSubType.MAP_ITERATION.getValue()),
+                        eq(TypeToken.get(String.class)),
+                        any(Supplier.class),
+                        any(RunInChildContextConfig.class)))
+                .thenReturn(new CompletedFuture<>("VALUE"));
+        try (var ignoredContext = BaseContextImpl.attachCurrentContext(context);
+                var ignoredReplay = ExtensionContextReplayContext.attach(false, null)) {
+            parentFunction.getValue().apply();
+        }
+
+        @SuppressWarnings("unchecked")
+        var itemFunction =
+                (ArgumentCaptor<Supplier<String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(Supplier.class);
+        verify(iteration)
+                .runInChildContextAsync(
+                        eq(OperationSubType.MAP_ITERATION.getValue()),
+                        eq(TypeToken.get(String.class)),
+                        itemFunction.capture(),
+                        any(RunInChildContextConfig.class));
+        try (var ignored = BaseContextImpl.attachCurrentContext(context)) {
+            assertEquals("VALUE", itemFunction.getValue().get());
+        }
         assertThrows(IllegalStateException.class, MapItemContext::getCurrentContext);
+    }
+
+    private interface CurrentContext extends DurableContext, ExtensionContext {}
+
+    private record CompletedFuture<T>(T result) implements DurableFuture<T> {
+        @Override
+        public T get() {
+            return result;
+        }
+
+        @Override
+        public CompletableFuture<Void> completionFuture() {
+            return CompletableFuture.completedFuture(null);
+        }
     }
 }

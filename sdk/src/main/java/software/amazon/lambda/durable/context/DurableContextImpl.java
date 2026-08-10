@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.context;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.Collection;
-import java.util.List;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -27,6 +26,7 @@ import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.context.extension.MapExtension;
 import software.amazon.lambda.durable.context.extension.WaitForCallbackExtension;
 import software.amazon.lambda.durable.context.extension.WaitForConditionExtension;
 import software.amazon.lambda.durable.context.extension.WithRetryExtension;
@@ -48,7 +48,6 @@ import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
-import software.amazon.lambda.durable.operation.MapOperation;
 import software.amazon.lambda.durable.operation.ParallelOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
@@ -446,32 +445,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
-        Objects.requireNonNull(items, "items cannot be null");
-        Objects.requireNonNull(function, "function cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-        ParameterValidator.validateOperationName(name);
-        ParameterValidator.validateOrderedCollection(items);
-
-        if (config.serDes() == null) {
-            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
-        }
-
-        // Convert to List for deterministic index-based access
-        var itemList = List.copyOf(items);
-        var iterationNames = MapOperation.resolveIterationNames(name, itemList, config);
-        var operationId = nextOperationId();
-
-        var operation = new MapOperation<>(
-                OperationIdentifier.of(operationId, name, OperationSubType.MAP),
-                itemList,
-                function,
-                resultType,
-                config,
-                iterationNames,
-                this);
-        operation.execute();
-        return operation;
+        return MapExtension.execute(this, name, items, resultType, function, config);
     }
 
     @Override

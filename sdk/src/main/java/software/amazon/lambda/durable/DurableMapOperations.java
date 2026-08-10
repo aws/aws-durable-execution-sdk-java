@@ -6,6 +6,8 @@ import java.util.Collection;
 import java.util.Objects;
 import java.util.function.Function;
 import software.amazon.lambda.durable.config.MapConfig;
+import software.amazon.lambda.durable.context.extension.MapExtension;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.model.MapResult;
 
 /** Context-free static facades for durable map operations. */
@@ -14,42 +16,42 @@ public final class DurableMapOperations {
 
     public static <I, O> MapResult<O> map(
             String name, Collection<I> items, Class<O> resultType, Function<I, O> function) {
-        return currentContext().map(name, items, resultType, adapt(function));
+        return mapAsync(name, items, resultType, function).get();
     }
 
     public static <I, O> MapResult<O> map(
             String name, Collection<I> items, TypeToken<O> resultType, Function<I, O> function) {
-        return currentContext().map(name, items, resultType, adapt(function));
+        return mapAsync(name, items, resultType, function).get();
     }
 
     public static <I, O> MapResult<O> map(
             String name, Collection<I> items, Class<O> resultType, Function<I, O> function, MapConfig config) {
-        return currentContext().map(name, items, resultType, adapt(function), config);
+        return mapAsync(name, items, resultType, function, config).get();
     }
 
     public static <I, O> MapResult<O> map(
             String name, Collection<I> items, TypeToken<O> resultType, Function<I, O> function, MapConfig config) {
-        return currentContext().map(name, items, resultType, adapt(function), config);
+        return mapAsync(name, items, resultType, function, config).get();
     }
 
     public static <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, Class<O> resultType, Function<I, O> function) {
-        return currentContext().mapAsync(name, items, resultType, adapt(function));
+        return mapAsync(name, items, TypeToken.get(resultType), function);
     }
 
     public static <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, Function<I, O> function) {
-        return currentContext().mapAsync(name, items, resultType, adapt(function));
+        return mapAsync(name, items, resultType, function, MapConfig.builder().build());
     }
 
     public static <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, Class<O> resultType, Function<I, O> function, MapConfig config) {
-        return currentContext().mapAsync(name, items, resultType, adapt(function), config);
+        return mapAsync(name, items, TypeToken.get(resultType), function, config);
     }
 
     public static <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, Function<I, O> function, MapConfig config) {
-        return currentContext().mapAsync(name, items, resultType, adapt(function), config);
+        return MapExtension.execute(currentContext(), name, items, resultType, adapt(function), config);
     }
 
     private static <I, O> DurableContext.MapFunction<I, O> adapt(Function<I, O> function) {
@@ -61,7 +63,7 @@ public final class DurableMapOperations {
         };
     }
 
-    private static DurableContext currentContext() {
-        return DurableContext.getCurrentContext();
+    private static ExtensionContext currentContext() {
+        return ExtensionContext.getCurrentContext();
     }
 }

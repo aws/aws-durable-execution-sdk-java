@@ -408,6 +408,34 @@ class PluginIntegrationTest {
         assertEquals(1, endCount, "empty map should fire onOperationEnd exactly once");
     }
 
+    @Test
+    void plugin_preservesMapAndIterationHookBoundaries() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> DurableMapOperations.map(
+                                "items", List.of("a", "b"), String.class, String::toUpperCase)
+                        .results()
+                        .toString(),
+                config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var operationNames =
+                plugin.operationStarts.stream().map(OperationInfo::name).toList();
+        assertTrue(operationNames.contains("items"));
+        assertTrue(operationNames.contains("items-iteration-0"));
+        assertTrue(operationNames.contains("items-iteration-1"));
+        var userFunctionNames = plugin.userFunctionStarts.stream()
+                .map(UserFunctionStartInfo::name)
+                .toList();
+        assertFalse(userFunctionNames.contains("items"));
+        assertTrue(userFunctionNames.contains("items-iteration-0"));
+        assertTrue(userFunctionNames.contains("items-iteration-1"));
+    }
+
     // ─── Operation change hook ───────────────────────────────────────────
 
     @Test

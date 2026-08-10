@@ -36,7 +36,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * Abstract base class for concurrent execution of multiple child context operations.
  *
  * <p>Encapsulates shared concurrency logic: queue-based concurrency control, success/failure counting, and completion
- * checking. Both {@code ParallelOperation} and {@code MapOperation} extend this base.
+ * checking. This remains the legacy execution engine for {@code ParallelOperation}.
  *
  * <p>Key design points:
  *
