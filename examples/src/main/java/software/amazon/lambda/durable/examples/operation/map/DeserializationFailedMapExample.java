@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.map;
 
+import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.time.Duration;
 import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
@@ -9,9 +12,8 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.operation.DurableMapOperation;
 import software.amazon.lambda.durable.operation.DurableMapOperation.MapConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
@@ -38,14 +40,13 @@ public class DeserializationFailedMapExample extends DurableHandler<GreetingRequ
         var names = List.of(name, name.toUpperCase(), name.toLowerCase());
 
         // Map over each name concurrently — each iteration runs in its own child context
-        var result = DurableMapOperation.map(
+        var result = map(
                 "greet-all",
                 names,
                 String.class,
                 item -> {
-                    var index = DurableMapOperation.MapItemContext.getCurrentContext()
-                            .getIndex();
-                    return DurableStepOperation.step("greet-" + index, String.class, () -> {
+                    var index = MapItemContext.getCurrentContext().getIndex();
+                    return step("greet-" + index, String.class, () -> {
                         throw new RuntimeException("Failure from " + item + "!");
                     });
                 },

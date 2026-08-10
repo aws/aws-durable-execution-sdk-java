@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableInvokeOperation.invokeAsync;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
+
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableInvokeOperation;
 import software.amazon.lambda.durable.operation.DurableInvokeOperation.InvokeConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 
@@ -43,7 +44,7 @@ public class CustomPollingExample extends DurableHandler<GreetingRequest, String
         context.getLogger().info("Starting workflow with input: {}", input);
 
         // Step 1: low case the input
-        var lowered = DurableStepOperation.stepAsync("validate", String.class, () -> {
+        var lowered = stepAsync("validate", String.class, () -> {
             try {
                 // prevent the execution from suspension
                 Thread.sleep(5000);
@@ -54,7 +55,7 @@ public class CustomPollingExample extends DurableHandler<GreetingRequest, String
         });
 
         // Step 2: Invoke async
-        var future = DurableInvokeOperation.invokeAsync(
+        var future = invokeAsync(
                 "call-greeting",
                 "simple-step-example" + input.getName() + ":$LATEST",
                 input,

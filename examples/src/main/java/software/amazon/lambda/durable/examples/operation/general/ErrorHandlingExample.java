@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
@@ -56,7 +57,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
         // NOTE: Exception type needs to be serializable by your SerDes implementation.
         String primaryResult;
         try {
-            primaryResult = DurableStepOperation.step(
+            primaryResult = step(
                     "call-primary-service",
                     String.class,
                     () -> {
@@ -68,7 +69,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
         } catch (ServiceUnavailableException e) {
             // Catch the specific custom exception type - the SDK reconstructs the original exception
             logger.warn("Service '{}' unavailable, using fallback: {}", e.getServiceName(), e.getMessage());
-            primaryResult = DurableStepOperation.step("call-fallback-service", String.class, () -> "fallback-result");
+            primaryResult = step("call-fallback-service", String.class, () -> "fallback-result");
         }
 
         // Example 2: Handling StepInterruptedException for AT_MOST_ONCE operations
@@ -78,7 +79,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
         // interruption scenario that occurs during replay after an unexpected termination.
         String paymentResult;
         try {
-            paymentResult = DurableStepOperation.step(
+            paymentResult = step(
                     "charge-payment",
                     String.class,
                     () -> "payment-" + input,
@@ -92,7 +93,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
                     e.getOperation().id());
             // In real code: check payment provider for transaction status
             // If payment went through, return success; otherwise, handle appropriately
-            paymentResult = DurableStepOperation.step("verify-payment-status", String.class, () -> "verified-payment");
+            paymentResult = step("verify-payment-status", String.class, () -> "verified-payment");
         }
 
         return "Completed: " + primaryResult + ", " + paymentResult;

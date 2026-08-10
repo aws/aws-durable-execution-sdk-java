@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.child;
 
+import static software.amazon.lambda.durable.operation.DurableContextOperation.runInChildContextAsync;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
@@ -11,8 +14,6 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
-import software.amazon.lambda.durable.operation.DurableContextOperation;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 
 /**
@@ -41,9 +42,9 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncStepsI
         var futures = new ArrayList<DurableFuture<Integer>>(steps);
         for (var i = 0; i < steps; i++) {
             var index = i;
-            var future = DurableContextOperation.runInChildContextAsync("child-" + i, Integer.class, () -> {
+            var future = runInChildContextAsync("child-" + i, Integer.class, () -> {
                 // create a step inside the child context, which doubles the number of threads
-                return DurableStepOperation.step("compute-" + index, Integer.class, () -> index * multiplier);
+                return step("compute-" + index, Integer.class, () -> index * multiplier);
             });
             futures.add(future);
         }
@@ -55,8 +56,8 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncStepsI
         var totalSum = results.stream().mapToInt(Integer::intValue).sum();
 
         // checkpoint the executionTime so that we can have the same value when replay
-        var executionTimeMs = DurableStepOperation.step(
-                "execution-time", Long.class, () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
+        var executionTimeMs =
+                step("execution-time", Long.class, () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
         logger.info(
                 "Completed {} child context, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
 

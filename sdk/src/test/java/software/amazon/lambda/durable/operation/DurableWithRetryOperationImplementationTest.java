@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -88,6 +89,8 @@ class DurableWithRetryOperationImplementationTest {
         var result = function.getValue().apply();
 
         assertEquals("done", result.result());
+        assertFalse(result.shouldReplayChildren(256 * 1024 - 1));
+        assertTrue(result.shouldReplayChildren(256 * 1024));
         assertEquals(1, attempts.get(0));
         assertEquals(2, attempts.get(1));
         verify(wait).waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(5));

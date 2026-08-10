@@ -146,6 +146,12 @@ retrieved from scoped thread-local contexts:
 Nested scopes restore the preceding value. Current context is available only on SDK-managed threads and is not
 propagated to application-created threads.
 
+`DurableContext.getCurrentContext()` and `StepContext.getCurrentContext()` preserve their nullable-probe behavior:
+they return `null` when no SDK context is active. Their `requireCurrentContext()` variants throw when the expected
+context is absent and are used when an operation requires an active SDK scope. Calling either getter from the wrong
+SDK context type still throws. `ExtensionContext.getCurrentContext()` always requires an active durable context and
+throws outside one.
+
 ### Reserve Sequential or Custom Local Identities
 
 `ExtensionContext` supports sequential and custom-local-ID reservations:
@@ -205,10 +211,11 @@ DurableFuture<Void> waitAsync(String subType, Duration duration);
         ExtensionContextConfig config);
 ```
 
-`ExtensionStepConfig` owns its nested `StepSemantics` and `RetryStrategy` contracts. Retry strategies reuse
-`ExtensionStepResult.retry(state, delay)` as their retry decision, so stateful continuations and failed attempts share
-one retry representation. Built-in step operations adapt the customer-facing config and retry types at the operation
-boundary, keeping the extension SPI independent of those packages.
+`ExtensionStepConfig` owns its nested `StepSemantics` and `RetryStrategy` contracts. Exception retry strategies reuse
+the fixed-delay `ExtensionStepResult.retry(state, delay)` outcome as their retry decision. Stateful continuations may
+also use `ExtensionStepResult.retryAfterNormalization(state, delayStrategy)` when the delay depends on the state after
+its configured SerDes round trip. Built-in step operations adapt the customer-facing config and retry types at the
+operation boundary, keeping the extension SPI independent of those packages.
 
 The primitive selector determines the backend operation type. The string controls only the subtype recorded in
 checkpoints, replay validation, plugins, logs, and error metadata.
@@ -234,9 +241,13 @@ A stateful extension STEP may return only:
 
 - `ExtensionStepResult.succeed(value)`
 - `ExtensionStepResult.retry(state, delay)`
+- `ExtensionStepResult.retryAfterNormalization(state, delayStrategy)`
 
-The SDK maps those outcomes onto the fixed STEP lifecycle. Thrown exceptions follow the normal STEP failure path.
-Attempt metadata remains available through `StepContext`.
+The fixed-delay retry checkpoints the supplied state and delay. The normalization-aware retry first serializes and
+deserializes the state with the configured SerDes, evaluates the delay strategy against that normalized state, then
+checkpoints the normalized state and selected delay. This keeps first execution and replay behavior consistent for
+normalizing serializers. The SDK maps both outcomes onto the fixed STEP lifecycle. Thrown exceptions follow the
+normal STEP failure path. Attempt metadata remains available through `StepContext`.
 
 ### Support Context Replay State
 
@@ -251,6 +262,11 @@ Supported result policies are:
 
 On replay, the framework function receives the stored replay state through scoped TLS. This supports large map
 results and parallel branch reconstruction without exposing checkpoint APIs.
+
+When child replay is requested with a `null` replay state, the SDK checkpoints an empty payload. On replay, an empty
+payload is interpreted as a `null` replay state rather than passed to the SerDes. This preserves compatibility with
+child-context checkpoints produced by earlier SDK versions, which stored large results as an empty payload with
+`replayChildren=true`.
 
 `ExtensionContextConfig` directly owns the child context serializer and virtual-context flag, plus extension-only
 behavior:
@@ -318,7 +334,9 @@ The migration preserves:
 - existing type, subtype, name, and operation tree shape
 - checkpoint actions, payloads, statuses, and replay validation
 - map and parallel completion, skipped items, nesting, and large-result behavior
-- wait-for-condition state, attempts, and delays
+- child contexts, map iterations, parallel branches, wait-for-callback, and checkpointed with-retry contexts replay
+  children when their serialized result is at least 256 KiB
+- wait-for-condition state, attempts, and delays, including delay evaluation against SerDes-normalized state
 - wait-for-callback exception translation
 - retry naming and virtual-context behavior
 - plugin operation and user-function event ordering

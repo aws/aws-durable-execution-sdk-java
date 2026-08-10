@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.map;
 
+import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -10,9 +13,8 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.NestingType;
-import software.amazon.lambda.durable.operation.DurableMapOperation;
 import software.amazon.lambda.durable.operation.DurableMapOperation.MapConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 
 /**
@@ -34,22 +36,20 @@ public class ComplexFlatMapExample extends DurableHandler<Integer, String> {
         // Part 1: Concurrent map with step + wait inside each branch
         var orderIds = IntStream.range(1, input + 1).mapToObj(x -> "order-" + x).collect(Collectors.toList());
 
-        var orderResult = DurableMapOperation.map(
+        var orderResult = map(
                 "process-orders",
                 orderIds,
                 String.class,
                 orderId -> {
-                    var index = DurableMapOperation.MapItemContext.getCurrentContext()
-                            .getIndex();
+                    var index = MapItemContext.getCurrentContext().getIndex();
                     // Step 1: validate the order
-                    var validated =
-                            DurableStepOperation.step("validate-" + index, String.class, () -> "validated:" + orderId);
+                    var validated = step("validate-" + index, String.class, () -> "validated:" + orderId);
 
                     // Wait between stages (simulates a cooldown or external dependency)
                     DurableWaitOperation.wait("cooldown-" + index, Duration.ofSeconds(1));
 
                     // Step 2: finalize the order
-                    return DurableStepOperation.step("finalize-" + index, String.class, () -> "done:" + validated);
+                    return step("finalize-" + index, String.class, () -> "done:" + validated);
                 },
                 MapConfig.builder().nestingType(NestingType.FLAT).build());
 
@@ -62,14 +62,13 @@ public class ComplexFlatMapExample extends DurableHandler<Integer, String> {
                 .nestingType(NestingType.FLAT)
                 .build();
 
-        var serverResult = DurableMapOperation.map(
+        var serverResult = map(
                 "find-healthy-servers",
                 servers,
                 String.class,
                 server -> {
-                    var index = DurableMapOperation.MapItemContext.getCurrentContext()
-                            .getIndex();
-                    return DurableStepOperation.step("health-check-" + index, String.class, () -> server + ":healthy");
+                    var index = MapItemContext.getCurrentContext().getIndex();
+                    return step("health-check-" + index, String.class, () -> server + ":healthy");
                 },
                 earlyTermConfig);
 

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.plugin.*;
 
 /**
@@ -42,9 +43,9 @@ public class PluginExample extends DurableHandler<GreetingRequest, String> {
         var context = DurableContext.getCurrentContext();
         context.getLogger().info("Starting plugin example for {}", input.getName());
 
-        var greeting = DurableStepOperation.step("create-greeting", String.class, () -> "Hello, " + input.getName());
+        var greeting = step("create-greeting", String.class, () -> "Hello, " + input.getName());
 
-        var result = DurableStepOperation.step("transform", String.class, () -> greeting.toUpperCase() + "!");
+        var result = step("transform", String.class, () -> greeting.toUpperCase() + "!");
 
         context.getLogger().info("Plugin example complete: {}", result);
         return result;

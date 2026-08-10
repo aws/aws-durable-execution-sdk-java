@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.invoke;
 
+import static software.amazon.lambda.durable.operation.DurableInvokeOperation.invoke;
+import static software.amazon.lambda.durable.operation.DurableInvokeOperation.invokeAsync;
+
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableInvokeOperation;
 import software.amazon.lambda.durable.operation.DurableInvokeOperation.InvokeConfig;
 
 /**
@@ -20,13 +22,13 @@ public class SimpleInvokeExample extends DurableHandler<GreetingRequest, String>
                 System.getenv().getOrDefault("FUNCTION_NAME_PREFIX", "") + "simple-step-example:$LATEST";
 
         // Invoke the `simple-step-example` function.
-        var future = DurableInvokeOperation.invokeAsync(
+        var future = invokeAsync(
                 "call-greeting1",
                 targetFunctionName,
                 input,
                 String.class,
                 InvokeConfig.builder().build());
-        var result2 = DurableInvokeOperation.invoke(
+        var result2 = invoke(
                 "call-greeting2",
                 targetFunctionName,
                 input,

@@ -2,25 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.wait;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
+
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
 /**
- * Example demonstrating concurrent stepAsync() with wait() operations.
+ * Example demonstrating concurrent stepAsync() with DurableWaitOperation.wait() operations.
  *
  * <p>This example shows suspension behavior with pending async steps:
  *
  * <ul>
  *   <li>stepAsync() starts a background operation (takes 2 seconds)
- *   <li>wait() is called immediately (3 second duration)
+ *   <li>DurableWaitOperation.wait() is called immediately (3 second duration)
  *   <li>The step completes successfully before suspension
  *   <li>Execution suspends for the wait time
  * </ul>
@@ -34,7 +35,7 @@ public class WaitAtLeastExample extends DurableHandler<GreetingRequest, String> 
         logger.info("Starting concurrent step + wait example for: {}", input.getName());
 
         // Start an async step that takes 2 seconds
-        DurableFuture<String> asyncStep = DurableStepOperation.stepAsync(
+        DurableFuture<String> asyncStep = stepAsync(
                 "async-operation",
                 String.class,
                 () -> {

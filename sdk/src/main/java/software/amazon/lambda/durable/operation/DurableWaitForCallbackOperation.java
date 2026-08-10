@@ -30,6 +30,7 @@ import software.amazon.lambda.durable.util.ParameterValidator;
 public final class DurableWaitForCallbackOperation {
     private static final String CALLBACK_SUFFIX = "-callback";
     private static final String SUBMITTER_SUFFIX = "-submitter";
+    private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
     private static final int MAX_NAME_LENGTH = ParameterValidator.MAX_OPERATION_NAME_LENGTH
             - Math.max(CALLBACK_SUFFIX.length(), SUBMITTER_SUFFIX.length());
 
@@ -116,11 +117,11 @@ public final class DurableWaitForCallbackOperation {
                 name + SUBMITTER_SUFFIX,
                 Void.class,
                 () -> {
-                    submitter.accept(callback.callbackId(), StepContext.getCurrentContext());
+                    submitter.accept(callback.callbackId(), StepContext.requireCurrentContext());
                     return null;
                 },
                 config.stepConfig());
-        return ExtensionContextResult.completed(callback.get());
+        return ExtensionContextResult.replayChildrenAboveSize(callback.get(), null, LARGE_RESULT_THRESHOLD);
     }
 
     private static ExtensionContextConfig extensionConfig(WaitForCallbackConfig config) {

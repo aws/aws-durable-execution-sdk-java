@@ -7,7 +7,9 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -19,6 +21,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -33,6 +36,8 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextFailure;
+import software.amazon.lambda.durable.extension.ExtensionContextFunction;
+import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -137,9 +142,14 @@ class ChildContextPrimitiveTest {
     }
 
     private ChildContextPrimitive<String> createExtensionOperation(String subType, ExtensionContextConfig config) {
+        return createExtensionOperation(subType, () -> ExtensionContextResult.completed("unused"), config);
+    }
+
+    private ChildContextPrimitive<String> createExtensionOperation(
+            String subType, ExtensionContextFunction<String> function, ExtensionContextConfig config) {
         return new ChildContextPrimitive<>(
                 new OperationIdentifier("1", "test-context", OperationType.CONTEXT, subType),
-                () -> ExtensionContextResult.completed("unused"),
+                function,
                 TypeToken.get(String.class),
                 config,
                 durableContext);
@@ -455,6 +465,63 @@ class ChildContextPrimitiveTest {
         // Give the executor thread time to run
         Thread.sleep(100);
         assertTrue(functionCalled.get(), "Function should be re-executed for replayChildren path");
+    }
+
+    @Test
+    void extensionReplayChildrenAcceptsLegacyEmptyResultPayload() {
+        when(executionManager.getOperationAndUpdateReplayState("1"))
+                .thenReturn(Operation.builder()
+                        .id("1")
+                        .name("test-context")
+                        .type(OperationType.CONTEXT)
+                        .subType("AcmeContext")
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(ContextDetails.builder()
+                                .result("")
+                                .replayChildren(true)
+                                .build())
+                        .build());
+        when(executionManager.hasOperationsForContext("1")).thenReturn(false);
+        var replayState = new AtomicReference<String>();
+        var config = ExtensionContextConfig.builder().serDes(SERDES).build();
+        var operation = createExtensionOperation(
+                "AcmeContext",
+                () -> {
+                    var replayContext = ExtensionContextReplayContext.<String>getCurrentContext();
+                    assertTrue(replayContext.isReplayingChildren());
+                    replayState.set(replayContext.getReplayState());
+                    return ExtensionContextResult.completed("reconstructed");
+                },
+                config);
+
+        operation.execute();
+
+        assertEquals("reconstructed", operation.get());
+        assertNull(replayState.get());
+    }
+
+    @Test
+    void extensionReplayChildrenWithoutStateCheckpointsLegacyEmptyPayload() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        var successUpdate = new AtomicReference<OperationUpdate>();
+        var successSent = new CountDownLatch(1);
+        when(executionManager.sendOperationUpdate(any())).thenAnswer(invocation -> {
+            var update = invocation.<OperationUpdate>getArgument(0);
+            if (update.action() == OperationAction.SUCCEED) {
+                successUpdate.set(update);
+                successSent.countDown();
+            }
+            return CompletableFuture.completedFuture(null);
+        });
+        var config = ExtensionContextConfig.builder().serDes(SERDES).build();
+        var operation = createExtensionOperation(
+                "AcmeContext", () -> ExtensionContextResult.replayChildrenAboveSize("large", null, 1), config);
+
+        operation.execute();
+
+        assertTrue(successSent.await(2, TimeUnit.SECONDS));
+        assertEquals("", successUpdate.get().payload());
+        assertTrue(successUpdate.get().contextOptions().replayChildren());
     }
 
     // ===== Non-deterministic detection =====

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.util.ArrayList;
 import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
@@ -9,9 +12,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig;
-import software.amazon.lambda.durable.operation.DurableParallelOperation;
 import software.amazon.lambda.durable.operation.DurableParallelOperation.ParallelConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
@@ -42,12 +43,12 @@ public class ParallelFailureToleranceExample
                 .build();
 
         var futures = new ArrayList<DurableFuture<String>>(input.services().size());
-        var parallel = DurableParallelOperation.parallel("call-services", config);
+        var parallel = parallel("call-services", config);
 
         try (parallel) {
             for (var service : input.services()) {
                 var future = parallel.branch("call-" + service, String.class, branchCtx -> {
-                    return DurableStepOperation.step(
+                    return step(
                             "invoke-" + service,
                             String.class,
                             () -> {

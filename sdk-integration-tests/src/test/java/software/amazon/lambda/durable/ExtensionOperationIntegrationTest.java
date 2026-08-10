@@ -4,6 +4,7 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -91,7 +92,7 @@ class ExtensionOperationIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertTrue(result.getResult(String.class).contains("step thread"));
-        assertThrows(IllegalStateException.class, DurableContext::getCurrentContext);
+        assertNull(DurableContext.getCurrentContext());
     }
 
     @Test

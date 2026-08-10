@@ -115,14 +115,15 @@ public final class DurableWaitForConditionOperation {
             T state,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunction,
             WaitForConditionConfig<T> config) {
-        var stepContext = StepContext.getCurrentContext();
+        var stepContext = StepContext.requireCurrentContext();
         var result = Objects.requireNonNull(
                 checkFunction.apply(state, stepContext), "waitForCondition check result cannot be null");
         if (result.isDone()) {
             return ExtensionStepResult.succeed(result.value());
         }
-        var delay = config.waitStrategy().evaluate(result.value(), stepContext.getAttempt());
-        return ExtensionStepResult.retry(result.value(), delay);
+        var attempt = stepContext.getAttempt();
+        return ExtensionStepResult.retryAfterNormalization(
+                result.value(), normalizedState -> config.waitStrategy().evaluate(normalizedState, attempt));
     }
 
     private static final class WaitForConditionFuture<T> implements DurableFuture<T> {

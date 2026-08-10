@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.util.ArrayList;
 import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
@@ -9,14 +12,12 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.model.ParallelResult;
-import software.amazon.lambda.durable.operation.DurableParallelOperation;
 import software.amazon.lambda.durable.operation.DurableParallelOperation.ParallelConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 
 /**
  * Example demonstrating parallel branch execution with the Durable Execution SDK.
  *
- * <p>This handler processes a list of items concurrently using {@code DurableParallelOperation.parallel()}:
+ * <p>This handler processes a list of items concurrently using {@code parallel()}:
  *
  * <ol>
  *   <li>Each item is processed in its own branch (child context)
@@ -42,13 +43,13 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
         var config = ParallelConfig.builder().build();
 
         var futures = new ArrayList<DurableFuture<String>>(items.size());
-        var parallel = DurableParallelOperation.parallel("process-items", config);
+        var parallel = parallel("process-items", config);
 
         try (parallel) {
             for (var item : items) {
                 var future = parallel.branch("process-" + item, String.class, branchCtx -> {
                     branchCtx.getLogger().info("Processing item: {}", item);
-                    return DurableStepOperation.step("transform-" + item, String.class, () -> item.toUpperCase());
+                    return step("transform-" + item, String.class, () -> item.toUpperCase());
                 });
                 futures.add(future);
             }

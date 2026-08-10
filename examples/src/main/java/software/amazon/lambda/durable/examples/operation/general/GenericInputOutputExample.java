@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -9,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
@@ -29,7 +30,7 @@ public class GenericInputOutputExample
         logger.info("Starting generic types example for user: {}", input.get("userId"));
 
         // Fetch nested generic type with retry (Map<String, List<String>>)
-        Map<String, List<String>> categories = DurableStepOperation.step(
+        Map<String, List<String>> categories = step(
                 "fetch-categories",
                 new TypeToken<Map<String, List<String>>>() {},
                 () -> {

@@ -7,13 +7,14 @@ import static software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.C
 import static software.amazon.lambda.durable.model.MapResult.MapResultItem.Status.SKIPPED;
 import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig.CompletionDecision.complete;
 import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig.CompletionDecision.continueExecution;
+import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.util.List;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig;
-import software.amazon.lambda.durable.operation.DurableMapOperation;
 import software.amazon.lambda.durable.operation.DurableMapOperation.MapConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
@@ -54,14 +55,13 @@ public class CustomShouldCompleteMapExample
                 }))
                 .build();
 
-        var result = DurableMapOperation.map(
+        var result = map(
                 "query-providers",
                 input.providers(),
                 String.class,
                 provider -> {
-                    var index = DurableMapOperation.MapItemContext.getCurrentContext()
-                            .getIndex();
-                    return DurableStepOperation.step(
+                    var index = MapItemContext.getCurrentContext().getIndex();
+                    return step(
                             "query-" + index,
                             String.class,
                             () -> {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -19,8 +20,13 @@ class CurrentContextTest {
     }
 
     @Test
-    void durableContextFailsClearlyOutsideDurableThread() {
-        var exception = assertThrows(IllegalStateException.class, DurableContext::getCurrentContext);
+    void durableContextReturnsNullOutsideDurableThread() {
+        assertNull(DurableContext.getCurrentContext());
+    }
+
+    @Test
+    void durableContextCanBeRequiredOutsideDurableThread() {
+        var exception = assertThrows(IllegalStateException.class, DurableContext::requireCurrentContext);
 
         assertTrue(exception.getMessage().contains("No DurableContext"));
     }
@@ -35,8 +41,13 @@ class CurrentContextTest {
     }
 
     @Test
-    void stepContextFailsClearlyOutsideStepThread() {
-        var exception = assertThrows(IllegalStateException.class, StepContext::getCurrentContext);
+    void stepContextReturnsNullOutsideStepThread() {
+        assertNull(StepContext.getCurrentContext());
+    }
+
+    @Test
+    void stepContextCanBeRequiredOutsideStepThread() {
+        var exception = assertThrows(IllegalStateException.class, StepContext::requireCurrentContext);
 
         assertTrue(exception.getMessage().contains("No StepContext"));
     }
@@ -66,9 +77,11 @@ class CurrentContextTest {
 
         try (var ignored = BaseContextImpl.attachCurrentContext(inner)) {
             assertSame(inner, StepContext.getCurrentContext());
+            assertSame(inner, StepContext.requireCurrentContext());
         }
 
         assertSame(outer, DurableContext.getCurrentContext());
+        assertSame(outer, DurableContext.requireCurrentContext());
     }
 
     private interface CurrentExtensionContext extends DurableContext, ExtensionContext {}

@@ -33,8 +33,8 @@ public interface DurableContext extends BaseContext {
     /**
      * Returns the durable context attached to the current SDK-managed context thread.
      *
-     * @return the current durable context
-     * @throws IllegalStateException if called outside a durable context or from a step thread
+     * @return the current durable context, or {@code null} when no SDK context is active
+     * @throws IllegalStateException if called from a step thread
      */
     static DurableContext getCurrentContext() {
         var context = BaseContext.getCurrentContext();
@@ -42,10 +42,24 @@ public interface DurableContext extends BaseContext {
             return durableContext;
         }
         if (context == null) {
-            throw new IllegalStateException("No DurableContext is active on the current thread");
+            return null;
         }
         throw new IllegalStateException(
                 "DurableContext is not available from a step thread; use StepContext.getCurrentContext() instead");
+    }
+
+    /**
+     * Requires the durable context attached to the current SDK-managed context thread.
+     *
+     * @return the current durable context
+     * @throws IllegalStateException if called outside a durable context or from a step thread
+     */
+    static DurableContext requireCurrentContext() {
+        var context = getCurrentContext();
+        if (context == null) {
+            throw new IllegalStateException("No DurableContext is active on the current thread");
+        }
+        return context;
     }
 
     /** Returns whether this context is currently replaying checkpointed durable operations. */
@@ -170,7 +184,10 @@ public interface DurableContext extends BaseContext {
         Objects.requireNonNull(func, "func cannot be null");
         try (var ignored = BaseContextImpl.attachCurrentContext(this)) {
             return DurableStepOperation.stepAsync(
-                    name, resultType, () -> func.apply(StepContext.getCurrentContext()), config.toOperationConfig());
+                    name,
+                    resultType,
+                    () -> func.apply(StepContext.requireCurrentContext()),
+                    config.toOperationConfig());
         }
     }
 

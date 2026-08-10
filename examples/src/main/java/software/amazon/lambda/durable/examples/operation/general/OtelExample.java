@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
@@ -9,7 +11,6 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
 
 /**
@@ -52,12 +53,12 @@ public class OtelExample extends DurableHandler<GreetingRequest, String> {
         // Log with MDC — traceId and spanId will be in the JSON output
         context.getLogger().info("Starting OTel example for {}", input.getName());
 
-        var greeting = DurableStepOperation.step("create-greeting", String.class, () -> {
+        var greeting = step("create-greeting", String.class, () -> {
             context.getLogger().info("Inside step — this log has trace context in MDC");
             return "Hello, " + input.getName();
         });
 
-        var result = DurableStepOperation.step("transform", String.class, () -> greeting.toUpperCase() + "!");
+        var result = step("transform", String.class, () -> greeting.toUpperCase() + "!");
 
         context.getLogger().info("OTel example complete: {}", result);
         return result;

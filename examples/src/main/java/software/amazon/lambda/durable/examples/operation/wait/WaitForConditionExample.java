@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.wait;
 
+import static software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.waitForCondition;
+
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation;
 import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.WaitForConditionConfig;
 import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.WaitForConditionResult;
 
@@ -22,7 +23,7 @@ public class WaitForConditionExample extends DurableHandler<Integer, Integer> {
     @Override
     public Integer handleRequest(Integer threshold) {
         // Poll until the counter reaches the input threshold
-        return DurableWaitForConditionOperation.waitForCondition(
+        return waitForCondition(
                 "wait-for-condition",
                 Integer.class,
                 callCount -> {

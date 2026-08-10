@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.callback;
 
+import static software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.waitForCallback;
+
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
-import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation;
 import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackConfig;
 import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackContext;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -21,7 +22,7 @@ public class WaitForCallbackFailedExample extends DurableHandler<ApprovalRequest
         String approvalResult;
 
         try {
-            approvalResult = DurableWaitForCallbackOperation.waitForCallback(
+            approvalResult = waitForCallback(
                     "preapproval",
                     String.class,
                     () -> {

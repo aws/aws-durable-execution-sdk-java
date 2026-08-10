@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -9,9 +12,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.model.ParallelResult;
-import software.amazon.lambda.durable.operation.DurableParallelOperation;
 import software.amazon.lambda.durable.operation.DurableParallelOperation.ParallelConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 
 /**
@@ -42,26 +43,26 @@ public class ParallelWithWaitExample
 
         var config = ParallelConfig.builder().build();
         var futures = new ArrayList<DurableFuture<String>>(3);
-        var parallel = DurableParallelOperation.parallel("notify", config);
+        var parallel = parallel("notify", config);
 
         try (parallel) {
 
             // Branch 1: email — no wait, deliver immediately
             futures.add(parallel.branch("email", String.class, ctx -> {
                 DurableWaitOperation.wait("email-rate-limit-delay", Duration.ofSeconds(10));
-                return DurableStepOperation.step("send-email", String.class, () -> "email:" + input.message());
+                return step("send-email", String.class, () -> "email:" + input.message());
             }));
 
             // Branch 2: SMS — wait for rate-limit window, then send
             futures.add(parallel.branch("sms", String.class, ctx -> {
                 DurableWaitOperation.wait("sms-rate-limit-delay", Duration.ofSeconds(10));
-                return DurableStepOperation.step("send-sms", String.class, () -> "sms:" + input.message());
+                return step("send-sms", String.class, () -> "sms:" + input.message());
             }));
 
             // Branch 3: push notification — wait for quiet-hours window, then send
             futures.add(parallel.branch("push", String.class, ctx -> {
                 DurableWaitOperation.wait("push-quiet-delay", Duration.ofSeconds(10));
-                return DurableStepOperation.step("send-push", String.class, () -> "push:" + input.message());
+                return step("send-push", String.class, () -> "push:" + input.message());
             }));
         }
 

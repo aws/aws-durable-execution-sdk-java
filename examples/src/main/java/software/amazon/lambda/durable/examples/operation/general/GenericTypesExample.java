@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -9,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
@@ -52,26 +53,25 @@ public class GenericTypesExample extends DurableHandler<GenericTypesExample.Inpu
         logger.info("Starting generic types example for user: {}", input.userId);
 
         // Step 1: Fetch a list of items (List<String>)
-        List<String> items = DurableStepOperation.step("fetch-items", new TypeToken<List<String>>() {}, () -> {
+        List<String> items = step("fetch-items", new TypeToken<List<String>>() {}, () -> {
             logger.info("Fetching items for user: {}", input.userId);
             return List.of("item1", "item2", "item3", "item4");
         });
         logger.info("Fetched {} items", items.size());
 
         // Step 2: Count items by category (Map<String, Integer>)
-        Map<String, Integer> counts =
-                DurableStepOperation.step("count-by-category", new TypeToken<Map<String, Integer>>() {}, () -> {
-                    logger.info("Counting items by category");
-                    var result = new HashMap<String, Integer>();
-                    result.put("electronics", 2);
-                    result.put("books", 1);
-                    result.put("clothing", 1);
-                    return result;
-                });
+        Map<String, Integer> counts = step("count-by-category", new TypeToken<Map<String, Integer>>() {}, () -> {
+            logger.info("Counting items by category");
+            var result = new HashMap<String, Integer>();
+            result.put("electronics", 2);
+            result.put("books", 1);
+            result.put("clothing", 1);
+            return result;
+        });
         logger.info("Counted {} categories", counts.size());
 
         // Step 3: Fetch nested generic type with retry (Map<String, List<String>>)
-        Map<String, List<String>> categories = DurableStepOperation.step(
+        Map<String, List<String>> categories = step(
                 "fetch-categories",
                 new TypeToken<Map<String, List<String>>>() {},
                 () -> {

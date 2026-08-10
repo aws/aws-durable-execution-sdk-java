@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.step;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 import software.amazon.lambda.durable.retry.RetryStrategies;
@@ -32,12 +33,12 @@ public class RetryExample extends DurableHandler<Object, String> {
     @Override
     public String handleRequest(Object input) {
         // Step 1: Record start time
-        startTime = DurableStepOperation.step("record-start-time", Instant.class, () -> Instant.now());
+        startTime = step("record-start-time", Instant.class, () -> Instant.now());
         logger.info("Recorded start time: {}", startTime);
 
         // Step 2: Call that never retries (fails immediately)
         try {
-            DurableStepOperation.step(
+            step(
                     "no-retry-call",
                     Void.class,
                     () -> {
@@ -51,7 +52,7 @@ public class RetryExample extends DurableHandler<Object, String> {
         }
 
         // Step 3: Flaky API call that succeeds after retries
-        var result = DurableStepOperation.step(
+        var result = step(
                 "flaky-api-call",
                 String.class,
                 () -> {

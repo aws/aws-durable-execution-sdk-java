@@ -33,4 +33,24 @@ class ExtensionStepResultTest {
         assertThrows(NullPointerException.class, () -> ExtensionStepResult.retry("next", null));
         assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retry("next", Duration.ofSeconds(-1)));
     }
+
+    @Test
+    void retryAfterNormalizationEvaluatesDelayFromNormalizedState() {
+        var result = ExtensionStepResult.retryAfterNormalization(
+                "raw", state -> "normalized".equals(state) ? Duration.ofSeconds(3) : Duration.ofSeconds(1));
+
+        assertEquals("raw", result.state());
+        assertEquals(Duration.ofSeconds(3), result.delay("normalized"));
+    }
+
+    @Test
+    void retryAfterNormalizationRejectsInvalidStrategyOrDelay() {
+        assertThrows(NullPointerException.class, () -> ExtensionStepResult.retryAfterNormalization("next", null));
+        assertThrows(
+                NullPointerException.class, () -> ExtensionStepResult.retryAfterNormalization("next", state -> null)
+                        .delay("normalized"));
+        assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retryAfterNormalization(
+                        "next", state -> Duration.ofSeconds(-1))
+                .delay("normalized"));
+    }
 }

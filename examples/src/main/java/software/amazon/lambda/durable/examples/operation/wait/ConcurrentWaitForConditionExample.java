@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.wait;
 
+import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
+import static software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.waitForCondition;
+
 import java.util.stream.IntStream;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.operation.DurableMapOperation;
 import software.amazon.lambda.durable.operation.DurableMapOperation.MapConfig;
-import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
 import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.WaitForConditionConfig;
 import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.WaitForConditionResult;
 
@@ -30,18 +32,17 @@ public class ConcurrentWaitForConditionExample extends DurableHandler<Concurrent
 
         var config = MapConfig.builder().maxConcurrency(input.maxConcurrency()).build();
 
-        var result = DurableMapOperation.map(
+        var result = map(
                 "concurrent-wait-for-conditions",
                 items,
                 String.class,
                 item -> {
-                    var index = DurableMapOperation.MapItemContext.getCurrentContext()
-                            .getIndex();
+                    var index = MapItemContext.getCurrentContext().getIndex();
                     var conditionConfig = WaitForConditionConfig.<Integer>builder()
                             .initialState(1)
                             .build();
                     // Poll until the counter reaches the input threshold
-                    var count = DurableWaitForConditionOperation.waitForCondition(
+                    var count = waitForCondition(
                             "condition-" + index,
                             Integer.class,
                             callCount -> {

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.step;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -16,7 +17,7 @@ public class DeserializationFailureExample extends DurableHandler<String, String
     @Override
     public String handleRequest(String input) {
         try {
-            DurableStepOperation.step(
+            step(
                     "fail-step",
                     String.class,
                     () -> {

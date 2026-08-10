@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 
 /**
  * Example demonstrating DurableLogger usage for structured logging with execution context.
@@ -26,13 +27,13 @@ public class LoggingExample extends DurableHandler<GreetingRequest, String> {
         context.getLogger(logger).info("Processing greeting for: {}", input.getName());
 
         // Step 1: Create greeting - logs inside step include operation context
-        var greeting = DurableStepOperation.step("create-greeting", String.class, () -> {
+        var greeting = step("create-greeting", String.class, () -> {
             StepContext.getCurrentContext().getLogger(logger).info("Creating greeting message");
             return "Hello, " + input.getName();
         });
 
         // Step 2: Transform
-        var result = DurableStepOperation.step("transform", String.class, () -> {
+        var result = step("transform", String.class, () -> {
             StepContext.getCurrentContext().getLogger().info("Transforming greeting to uppercase");
             return greeting.toUpperCase() + "!";
         });

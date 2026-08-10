@@ -44,6 +44,7 @@ import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 
 class StatefulExtensionStepPrimitiveTest {
     private static final String OPERATION_ID = "1";
@@ -52,6 +53,19 @@ class StatefulExtensionStepPrimitiveTest {
 
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
+
+    private static final class NormalizingSerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return "\"raw\"";
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return (T) "normalized";
+        }
+    }
 
     @BeforeEach
     void setUp() {
@@ -200,6 +214,45 @@ class StatefulExtensionStepPrimitiveTest {
         assertNull(retryUpdate.get().payload());
         assertEquals(
                 IllegalStateException.class.getName(), retryUpdate.get().error().errorType());
+    }
+
+    @Test
+    void retryDelayUsesCheckpointNormalizedState() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+        when(executionManager.pollForOperationUpdates(OPERATION_ID)).thenReturn(new CompletableFuture<>());
+        var retryUpdate = new AtomicReference<OperationUpdate>();
+        var retrySent = new CountDownLatch(1);
+        when(executionManager.sendOperationUpdate(any())).thenAnswer(invocation -> {
+            var update = invocation.<OperationUpdate>getArgument(0);
+            if (update.action() == OperationAction.RETRY) {
+                retryUpdate.set(update);
+                retrySent.countDown();
+            }
+            return CompletableFuture.completedFuture(null);
+        });
+        var strategyState = new AtomicReference<String>();
+        var operation = new StepPrimitive<>(
+                new OperationIdentifier(
+                        OPERATION_ID,
+                        OPERATION_NAME,
+                        OperationType.STEP,
+                        OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                state -> ExtensionStepResult.retryAfterNormalization("raw", normalized -> {
+                    strategyState.set(normalized);
+                    return Duration.ofSeconds(7);
+                }),
+                TypeToken.get(String.class),
+                ExtensionStepConfig.<String>builder()
+                        .serDes(new NormalizingSerDes())
+                        .build(),
+                durableContext);
+
+        operation.execute();
+
+        assertTrue(retrySent.await(2, TimeUnit.SECONDS));
+        assertEquals("normalized", strategyState.get());
+        assertEquals("\"raw\"", retryUpdate.get().payload());
+        assertEquals(7, retryUpdate.get().stepOptions().nextAttemptDelaySeconds());
     }
 
     @Test

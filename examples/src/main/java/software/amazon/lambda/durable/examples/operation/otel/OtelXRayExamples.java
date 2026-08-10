@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.otel;
 
+import static software.amazon.lambda.durable.operation.DurableContextOperation.runInChildContext;
+import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
+import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
@@ -10,10 +15,6 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableContextOperation;
-import software.amazon.lambda.durable.operation.DurableMapOperation;
-import software.amazon.lambda.durable.operation.DurableParallelOperation;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
 
 /**
@@ -44,11 +45,11 @@ public final class OtelXRayExamples {
             context.getLogger().info("Starting OTel X-Ray map example for {}", input.getName());
 
             var items = List.of("alpha", "beta", "gamma");
-            var result = DurableMapOperation.map(
+            var result = map(
                     "process-items",
                     items,
                     String.class,
-                    item -> DurableStepOperation.step("transform-" + item, String.class, () -> item.toUpperCase()));
+                    item -> step("transform-" + item, String.class, () -> item.toUpperCase()));
 
             return "Mapped " + result.succeeded().size() + " items";
         }
@@ -67,16 +68,16 @@ public final class OtelXRayExamples {
             var context = DurableContext.getCurrentContext();
             context.getLogger().info("Starting OTel X-Ray parallel example for {}", input.getName());
 
-            var parallel = DurableParallelOperation.parallel("fan-out");
+            var parallel = parallel("fan-out");
             try (parallel) {
                 parallel.branch(
                         "branch-a",
                         String.class,
-                        childCtx -> DurableStepOperation.step("step-a", String.class, () -> "A: " + input.getName()));
+                        childCtx -> step("step-a", String.class, () -> "A: " + input.getName()));
                 parallel.branch(
                         "branch-b",
                         String.class,
-                        childCtx -> DurableStepOperation.step("step-b", String.class, () -> "B: " + input.getName()));
+                        childCtx -> step("step-b", String.class, () -> "B: " + input.getName()));
             }
             var result = parallel.get();
 
@@ -97,11 +98,10 @@ public final class OtelXRayExamples {
             var context = DurableContext.getCurrentContext();
             context.getLogger().info("Starting OTel X-Ray nested context example for {}", input.getName());
 
-            return DurableContextOperation.runInChildContext("outer", String.class, () -> {
-                var intermediate =
-                        DurableStepOperation.step("outer-step", String.class, () -> "Hello, " + input.getName());
-                return DurableContextOperation.runInChildContext("inner", String.class, () -> {
-                    return DurableStepOperation.step("deep-step", String.class, () -> intermediate.toUpperCase() + "!");
+            return runInChildContext("outer", String.class, () -> {
+                var intermediate = step("outer-step", String.class, () -> "Hello, " + input.getName());
+                return runInChildContext("inner", String.class, () -> {
+                    return step("deep-step", String.class, () -> intermediate.toUpperCase() + "!");
                 });
             });
         }

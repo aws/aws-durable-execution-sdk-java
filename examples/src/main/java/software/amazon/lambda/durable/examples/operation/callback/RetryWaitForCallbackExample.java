@@ -2,20 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.callback;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+import static software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.waitForCallback;
+import static software.amazon.lambda.durable.operation.DurableWithRetryOperation.withRetry;
+
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
-import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation;
 import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackContext;
-import software.amazon.lambda.durable.operation.DurableWithRetryOperation;
 import software.amazon.lambda.durable.operation.DurableWithRetryOperation.WithRetryConfig;
 import software.amazon.lambda.durable.operation.DurableWithRetryOperation.WithRetryContext;
 import software.amazon.lambda.durable.retry.RetryDecision;
 
 /**
- * Example demonstrating {@link DurableWithRetryOperation} with {@link DurableWaitForCallbackOperation}.
+ * Example demonstrating {@code withRetry} with {@code waitForCallback}.
  *
  * <p>Submits an approval request to an external system via a callback. If the callback fails (e.g., the external system
  * rejects the request), the helper retries the entire waitForCallback cycle — creating a fresh callback with a new ID
@@ -32,22 +33,20 @@ public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest,
     @Override
     public String handleRequest(ApprovalRequest input) {
         // Step 1: Prepare the approval request
-        var prepared = DurableStepOperation.step(
+        var prepared = step(
                 "prepare", String.class, () -> "Approval for: " + input.description() + " ($" + input.amount() + ")");
 
         // Step 2: waitForCallback with retry — if the external system fails, try again with a fresh callback
-        var approvalResult = DurableWithRetryOperation.withRetry(
+        var approvalResult = withRetry(
                 null,
                 () -> {
                     var attempt = WithRetryContext.getCurrentContext().getAttempt();
-                    return DurableWaitForCallbackOperation.waitForCallback(
-                            "approval-" + attempt, String.class, () -> StepContext.getCurrentContext()
-                                    .getLogger()
-                                    .info(
-                                            "Attempt {}: sending callback {} to approval system",
-                                            attempt,
-                                            WaitForCallbackContext.getCurrentContext()
-                                                    .getCallbackId()));
+                    return waitForCallback("approval-" + attempt, String.class, () -> StepContext.getCurrentContext()
+                            .getLogger()
+                            .info(
+                                    "Attempt {}: sending callback {} to approval system",
+                                    attempt,
+                                    WaitForCallbackContext.getCurrentContext().getCallbackId()));
                 },
                 WithRetryConfig.builder()
                         .retryStrategy((error, attempt) -> attempt < MAX_ATTEMPTS
@@ -56,7 +55,6 @@ public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest,
                         .build());
 
         // Step 3: Process the result
-        return DurableStepOperation.step(
-                "process-result", String.class, () -> prepared + " - Result: " + approvalResult);
+        return step("process-result", String.class, () -> prepared + " - Result: " + approvalResult);
     }
 }

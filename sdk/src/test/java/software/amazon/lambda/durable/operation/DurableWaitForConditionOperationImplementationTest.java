@@ -3,9 +3,11 @@
 package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -14,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -51,11 +54,13 @@ class DurableWaitForConditionOperationImplementationTest {
         var future = mockStringFuture();
         var resultType = TypeToken.get(String.class);
         var serDes = new JacksonSerDes();
+        var strategyCalled = new AtomicBoolean();
         var config = WaitForConditionConfig.<String>builder()
                 .initialState("initial")
                 .serDes(serDes)
                 .waitStrategy((state, attempt) -> {
-                    assertEquals("next", state);
+                    strategyCalled.set(true);
+                    assertEquals("normalized", state);
                     assertEquals(2, attempt);
                     return Duration.ofSeconds(7);
                 })
@@ -87,9 +92,12 @@ class DurableWaitForConditionOperationImplementationTest {
         when(stepContext.getAttempt()).thenReturn(2);
         try (var ignored = BaseContextImpl.attachCurrentContext(stepContext)) {
             var retry = assertInstanceOf(
-                    ExtensionStepResult.Retry.class, function.getValue().apply("state"));
+                    ExtensionStepResult.RetryAfterNormalization.class,
+                    function.getValue().apply("state"));
             assertEquals("next", retry.state());
-            assertEquals(Duration.ofSeconds(7), retry.delay());
+            assertFalse(strategyCalled.get());
+            assertEquals(Duration.ofSeconds(7), retry.delay("normalized"));
+            assertTrue(strategyCalled.get());
         }
     }
 

@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.step;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
+
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.RetryStrategies;
@@ -35,7 +37,7 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
         logger.info("Starting retry in-process example");
 
         // Start async step that will fail and retry
-        DurableFuture<String> asyncStep = DurableStepOperation.stepAsync(
+        DurableFuture<String> asyncStep = stepAsync(
                 "flaky-async-operation",
                 String.class,
                 () -> {
@@ -63,7 +65,7 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
 
         // Long-running synchronous step that keeps process busy
         // This prevents suspension during async step retries
-        String syncResult = DurableStepOperation.step("long-running-operation", String.class, () -> {
+        String syncResult = step("long-running-operation", String.class, () -> {
             logger.info(
                     "Starting long-running operation (10 seconds) in thread: {}",
                     Thread.currentThread().getName());

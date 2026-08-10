@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.callback;
 
+import static software.amazon.lambda.durable.operation.DurableCallbackOperation.createCallback;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+import static software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.waitForCallbackAsync;
+
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
-import software.amazon.lambda.durable.operation.DurableCallbackOperation;
 import software.amazon.lambda.durable.operation.DurableCallbackOperation.CallbackConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
-import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation;
 import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackContext;
 
 /**
@@ -37,7 +38,7 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
     @Override
     public String handleRequest(ApprovalRequest input) {
         // Step 1: Prepare the approval request
-        var prepared = DurableStepOperation.step(
+        var prepared = step(
                 "prepare",
                 String.class,
                 () -> "Approval request for: " + input.description() + " ($" + input.amount() + ")");
@@ -49,18 +50,15 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
 
         var config = CallbackConfig.builder().timeout(timeout).build();
 
-        var preapprovalCallback =
-                DurableWaitForCallbackOperation.waitForCallbackAsync("preapproval", String.class, () -> {
-                    var callbackId = WaitForCallbackContext.getCurrentContext().getCallbackId();
-                    StepContext.getCurrentContext()
-                            .getLogger()
-                            .info("Sending callback {} to preapproval system", callbackId);
-                });
+        var preapprovalCallback = waitForCallbackAsync("preapproval", String.class, () -> {
+            var callbackId = WaitForCallbackContext.getCurrentContext().getCallbackId();
+            StepContext.getCurrentContext().getLogger().info("Sending callback {} to preapproval system", callbackId);
+        });
 
-        var callback = DurableCallbackOperation.createCallback("approval", String.class, config);
+        var callback = createCallback("approval", String.class, config);
 
         // Step 2.5: Log AWS CLI command to complete the callback
-        DurableStepOperation.step("log-callback-command", Void.class, () -> {
+        step("log-callback-command", Void.class, () -> {
             var callbackId = callback.callbackId();
             // The result must be base64-encoded JSON
             var command = String.format(
@@ -76,7 +74,7 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
         var approvalResult = callback.get();
 
         // Step 4: Process the approval
-        return DurableStepOperation.step(
+        return step(
                 "process-approval", String.class, () -> prepared + " - " + preapprovalResult + " - " + approvalResult);
     }
 }

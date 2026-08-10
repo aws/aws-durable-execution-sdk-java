@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.wait;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
+import static software.amazon.lambda.durable.operation.DurableWaitOperation.waitAsync;
+
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
-import software.amazon.lambda.durable.operation.DurableWaitOperation;
 
 /**
  * Example demonstrating non-blocking wait with waitAsync().
@@ -31,11 +32,10 @@ public class WaitAsyncExample extends DurableHandler<GreetingRequest, String> {
         context.getLogger().info("Starting waitAsync example for {}", input.getName());
 
         // Start a non-blocking wait — returns immediately
-        DurableFuture<Void> waitFuture = DurableWaitOperation.waitAsync("min-delay", Duration.ofSeconds(5));
+        DurableFuture<Void> waitFuture = waitAsync("min-delay", Duration.ofSeconds(5));
 
         // Run a step concurrently while the wait timer is ticking
-        DurableFuture<String> stepFuture =
-                DurableStepOperation.stepAsync("process", String.class, () -> "Processed: " + input.getName());
+        DurableFuture<String> stepFuture = stepAsync("process", String.class, () -> "Processed: " + input.getName());
 
         // Block until both complete — guarantees at least 5 seconds elapsed
         waitFuture.get();

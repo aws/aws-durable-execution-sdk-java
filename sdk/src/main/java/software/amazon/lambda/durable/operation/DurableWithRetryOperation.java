@@ -25,6 +25,7 @@ public final class DurableWithRetryOperation {
     private static final String BACKOFF_SUFFIX = "-backoff-";
     private static final String ANONYMOUS_CONTEXT_NAME = "retry";
     private static final String ANONYMOUS_BACKOFF_PREFIX = "retry-backoff-";
+    private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private DurableWithRetryOperation() {}
 
@@ -59,7 +60,8 @@ public final class DurableWithRetryOperation {
                 .runInChildContextAsync(
                         OperationSubType.WITH_RETRY.getValue(),
                         new TypeToken<Object>() {},
-                        () -> ExtensionContextResult.completed(executeRetryLoop(name, operation, config)),
+                        () -> ExtensionContextResult.replayChildrenAboveSize(
+                                executeRetryLoop(name, operation, config), null, LARGE_RESULT_THRESHOLD),
                         ExtensionContextConfig.builder()
                                 .isVirtual(!config.wrapInChildContext())
                                 .build());
@@ -77,7 +79,7 @@ public final class DurableWithRetryOperation {
 
     private static <T> T executeRetryLoop(
             String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {
-        var durableContext = DurableContext.getCurrentContext();
+        var durableContext = DurableContext.requireCurrentContext();
         var extensionContext = ExtensionContext.getCurrentContext();
         var attempt = 1;
         while (true) {

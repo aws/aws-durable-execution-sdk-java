@@ -142,7 +142,7 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
                             PARALLEL_BRANCH.getValue(),
                             definition.resultType,
                             () -> ExtensionContextResult.replayChildrenAboveSize(
-                                    definition.function.apply(DurableContext.getCurrentContext()),
+                                    definition.function.apply(DurableContext.requireCurrentContext()),
                                     null,
                                     LARGE_RESULT_THRESHOLD),
                             branchConfig(definition.config)),

@@ -180,7 +180,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
                             MAP_ITERATION.getValue(),
                             resultType,
                             () -> ExtensionContextResult.replayChildrenAboveSize(
-                                    function.apply(item, itemIndex, DurableContext.getCurrentContext()),
+                                    function.apply(item, itemIndex, DurableContext.requireCurrentContext()),
                                     null,
                                     LARGE_RESULT_THRESHOLD),
                             iterationConfig),

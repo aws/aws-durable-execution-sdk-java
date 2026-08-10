@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.primitive;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -126,13 +128,23 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
             handleStepSucceeded(succeeded.value());
             return;
         }
-        var retry = (ExtensionStepResult.Retry<T>) result;
-        handleExtensionStepRetry(retry, null, attempt);
+        if (result instanceof ExtensionStepResult.Retry<T> retry) {
+            handleExtensionStepRetry(retry.state(), ignored -> retry.delay(), null, attempt);
+            return;
+        }
+        var retry = (ExtensionStepResult.RetryAfterNormalization<T>) result;
+        handleExtensionStepRetry(retry.state(), retry::delay, null, attempt);
     }
 
     private void handleExtensionStepRetry(ExtensionStepResult.Retry<T> retry, ErrorObject error, int attempt) {
-        var serializedState = serializeAndDeserializeResult(retry.state());
-        var retryDelaySeconds = Math.toIntExact(retry.delay().toSeconds());
+        handleExtensionStepRetry(retry.state(), ignored -> retry.delay(), error, attempt);
+    }
+
+    private void handleExtensionStepRetry(
+            T state, Function<T, Duration> delayStrategy, ErrorObject error, int attempt) {
+        var serializedState = serializeAndDeserializeResult(state);
+        var delay = delayStrategy.apply(serializedState.deserialized());
+        var retryDelaySeconds = Math.toIntExact(delay.toSeconds());
         var update = OperationUpdate.builder()
                 .action(OperationAction.RETRY)
                 .payload(serializedState.serialized())

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.map;
 
+import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableMapOperation;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
 
 /**
  * Example demonstrating the map operation with the Durable Execution SDK.
@@ -32,9 +34,9 @@ public class SimpleMapExample extends DurableHandler<GreetingRequest, String> {
         var names = List.of(name, name.toUpperCase(), name.toLowerCase());
 
         // Map over each name concurrently — each iteration runs in its own child context
-        var result = DurableMapOperation.map("greet-all", names, String.class, item -> {
-            var index = DurableMapOperation.MapItemContext.getCurrentContext().getIndex();
-            return DurableStepOperation.step("greet-" + index, String.class, () -> "Hello, " + item + "!");
+        var result = map("greet-all", names, String.class, item -> {
+            var index = MapItemContext.getCurrentContext().getIndex();
+            return step("greet-" + index, String.class, () -> "Hello, " + item + "!");
         });
 
         context.getLogger().info("Map completed: allSucceeded={}, size={}", result.allSucceeded(), result.size());

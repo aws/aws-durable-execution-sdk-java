@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.vt;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.Executors;
@@ -13,7 +16,6 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.ExampleTemplate;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsOutput;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
 
 /**
@@ -43,7 +45,7 @@ public class ManyAsyncStepsVirtualThreadPoolExample extends DurableHandler<ManyA
         var futures = new ArrayList<DurableFuture<Integer>>(steps);
         for (var i = 0; i < steps; i++) {
             var index = i;
-            var future = DurableStepOperation.stepAsync("compute-" + i, Integer.class, () -> index * multiplier);
+            var future = stepAsync("compute-" + i, Integer.class, () -> index * multiplier);
             futures.add(future);
         }
 
@@ -54,8 +56,8 @@ public class ManyAsyncStepsVirtualThreadPoolExample extends DurableHandler<ManyA
         var totalSum = results.stream().mapToInt(Integer::intValue).sum();
 
         // checkpoint the executionTime so that we can have the same value when replay
-        var executionTimeMs = DurableStepOperation.step(
-                "execution-time", Long.class, () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
+        var executionTimeMs =
+                step("execution-time", Long.class, () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
         logger.info("Completed {} steps, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
 
         // Wait 2 seconds to test replay

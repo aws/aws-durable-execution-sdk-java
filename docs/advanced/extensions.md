@@ -5,8 +5,8 @@ separate Maven module without defining backend operation types, sending checkpoi
 implementation packages.
 
 Extension-author contracts are in `software.amazon.lambda.durable.extension`. Built-in operation APIs are in
-`software.amazon.lambda.durable.operation`, while operation-specific TLS metadata contexts remain in
-`software.amazon.lambda.durable`.
+`software.amazon.lambda.durable.operation`, with operation-specific TLS metadata contexts nested under their owning
+operation classes.
 
 Application code calls only the extension's API:
 
@@ -85,6 +85,10 @@ The same pattern applies to `DurableInvokeOperation.InvokeConfig`,
 `DurableWaitForConditionOperation.WaitForConditionConfig`, and
 `DurableWithRetryOperation.WithRetryConfig`.
 
+`DurableWaitForConditionOperation` also owns the `WaitForConditionResult` used by its static APIs. The existing
+`DurableContext` methods continue to use the compatibility result type under
+`software.amazon.lambda.durable.model`.
+
 Map and parallel extend `DurableConcurrencyOperation` and use its shared
 `DurableConcurrencyOperation.CompletionConfig` and `DurableConcurrencyOperation.NestingType` configuration types.
 
@@ -123,7 +127,7 @@ User functions in the static APIs do not receive SDK context objects:
 
 ```java
 var result = DurableStepOperation.step("process", Result.class, () -> {
-    var step = StepContext.getCurrentContext();
+    var step = StepContext.requireCurrentContext();
     return process(step.getAttempt());
 });
 ```
@@ -152,13 +156,18 @@ var result = DurableWithRetryOperation.withRetry("transaction", () -> {
 ```
 
 Parallel branch functions are `Supplier<T>`. Wait-for-condition functions receive only the durable state value and
-obtain attempt metadata from `StepContext.getCurrentContext()`.
+obtain attempt metadata from `StepContext.requireCurrentContext()`.
 
 ## Current context scopes
 
-`DurableContext.getCurrentContext()` and `ExtensionContext.getCurrentContext()` are available on SDK-managed handler
-and child-context threads. `StepContext.getCurrentContext()` is available inside step and wait-for-condition user
-functions.
+`DurableContext.getCurrentContext()` is available on SDK-managed handler and child-context threads, while
+`StepContext.getCurrentContext()` is available inside step and wait-for-condition user functions. Both methods return
+`null` when no SDK context is active, preserving their use as availability probes. Use
+`DurableContext.requireCurrentContext()` or `StepContext.requireCurrentContext()` when absence should be an error.
+Calling either getter from the wrong SDK context type throws.
+
+`ExtensionContext.getCurrentContext()` is available on SDK-managed handler and child-context threads and throws when
+no durable extension scope is active or when called from a step thread.
 
 `DurableMapOperation.MapItemContext`, `DurableWaitForCallbackOperation.WaitForCallbackContext`, and
 `DurableWithRetryOperation.WithRetryContext` are available only inside their corresponding user function. Nested
@@ -278,11 +287,16 @@ var result = ExtensionContext.getCurrentContext()
                         .build());
 ```
 
-The function may return only `ExtensionStepResult.succeed(value)` or
-`ExtensionStepResult.retry(state, delay)`. Retry state uses the configured `SerDes`; attempt metadata remains
-available through `StepContext.getCurrentContext()`. Thrown exceptions follow the normal STEP failure path.
-`ExtensionStepConfig` owns its retry strategy, which returns the same retry outcome used by stateful continuations.
-Extension libraries can therefore configure exception retries and delivery semantics without depending on the
+The function may return `ExtensionStepResult.succeed(value)`,
+`ExtensionStepResult.retry(state, delay)`, or
+`ExtensionStepResult.retryAfterNormalization(state, delayStrategy)`. The fixed-delay form uses the supplied delay.
+The normalization-aware form first round-trips the state through the configured `SerDes`, then evaluates the delay
+strategy against that checkpoint-normalized state. Both retry forms checkpoint the normalized state; attempt metadata
+remains available through `StepContext.requireCurrentContext()`. Thrown exceptions follow the normal STEP failure
+path.
+
+`ExtensionStepConfig` owns its exception retry strategy. It returns the fixed-delay retry outcome or a do-not-retry
+decision, allowing extension libraries to configure exception retries and delivery semantics without depending on the
 customer-facing config or retry packages:
 
 ```java
@@ -323,6 +337,10 @@ Use `ExtensionContextResult.completed(result)` when children never need to repla
 `replayChildrenAboveSize(result, replayState, thresholdBytes)` to replay only when the serialized full result reaches
 the threshold. Replay metadata is scoped to the framework callback through `ExtensionContextReplayContext`.
 
+If replay is selected with a `null` replay state, the SDK checkpoints an empty payload. During replay, an empty payload
+is exposed as a `null` replay state instead of being deserialized. This also allows extension contexts to replay
+large-result checkpoints written by earlier SDK versions.
+
 `ExtensionContextConfig` directly configures the context serializer and whether the context is virtual. It also
 controls framework user-function plugin events and can suppress child checkpoints that finish after the parent. If a
 context fails, the SDK first rethrows a deserialized original exception, then calls the configured error handler, and
@@ -344,8 +362,8 @@ var result = ExtensionContext.getCurrentContext()
         .get();
 ```
 
-Inside the function, `DurableContext.getCurrentContext()` and `ExtensionContext.getCurrentContext()` return the child
-context.
+Inside the function, `DurableContext.requireCurrentContext()` and `ExtensionContext.getCurrentContext()` return the
+child context.
 
 ## Custom durable futures
 
@@ -382,6 +400,11 @@ The built-in map, parallel, wait-for-callback, wait-for-condition, and with-retr
 the same extension primitives. Their legacy `DurableContext` methods and context-free static APIs share one
 canonical implementation while preserving their established checkpoint topology and plugin behavior.
 
+Built-in child contexts, map iterations, parallel branches, wait-for-callback contexts, and checkpointed with-retry
+contexts replay children when the serialized result is at least 256 KiB. They checkpoint an empty replay-state payload
+when no compact state is required. Map and parallel parent contexts may also always replay children when their
+completion or item-naming behavior requires reconstruction.
+
 ## Module compatibility
 
 An extension Maven module should depend only on the public SDK artifact and import public types under
@@ -391,5 +414,5 @@ or `primitive`.
 
 The extension-author SPI includes `ExtensionContext`, `ExtensionOperation`, stateful-step contracts, and configurable
 extension-context contracts under `software.amazon.lambda.durable.extension`. Static operation APIs are under
-`software.amazon.lambda.durable.operation`; typed TLS contexts and `DurableFuture.completionFuture()` remain under
-`software.amazon.lambda.durable`.
+`software.amazon.lambda.durable.operation`; operation-specific TLS contexts are nested under their owning operation
+classes, while `DurableFuture.completionFuture()` remains on the root SDK interface.

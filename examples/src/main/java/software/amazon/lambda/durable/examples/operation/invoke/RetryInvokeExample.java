@@ -2,17 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.invoke;
 
+import static software.amazon.lambda.durable.operation.DurableInvokeOperation.invoke;
+import static software.amazon.lambda.durable.operation.DurableWithRetryOperation.withRetry;
+
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.operation.DurableInvokeOperation;
-import software.amazon.lambda.durable.operation.DurableWithRetryOperation;
 import software.amazon.lambda.durable.operation.DurableWithRetryOperation.WithRetryConfig;
 import software.amazon.lambda.durable.operation.DurableWithRetryOperation.WithRetryContext;
 import software.amazon.lambda.durable.retry.RetryDecision;
 
 /**
- * Example demonstrating {@link DurableWithRetryOperation} with {@link DurableInvokeOperation}.
+ * Example demonstrating {@code withRetry} with {@code invoke}.
  *
  * <p>Retries a chained Lambda invocation up to 3 times with a fixed 2-second backoff between attempts. Each attempt
  * uses a unique operation name ({@code "call-greeting-1"}, {@code "call-greeting-2"}, etc.) so the execution history
@@ -29,12 +30,11 @@ public class RetryInvokeExample extends DurableHandler<GreetingRequest, String> 
         var targetFunctionName =
                 System.getenv().getOrDefault("FUNCTION_NAME_PREFIX", "") + "simple-step-example:$LATEST";
 
-        return DurableWithRetryOperation.withRetry(
+        return withRetry(
                 null,
                 () -> {
                     var attempt = WithRetryContext.getCurrentContext().getAttempt();
-                    return DurableInvokeOperation.invoke(
-                            "call-greeting-" + attempt, targetFunctionName, input, String.class);
+                    return invoke("call-greeting-" + attempt, targetFunctionName, input, String.class);
                 },
                 WithRetryConfig.builder()
                         .retryStrategy((error, attempt) -> attempt < MAX_ATTEMPTS

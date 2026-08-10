@@ -131,9 +131,9 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
                 if (existing.contextDetails() != null
                         && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
                     replayChildren.set(true);
-                    if (extensionFunction != null) {
-                        replayState.set(
-                                deserializeResult(existing.contextDetails().result()));
+                    var result = existing.contextDetails().result();
+                    if (extensionFunction != null && result != null && !result.isEmpty()) {
+                        replayState.set(deserializeResult(result));
                     }
                     executeChildContext();
                 } else {
@@ -219,17 +219,22 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
 
         var resultBytes = serializedSize(serializedResult.serialized());
         if (result.shouldReplayChildren(resultBytes)) {
-            var serializedReplayState = serializeAndDeserializeResult(result.replayState());
             cachedOperationResult.set(DeserializedOperationResult.succeeded(serializedResult.deserialized()));
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
-                    .payload(serializedReplayState.serialized())
+                    .payload(serializeReplayState(result.replayState()))
                     .contextOptions(
                             ContextOptions.builder().replayChildren(true).build()));
         } else {
             sendOperationUpdate(
                     OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized()));
         }
+    }
+
+    private String serializeReplayState(T replayState) {
+        return replayState == null
+                ? ""
+                : serializeAndDeserializeResult(replayState).serialized();
     }
 
     private boolean shouldSkipCheckpoint() {

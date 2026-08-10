@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -16,7 +18,6 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -77,7 +78,7 @@ public class CustomConfigExample extends DurableHandler<String, String> {
     @Override
     public String handleRequest(String input) {
         // Step 1: Create a custom object with camelCase fields to demonstrate snake_case serialization
-        var customObject = DurableStepOperation.step(
+        var customObject = step(
                 "create-custom-object",
                 CustomData.class,
                 () -> new CustomData("user123", "John Doe", 25, "john.doe@example.com"));

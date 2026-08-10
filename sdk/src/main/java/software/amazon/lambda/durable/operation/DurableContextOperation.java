@@ -80,7 +80,7 @@ public final class DurableContextOperation {
                         RUN_IN_CHILD_CONTEXT.getValue(),
                         resultType,
                         () -> ExtensionContextResult.replayChildrenAboveSize(
-                                function.apply(DurableContext.getCurrentContext()), null, LARGE_RESULT_THRESHOLD),
+                                function.apply(DurableContext.requireCurrentContext()), null, LARGE_RESULT_THRESHOLD),
                         ExtensionContextConfig.builder()
                                 .serDes(config.serDes())
                                 .isVirtual(config.isVirtual())

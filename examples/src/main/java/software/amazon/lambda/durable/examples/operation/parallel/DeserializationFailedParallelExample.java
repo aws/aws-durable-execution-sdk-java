@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
 import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
@@ -9,15 +12,13 @@ import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.operation.DurableParallelOperation;
 import software.amazon.lambda.durable.operation.DurableParallelOperation.ParallelConfig;
-import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 /**
  * Example demonstrating parallel branch execution with the Durable Execution SDK.
  *
- * <p>This handler processes a list of items concurrently using {@code DurableParallelOperation.parallel()}:
+ * <p>This handler processes a list of items concurrently using {@code parallel()}:
  *
  * <ol>
  *   <li>Each item is processed in its own branch (child context)
@@ -41,14 +42,14 @@ public class DeserializationFailedParallelExample
 
         var config = ParallelConfig.builder().build();
 
-        var parallel = DurableParallelOperation.parallel("process-items", config);
+        var parallel = parallel("process-items", config);
 
         try (parallel) {
             var future = parallel.branch(
                     "process",
                     String.class,
                     branchCtx -> {
-                        return DurableStepOperation.step("transform", String.class, () -> {
+                        return step("transform", String.class, () -> {
                             throw new RuntimeException("Intentional failure for transform");
                         });
                     },
