@@ -51,10 +51,7 @@ public class DeserializationFailedParallelExample
                             throw new RuntimeException("Intentional failure for transform");
                         });
                     },
-                    ParallelBranchConfig.builder()
-                            .serDes(new FailedSerDes())
-                            .build()
-                            .toOperationConfig());
+                    ParallelBranchConfig.builder().serDes(new FailedSerDes()).build());
 
             parallel.get();
             try {

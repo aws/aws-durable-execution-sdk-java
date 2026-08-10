@@ -18,13 +18,13 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.model.ParallelResult;
-import software.amazon.lambda.durable.operation.DurableParallelOperation.ParallelBranchConfig;
 import software.amazon.lambda.durable.operation.DurableParallelOperation.ParallelConfig;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ParameterValidator;
@@ -60,7 +60,7 @@ final class ParallelOperationFuture implements ParallelDurableFuture {
 
         synchronized (lock) {
             ensureRegistrationOpen();
-            var definition = new BranchDefinition<>(name, resultType, function, config);
+            var definition = new BranchDefinition<>(name, resultType, function, config.toOperationConfig());
             branches.add(definition);
             if (coordinator != null) {
                 registerBranch(definition, branches.size() - 1);
@@ -202,7 +202,7 @@ final class ParallelOperationFuture implements ParallelDurableFuture {
                 statuses);
     }
 
-    private ExtensionContextConfig branchConfig(ParallelBranchConfig branchConfig) {
+    private ExtensionContextConfig branchConfig(DurableParallelOperation.ParallelBranchConfig branchConfig) {
         return ExtensionContextConfig.builder()
                 .childContextConfig(RunInChildContextConfig.builder()
                         .serDes(branchConfig.serDes() == null ? defaultSerDes : branchConfig.serDes())
@@ -235,14 +235,14 @@ final class ParallelOperationFuture implements ParallelDurableFuture {
         private final String name;
         private final TypeToken<T> resultType;
         private final Function<DurableContext, T> function;
-        private final ParallelBranchConfig config;
+        private final DurableParallelOperation.ParallelBranchConfig config;
         private final DeferredDurableFuture<T> future = new DeferredDurableFuture<>();
 
         private BranchDefinition(
                 String name,
                 TypeToken<T> resultType,
                 Function<DurableContext, T> function,
-                ParallelBranchConfig config) {
+                DurableParallelOperation.ParallelBranchConfig config) {
             this.name = name;
             this.resultType = resultType;
             this.function = function;

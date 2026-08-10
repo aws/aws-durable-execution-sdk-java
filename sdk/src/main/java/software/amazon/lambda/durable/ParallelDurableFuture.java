@@ -4,9 +4,9 @@ package software.amazon.lambda.durable;
 
 import java.util.function.Function;
 import java.util.function.Supplier;
+import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.model.SafeCloseable;
-import software.amazon.lambda.durable.operation.DurableParallelOperation.ParallelBranchConfig;
 
 /** User-facing context for managing parallel branch execution within a durable function. */
 public interface ParallelDurableFuture extends SafeCloseable, DurableFuture<ParallelResult> {

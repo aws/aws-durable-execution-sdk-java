@@ -40,11 +40,8 @@ class DurableOperationConfigTest {
         assertOperationConfig(DurableContextOperation.class, "RunInChildContextConfig", RunInChildContextConfig.class);
         assertOperationConfig(DurableMapOperation.class, "MapConfig", MapConfig.class);
         assertOperationConfig(DurableParallelOperation.class, "ParallelConfig", ParallelConfig.class);
-        assertOperationConfig(
-                ParallelDurableFuture.class,
-                DurableParallelOperation.class,
-                "ParallelBranchConfig",
-                ParallelBranchConfig.class);
+        assertOperationConfig(DurableParallelOperation.class, "ParallelBranchConfig", ParallelBranchConfig.class);
+        assertParallelFutureUsesCompatibilityBranchConfig();
         assertOperationConfig(
                 DurableWaitForCallbackOperation.class, "WaitForCallbackConfig", WaitForCallbackConfig.class);
         assertOperationConfig(
@@ -157,6 +154,18 @@ class DurableOperationConfigTest {
     private static void assertOperationConfig(Class<?> operationClass, String nestedName, Class<?> legacyClass)
             throws Exception {
         assertOperationConfig(operationClass, operationClass, nestedName, legacyClass);
+    }
+
+    private static void assertParallelFutureUsesCompatibilityBranchConfig() {
+        var nestedConfig = DurableParallelOperation.ParallelBranchConfig.class;
+        assertTrue(Arrays.stream(ParallelDurableFuture.class.getMethods())
+                .filter(method -> method.getName().equals("branch"))
+                .flatMap(method -> Arrays.stream(method.getParameterTypes()))
+                .anyMatch(ParallelBranchConfig.class::equals));
+        assertFalse(Arrays.stream(ParallelDurableFuture.class.getMethods())
+                .filter(method -> method.getName().equals("branch"))
+                .flatMap(method -> Arrays.stream(method.getParameterTypes()))
+                .anyMatch(nestedConfig::equals));
     }
 
     private static void assertOperationConfig(
