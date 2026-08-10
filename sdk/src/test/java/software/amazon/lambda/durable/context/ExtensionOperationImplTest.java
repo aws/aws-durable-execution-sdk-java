@@ -52,6 +52,23 @@ class ExtensionOperationImplTest {
     }
 
     @Test
+    void customReservationUsesExplicitLocalOperationId() {
+        var context = mock(DurableContextImpl.class);
+        var duration = Duration.ofSeconds(1);
+        var expectedFuture = mockFuture();
+        when(context.reserveOperationId("node-a")).thenReturn("custom-node-a");
+        doCallRealMethod().when(context).reserve("custom", "node-a");
+        when(context.waitAsyncWithId("custom-node-a", "custom", duration)).thenReturn(expectedFuture);
+
+        var operation = context.reserve("custom", "node-a");
+        var actualFuture = operation.waitAsync(duration);
+
+        verify(context).reserveOperationId("node-a");
+        verify(context).waitAsyncWithId("custom-node-a", "custom", duration);
+        assertEquals(expectedFuture, actualFuture);
+    }
+
+    @Test
     void reservedStepAdaptsSupplierToStepFunction() {
         var context = mock(DurableContextImpl.class);
         var future = mockStringFuture();

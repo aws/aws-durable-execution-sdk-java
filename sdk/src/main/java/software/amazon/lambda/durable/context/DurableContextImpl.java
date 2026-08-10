@@ -499,14 +499,28 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         return operationIdGenerator.nextOperationId();
     }
 
+    private String nextOperationId(String localOperationId) {
+        return operationIdGenerator.nextOperationId(localOperationId);
+    }
+
     String reserveOperationId() {
         return nextOperationId();
+    }
+
+    String reserveOperationId(String localOperationId) {
+        return nextOperationId(localOperationId);
     }
 
     @Override
     public ExtensionOperation reserve(String name) {
         ParameterValidator.validateOperationName(name);
         return new ExtensionOperationImpl(this, reserveOperationId(), name);
+    }
+
+    @Override
+    public ExtensionOperation reserve(String name, String localOperationId) {
+        ParameterValidator.validateOperationName(name);
+        return new ExtensionOperationImpl(this, reserveOperationId(localOperationId), name);
     }
 
     /** Returns whether this context is currently in replay mode. */

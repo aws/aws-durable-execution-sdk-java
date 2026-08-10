@@ -13,6 +13,7 @@ import static software.amazon.lambda.durable.extension.PairOperations.pairAsync;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,31 @@ class ExtensionOperationIntegrationTest {
         assertEquals(hash("1"), result.getOperation("pair-left").getId());
         assertEquals(hash("2"), result.getOperation("pair-right").getId());
         assertEquals(hash("3"), result.getOperation("pair-pause").getId());
+    }
+
+    @Test
+    void customReservationsRemainStableWhenRegistrationOrderChanges() {
+        var invocations = new AtomicInteger();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var extension = ExtensionContext.getCurrentContext();
+            var replay = invocations.incrementAndGet() > 1;
+            var first = replay
+                    ? extension.reserve("right", "right")
+                    : extension.reserve("left", "left");
+            var second = replay
+                    ? extension.reserve("left", "left")
+                    : extension.reserve("right", "right");
+            first.step(String.class, () -> first == second ? "invalid" : "first");
+            second.step(String.class, () -> "second");
+            context.wait("replay", Duration.ofSeconds(1));
+            return "done";
+        });
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(hash("left"), result.getOperation("left").getId());
+        assertEquals(hash("right"), result.getOperation("right").getId());
     }
 
     @Test
@@ -65,7 +91,7 @@ class ExtensionOperationIntegrationTest {
             return outer.reserve("child").runInChildContext(String.class, () -> {
                 var child = ExtensionContext.getCurrentContext();
                 assertNotSame(outer, child);
-                return child.reserve("value").step(String.class, () -> "nested");
+                return child.reserve("value", "node").step(String.class, () -> "nested");
             });
         });
 
@@ -74,6 +100,7 @@ class ExtensionOperationIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("nested", result.getResult(String.class));
         assertEquals(hash("1"), result.getOperation("child").getId());
+        assertEquals(hash(hash("1") + "-node"), result.getOperation("value").getId());
     }
 
     private static String hash(String value) {

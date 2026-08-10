@@ -6,12 +6,16 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Generates operation IDs for the durable operations. */
 public class OperationIdGenerator {
     private final AtomicInteger operationCounter;
     private final String operationIdPrefix;
+    private final Set<String> allocatedLocalIds = ConcurrentHashMap.newKeySet();
 
     public OperationIdGenerator(String contextId) {
         this.operationCounter = new AtomicInteger(0);
@@ -42,7 +46,35 @@ public class OperationIdGenerator {
      * {@code hash("<parentHash>-2")} inside a child context.
      */
     public String nextOperationId() {
-        var counter = String.valueOf(operationCounter.incrementAndGet());
-        return hashOperationId(operationIdPrefix + counter);
+        String localOperationId;
+        do {
+            localOperationId = String.valueOf(operationCounter.incrementAndGet());
+        } while (!allocatedLocalIds.add(localOperationId));
+        return hashOperationId(operationIdPrefix + localOperationId);
+    }
+
+    /**
+     * Returns an operation ID derived from a caller-provided local ID.
+     *
+     * <p>The local ID replaces the generated sequence number for this allocation. It is namespaced by the current
+     * context prefix and advances the generated sequence once.
+     *
+     * @param localOperationId the caller-provided ID within the current context
+     * @return the hashed, context-scoped operation ID
+     */
+    public String nextOperationId(String localOperationId) {
+        validateLocalOperationId(localOperationId);
+        if (!allocatedLocalIds.add(localOperationId)) {
+            throw new IllegalArgumentException("Local operation ID is already in use: " + localOperationId);
+        }
+        operationCounter.incrementAndGet();
+        return hashOperationId(operationIdPrefix + localOperationId);
+    }
+
+    private void validateLocalOperationId(String localOperationId) {
+        Objects.requireNonNull(localOperationId, "localOperationId cannot be null");
+        if (localOperationId.isBlank()) {
+            throw new IllegalArgumentException("localOperationId cannot be blank");
+        }
     }
 }

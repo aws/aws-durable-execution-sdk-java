@@ -39,4 +39,16 @@ public interface ExtensionContext extends BaseContext {
      * @return an opaque one-shot reservation
      */
     ExtensionOperation reserve(String name);
+
+    /**
+     * Reserves a primitive operation identity using a caller-provided local ID.
+     *
+     * <p>The SDK namespaces and hashes the local ID with the current context. The local ID replaces one generated
+     * sequence value and must be unique within this context.
+     *
+     * @param name the primitive operation name
+     * @param localOperationId the stable local ID within the current context
+     * @return an opaque one-shot reservation
+     */
+    ExtensionOperation reserve(String name, String localOperationId);
 }
