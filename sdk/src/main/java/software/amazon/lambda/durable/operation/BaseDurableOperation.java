@@ -97,6 +97,15 @@ public abstract class BaseDurableOperation {
         return completionFuture;
     }
 
+    /**
+     * Returns a non-mutating completion signal for public {@code DurableFuture} combinators.
+     *
+     * @return a future that completes with this operation
+     */
+    public CompletableFuture<Void> completionFuture() {
+        return completionFuture.thenApply(ignored -> null);
+    }
+
     /** Gets the operation sub-type (e.g. RUN_IN_CHILD_CONTEXT, WAIT_FOR_CALLBACK). */
     public OperationSubType getSubType() {
         return operationIdentifier.subType();

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.operation.SerializableDurableOperation;
 
@@ -69,10 +70,44 @@ class DurableFutureTest {
         assertThrows(RuntimeException.class, () -> DurableFuture.allOf(op1, op2));
     }
 
+    @Test
+    void anyOfSupportsPublicDurableFutureImplementations() {
+        var pending = new TestFuture<>("pending");
+        var completed = new TestFuture<>("completed");
+        completed.complete();
+
+        var result = DurableFuture.anyOf(pending, completed);
+
+        assertEquals("completed", result);
+    }
+
     @SuppressWarnings("unchecked")
     private <T> SerializableDurableOperation<T> mockOperation(T result) {
         SerializableDurableOperation<T> op = mock(SerializableDurableOperation.class);
         when(op.get()).thenReturn(result);
         return op;
+    }
+
+    private static final class TestFuture<T> implements DurableFuture<T> {
+        private final T result;
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
+
+        private TestFuture(T result) {
+            this.result = result;
+        }
+
+        @Override
+        public T get() {
+            return result;
+        }
+
+        @Override
+        public CompletableFuture<Void> completionFuture() {
+            return completion;
+        }
+
+        private void complete() {
+            completion.complete(null);
+        }
     }
 }

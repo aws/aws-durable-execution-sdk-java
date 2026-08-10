@@ -5,7 +5,6 @@ package software.amazon.lambda.durable;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
  * A future representing the result of an asynchronous durable operation.
@@ -25,6 +24,18 @@ public interface DurableFuture<T> {
      * @return the operation result
      */
     T get();
+
+    /**
+     * Returns a completion signal for this durable future.
+     *
+     * <p>The returned future completes when the durable operation completes. Completing or cancelling the returned
+     * future does not affect the durable operation.
+     *
+     * @return a future that signals durable operation completion
+     */
+    default CompletableFuture<Void> completionFuture() {
+        throw new UnsupportedOperationException("This DurableFuture does not expose a completion signal");
+    }
 
     /**
      * Waits for all provided futures to complete and returns their results in order.
@@ -63,7 +74,7 @@ public interface DurableFuture<T> {
      */
     static Object anyOf(DurableFuture<?>... futures) {
         return CompletableFuture.anyOf(Arrays.stream(futures)
-                        .map(f -> ((BaseDurableOperation) f).getCompletionFuture())
+                        .map(f -> f.completionFuture().thenApply(ignored -> f))
                         .toArray(CompletableFuture[]::new))
                 .thenApply(o -> (DurableFuture) o)
                 .join()
