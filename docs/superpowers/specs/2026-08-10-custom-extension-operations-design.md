@@ -11,8 +11,9 @@ Application code calls ordinary static extension methods:
 ```java
 import static software.amazon.lambda.durable.dag.DagOperations.dag;
 
-var result = dag("etl", definition -> {
-    // Define DAG nodes.
+var result = dag("etl", () -> {
+    var dag = DagContext.getCurrentContext();
+    // Define DAG nodes through the current DAG context.
 });
 ```
 
@@ -32,8 +33,9 @@ Core operations correspond to SDK-owned primitive behavior:
 - `runInChildContext`
 
 `DurableCoreOperations` exposes context-free static facades for these operations. The facades obtain the active
-`DurableContext` from SDK-managed current-context storage and delegate to the existing instance methods. New static
-step APIs use `StepContext` functions and do not reproduce the deprecated `Supplier` step overloads.
+`DurableContext` from SDK-managed current-context storage and delegate to the existing instance methods. User
+functions in the new APIs do not receive SDK context objects. For example, static step methods accept `Supplier<T>`;
+step code obtains `StepContext` through `StepContext.getCurrentContext()`.
 
 ### Extension operations
 
@@ -103,7 +105,7 @@ returns an opaque, one-shot `ExtensionOperation`. The ID remains hidden from ext
 public interface ExtensionOperation {
     <T> DurableFuture<T> stepAsync(
             TypeToken<T> resultType,
-            Function<StepContext, T> function,
+            Supplier<T> function,
             StepConfig config);
 
     DurableFuture<Void> waitAsync(Duration duration);
@@ -120,7 +122,7 @@ public interface ExtensionOperation {
 
     <T> DurableFuture<T> runInChildContextAsync(
             TypeToken<T> resultType,
-            Function<ExtensionContext, T> function,
+            Supplier<T> function,
             RunInChildContextConfig config);
 
     // Class<T>, synchronous, and default-configuration overloads are default methods.
@@ -139,10 +141,12 @@ not part of the extension API.
 A DAG module uses only public SDK contracts:
 
 ```java
-public static DagResult dag(String name, Consumer<DagContext> register) {
+public static DagResult dag(String name, Runnable register) {
     var extension = ExtensionContext.getCurrentContext();
     var dag = new DagContext(name, extension);
-    register.accept(dag);
+    try (var ignored = DagContext.attach(dag)) {
+        register.run();
+    }
     return dag.execute();
 }
 ```
@@ -158,10 +162,10 @@ var load = extension.reserve("load");
 The scheduler can later execute those reservations in any dependency-valid order:
 
 ```java
-var transformFuture = transform.stepAsync(String.class, step -> transformData());
+var transformFuture = transform.stepAsync(String.class, () -> transformData());
 var extractFuture = extract.runInChildContextAsync(
         ExtractResult.class,
-        child -> executeExtraction());
+        () -> executeExtraction());
 ```
 
 Registration order determines IDs; launch order does not. This supports graph scheduling without name-derived IDs or
@@ -178,6 +182,9 @@ The SDK binds and restores current context around:
 - child-context functions
 - step functions
 - wait-for-condition check functions
+- map item functions
+- wait-for-callback submitters
+- with-retry bodies
 
 `DurableContext.getCurrentContext()` continues to use its existing signature. Its failure behavior is clarified:
 
@@ -192,11 +199,110 @@ clear `IllegalStateException` from step threads and unsupported threads.
 Current context is not propagated to application-created threads. Extensions must create durable primitives on
 SDK-managed durable context threads.
 
+## User Function Signatures
+
+New static APIs and extension reservations never pass SDK-created context or metadata values as user-function
+arguments. User functions receive only values supplied by the application or values from the application's durable
+data flow.
+
+Examples:
+
+```java
+var result = DurableCoreOperations.step(
+        "process",
+        Result.class,
+        () -> {
+            var step = StepContext.getCurrentContext();
+            return process(step.getAttempt());
+        });
+```
+
+```java
+var result = DurableMapOperations.map(
+        "process",
+        items,
+        Result.class,
+        item -> {
+            var mapItem = MapItemContext.getCurrentContext();
+            return process(item, mapItem.getIndex());
+        });
+```
+
+```java
+var result = DurableWaitForCallbackOperations.waitForCallback(
+        "approval",
+        Approval.class,
+        () -> {
+            var callback = WaitForCallbackContext.getCurrentContext();
+            submitApproval(callback.getCallbackId());
+        });
+```
+
+```java
+var result = DurableWithRetryOperations.withRetry(
+        "transaction",
+        () -> {
+            var retry = WithRetryContext.getCurrentContext();
+            return executeAttempt(retry.getAttempt());
+        });
+```
+
+The new callback shapes are:
+
+- step and child-context functions: `Supplier<T>`
+- map item functions: `Function<I, O>`; `MapItemContext` exposes the item index
+- parallel branch functions: `Supplier<T>`
+- wait-for-callback submitters: `Runnable`; `WaitForCallbackContext` exposes the callback ID
+- wait-for-condition checks: receive only the durable state value; attempt metadata is available from
+  `StepContext.getCurrentContext()`
+- with-retry bodies: `Supplier<T>`; `WithRetryContext` exposes the attempt number
+- extension child-context reservations: `Supplier<T>`; `ExtensionContext` is obtained through TLS
+
+`MapItemContext`, `WaitForCallbackContext`, `WithRetryContext`, and any equivalent operation-specific context provide
+`getCurrentContext()` static accessors. Each accessor fails clearly outside its matching user-function scope. These
+operation-specific contexts are bound in addition to the base durable or step context so static core operations
+continue to resolve the active `DurableContext` or `StepContext`.
+
+The initial operation-specific metadata contracts are:
+
+```java
+public interface MapItemContext {
+    static MapItemContext getCurrentContext() {
+        return OperationContextStorage.get(MapItemContext.class);
+    }
+
+    int getIndex();
+}
+
+public interface WaitForCallbackContext {
+    static WaitForCallbackContext getCurrentContext() {
+        return OperationContextStorage.get(WaitForCallbackContext.class);
+    }
+
+    String getCallbackId();
+}
+
+public interface WithRetryContext {
+    static WithRetryContext getCurrentContext() {
+        return OperationContextStorage.get(WithRetryContext.class);
+    }
+
+    int getAttempt();
+}
+```
+
+Each context uses a scoped SDK-managed `ThreadLocal`. Entering a nested operation stores the previous value, and
+closing the scope restores it. The thread-local value is removed when no previous value exists.
+`OperationContextStorage` is a package-private SDK implementation detail.
+
+Existing context-accepting functions on `DurableContext`, including `Function<StepContext, T>`,
+`Function<DurableContext, T>`, and existing map/retry callback types, remain unchanged for backward compatibility.
+
 ## Static Operation Facades
 
 `DurableCoreOperations` contains only core operations. Each method obtains the current durable context internally.
-Its child-context static methods use callbacks that do not require callers to receive a `DurableContext`; code inside
-the callback can use static operations or `ExtensionContext.getCurrentContext()`.
+Its step and child-context static methods accept context-free suppliers. Code inside those callbacks uses typed
+current-context accessors when it needs SDK metadata.
 
 Each built-in extension facade contains only one operation family:
 
@@ -251,6 +357,9 @@ Public compatibility guarantees apply to:
 - `DurableWithRetryOperations`
 - `ExtensionContext`
 - `ExtensionOperation`
+- `MapItemContext`
+- `WaitForCallbackContext`
+- `WithRetryContext`
 - `DurableFuture.completionFuture()`
 
 Compatible SDK releases may add new default overloads or new primitive capabilities. Existing reservation ordering,
@@ -274,6 +383,7 @@ from an unsupported thread fails before creating a primitive.
 Unit tests cover:
 
 - current durable, step, and extension context lookup
+- operation-specific context lookup and scope validation
 - restoration of nested current-context bindings
 - deterministic reservation allocation
 - out-of-order reservation execution
@@ -291,6 +401,7 @@ Integration tests in `sdk-integration-tests` cover:
 - nested extensions in the same scope
 - extensions that explicitly create child contexts
 - static core and built-in extension facades
+- context-free user functions with TLS-based metadata access
 - primitive plugin lifecycle events
 
 Formatting runs through `mvn spotless:apply`. Verification starts with focused SDK and integration tests, then expands
