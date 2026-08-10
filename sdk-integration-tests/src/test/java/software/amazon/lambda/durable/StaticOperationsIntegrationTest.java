@@ -72,11 +72,13 @@ class StaticOperationsIntegrationTest {
             var branchFutures = new ArrayList<DurableFuture<String>>();
             try (var parallel = DurableParallelOperation.parallel("parallel")) {
                 branchFutures.add(parallel.branch(
-                        "left", String.class, () -> DurableStepOperation.step("branch-step", String.class, () -> "L")));
+                        "left",
+                        String.class,
+                        ignored -> DurableStepOperation.step("branch-step", String.class, () -> "L")));
                 branchFutures.add(parallel.branch(
                         "right",
                         String.class,
-                        () -> DurableStepOperation.step("branch-step", String.class, () -> "R")));
+                        ignored -> DurableStepOperation.step("branch-step", String.class, () -> "R")));
             }
             return mapResult.results() + ":" + DurableFuture.allOf(branchFutures);
         });
@@ -136,9 +138,10 @@ class StaticOperationsIntegrationTest {
         });
         var staticRunner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             try (var parallel = DurableParallelOperation.parallel("parallel", parallelConfig.toOperationConfig())) {
-                parallel.branch("left", String.class, () -> DurableStepOperation.step("work", String.class, () -> "L"));
                 parallel.branch(
-                        "right", String.class, () -> DurableStepOperation.step("work", String.class, () -> "R"));
+                        "left", String.class, ignored -> DurableStepOperation.step("work", String.class, () -> "L"));
+                parallel.branch(
+                        "right", String.class, ignored -> DurableStepOperation.step("work", String.class, () -> "R"));
                 return parallel.get().statuses().toString();
             }
         });
