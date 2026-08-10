@@ -116,10 +116,12 @@ software.amazon.lambda.durable.operation
 Each `Durable*Operation` class owns its context-free overloads and its canonical `ExtensionContext` implementation.
 There are no separate built-in `*Extension` classes.
 
-Keep the following customer-facing types in the root `software.amazon.lambda.durable` package:
+Keep established SDK types such as `DurableFuture`, `StepContext`, and `TypeToken` in the root
+`software.amazon.lambda.durable` package. Keep operation-specific TLS metadata nested under its owning operation:
 
-- operation-specific TLS metadata such as `MapItemContext`, `WaitForCallbackContext`, and `WithRetryContext`
-- established SDK types such as `DurableFuture`, `StepContext`, and `TypeToken`
+- `DurableMapOperation.MapItemContext`
+- `DurableWaitForCallbackOperation.WaitForCallbackContext`
+- `DurableWithRetryOperation.WithRetryContext`
 
 Backend primitive engines remain internal under `software.amazon.lambda.durable.primitive`.
 
@@ -133,9 +135,9 @@ retrieved from scoped thread-local contexts:
 - `DurableContext`
 - `ExtensionContext`
 - `StepContext`
-- `MapItemContext`
-- `WaitForCallbackContext`
-- `WithRetryContext`
+- `DurableMapOperation.MapItemContext`
+- `DurableWaitForCallbackOperation.WaitForCallbackContext`
+- `DurableWithRetryOperation.WithRetryContext`
 - extension replay contexts
 
 Nested scopes restore the preceding value. Current context is available only on SDK-managed threads and is not

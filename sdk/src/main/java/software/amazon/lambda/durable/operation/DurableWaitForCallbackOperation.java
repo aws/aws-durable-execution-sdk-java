@@ -13,7 +13,6 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.WaitForCallbackContext;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackSubmitterException;
@@ -25,6 +24,7 @@ import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextFailure;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /** Context-free static facade and canonical implementation of durable wait-for-callback operations. */
@@ -164,6 +164,46 @@ public final class DurableWaitForCallbackOperation {
                 .filter(Objects::nonNull)
                 .findFirst()
                 .orElse(null);
+    }
+
+    /** Metadata for the callback submitter active on the current SDK-managed thread. */
+    public static final class WaitForCallbackContext {
+        private static final ThreadLocal<WaitForCallbackContext> CURRENT = new ThreadLocal<>();
+
+        private final String callbackId;
+
+        private WaitForCallbackContext(String callbackId) {
+            this.callbackId = Objects.requireNonNull(callbackId, "callbackId cannot be null");
+        }
+
+        /** Returns the callback context attached to the current SDK-managed thread. */
+        public static WaitForCallbackContext getCurrentContext() {
+            var context = CURRENT.get();
+            if (context == null) {
+                throw new IllegalStateException("WaitForCallbackContext is not active on the current thread");
+            }
+            return context;
+        }
+
+        /** Returns the callback ID to send to the external system. */
+        public String getCallbackId() {
+            return callbackId;
+        }
+
+        /** Attaches callback metadata for the duration of the returned scope. */
+        public static SafeCloseable attach(String callbackId) {
+            var previous = CURRENT.get();
+            CURRENT.set(new WaitForCallbackContext(callbackId));
+            return () -> restore(previous);
+        }
+
+        private static void restore(WaitForCallbackContext previous) {
+            if (previous == null) {
+                CURRENT.remove();
+            } else {
+                CURRENT.set(previous);
+            }
+        }
     }
 
     /** Configuration for durable wait-for-callback operations. */

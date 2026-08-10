@@ -7,8 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
+import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackContext;
+import software.amazon.lambda.durable.operation.DurableWithRetryOperation.WithRetryContext;
 
-class OperationContextStorageTest {
+class OperationContextTest {
     @Test
     void mapItemContextRestoresNestedScope() {
         assertThrows(IllegalStateException.class, MapItemContext::getCurrentContext);

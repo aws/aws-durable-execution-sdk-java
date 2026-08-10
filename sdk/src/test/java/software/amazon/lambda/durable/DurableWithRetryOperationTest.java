@@ -20,6 +20,7 @@ import software.amazon.lambda.durable.extension.ExtensionContextFunction;
 import software.amazon.lambda.durable.extension.ExtensionOperation;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.DurableWithRetryOperation;
+import software.amazon.lambda.durable.operation.DurableWithRetryOperation.WithRetryContext;
 
 class DurableWithRetryOperationTest {
     @AfterEach

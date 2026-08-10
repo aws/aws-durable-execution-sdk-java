@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation;
+import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackContext;
 
 class DurableWaitForCallbackOperationTest {
     @AfterEach

@@ -127,7 +127,7 @@ var result = DurableStepOperation.step("process", Result.class, () -> {
 
 ```java
 var result = DurableMapOperation.map("process", items, Result.class, item -> {
-    var index = MapItemContext.getCurrentContext().getIndex();
+    var index = DurableMapOperation.MapItemContext.getCurrentContext().getIndex();
     return process(item, index);
 });
 ```
@@ -136,12 +136,14 @@ var result = DurableMapOperation.map("process", items, Result.class, item -> {
 var result = DurableWaitForCallbackOperation.waitForCallback(
         "approval",
         Approval.class,
-        () -> submit(WaitForCallbackContext.getCurrentContext().getCallbackId()));
+        () -> submit(DurableWaitForCallbackOperation.WaitForCallbackContext
+                .getCurrentContext()
+                .getCallbackId()));
 ```
 
 ```java
 var result = DurableWithRetryOperation.withRetry("transaction", () -> {
-    var attempt = WithRetryContext.getCurrentContext().getAttempt();
+    var attempt = DurableWithRetryOperation.WithRetryContext.getCurrentContext().getAttempt();
     return executeAttempt(attempt);
 });
 ```
@@ -155,15 +157,16 @@ obtain attempt metadata from `StepContext.getCurrentContext()`.
 and child-context threads. `StepContext.getCurrentContext()` is available inside step and wait-for-condition user
 functions.
 
-`MapItemContext`, `WaitForCallbackContext`, and `WithRetryContext` are available only inside their corresponding user
-function. Nested scopes restore the previous context when they close.
+`DurableMapOperation.MapItemContext`, `DurableWaitForCallbackOperation.WaitForCallbackContext`, and
+`DurableWithRetryOperation.WithRetryContext` are available only inside their corresponding user function. Nested
+scopes restore the previous context when they close.
 
 Operation-specific TLS is not automatically propagated into a nested primitive's separate user-function thread. Read
 the metadata in its owning function and capture any application value needed by the nested operation:
 
 ```java
 var result = DurableMapOperation.map("process", items, Result.class, item -> {
-    var index = MapItemContext.getCurrentContext().getIndex();
+    var index = DurableMapOperation.MapItemContext.getCurrentContext().getIndex();
     return DurableStepOperation.step("process-item", Result.class, () -> process(item, index));
 });
 ```

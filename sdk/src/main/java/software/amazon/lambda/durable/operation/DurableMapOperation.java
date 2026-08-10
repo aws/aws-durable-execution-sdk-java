@@ -17,7 +17,6 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.MapItemContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
@@ -29,6 +28,7 @@ import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.model.MapResult;
+import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 import software.amazon.lambda.durable.util.ParameterValidator;
@@ -279,6 +279,46 @@ public final class DurableMapOperation {
 
     private static <O> TypeToken<MapResult<O>> mapResultType() {
         return new TypeToken<>() {};
+    }
+
+    /** Metadata for the map item function active on the current SDK-managed thread. */
+    public static final class MapItemContext {
+        private static final ThreadLocal<MapItemContext> CURRENT = new ThreadLocal<>();
+
+        private final int index;
+
+        private MapItemContext(int index) {
+            this.index = index;
+        }
+
+        /** Returns the map item context attached to the current SDK-managed thread. */
+        public static MapItemContext getCurrentContext() {
+            var context = CURRENT.get();
+            if (context == null) {
+                throw new IllegalStateException("MapItemContext is not active on the current thread");
+            }
+            return context;
+        }
+
+        /** Returns the zero-based index of the current map item. */
+        public int getIndex() {
+            return index;
+        }
+
+        /** Attaches map item metadata for the duration of the returned scope. */
+        public static SafeCloseable attach(int index) {
+            var previous = CURRENT.get();
+            CURRENT.set(new MapItemContext(index));
+            return () -> restore(previous);
+        }
+
+        private static void restore(MapItemContext previous) {
+            if (previous == null) {
+                CURRENT.remove();
+            } else {
+                CURRENT.set(previous);
+            }
+        }
     }
 
     /** Configuration for durable MAP operations. */

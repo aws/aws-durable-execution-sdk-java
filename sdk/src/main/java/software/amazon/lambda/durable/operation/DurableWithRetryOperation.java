@@ -9,7 +9,6 @@ import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.WithRetryContext;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
@@ -17,6 +16,7 @@ import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
@@ -105,6 +105,46 @@ public final class DurableWithRetryOperation {
 
     private static String backoffName(String name, int attempt) {
         return name != null ? name + BACKOFF_SUFFIX + attempt : ANONYMOUS_BACKOFF_PREFIX + attempt;
+    }
+
+    /** Metadata for the retry body active on the current SDK-managed thread. */
+    public static final class WithRetryContext {
+        private static final ThreadLocal<WithRetryContext> CURRENT = new ThreadLocal<>();
+
+        private final int attempt;
+
+        private WithRetryContext(int attempt) {
+            this.attempt = attempt;
+        }
+
+        /** Returns the retry context attached to the current SDK-managed thread. */
+        public static WithRetryContext getCurrentContext() {
+            var context = CURRENT.get();
+            if (context == null) {
+                throw new IllegalStateException("WithRetryContext is not active on the current thread");
+            }
+            return context;
+        }
+
+        /** Returns the current one-based retry attempt. */
+        public int getAttempt() {
+            return attempt;
+        }
+
+        /** Attaches retry metadata for the duration of the returned scope. */
+        public static SafeCloseable attach(int attempt) {
+            var previous = CURRENT.get();
+            CURRENT.set(new WithRetryContext(attempt));
+            return () -> restore(previous);
+        }
+
+        private static void restore(WithRetryContext previous) {
+            if (previous == null) {
+                CURRENT.remove();
+            } else {
+                CURRENT.set(previous);
+            }
+        }
     }
 
     /** Configuration for replay-safe retry operations. */

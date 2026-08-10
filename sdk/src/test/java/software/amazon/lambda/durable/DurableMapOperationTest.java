@@ -25,6 +25,7 @@ import software.amazon.lambda.durable.extension.ExtensionOperation;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.DurableMapOperation;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
 
 class DurableMapOperationTest {
     @AfterEach
