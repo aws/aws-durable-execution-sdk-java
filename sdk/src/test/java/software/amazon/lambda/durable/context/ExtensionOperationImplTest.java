@@ -20,11 +20,13 @@ import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.ExtensionContextResult;
 import software.amazon.lambda.durable.ExtensionOperation;
 import software.amazon.lambda.durable.ExtensionStepResult;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.ExtensionContextConfig;
 import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
@@ -237,6 +239,23 @@ class ExtensionOperationImplTest {
         verify(context)
                 .runInChildContextAsyncWithId(eq("1"), eq("child"), eq(resultType), function.capture(), eq(config));
         assertEquals("result", function.getValue().apply(mock(DurableContext.class)));
+    }
+
+    @Test
+    void advancedChildContextDelegatesFrameworkFunction() {
+        var context = mock(DurableContextImpl.class);
+        var future = mockStringFuture();
+        var resultType = TypeToken.get(String.class);
+        var config = ExtensionContextConfig.builder().build();
+        when(context.extensionContextAsyncWithId(
+                        eq("1"), eq("child"), eq("AcmeContext"), eq(resultType), any(), eq(config)))
+                .thenReturn(future);
+
+        var actual = new ExtensionOperationImpl(context, "1", "child")
+                .runInChildContextAsync(
+                        "AcmeContext", resultType, () -> ExtensionContextResult.completed("result"), config);
+
+        assertEquals(future, actual);
     }
 
     @Test

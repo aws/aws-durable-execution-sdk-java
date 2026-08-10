@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,9 +19,13 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.ExtensionContextFailure;
+import software.amazon.lambda.durable.ExtensionContextResult;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.ExtensionContextConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
@@ -28,6 +34,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -124,6 +131,15 @@ class ChildContextOperationTest {
                 RunInChildContextConfig.builder().serDes(SERDES).build(),
                 durableContext,
                 parent);
+    }
+
+    private ChildContextOperation<String> createExtensionOperation(ExtensionContextConfig config) {
+        return new ChildContextOperation<>(
+                new OperationDescriptor("1", "test-context", OperationType.CONTEXT, "AcmeContext"),
+                () -> ExtensionContextResult.completed("unused"),
+                TypeToken.get(String.class),
+                config,
+                durableContext);
     }
 
     // ===== SUCCEEDED replay =====
@@ -244,6 +260,116 @@ class ChildContextOperationTest {
         var thrown = assertThrows(ChildContextFailedException.class, operation::get);
         assertTrue(thrown.getMessage().contains("com.nonexistent.SomeException"));
         assertTrue(thrown.getMessage().contains("unknown error"));
+    }
+
+    @Test
+    void replayFailedUsesExtensionErrorHandlerWithChildSummaries() {
+        var contextError = ErrorObject.builder()
+                .errorType("com.nonexistent.ContextException")
+                .errorMessage("context failed")
+                .build();
+        var childError = ErrorObject.builder()
+                .errorType("com.nonexistent.ChildException")
+                .errorMessage("child failed")
+                .build();
+        var failedContext = Operation.builder()
+                .id("1")
+                .name("test-context")
+                .type(OperationType.CONTEXT)
+                .subType("AcmeContext")
+                .status(OperationStatus.FAILED)
+                .contextDetails(ContextDetails.builder().error(contextError).build())
+                .build();
+        var failedChild = Operation.builder()
+                .id("1-1")
+                .name("child")
+                .type(OperationType.STEP)
+                .subType("AcmeChild")
+                .status(OperationStatus.FAILED)
+                .stepDetails(StepDetails.builder().error(childError).build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(failedContext);
+        when(executionManager.getChildOperations("1")).thenReturn(List.of(failedChild));
+        var capturedFailure = new AtomicReference<ExtensionContextFailure>();
+        var translated = new IllegalStateException("translated");
+        var config = ExtensionContextConfig.builder()
+                .childContextConfig(
+                        RunInChildContextConfig.builder().serDes(SERDES).build())
+                .errorHandler(failure -> {
+                    capturedFailure.set(failure);
+                    return translated;
+                })
+                .build();
+
+        var operation = createExtensionOperation(config);
+        operation.execute();
+
+        assertSame(translated, assertThrows(IllegalStateException.class, operation::get));
+        var failure = capturedFailure.get();
+        assertEquals("test-context", failure.contextName());
+        assertEquals("AcmeContext", failure.subType());
+        assertEquals(contextError, failure.error());
+        assertEquals(1, failure.childOperations().size());
+        assertEquals(OperationType.STEP, failure.childOperations().get(0).operationType());
+        assertEquals("AcmeChild", failure.childOperations().get(0).subType());
+        assertEquals(childError, failure.childOperations().get(0).error());
+    }
+
+    @Test
+    void replayFailedPrefersReconstructedExceptionOverExtensionHandler() {
+        var originalException = new IllegalArgumentException("bad input");
+        var failedContext = Operation.builder()
+                .id("1")
+                .name("test-context")
+                .type(OperationType.CONTEXT)
+                .subType("AcmeContext")
+                .status(OperationStatus.FAILED)
+                .contextDetails(ContextDetails.builder()
+                        .error(ErrorObject.builder()
+                                .errorType("java.lang.IllegalArgumentException")
+                                .errorMessage("bad input")
+                                .errorData(SERDES.serialize(originalException))
+                                .stackTrace(List.of("com.example.Test|method|Test.java|42"))
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(failedContext);
+        var handlerCalled = new AtomicBoolean();
+        var config = ExtensionContextConfig.builder()
+                .childContextConfig(
+                        RunInChildContextConfig.builder().serDes(SERDES).build())
+                .errorHandler(failure -> {
+                    handlerCalled.set(true);
+                    return new IllegalStateException("translated");
+                })
+                .build();
+
+        var operation = createExtensionOperation(config);
+        operation.execute();
+
+        var thrown = assertThrows(IllegalArgumentException.class, operation::get);
+        assertEquals("bad input", thrown.getMessage());
+        assertFalse(handlerCalled.get());
+    }
+
+    @Test
+    void suppressingExtensionContextPropagatesCompletionOwnerToChildContext() {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
+        var childContext = mock(DurableContextImpl.class);
+        when(childContext.getDurableConfig()).thenReturn(createConfig());
+        var config = ExtensionContextConfig.builder()
+                .childContextConfig(
+                        RunInChildContextConfig.builder().serDes(SERDES).build())
+                .suppressLateChildCheckpoints(true)
+                .build();
+        var operation = createExtensionOperation(config);
+        when(durableContext.createChildContext("1", "test-context", false, operation))
+                .thenReturn(childContext);
+
+        operation.execute();
+
+        verify(durableContext, timeout(1000)).createChildContext("1", "test-context", false, operation);
     }
 
     // ===== Replay STARTED =====

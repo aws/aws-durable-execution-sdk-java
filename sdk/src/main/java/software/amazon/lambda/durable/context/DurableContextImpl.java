@@ -16,12 +16,14 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ExtensionContext;
+import software.amazon.lambda.durable.ExtensionContextFunction;
 import software.amazon.lambda.durable.ExtensionOperation;
 import software.amazon.lambda.durable.ExtensionStepFunction;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.ExtensionContextConfig;
 import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.MapConfig;
@@ -41,6 +43,7 @@ import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
@@ -65,6 +68,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl parentContext;
+    private final BaseDurableOperation lateCheckpointOwner;
     private final boolean isVirtual;
     private boolean isReplaying;
 
@@ -76,10 +80,12 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             String contextId,
             String contextName,
             boolean isVirtual,
-            DurableContextImpl parentContext) {
+            DurableContextImpl parentContext,
+            BaseDurableOperation lateCheckpointOwner) {
         super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);
         operationIdGenerator = new OperationIdGenerator(contextId);
         this.parentContext = parentContext;
+        this.lateCheckpointOwner = lateCheckpointOwner;
         this.isVirtual = isVirtual;
         this.isReplaying = executionManager.hasOperationsForContext(contextId);
     }
@@ -96,7 +102,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      */
     public static DurableContextImpl createRootContext(
             ExecutionManager executionManager, DurableConfig durableConfig, Context lambdaContext) {
-        return new DurableContextImpl(executionManager, durableConfig, lambdaContext, null, null, false, null);
+        return new DurableContextImpl(executionManager, durableConfig, lambdaContext, null, null, false, null, null);
     }
 
     /**
@@ -108,6 +114,14 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * @return a new DurableContext for the child context
      */
     public DurableContextImpl createChildContext(String childContextId, String childContextName, boolean isVirtual) {
+        return createChildContext(childContextId, childContextName, isVirtual, null);
+    }
+
+    public DurableContextImpl createChildContext(
+            String childContextId,
+            String childContextName,
+            boolean isVirtual,
+            BaseDurableOperation lateCheckpointOwner) {
         return new DurableContextImpl(
                 getExecutionManager(),
                 getDurableConfig(),
@@ -115,7 +129,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 childContextId,
                 childContextName,
                 isVirtual,
-                this);
+                this,
+                lateCheckpointOwner);
     }
 
     /**
@@ -391,8 +406,40 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 func,
                 resultType,
                 config,
-                this);
+                this,
+                lateCheckpointOwner);
 
+        operation.execute();
+        return operation;
+    }
+
+    <T> DurableFuture<T> extensionContextAsyncWithId(
+            String operationId,
+            String name,
+            String subType,
+            TypeToken<T> resultType,
+            ExtensionContextFunction<T> function,
+            ExtensionContextConfig config) {
+        Objects.requireNonNull(resultType, "resultType cannot be null");
+        Objects.requireNonNull(function, "function cannot be null");
+        Objects.requireNonNull(config, "config cannot be null");
+        ParameterValidator.validateOperationName(name);
+
+        var childConfig = config.childContextConfig();
+        if (childConfig.serDes() == null) {
+            childConfig = childConfig.toBuilder()
+                    .serDes(getDurableConfig().getSerDes())
+                    .build();
+            config = config.toBuilder().childContextConfig(childConfig).build();
+        }
+
+        var operation = new ChildContextOperation<>(
+                new OperationDescriptor(operationId, name, OperationType.CONTEXT, subType),
+                function,
+                resultType,
+                config,
+                this,
+                lateCheckpointOwner);
         operation.execute();
         return operation;
     }

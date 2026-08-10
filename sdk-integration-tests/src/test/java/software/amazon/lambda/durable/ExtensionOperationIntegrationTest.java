@@ -16,8 +16,10 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.config.ExtensionContextConfig;
 import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
@@ -143,6 +145,38 @@ class ExtensionOperationIntegrationTest {
         assertEquals(2, result.getResult(Integer.class));
         assertEquals("AcmeStateful", result.getOperation("stateful").getSubtype());
         assertEquals(3, result.getOperation("stateful").getAttempt());
+    }
+
+    @Test
+    void extensionContextExposesStoredReplayStateWhileReplayingChildren() {
+        var replayState = new AtomicReference<String>();
+        var executions = new AtomicInteger();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = ExtensionContext.getCurrentContext()
+                    .reserve("advanced")
+                    .runInChildContext(
+                            "AcmeContext",
+                            String.class,
+                            () -> {
+                                executions.incrementAndGet();
+                                var replay = ExtensionContextReplayContext.<String>getCurrentContext();
+                                if (replay.isReplayingChildren()) {
+                                    replayState.set(replay.getReplayState());
+                                }
+                                return ExtensionContextResult.replayChildren("full", "stored");
+                            },
+                            ExtensionContextConfig.builder().build());
+            context.wait("replay", Duration.ofSeconds(1));
+            return result;
+        });
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("full", result.getResult(String.class));
+        assertTrue(executions.get() >= 2);
+        assertEquals("stored", replayState.get());
+        assertThrows(IllegalStateException.class, ExtensionContextReplayContext::getCurrentContext);
     }
 
     private static String hash(String value) {

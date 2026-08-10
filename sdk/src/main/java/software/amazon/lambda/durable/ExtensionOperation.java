@@ -5,6 +5,7 @@ package software.amazon.lambda.durable;
 import java.time.Duration;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.config.ExtensionContextConfig;
 import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
@@ -281,4 +282,28 @@ public interface ExtensionOperation {
 
     <T> DurableFuture<T> runInChildContextAsync(
             String subType, TypeToken<T> resultType, Supplier<T> function, RunInChildContextConfig config);
+
+    default <T> T runInChildContext(
+            String subType, Class<T> resultType, ExtensionContextFunction<T> function, ExtensionContextConfig config) {
+        return runInChildContext(subType, TypeToken.get(resultType), function, config);
+    }
+
+    default <T> T runInChildContext(
+            String subType,
+            TypeToken<T> resultType,
+            ExtensionContextFunction<T> function,
+            ExtensionContextConfig config) {
+        return runInChildContextAsync(subType, resultType, function, config).get();
+    }
+
+    default <T> DurableFuture<T> runInChildContextAsync(
+            String subType, Class<T> resultType, ExtensionContextFunction<T> function, ExtensionContextConfig config) {
+        return runInChildContextAsync(subType, TypeToken.get(resultType), function, config);
+    }
+
+    <T> DurableFuture<T> runInChildContextAsync(
+            String subType,
+            TypeToken<T> resultType,
+            ExtensionContextFunction<T> function,
+            ExtensionContextConfig config);
 }
