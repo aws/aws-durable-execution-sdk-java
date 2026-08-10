@@ -19,6 +19,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -121,10 +123,10 @@ class StatefulExtensionStepPrimitiveTest {
         assertThrows(StepFailedException.class, operation::get);
     }
 
-    @Test
-    void replayStartedAndReadyResumeWithCheckpointedState() throws Exception {
-        assertResumes(OperationStatus.STARTED, 10);
-        assertResumes(OperationStatus.READY, 5);
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"STARTED, 10", "READY, 5"})
+    void replayStartedOrReadyResumesWithCheckpointedState(OperationStatus status, int expectedState) throws Exception {
+        assertResumes(status, expectedState);
     }
 
     @Test
