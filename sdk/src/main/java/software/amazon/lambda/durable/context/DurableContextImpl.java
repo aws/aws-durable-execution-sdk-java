@@ -158,7 +158,17 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             WaitForConditionConfig<T> config) {
         return DurableWaitForConditionOperation.waitForConditionAsync(
-                this, name, resultType, checkFunc, config.toOperationConfig());
+                this,
+                name,
+                resultType,
+                (state, stepContext) -> {
+                    var result = checkFunc.apply(state, stepContext);
+                    return result == null
+                            ? null
+                            : new DurableWaitForConditionOperation.WaitForConditionResult<>(
+                                    result.value(), result.isDone());
+                },
+                config.toOperationConfig());
     }
 
     // =============== withRetry ================

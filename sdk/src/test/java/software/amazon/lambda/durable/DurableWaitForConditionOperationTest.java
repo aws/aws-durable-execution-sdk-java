@@ -3,6 +3,8 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -19,8 +21,8 @@ import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.OperationSubType;
-import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation;
+import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.WaitForConditionResult;
 
 class DurableWaitForConditionOperationTest {
     @AfterEach
@@ -61,6 +63,17 @@ class DurableWaitForConditionOperationTest {
                     (ExtensionStepResult.Succeeded<String>) check.getValue().apply("value");
             assertEquals("VALUE", result.value());
         }
+    }
+
+    @Test
+    void resultFactoriesRepresentPollingDecision() {
+        var completed = WaitForConditionResult.stopPolling("done");
+        var pending = WaitForConditionResult.continuePolling("next");
+
+        assertEquals("done", completed.value());
+        assertTrue(completed.isDone());
+        assertEquals("next", pending.value());
+        assertFalse(pending.isDone());
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

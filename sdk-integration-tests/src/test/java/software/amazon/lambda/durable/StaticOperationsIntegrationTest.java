@@ -194,7 +194,7 @@ class StaticOperationsIntegrationTest {
                 (input, context) -> DurableWaitForConditionOperation.waitForCondition(
                         "condition",
                         Integer.class,
-                        StaticOperationsIntegrationTest::nextConditionState,
+                        StaticOperationsIntegrationTest::nextOperationConditionState,
                         config.toOperationConfig()));
 
         var legacyResult = legacyRunner.runUntilComplete("input");
@@ -247,7 +247,7 @@ class StaticOperationsIntegrationTest {
                     Integer.class,
                     state -> {
                         assertNotNull(StepContext.getCurrentContext());
-                        return WaitForConditionResult.stopPolling(state + 1);
+                        return DurableWaitForConditionOperation.WaitForConditionResult.stopPolling(state + 1);
                     },
                     WaitForConditionConfig.<Integer>builder()
                             .initialState(0)
@@ -298,6 +298,14 @@ class StaticOperationsIntegrationTest {
     private static WaitForConditionResult<Integer> nextConditionState(int state) {
         var next = state + 1;
         return next >= 2 ? WaitForConditionResult.stopPolling(next) : WaitForConditionResult.continuePolling(next);
+    }
+
+    private static DurableWaitForConditionOperation.WaitForConditionResult<Integer> nextOperationConditionState(
+            int state) {
+        var next = state + 1;
+        return next >= 2
+                ? DurableWaitForConditionOperation.WaitForConditionResult.stopPolling(next)
+                : DurableWaitForConditionOperation.WaitForConditionResult.continuePolling(next);
     }
 
     private static String retryAttempt(int attempt, Supplier<String> operation) {

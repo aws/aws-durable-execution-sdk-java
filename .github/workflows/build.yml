@@ -126,6 +126,34 @@ jobs:
         with:
           path: github-pages
 
+  operation-examples:
+    name: Operation examples (Java ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java:
+          - 17
+          - 21
+          - 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Java ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Test operation examples
+        run: >-
+          mvn -B -pl examples -am
+          -Dtest='software.amazon.lambda.durable.examples.operation.**.*Test'
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
   deploy-pages:
     if: ${{ github.event_name == 'milestone' || github.ref == 'refs/heads/main' }}
     needs: build

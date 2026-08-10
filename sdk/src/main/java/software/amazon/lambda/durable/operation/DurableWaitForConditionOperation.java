@@ -15,7 +15,6 @@ import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.OperationSubType;
-import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -145,6 +144,25 @@ public final class DurableWaitForConditionOperation {
         @Override
         public CompletableFuture<Void> completionFuture() {
             return delegate.completionFuture();
+        }
+    }
+
+    /**
+     * Result returned by a wait-for-condition check function.
+     *
+     * @param value the current state after evaluation
+     * @param isDone true to stop polling, false to continue polling
+     * @param <T> the state type
+     */
+    public record WaitForConditionResult<T>(T value, boolean isDone) {
+        /** Returns a result that stops polling with the supplied final value. */
+        public static <T> WaitForConditionResult<T> stopPolling(T value) {
+            return new WaitForConditionResult<>(value, true);
+        }
+
+        /** Returns a result that continues polling with the supplied state. */
+        public static <T> WaitForConditionResult<T> continuePolling(T value) {
+            return new WaitForConditionResult<>(value, false);
         }
     }
 

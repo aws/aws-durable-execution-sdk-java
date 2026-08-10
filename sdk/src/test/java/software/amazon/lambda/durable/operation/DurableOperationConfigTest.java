@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.CUSTOM_COMPLETION_SUCCEEDED;
 
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.time.Duration;
 import java.util.Arrays;
@@ -28,6 +29,7 @@ import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -53,6 +55,8 @@ class DurableOperationConfigTest {
                 DurableWaitForCallbackOperation.class, "WaitForCallbackConfig", WaitForCallbackConfig.class);
         assertOperationConfig(
                 DurableWaitForConditionOperation.class, "WaitForConditionConfig", WaitForConditionConfig.class);
+        assertOperationOwnedType(
+                DurableWaitForConditionOperation.class, "WaitForConditionResult", WaitForConditionResult.class);
         assertOperationConfig(DurableWithRetryOperation.class, "WithRetryConfig", WithRetryConfig.class);
     }
 
@@ -188,6 +192,14 @@ class DurableOperationConfigTest {
         var nestedClass = Class.forName(owner.getName() + "$" + nestedName);
         assertTrue(Modifier.isProtected(nestedClass.getModifiers()));
         assertTrue(Modifier.isStatic(nestedClass.getModifiers()));
+    }
+
+    private static void assertOperationOwnedType(Class<?> operationClass, String nestedName, Class<?> legacyClass)
+            throws Exception {
+        assertPublicStaticNestedType(operationClass, nestedName);
+        assertFalse(Arrays.stream(operationClass.getMethods())
+                .map(Method::toGenericString)
+                .anyMatch(signature -> signature.contains(legacyClass.getName())));
     }
 
     private static void assertParallelFutureUsesCompatibilityBranchConfig() {

@@ -108,3 +108,78 @@ jobs:
           JAVA_VERSION: ${{ matrix.java }}
         run: python3 ../.github/scripts/publish_e2e_test_summary.py
         working-directory: ./examples
+
+  operation-e2e-tests:
+    name: Operation examples E2E (Java ${{ matrix.java }})
+    env:
+      AWS_REGION: us-west-2
+      E2E_TEST_PARALLELISM: 4
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java:
+          - 17
+          - 21
+          - 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: "${{ secrets.TEST_ROLE_ARN }}"
+          role-session-name: java-language-sdk-operation-test
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
+      - name: Setup Java ${{ matrix.java }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build locally
+        run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
+      - name: Generate operation SAM template
+        run: python3 generate-template.py --suite operation
+        working-directory: ./examples
+      - name: sam build
+        env:
+          MAVEN_OPTS: -DskipTests=true -Dmaven.test.skip=true
+        run: |
+          sam build --debug --parameter-overrides \
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=FunctionNamePrefix,ParameterValue=Java${{ matrix.java }}-Operation- ParameterKey=RoleArn,ParameterValue=${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}'
+        working-directory: ./examples
+      - name: Clean up unmanaged Lambda log groups
+        run: |
+          .github/scripts/cleanup_e2e_unmanaged_log_groups.sh --execute \
+            --stack-name Java${{ matrix.java }}-JavaSDKOperationCloudBasedIntegrationTestStack
+      - name: sam deploy
+        run: |
+          sam deploy --stack-name Java${{ matrix.java }}-JavaSDKOperationCloudBasedIntegrationTestStack \
+            --resolve-image-repos --resolve-s3 --parameter-overrides \
+            'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=FunctionNamePrefix,ParameterValue=Java${{ matrix.java }}-Operation- ParameterKey=RoleArn,ParameterValue=${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}'
+        working-directory: ./examples
+      - name: Cloud Based Integration Tests
+        run: |
+          mvn clean test -B \
+            -Dtest.cloud.enabled=true \
+            -Dtest.aws.account='${{ secrets.TEST_ACCOUNT_ID }}' \
+            -Dtest="CloudBasedIntegrationTest,CloudBasedOtelIntegrationTest" \
+            -Dtest.function.name.prefix='Java${{ matrix.java }}-Operation-' \
+            -Djunit.jupiter.execution.parallel.enabled=true \
+            -Djunit.jupiter.execution.parallel.mode.default=concurrent \
+            -Djunit.jupiter.execution.parallel.mode.classes.default=concurrent \
+            -Djunit.jupiter.execution.parallel.config.strategy=fixed \
+            -Djunit.jupiter.execution.parallel.config.fixed.parallelism=${{ env.E2E_TEST_PARALLELISM }}
+        working-directory: ./examples
+      - name: Publish test case summary
+        if: always()
+        env:
+          JAVA_VERSION: ${{ matrix.java }} Operation Examples
+        run: python3 ../.github/scripts/publish_e2e_test_summary.py
+        working-directory: ./examples

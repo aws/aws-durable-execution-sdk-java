@@ -25,7 +25,6 @@ import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
@@ -35,7 +34,8 @@ import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.OperationSubType;
-import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.WaitForConditionConfig;
+import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation.WaitForConditionResult;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class DurableWaitForConditionOperationImplementationTest {
@@ -69,11 +69,7 @@ class DurableWaitForConditionOperationImplementationTest {
                 .thenReturn(future);
 
         var actual = DurableWaitForConditionOperation.waitForConditionAsync(
-                context,
-                "ready",
-                resultType,
-                (state, step) -> WaitForConditionResult.continuePolling("next"),
-                config.toOperationConfig());
+                context, "ready", resultType, (state, step) -> WaitForConditionResult.continuePolling("next"), config);
 
         assertEquals(future.get(), actual.get());
         var function = extensionFunction();
@@ -153,7 +149,7 @@ class DurableWaitForConditionOperationImplementationTest {
                 "ready",
                 resultType,
                 (state, step) -> WaitForConditionResult.stopPolling(state),
-                WaitForConditionConfig.<String>builder().build().toOperationConfig());
+                WaitForConditionConfig.<String>builder().build());
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
