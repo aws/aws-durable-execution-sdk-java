@@ -11,6 +11,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
 - **Log Correlation**: Injects `trace_id`, `span_id`, and `traceSampled` into SLF4J MDC for end-to-end observability
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` uses the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
+- **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
 ## Installation
 
@@ -44,7 +45,7 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 1. Add the ADOT Lambda Layer to your function
 2. Enable X-Ray Active Tracing on the function
 3. Configure environment variables
-4. Register `InvocationOtelPlugin` in your handler's `DurableConfig`
+4. Load `InvocationOtelPlugin` dynamically or register it in your handler's `DurableConfig`
 5. Grant X-Ray write permissions
 
 ### 1. ADOT Lambda Layer
@@ -70,10 +71,12 @@ MyFunction:
       LogFormat: JSON
     Layers:
       - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroJava:16
+      - <otel-plugin-layer-arn>
     Environment:
       Variables:
         AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
-        OTEL_JAVAAGENT_EXTENSIONS: /var/task/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar
+        OTEL_JAVAAGENT_EXTENSIONS: /opt/java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar
+        DURABLE_EXECUTION_PLUGINS: otel-invocation
 ```
 
 **AWS CLI:**
@@ -81,11 +84,11 @@ MyFunction:
 ```bash
 aws lambda update-function-configuration \
   --function-name your-function-name \
-  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:16" \
-  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument,OTEL_JAVAAGENT_EXTENSIONS=/var/task/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar}"
+  --layers "arn:aws:lambda:<region>:615299751070:layer:AWSOpenTelemetryDistroJava:16" "<otel-plugin-layer-arn>" \
+  --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument,OTEL_JAVAAGENT_EXTENSIONS=/opt/java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar,DURABLE_EXECUTION_PLUGINS=otel-invocation}"
 ```
 
-Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed OTel plugin jar that contains this plugin's `META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider` entry.
+Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`.
 
 ### 2. AWS X-Ray Active Tracing
 
@@ -102,7 +105,20 @@ MyFunction:
     Tracing: Active
 ```
 
-### 3. In Your Lambda Handler
+### 3. Plugin Registration
+
+With the layer and `DURABLE_EXECUTION_PLUGINS=otel-invocation` configured above, no OTel plugin dependency or registration code is required in the function artifact. The function can use its existing `DurableConfig`.
+
+The OTel plugin JAR exposes two dynamic provider names:
+
+| Provider name | Plugin | Trace model |
+|---------------|--------|-------------|
+| `otel-invocation` | `InvocationOtelPlugin` | Invocation-rooted |
+| `otel-execution` | `ExecutionOtelPlugin` | Workflow-rooted |
+
+Set `DURABLE_EXECUTION_PLUGINS=otel-execution` to select the Workflow-rooted plugin instead.
+
+Applications that prefer code-based configuration can continue to register the plugin explicitly:
 
 ```java
 import software.amazon.lambda.durable.DurableConfig;
@@ -215,21 +231,9 @@ With Lambda's `LoggingConfig: JSON` (required for durable functions), CloudWatch
 
 ## Configuration
 
-### Constructor Options
-
-```java
-// Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
-new InvocationOtelPlugin();
-
-// Custom tracer provider pipeline
-new InvocationOtelPlugin(tracerProviderBuilder);
-
-// Custom context extractor, MDC enabled
-new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor);
-
-// Full configuration
-new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
-```
+Both plugins take a required `SdkTracerProviderBuilder` (your exporter/processor pipeline) plus an optional
+`OtelPluginConfig` built with a named-field builder. This replaces the older telescoping constructors, giving readable,
+type-safe call sites, and matches the `OtelPluginConfig` object in the JavaScript and Python SDKs.
 
 ### InvocationOtelPlugin
 
@@ -237,46 +241,53 @@ new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
 new InvocationOtelPlugin();
 
-// Custom tracer provider pipeline
+// Custom tracer provider pipeline, all other options defaulted
 new InvocationOtelPlugin(tracerProviderBuilder);
 
-// Custom context extractor, MDC enabled
-new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor);
-
-// Full configuration
-new InvocationOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc);
+// Full configuration via the builder
+new InvocationOtelPlugin(
+    tracerProviderBuilder,
+    OtelPluginConfig.builder()
+        .contextExtractor(new XRayContextExtractor())
+        .enableMdc(true)
+        .workflowSpanName("Workflow")
+        .instrumentationName("aws-durable-execution-sdk-java")
+        .build());
 ```
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Not used by `new InvocationOtelPlugin()`; the default constructor uses the ADOT Java agent provider |
-| `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
-| `enableMdc` | If true, injects `trace_id`/`span_id`/`traceSampled` into SLF4J MDC | `true` |
 
 ### ExecutionOtelPlugin
 
-The `ExecutionOtelPlugin` renders the Workflow span as the trace root with operations as siblings of the invocation span. It supports the same constructor options:
+The `ExecutionOtelPlugin` renders the Workflow span as the trace root with operations as siblings of the invocation
+span. It takes the same `(SdkTracerProviderBuilder, OtelPluginConfig)` constructor:
 
 ```java
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
 new ExecutionOtelPlugin();
 
-// Custom tracer provider pipeline
+// Custom tracer provider pipeline, all other options defaulted
 new ExecutionOtelPlugin(tracerProviderBuilder);
 
-// Custom context extractor, MDC enabled
-new ExecutionOtelPlugin(tracerProviderBuilder, contextExtractor);
-
-// Full configuration
-new ExecutionOtelPlugin(tracerProviderBuilder, contextExtractor, enableMdc, workflowSpanName);
+// Full configuration via the builder
+new ExecutionOtelPlugin(
+    tracerProviderBuilder,
+    OtelPluginConfig.builder()
+        .enableMdc(false)
+        .workflowSpanName("Workflow")
+        .build());
 ```
 
-| Parameter | Description | Default |
+### OtelPluginConfig options
+
+| Builder method | Description | Default |
 |-----------|-------------|---------|
-| `tracerProviderBuilder` | `SdkTracerProviderBuilder` with your exporter/processor configured | Not used by `new ExecutionOtelPlugin()`; the default constructor uses the ADOT Java agent provider |
-| `contextExtractor` | Extracts parent trace context from the Lambda environment | `XRayContextExtractor` |
-| `enableMdc` | If true, injects `trace_id`/`span_id`/`traceSampled` into SLF4J MDC | `true` |
-| `workflowSpanName` | Name for the Workflow root span | `"Workflow"` |
+| `contextExtractor(...)` | Extracts parent trace context from the Lambda environment | `new XRayContextExtractor()` |
+| `enableMdc(...)` | If true, injects `trace_id`/`span_id`/`traceSampled` into SLF4J MDC | `true` |
+| `workflowSpanName(...)` | Name for the Workflow span | `"Workflow"` |
+| `instrumentationName(...)` | Instrumentation scope name registered with the tracer | `"aws-durable-execution-sdk-java"` |
+
+> The `tracerProviderBuilder` argument is not used by the no-arg `new InvocationOtelPlugin()` /
+> `new ExecutionOtelPlugin()` constructors; those use the ADOT Java agent's global provider. A `null` passed to any
+> `OtelPluginConfig` builder setter falls back to that option's default.
 
 ## Known Limitations
 

@@ -51,8 +51,10 @@ class InvocationOtelPluginTest {
 
         plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
     }
 
     @AfterEach
@@ -219,6 +221,19 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void invocationOtelPluginProvider_isRegisteredAsServiceProvider() {
+        var provider = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
+                .filter(candidate -> candidate.type().equals(InvocationOtelPluginProvider.class))
+                .findFirst()
+                .orElseThrow()
+                .get();
+
+        assertEquals("otel-invocation", provider.getName());
+        assertEquals(DurableExecutionPluginProvider.API_VERSION, provider.getApiVersion());
+        assertEquals(InvocationOtelPlugin.class, provider.getPluginType());
+    }
+
+    @Test
     void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
         var traceId = "5759e988bd862e3fe1be46a994272793";
         var parentSpanId = "53995c3f42cd8ad8";
@@ -255,6 +270,74 @@ class InvocationOtelPluginTest {
         var span = spans.get(0);
         assertEquals("Invocation", span.getName());
         assertEquals(StatusCode.OK, span.getStatus().getStatusCode());
+    }
+
+    @Test
+    void customInstrumentationName_isUsedForTracerScope() {
+        var exporter = InMemorySpanExporter.create();
+        var customPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .instrumentationName("my-custom-scope")
+                        .build());
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        customPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        assertFalse(spans.isEmpty());
+        for (var span : spans) {
+            assertEquals("my-custom-scope", span.getInstrumentationScopeInfo().getName());
+        }
+    }
+
+    @Test
+    void configOnlyConstructor_defaultsToGlobalProvider() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        OpenTelemetrySdk.builder()
+                .setTracerProvider(SdkTracerProvider.builder().build())
+                .buildAndRegisterGlobal();
+
+        var plugin = new InvocationOtelPlugin(OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
+    }
+
+    @Test
+    void configWithAutoOtlp_buildsPluginOwnedProvider() {
+        var plugin = new InvocationOtelPlugin(OtelPluginConfig.builder()
+                .providerSource(ProviderSource.AUTO_OTLP)
+                .build());
+        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
+    }
+
+    @Test
+    void builderConstructor_isExplicitSource() {
+        var plugin = new InvocationOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
+    }
+
+    @Test
+    void configProviderSource_defaultsToGlobalAndHonorsAutoOtlp() {
+        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
+        assertEquals(
+                ProviderSource.AUTO_OTLP,
+                OtelPluginConfig.builder()
+                        .providerSource(ProviderSource.AUTO_OTLP)
+                        .build()
+                        .providerSource());
+    }
+
+    @Test
+    void configOnlyConstructor_rejectsExplicitProviderSource() {
+        var config = OtelPluginConfig.builder()
+                .providerSource(ProviderSource.EXPLICIT)
+                .build();
+        var error = assertThrows(IllegalArgumentException.class, () -> new InvocationOtelPlugin(config));
+        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
     }
 
     @Test
@@ -760,14 +843,48 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void invocationEnd_closesNestedSpansChildFirst() {
+        var parentId = "op-parent";
+        var childId = "op-child";
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        plugin.onOperationStart(new OperationInfo(
+                parentId, "parent-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null, null, false));
+        plugin.onOperationStart(
+                new OperationInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), null, null, false));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), false, 1));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+
+        var parentSpan = spanByName("parent-context");
+        var childSpan = spanByName("child-step");
+        var attemptSpan = spanByName("child-step attempt 1");
+        var spans = spanExporter.getFinishedSpanItems();
+        assertTrue(
+                spans.indexOf(attemptSpan) < spans.indexOf(childSpan),
+                "Attempt span must be exported before its operation span");
+        assertTrue(
+                spans.indexOf(childSpan) < spans.indexOf(parentSpan),
+                "Child operation span must be exported before its parent operation span");
+        assertTrue(
+                attemptSpan.getEndEpochNanos() <= childSpan.getEndEpochNanos(),
+                "Attempt span must end before its operation span");
+        assertTrue(
+                childSpan.getEndEpochNanos() <= parentSpan.getEndEpochNanos(),
+                "Child operation span must end before its parent operation span");
+    }
+
+    @Test
     void sampling_disabled_producesNoSpans() {
         spanExporter = InMemorySpanExporter.create();
         var sampledPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
 
         sampledPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         sampledPlugin.onUserFunctionStart(
@@ -803,8 +920,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -822,8 +941,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onOperationStart(
@@ -863,8 +984,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -888,8 +1011,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -918,8 +1043,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         // First invocation
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
@@ -974,8 +1101,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var noXrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
 
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
         noXrayPlugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
@@ -1005,8 +1134,10 @@ class InvocationOtelPluginTest {
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> extractedContext,
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> extractedContext)
+                        .enableMdc(false)
+                        .build());
 
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
@@ -1050,11 +1181,11 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void operationEnd_withoutMatchingStart_usesOperationStartTimestamp() {
+    void operationEnd_withoutMatchingStart_startsWithinCurrentInvocation() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
-        var operationStart = Instant.parse("2026-01-15T08:30:00Z");
-        var operationEnd = Instant.parse("2026-01-15T09:00:00Z");
+        var operationStart = Instant.EPOCH;
+        var operationEnd = operationStart.plusSeconds(60);
 
         // onOperationEnd without a prior onOperationStart — continuation span
         plugin.onOperationEnd(new OperationEndInfo(
@@ -1073,15 +1204,19 @@ class InvocationOtelPluginTest {
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
-        var continuationSpan = spanExporter.getFinishedSpanItems().stream()
+        var spans = spanExporter.getFinishedSpanItems();
+        var continuationSpan = spans.stream()
                 .filter(s -> s.getName().contains("wait"))
                 .findFirst()
                 .orElseThrow();
+        var invocationSpan = spans.stream()
+                .filter(s -> s.getName().equals("Invocation"))
+                .findFirst()
+                .orElseThrow();
 
-        assertEquals(
-                operationStart.toEpochMilli(),
-                continuationSpan.getStartEpochNanos() / 1_000_000,
-                "Continuation span should use the operation's startTimestamp");
+        assertEquals(invocationSpan.getSpanId(), continuationSpan.getParentSpanId());
+        assertTrue(continuationSpan.getStartEpochNanos() >= invocationSpan.getStartEpochNanos());
+        assertTrue(continuationSpan.getEndEpochNanos() <= invocationSpan.getEndEpochNanos());
     }
 
     @Test
@@ -1494,8 +1629,11 @@ class InvocationOtelPluginTest {
         var exporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> new ExtractedContext("5759e988bd862e3fe1be46a994272793", "53995c3f42cd8ad8"),
-                false);
+                OtelPluginConfig.builder()
+                        .contextExtractor(
+                                () -> new ExtractedContext("5759e988bd862e3fe1be46a994272793", "53995c3f42cd8ad8"))
+                        .enableMdc(false)
+                        .build());
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
@@ -1534,9 +1672,11 @@ class InvocationOtelPluginTest {
         var exporter = InMemorySpanExporter.create();
         var customPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> null,
-                false,
-                "MyWorkflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("MyWorkflow")
+                        .build());
         customPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         customPlugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));

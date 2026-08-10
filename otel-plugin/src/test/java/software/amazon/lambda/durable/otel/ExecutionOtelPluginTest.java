@@ -7,14 +7,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import java.util.ServiceLoader;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,9 +44,11 @@ class ExecutionOtelPluginTest {
                 SdkTracerProvider.builder()
                         .setResource(resource)
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
-                () -> null,
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
     }
 
     @AfterEach
@@ -52,6 +59,73 @@ class ExecutionOtelPluginTest {
     }
 
     // ─── Default constructor ─────────────────────────────────────────────
+
+    @Test
+    void customInstrumentationName_isUsedForTracerScope() {
+        var exporter = InMemorySpanExporter.create();
+        var customPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .instrumentationName("my-custom-scope")
+                        .build());
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        customPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        assertFalse(spans.isEmpty());
+        for (var span : spans) {
+            assertEquals("my-custom-scope", span.getInstrumentationScopeInfo().getName());
+        }
+    }
+
+    @Test
+    void configOnlyConstructor_defaultsToGlobalProvider() {
+        OtelPluginAutoConfigurationState.markInstalled();
+        GlobalOpenTelemetry.resetForTest();
+        OpenTelemetrySdk.builder()
+                .setTracerProvider(SdkTracerProvider.builder().build())
+                .buildAndRegisterGlobal();
+
+        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
+    }
+
+    @Test
+    void configWithAutoOtlp_buildsPluginOwnedProvider() {
+        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.builder()
+                .providerSource(ProviderSource.AUTO_OTLP)
+                .build());
+        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
+    }
+
+    @Test
+    void builderConstructor_isExplicitSource() {
+        var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
+        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
+    }
+
+    @Test
+    void configProviderSource_defaultsToGlobalAndHonorsAutoOtlp() {
+        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
+        assertEquals(
+                ProviderSource.AUTO_OTLP,
+                OtelPluginConfig.builder()
+                        .providerSource(ProviderSource.AUTO_OTLP)
+                        .build()
+                        .providerSource());
+    }
+
+    @Test
+    void configOnlyConstructor_rejectsExplicitProviderSource() {
+        var config = OtelPluginConfig.builder()
+                .providerSource(ProviderSource.EXPLICIT)
+                .build();
+        var error = assertThrows(IllegalArgumentException.class, () -> new ExecutionOtelPlugin(config));
+        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
+    }
 
     @Test
     void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
@@ -96,6 +170,19 @@ class ExecutionOtelPluginTest {
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Workflow")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Invocation")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
+    }
+
+    @Test
+    void executionOtelPluginProvider_isRegisteredAsServiceProvider() {
+        var provider = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
+                .filter(candidate -> candidate.type().equals(ExecutionOtelPluginProvider.class))
+                .findFirst()
+                .orElseThrow()
+                .get();
+
+        assertEquals("otel-execution", provider.getName());
+        assertEquals(DurableExecutionPluginProvider.API_VERSION, provider.getApiVersion());
+        assertEquals(ExecutionOtelPlugin.class, provider.getPluginType());
     }
 
     // ─── Workflow root span lifecycle ────────────────────────────────────
@@ -153,7 +240,7 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void workflowSpan_isRoot_invocationSpanIsChild() {
+    void workflowAndInvocationSpans_areIndependentRoots_withoutAmbientContext() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
@@ -161,14 +248,27 @@ class ExecutionOtelPluginTest {
         var workflowSpan = spanByName(spans, "Workflow");
         var invocationSpan = spanByName(spans, "Invocation");
 
-        assertFalse(
-                invocationSpan.getParentSpanContext().getSpanId().equals("0000000000000000"),
-                "Invocation span must have a parent");
-        assertEquals(
-                workflowSpan.getSpanId(),
-                invocationSpan.getParentSpanId(),
-                "Invocation span must be a child of the Workflow root span");
+        assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must be a root");
+        assertFalse(invocationSpan.getParentSpanContext().isValid(), "Invocation span must be a root");
+        assertEquals(workflowSpan.getTraceId(), invocationSpan.getTraceId());
         assertEquals(SpanKind.INTERNAL, invocationSpan.getKind());
+    }
+
+    @Test
+    void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
+        var traceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var parentSpanContext =
+                SpanContext.create(traceId, parentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+
+        try (var ignored = Span.wrap(parentSpanContext).makeCurrent()) {
+            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var invocationSpan = spanByName(spanExporter.getFinishedSpanItems(), "Invocation");
+        assertEquals(traceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
     }
 
     @Test
@@ -385,6 +485,25 @@ class ExecutionOtelPluginTest {
                 attemptSpan.getLinks().stream()
                         .anyMatch(l -> l.getSpanContext().getSpanId().equals(invocationSpan.getSpanId())),
                 "Attempt span must carry a link to the invocation span");
+    }
+
+    @Test
+    void attemptSpan_carriesOperationSubtype() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("process-order"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                "Step",
+                attemptSpan.getAttributes().get(AttributeKey.stringKey("durable.operation.subtype")),
+                "Attempt span should carry durable.operation.subtype from the operation");
     }
 
     @Test
@@ -708,9 +827,11 @@ class ExecutionOtelPluginTest {
         var exporter2 = InMemorySpanExporter.create();
         var plugin2 = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter2)),
-                () -> null,
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
         plugin2.onInvocationStart(new InvocationInfo("req-9", ARN, true, Instant.now()));
         plugin2.onInvocationEnd(new InvocationEndInfo("req-9", ARN, true, InvocationStatus.SUCCEEDED, null));
         var secondWorkflowSpanId =
@@ -731,9 +852,11 @@ class ExecutionOtelPluginTest {
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> null,
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
         sampledPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         sampledPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
         assertTrue(exporter.getFinishedSpanItems().isEmpty(), "No spans should be exported with 0% sampling");
@@ -747,9 +870,11 @@ class ExecutionOtelPluginTest {
         var exporter = InMemorySpanExporter.create();
         var xrayPlugin = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
-                () -> new ExtractedContext(xrayTraceId, null),
-                false,
-                "Workflow");
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, null))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
@@ -773,6 +898,30 @@ class ExecutionOtelPluginTest {
         assertTrue(
                 spans.stream().allMatch(s -> s.getTraceId().equals(xrayTraceId)),
                 "All spans must share the extracted X-Ray trace ID");
+    }
+
+    @Test
+    void xrayExtraction_withParentSpanId_invocationSpanHasCorrectParent() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var exporter = InMemorySpanExporter.create();
+        var xrayPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        var workflowSpan = spanByName(spans, "Workflow");
+        var invocationSpan = spanByName(spans, "Invocation");
+        assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must remain an independent root");
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
