@@ -5,10 +5,8 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.model.OperationSubType.STEP;
 
 import java.util.Objects;
-import java.util.function.Function;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.extension.ExtensionContext;
@@ -55,26 +53,16 @@ public final class DurableStepOperation {
     public static <T> DurableFuture<T> stepAsync(
             String name, TypeToken<T> resultType, Supplier<T> function, StepConfig config) {
         Objects.requireNonNull(function, "function cannot be null");
-        return stepAsync(ExtensionContext.getCurrentContext(), name, resultType, ignored -> function.get(), config);
-    }
-
-    public static <T> DurableFuture<T> stepAsync(
-            ExtensionContext context,
-            String name,
-            TypeToken<T> resultType,
-            Function<StepContext, T> function,
-            StepConfig config) {
-        Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(function, "function cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         ParameterValidator.validateOperationName(name);
 
+        var context = ExtensionContext.getCurrentContext();
         return context.reserve(name)
                 .stepAsync(
                         STEP.getValue(),
                         resultType,
-                        ignored -> ExtensionStepResult.succeed(function.apply(StepContext.getCurrentContext())),
+                        ignored -> ExtensionStepResult.succeed(function.get()),
                         ExtensionStepConfig.<T>builder()
                                 .serDes(config.serDes())
                                 .retryStrategy(adapt(config.retryStrategy()))

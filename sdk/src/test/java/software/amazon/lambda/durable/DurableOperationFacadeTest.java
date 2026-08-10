@@ -22,6 +22,7 @@ import static software.amazon.lambda.durable.model.OperationSubType.STEP;
 import static software.amazon.lambda.durable.model.OperationSubType.WAIT;
 
 import java.time.Duration;
+import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -101,6 +102,19 @@ class DurableOperationFacadeTest {
     }
 
     @Test
+    void stepFacadeDoesNotAcceptExplicitContext() {
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> DurableStepOperation.class.getMethod(
+                        "stepAsync",
+                        ExtensionContext.class,
+                        String.class,
+                        TypeToken.class,
+                        Function.class,
+                        DurableStepOperation.StepConfig.class));
+    }
+
+    @Test
     void stepAcceptsContextFreeSupplier() {
         var context = mockDurableContext();
         var reservation = mock(ExtensionOperation.class);
@@ -130,12 +144,13 @@ class DurableOperationFacadeTest {
     }
 
     @Test
-    void stepAdaptsUserFacingRetryConfigToExtensionSpi() {
-        var context = mock(ExtensionContext.class);
+    void stepAdaptsOperationConfigToExtensionSpi() {
+        var context = mockDurableContext();
         var reservation = mock(ExtensionOperation.class);
         var future = mockStringFuture();
         var resultType = TypeToken.get(String.class);
-        when(context.reserve("step")).thenReturn(reservation);
+        BaseContextImpl.setCurrentContext(context);
+        when(((ExtensionContext) context).reserve("step")).thenReturn(reservation);
         when(reservation.stepAsync(
                         eq(STEP.getValue()),
                         eq(resultType),
@@ -148,7 +163,7 @@ class DurableOperationFacadeTest {
                 .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                 .build();
 
-        assertSame(future, DurableStepOperation.stepAsync(context, "step", resultType, ignored -> "result", config));
+        assertSame(future, DurableStepOperation.stepAsync("step", resultType, () -> "result", config));
 
         var extensionConfig = ArgumentCaptor.forClass(ExtensionStepConfig.class);
         verify(reservation)
@@ -196,6 +211,17 @@ class DurableOperationFacadeTest {
                 StepConfig.builder().build());
 
         assertSame(future, result);
+        @SuppressWarnings("unchecked")
+        var function = (ArgumentCaptor<ExtensionStepFunction<String>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(ExtensionStepFunction.class);
+        verify(reservation)
+                .stepAsync(
+                        eq(STEP.getValue()), any(TypeToken.class), function.capture(), any(ExtensionStepConfig.class));
+        try (var ignored = BaseContextImpl.attachCurrentContext(mock(StepContext.class))) {
+            var stepResult = assertInstanceOf(
+                    ExtensionStepResult.Succeeded.class, function.getValue().apply(null));
+            assertEquals("result", stepResult.value());
+        }
     }
 
     @Test

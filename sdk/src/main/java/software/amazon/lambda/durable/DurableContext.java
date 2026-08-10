@@ -4,6 +4,7 @@ package software.amazon.lambda.durable;
 
 import java.time.Duration;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -18,6 +19,7 @@ import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.BaseContext;
+import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -165,8 +167,11 @@ public interface DurableContext extends BaseContext {
      */
     default <T> DurableFuture<T> stepAsync(
             String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config) {
-        return DurableStepOperation.stepAsync(
-                (ExtensionContext) this, name, resultType, func, config.toOperationConfig());
+        Objects.requireNonNull(func, "func cannot be null");
+        try (var ignored = BaseContextImpl.attachCurrentContext(this)) {
+            return DurableStepOperation.stepAsync(
+                    name, resultType, () -> func.apply(StepContext.getCurrentContext()), config.toOperationConfig());
+        }
     }
 
     /** @deprecated use the variants accepting StepContext instead */
