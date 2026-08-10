@@ -42,14 +42,10 @@ class StaticOperationsIntegrationTest {
     @Test
     void mapAndParallelExposeContextFreeUserFunctions() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var mapResult = DurableMapOperations.map(
-                    "map",
-                    List.of("a", "b"),
-                    String.class,
-                    item -> {
-                        var index = MapItemContext.getCurrentContext().getIndex();
-                        return DurableCoreOperations.step("map-step", String.class, () -> item + index);
-                    });
+            var mapResult = DurableMapOperations.map("map", List.of("a", "b"), String.class, item -> {
+                var index = MapItemContext.getCurrentContext().getIndex();
+                return DurableCoreOperations.step("map-step", String.class, () -> item + index);
+            });
 
             var branchFutures = new ArrayList<DurableFuture<String>>();
             try (var parallel = DurableParallelOperations.parallel("parallel")) {
@@ -82,9 +78,7 @@ class StaticOperationsIntegrationTest {
                         assertNotNull(StepContext.getCurrentContext());
                         return WaitForConditionResult.stopPolling(state + 1);
                     },
-                    WaitForConditionConfig.<Integer>builder()
-                            .initialState(0)
-                            .build());
+                    WaitForConditionConfig.<Integer>builder().initialState(0).build());
             var retry = DurableWithRetryOperations.withRetry("retry", () -> {
                 var attempt = WithRetryContext.getCurrentContext().getAttempt();
                 retryExecutions.incrementAndGet();

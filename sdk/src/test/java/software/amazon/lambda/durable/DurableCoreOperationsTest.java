@@ -33,8 +33,8 @@ class DurableCoreOperationsTest {
         DurableCoreOperations.step("step", String.class, () -> "result");
 
         @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<StepContext, String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(
-                Function.class);
+        var function = (ArgumentCaptor<Function<StepContext, String>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
         verify(context).step(eq("step"), eq(String.class), function.capture());
         assertEquals("result", function.getValue().apply(mock(StepContext.class)));
     }
@@ -47,8 +47,8 @@ class DurableCoreOperationsTest {
         DurableCoreOperations.runInChildContext("child", String.class, () -> "result");
 
         @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<DurableContext, String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(
-                Function.class);
+        var function = (ArgumentCaptor<Function<DurableContext, String>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
         verify(context).runInChildContext(eq("child"), eq(String.class), function.capture());
         assertEquals("result", function.getValue().apply(mock(DurableContext.class)));
     }
@@ -63,19 +63,12 @@ class DurableCoreOperationsTest {
         @SuppressWarnings("unchecked")
         var callbackFuture = (DurableCallbackFuture<String>) mock(DurableCallbackFuture.class);
         when(context.waitAsync("wait", duration)).thenReturn(waitFuture);
-        when(context.invokeAsync("invoke", "function", "payload", String.class))
-                .thenReturn(invokeFuture);
-        when(context.createCallback("callback", String.class))
-                .thenReturn(callbackFuture);
+        when(context.invokeAsync("invoke", "function", "payload", String.class)).thenReturn(invokeFuture);
+        when(context.createCallback("callback", String.class)).thenReturn(callbackFuture);
 
         assertEquals(waitFuture, DurableCoreOperations.waitAsync("wait", duration));
-        assertEquals(
-                invokeFuture,
-                DurableCoreOperations.invokeAsync(
-                        "invoke", "function", "payload", String.class));
-        assertEquals(
-                callbackFuture,
-                DurableCoreOperations.createCallback("callback", String.class));
+        assertEquals(invokeFuture, DurableCoreOperations.invokeAsync("invoke", "function", "payload", String.class));
+        assertEquals(callbackFuture, DurableCoreOperations.createCallback("callback", String.class));
     }
 
     @Test
@@ -86,19 +79,16 @@ class DurableCoreOperationsTest {
         var childConfig = RunInChildContextConfig.builder().build();
 
         DurableCoreOperations.stepAsync("step", new TypeToken<String>() {}, () -> "step", stepConfig);
-        DurableCoreOperations.runInChildContextAsync(
-                "child", new TypeToken<String>() {}, () -> "child", childConfig);
+        DurableCoreOperations.runInChildContextAsync("child", new TypeToken<String>() {}, () -> "child", childConfig);
 
         verify(context).stepAsync(eq("step"), any(TypeToken.class), any(Function.class), eq(stepConfig));
-        verify(context)
-                .runInChildContextAsync(eq("child"), any(TypeToken.class), any(Function.class), eq(childConfig));
+        verify(context).runInChildContextAsync(eq("child"), any(TypeToken.class), any(Function.class), eq(childConfig));
     }
 
     @Test
     void coreOperationsFailOutsideDurableContext() {
         assertThrows(
-                IllegalStateException.class,
-                () -> DurableCoreOperations.step("step", String.class, () -> "result"));
+                IllegalStateException.class, () -> DurableCoreOperations.step("step", String.class, () -> "result"));
     }
 
     @SuppressWarnings("unchecked")

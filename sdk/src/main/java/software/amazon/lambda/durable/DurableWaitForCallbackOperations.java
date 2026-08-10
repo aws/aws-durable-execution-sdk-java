@@ -28,13 +28,11 @@ public final class DurableWaitForCallbackOperations {
         return currentContext().waitForCallback(name, resultType, adapt(submitter), config);
     }
 
-    public static <T> DurableFuture<T> waitForCallbackAsync(
-            String name, Class<T> resultType, Runnable submitter) {
+    public static <T> DurableFuture<T> waitForCallbackAsync(String name, Class<T> resultType, Runnable submitter) {
         return currentContext().waitForCallbackAsync(name, resultType, adapt(submitter));
     }
 
-    public static <T> DurableFuture<T> waitForCallbackAsync(
-            String name, TypeToken<T> resultType, Runnable submitter) {
+    public static <T> DurableFuture<T> waitForCallbackAsync(String name, TypeToken<T> resultType, Runnable submitter) {
         return currentContext().waitForCallbackAsync(name, resultType, adapt(submitter));
     }
 

@@ -1,6 +1,7 @@
 # ADR-006: Public API for Custom Extension Operations
 
-**Status:** Proposed  
+**Status:** Accepted
+
 **Date:** 2026-08-10
 
 ## Context

@@ -57,8 +57,7 @@ public interface ExtensionOperation {
     }
 
     default <T, U> T invoke(String functionName, U payload, TypeToken<T> resultType) {
-        return invoke(
-                functionName, payload, resultType, InvokeConfig.builder().build());
+        return invoke(functionName, payload, resultType, InvokeConfig.builder().build());
     }
 
     default <T, U> T invoke(String functionName, U payload, Class<T> resultType, InvokeConfig config) {
@@ -83,8 +82,7 @@ public interface ExtensionOperation {
         return invokeAsync(functionName, payload, TypeToken.get(resultType), config);
     }
 
-    <T, U> DurableFuture<T> invokeAsync(
-            String functionName, U payload, TypeToken<T> resultType, InvokeConfig config);
+    <T, U> DurableFuture<T> invokeAsync(String functionName, U payload, TypeToken<T> resultType, InvokeConfig config);
 
     default <T> DurableCallbackFuture<T> createCallback(Class<T> resultType) {
         return createCallback(TypeToken.get(resultType));
@@ -109,13 +107,11 @@ public interface ExtensionOperation {
                 resultType, function, RunInChildContextConfig.builder().build());
     }
 
-    default <T> T runInChildContext(
-            Class<T> resultType, Supplier<T> function, RunInChildContextConfig config) {
+    default <T> T runInChildContext(Class<T> resultType, Supplier<T> function, RunInChildContextConfig config) {
         return runInChildContext(TypeToken.get(resultType), function, config);
     }
 
-    default <T> T runInChildContext(
-            TypeToken<T> resultType, Supplier<T> function, RunInChildContextConfig config) {
+    default <T> T runInChildContext(TypeToken<T> resultType, Supplier<T> function, RunInChildContextConfig config) {
         return runInChildContextAsync(resultType, function, config).get();
     }
 

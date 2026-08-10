@@ -31,8 +31,8 @@ class DurableMapOperationsTest {
         });
 
         @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<DurableContext.MapFunction<String, String>>) (ArgumentCaptor<?>)
-                ArgumentCaptor.forClass(DurableContext.MapFunction.class);
+        var function = (ArgumentCaptor<DurableContext.MapFunction<String, String>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(DurableContext.MapFunction.class);
         verify(context).map(eq("map"), eq(List.of("value")), eq(String.class), function.capture());
         assertEquals("VALUE", function.getValue().apply("value", 3, mock(DurableContext.class)));
         assertThrows(IllegalStateException.class, MapItemContext::getCurrentContext);

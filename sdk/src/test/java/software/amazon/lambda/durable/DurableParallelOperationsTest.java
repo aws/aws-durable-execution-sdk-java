@@ -31,11 +31,7 @@ class DurableParallelOperationsTest {
         var branchFuture = mockStringFuture();
         BaseContextImpl.setCurrentContext(context);
         when(context.parallel("parallel")).thenReturn(parallel);
-        when(parallel.branch(
-                        eq("branch"),
-                        any(TypeToken.class),
-                        any(Function.class),
-                        any(ParallelBranchConfig.class)))
+        when(parallel.branch(eq("branch"), any(TypeToken.class), any(Function.class), any(ParallelBranchConfig.class)))
                 .thenReturn(branchFuture);
 
         var result = DurableParallelOperations.parallel("parallel");
@@ -44,14 +40,10 @@ class DurableParallelOperationsTest {
         assertSame(parallel, result);
         assertSame(branchFuture, resultFuture);
         @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<DurableContext, String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(
-                Function.class);
+        var function = (ArgumentCaptor<Function<DurableContext, String>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
         verify(parallel)
-                .branch(
-                        eq("branch"),
-                        any(TypeToken.class),
-                        function.capture(),
-                        any(ParallelBranchConfig.class));
+                .branch(eq("branch"), any(TypeToken.class), function.capture(), any(ParallelBranchConfig.class));
         assertEquals("result", function.getValue().apply(mock(DurableContext.class)));
     }
 

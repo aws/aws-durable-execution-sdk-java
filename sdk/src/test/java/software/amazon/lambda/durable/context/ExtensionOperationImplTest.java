@@ -62,14 +62,19 @@ class ExtensionOperationImplTest {
                 .thenReturn(future);
         var operation = new ExtensionOperationImpl(context, "1", "step");
 
-        assertEquals(future, operation.stepAsync(resultType, () -> {
-            called.set(true);
-            return "result";
-        }, config));
+        assertEquals(
+                future,
+                operation.stepAsync(
+                        resultType,
+                        () -> {
+                            called.set(true);
+                            return "result";
+                        },
+                        config));
 
         @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<StepContext, String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(
-                Function.class);
+        var function = (ArgumentCaptor<Function<StepContext, String>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
         verify(context).stepAsyncWithId(eq("1"), eq("step"), eq(resultType), function.capture(), eq(config));
         assertEquals("result", function.getValue().apply(mock(StepContext.class)));
         assertEquals(true, called.get());
@@ -119,8 +124,8 @@ class ExtensionOperationImplTest {
         assertEquals(future, operation.runInChildContextAsync(resultType, () -> "result", config));
 
         @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<DurableContext, String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(
-                Function.class);
+        var function = (ArgumentCaptor<Function<DurableContext, String>>)
+                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
         verify(context)
                 .runInChildContextAsyncWithId(eq("1"), eq("child"), eq(resultType), function.capture(), eq(config));
         assertEquals("result", function.getValue().apply(mock(DurableContext.class)));
@@ -135,9 +140,7 @@ class ExtensionOperationImplTest {
 
         operation.waitAsync(duration);
 
-        assertThrows(
-                IllegalStateException.class,
-                () -> operation.stepAsync(String.class, () -> "second"));
+        assertThrows(IllegalStateException.class, () -> operation.stepAsync(String.class, () -> "second"));
     }
 
     @SuppressWarnings("unchecked")

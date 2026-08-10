@@ -7,8 +7,8 @@ import software.amazon.lambda.durable.context.BaseContext;
 /**
  * Public context available to custom extension operations.
  *
- * <p>This interface exposes replay state and opaque primitive reservations without exposing checkpoint internals or
- * raw operation IDs.
+ * <p>This interface exposes replay state and opaque primitive reservations without exposing checkpoint internals or raw
+ * operation IDs.
  */
 public interface ExtensionContext extends BaseContext {
     /**

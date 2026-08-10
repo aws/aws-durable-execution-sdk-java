@@ -55,8 +55,7 @@ final class ExtensionOperationImpl implements ExtensionOperation {
     public <T> DurableFuture<T> runInChildContextAsync(
             TypeToken<T> resultType, Supplier<T> function, RunInChildContextConfig config) {
         claim();
-        return context.runInChildContextAsyncWithId(
-                operationId, name, resultType, ignored -> function.get(), config);
+        return context.runInChildContextAsyncWithId(operationId, name, resultType, ignored -> function.get(), config);
     }
 
     private void claim() {

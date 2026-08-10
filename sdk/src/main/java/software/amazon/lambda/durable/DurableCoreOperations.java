@@ -105,8 +105,7 @@ public final class DurableCoreOperations {
         return currentContext().createCallback(name, resultType);
     }
 
-    public static <T> DurableCallbackFuture<T> createCallback(
-            String name, Class<T> resultType, CallbackConfig config) {
+    public static <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config) {
         return currentContext().createCallback(name, resultType, config);
     }
 
@@ -133,8 +132,7 @@ public final class DurableCoreOperations {
         return currentContext().runInChildContext(name, resultType, ignored -> function.get(), config);
     }
 
-    public static <T> DurableFuture<T> runInChildContextAsync(
-            String name, Class<T> resultType, Supplier<T> function) {
+    public static <T> DurableFuture<T> runInChildContextAsync(String name, Class<T> resultType, Supplier<T> function) {
         return currentContext().runInChildContextAsync(name, resultType, ignored -> function.get());
     }
 

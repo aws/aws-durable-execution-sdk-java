@@ -172,10 +172,7 @@ class PluginIntegrationTest {
     void plugin_receivesPrimitiveLifecycleForCustomExtension() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
-        var runner = LocalDurableTestRunner.create(
-                String.class,
-                (input, context) -> customExtension(),
-                config);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> customExtension(), config);
 
         var result = runner.runUntilComplete("input");
 
@@ -187,9 +184,7 @@ class PluginIntegrationTest {
     }
 
     private static String customExtension() {
-        return ExtensionContext.getCurrentContext()
-                .reserve("inner-step")
-                .step(String.class, () -> "done");
+        return ExtensionContext.getCurrentContext().reserve("inner-step").step(String.class, () -> "done");
     }
 
     @Test

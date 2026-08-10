@@ -31,8 +31,7 @@ public final class PairOperations {
         return new PairFuture(leftFuture, rightFuture, pause.waitAsync(Duration.ofSeconds(1)));
     }
 
-    private record PairFuture(
-            DurableFuture<String> left, DurableFuture<String> right, DurableFuture<Void> pause)
+    private record PairFuture(DurableFuture<String> left, DurableFuture<String> right, DurableFuture<Void> pause)
             implements DurableFuture<String> {
         @Override
         public String get() {
@@ -42,8 +41,7 @@ public final class PairOperations {
 
         @Override
         public CompletableFuture<Void> completionFuture() {
-            return CompletableFuture.allOf(
-                    left.completionFuture(), right.completionFuture(), pause.completionFuture());
+            return CompletableFuture.allOf(left.completionFuture(), right.completionFuture(), pause.completionFuture());
         }
     }
 }

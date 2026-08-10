@@ -23,20 +23,12 @@ public final class DurableMapOperations {
     }
 
     public static <I, O> MapResult<O> map(
-            String name,
-            Collection<I> items,
-            Class<O> resultType,
-            Function<I, O> function,
-            MapConfig config) {
+            String name, Collection<I> items, Class<O> resultType, Function<I, O> function, MapConfig config) {
         return currentContext().map(name, items, resultType, adapt(function), config);
     }
 
     public static <I, O> MapResult<O> map(
-            String name,
-            Collection<I> items,
-            TypeToken<O> resultType,
-            Function<I, O> function,
-            MapConfig config) {
+            String name, Collection<I> items, TypeToken<O> resultType, Function<I, O> function, MapConfig config) {
         return currentContext().map(name, items, resultType, adapt(function), config);
     }
 
@@ -51,20 +43,12 @@ public final class DurableMapOperations {
     }
 
     public static <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name,
-            Collection<I> items,
-            Class<O> resultType,
-            Function<I, O> function,
-            MapConfig config) {
+            String name, Collection<I> items, Class<O> resultType, Function<I, O> function, MapConfig config) {
         return currentContext().mapAsync(name, items, resultType, adapt(function), config);
     }
 
     public static <I, O> DurableFuture<MapResult<O>> mapAsync(
-            String name,
-            Collection<I> items,
-            TypeToken<O> resultType,
-            Function<I, O> function,
-            MapConfig config) {
+            String name, Collection<I> items, TypeToken<O> resultType, Function<I, O> function, MapConfig config) {
         return currentContext().mapAsync(name, items, resultType, adapt(function), config);
     }
 

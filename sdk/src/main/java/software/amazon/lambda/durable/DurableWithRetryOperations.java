@@ -23,8 +23,7 @@ public final class DurableWithRetryOperations {
         return currentContext().withRetryAsync(name, adapt(operation));
     }
 
-    public static <T> DurableFuture<T> withRetryAsync(
-            String name, Supplier<T> operation, WithRetryConfig config) {
+    public static <T> DurableFuture<T> withRetryAsync(String name, Supplier<T> operation, WithRetryConfig config) {
         return currentContext().withRetryAsync(name, adapt(operation), config);
     }
 
