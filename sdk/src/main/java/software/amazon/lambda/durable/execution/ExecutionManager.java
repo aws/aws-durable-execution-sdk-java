@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Central manager for durable execution coordination.
@@ -226,6 +227,46 @@ public class ExecutionManager implements SafeCloseable {
     /** Returns the current thread's ThreadContext (threadId and threadType), or null if not set. */
     public ThreadContext getCurrentThreadContext() {
         return currentThreadContext.get();
+    }
+
+    /**
+     * Waits for a future from the current durable context thread.
+     *
+     * <p>The current thread is marked inactive while waiting so the execution can suspend. It is reactivated
+     * synchronously when the future completes.
+     *
+     * @param future the future to wait for
+     * @param <T> the future result type
+     * @return the completed result
+     */
+    public <T> T awaitFuture(CompletableFuture<T> future) {
+        var threadContext = getCurrentThreadContext();
+        CompletableFuture<T> awaitedFuture = future;
+
+        if (threadContext != null && !future.isDone()) {
+            var coordinationLock = new Object();
+            var deregistered = new boolean[1];
+            synchronized (coordinationLock) {
+                awaitedFuture = future.whenComplete((ignored, throwable) -> {
+                    synchronized (coordinationLock) {
+                        if (deregistered[0] && !isExecutionCompletedExceptionally()) {
+                            registerActiveThread(threadContext.threadId());
+                        }
+                    }
+                });
+                if (!future.isDone()) {
+                    deregistered[0] = true;
+                    deregisterActiveThread(threadContext.threadId());
+                }
+            }
+        }
+
+        try {
+            return awaitedFuture.join();
+        } catch (Throwable throwable) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+            return null;
+        }
     }
 
     /**
