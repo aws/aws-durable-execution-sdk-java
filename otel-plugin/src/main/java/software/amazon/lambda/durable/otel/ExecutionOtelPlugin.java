@@ -41,8 +41,8 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *   <li><b>Workflow span</b> — one <em>logical</em> root span per durable execution. Its span ID is derived
  *       deterministically from the execution ARN, so every invocation of the same execution produces the same ID. It is
  *       ended (and therefore exported) exactly once, on the terminal invocation.
- *   <li><b>Invocation span</b> — one per Lambda invocation, a child of the Workflow span. Created and ended every
- *       invocation.
+ *   <li><b>Invocation span</b> — one per Lambda invocation, a child of the ambient Lambda span when available and a
+ *       root otherwise. Created and ended every invocation.
  *   <li><b>Operation span</b> — parented to its parent operation span (or the Workflow span) and carrying a
  *       <em>link</em> to the current Invocation span for correlation. Deterministic ID keyed by operation ID, so a
  *       suspended-then-resumed operation stitches into a single logical span across invocations.
@@ -51,8 +51,8 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * </ul>
  *
  * <p>Contrast with {@link InvocationOtelPlugin} (the invocation-rooted variant, equivalent to the reference
- * {@code InvocationOtelPlugin}): there the invocation span is the root and there is no Workflow span. Here the workflow
- * span is the root, operations hang off the Workflow span, and each operation/attempt links to the invocation that ran
+ * {@code InvocationOtelPlugin}): there operations hang off the per-invocation span and link to the Workflow span. Here
+ * operations hang off the independent Workflow root span, while each operation/attempt links to the invocation that ran
  * it. Both plugins share {@link DeterministicIdGenerator}, {@link ContextExtractor}, {@link SpanAttributes}, and
  * {@link MdcSpanEnricher}.
  *
@@ -193,8 +193,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // Set execution ARN for deterministic span/trace ID generation
         idGenerator.setDurableExecutionArn(info.durableExecutionArn());
 
-        // Extract trace context from environment (X-Ray header). Only the trace ID is used — the Workflow span is a
-        // true root, so the X-Ray parent span ID is intentionally not used for parenting (unlike InvocationOtelPlugin).
+        // Extract trace context from the environment (X-Ray header), falling back to the ambient OTel span.
         var extractedContext = contextExtractor.extract();
         if (extractedContext == null) {
             extractedContext = extractCurrentSpanContext();
@@ -216,10 +215,22 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         idGenerator.setNextSpanId(idGenerator.generateWorkflowSpanId());
         workflowSpan = workflowSpanBuilder.startSpan();
 
-        // Invocation span — child of the Workflow span, INTERNAL kind, random span ID (new every invocation).
+        Context parentContext;
+        if (extractedContext != null && extractedContext.parentSpanId() != null) {
+            var parentSpanContext = SpanContext.createFromRemoteParent(
+                    extractedContext.traceId(),
+                    extractedContext.parentSpanId(),
+                    TraceFlags.getSampled(),
+                    TraceState.getDefault());
+            parentContext = Context.root().with(Span.wrap(parentSpanContext));
+        } else {
+            parentContext = Context.root();
+        }
+
+        // Invocation span — child of the ambient Lambda span when available, otherwise a root.
         var spanBuilder = tracer.spanBuilder("Invocation")
                 .setSpanKind(SpanKind.INTERNAL)
-                .setParent(Context.root().with(workflowSpan))
+                .setParent(parentContext)
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
                 .setAttribute(DURABLE_FIRST_INVOCATION, info.isFirstInvocation());
 
