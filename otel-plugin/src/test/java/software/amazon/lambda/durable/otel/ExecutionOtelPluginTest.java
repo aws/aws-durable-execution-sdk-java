@@ -7,8 +7,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
@@ -225,7 +229,7 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void workflowSpan_isRoot_invocationSpanIsChild() {
+    void workflowAndInvocationSpans_areIndependentRoots_withoutAmbientContext() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
@@ -233,14 +237,27 @@ class ExecutionOtelPluginTest {
         var workflowSpan = spanByName(spans, "Workflow");
         var invocationSpan = spanByName(spans, "Invocation");
 
-        assertFalse(
-                invocationSpan.getParentSpanContext().getSpanId().equals("0000000000000000"),
-                "Invocation span must have a parent");
-        assertEquals(
-                workflowSpan.getSpanId(),
-                invocationSpan.getParentSpanId(),
-                "Invocation span must be a child of the Workflow root span");
+        assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must be a root");
+        assertFalse(invocationSpan.getParentSpanContext().isValid(), "Invocation span must be a root");
+        assertEquals(workflowSpan.getTraceId(), invocationSpan.getTraceId());
         assertEquals(SpanKind.INTERNAL, invocationSpan.getKind());
+    }
+
+    @Test
+    void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
+        var traceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var parentSpanContext =
+                SpanContext.create(traceId, parentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+
+        try (var ignored = Span.wrap(parentSpanContext).makeCurrent()) {
+            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var invocationSpan = spanByName(spanExporter.getFinishedSpanItems(), "Invocation");
+        assertEquals(traceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
     }
 
     @Test
@@ -766,6 +783,30 @@ class ExecutionOtelPluginTest {
         assertTrue(
                 spans.stream().allMatch(s -> s.getTraceId().equals(xrayTraceId)),
                 "All spans must share the extracted X-Ray trace ID");
+    }
+
+    @Test
+    void xrayExtraction_withParentSpanId_invocationSpanHasCorrectParent() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var exporter = InMemorySpanExporter.create();
+        var xrayPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        var workflowSpan = spanByName(spans, "Workflow");
+        var invocationSpan = spanByName(spans, "Invocation");
+        assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must remain an independent root");
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
