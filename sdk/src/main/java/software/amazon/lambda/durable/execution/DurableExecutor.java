@@ -91,7 +91,13 @@ public class DurableExecutor {
                                 executionArn,
                                 isFirstInvocation,
                                 executionManager.getExecutionOperation().startTimestamp(),
-                                userInput));
+                                userInput,
+                                PluginInfoConverter.toOperationItemMap(
+                                        executionManager.getOperationsSnapshot(),
+                                        executionManager.getInitialOperationIds()),
+                                PluginInfoConverter.toOperationItemMap(
+                                        executionManager.getUpdatedOperationsSnapshot(),
+                                        executionManager.getInitialOperationIds())));
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);
                         }
@@ -120,6 +126,7 @@ public class DurableExecutor {
                                 if (cause instanceof SuspendExecutionException) {
                                     fireOnInvocationEnd(
                                             pluginRunner,
+                                            executionManager,
                                             requestId,
                                             executionArn,
                                             isFirstInvocation,
@@ -138,6 +145,7 @@ public class DurableExecutor {
                                         && unrecoverableDurableExecutionException.isRetryable()) {
                                     fireOnInvocationEnd(
                                             pluginRunner,
+                                            executionManager,
                                             requestId,
                                             executionArn,
                                             isFirstInvocation,
@@ -152,6 +160,7 @@ public class DurableExecutor {
                                 logger.debug("Execution failed: {}", cause.getMessage());
                                 fireOnInvocationEnd(
                                         pluginRunner,
+                                        executionManager,
                                         requestId,
                                         executionArn,
                                         isFirstInvocation,
@@ -168,6 +177,7 @@ public class DurableExecutor {
                                     DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
                             fireOnInvocationEnd(
                                     pluginRunner,
+                                    executionManager,
                                     requestId,
                                     executionArn,
                                     isFirstInvocation,
@@ -188,6 +198,7 @@ public class DurableExecutor {
 
     private static void fireOnInvocationEnd(
             PluginRunner pluginRunner,
+            ExecutionManager executionManager,
             String requestId,
             String executionArn,
             boolean isFirstInvocation,
@@ -196,7 +207,16 @@ public class DurableExecutor {
             Object executionInput,
             Object executionResult) {
         pluginRunner.onInvocationEnd(new InvocationEndInfo(
-                requestId, executionArn, isFirstInvocation, status, error, executionInput, executionResult));
+                requestId,
+                executionArn,
+                isFirstInvocation,
+                executionManager.getExecutionOperation().startTimestamp(),
+                PluginInfoConverter.toOperationItemMap(
+                        executionManager.getOperationsSnapshot(), executionManager.getInitialOperationIds()),
+                status,
+                error,
+                executionInput,
+                executionResult));
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {
