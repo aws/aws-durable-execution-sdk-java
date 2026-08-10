@@ -123,7 +123,7 @@ class ChildContextOperationTest {
     }
 
     private ChildContextOperation<String> createOperationWithParent(
-            Function<DurableContext, String> func, ConcurrencyOperation<?> parent) {
+            Function<DurableContext, String> func, BaseDurableOperation parent) {
         return new ChildContextOperation<>(
                 OPERATION_IDENTIFIER,
                 func,
@@ -467,15 +467,14 @@ class ChildContextOperationTest {
         assertThrows(NonDeterministicExecutionException.class, operation::execute);
     }
 
-    // ===== Parent ConcurrencyOperation support =====
+    // ===== Parent operation support =====
 
     /** Child skips success checkpoint when parent operation has already completed. */
     @Test
     void childSkipsSuccessCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = mock(ConcurrencyOperation.class);
-        when(parent.isOperationCompleted()).thenReturn(true);
+        var parent = new CompletedParentOperation(durableContext);
 
         var operation = createOperationWithParent(ctx -> "result", parent);
         operation.execute();
@@ -525,8 +524,7 @@ class ChildContextOperationTest {
     void childSkipsFailureCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = mock(ConcurrencyOperation.class);
-        when(parent.isOperationCompleted()).thenReturn(true);
+        var parent = new CompletedParentOperation(durableContext);
 
         var operation = createOperationWithParent(
                 ctx -> {
@@ -539,5 +537,25 @@ class ChildContextOperationTest {
         // sendOperationUpdate should not be called with FAIL action
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
+    }
+
+    private static final class CompletedParentOperation extends BaseDurableOperation {
+        private CompletedParentOperation(DurableContextImpl durableContext) {
+            super(
+                    OperationIdentifier.of("parent", "parent", OperationSubType.RUN_IN_CHILD_CONTEXT),
+                    durableContext,
+                    null);
+        }
+
+        @Override
+        protected void start() {}
+
+        @Override
+        protected void replay(Operation existing) {}
+
+        @Override
+        protected boolean isOperationCompleted() {
+            return true;
+        }
     }
 }

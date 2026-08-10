@@ -253,10 +253,6 @@ context.step("name", Type.class, stepCtx -> doWork(),
 │  - WaitOperation             │    │  - Batches API calls (750KB) │
 │  - InvokeOperation<T>        │    │                              │
 │  - CallbackOperation<T>      │    │  - Notifies via callback     │
-│  - WaitForConditionOperation │    └──────────────────────────────┘
-│  - ConcurrencyOperation<T>   │
-│  - MapOperation<I,O>         │
-│  - ParallelOperation         │
 │  - ChildContextOperation<T>  │
 │  - execute() / get()         │
 └──────────────────────────────┘
@@ -295,7 +291,22 @@ software.amazon.lambda.durable
 │   └── CompletionConfig     # Completion criteria for map/parallel
 │
 ├── context/
-│   └── BaseContext           # Base interface for DurableContext
+│   ├── BaseContext           # Base interface for DurableContext
+│   └── extension/            # Built-in composed operation implementations
+│       ├── MapExtension
+│       ├── ParallelExtension
+│       ├── WaitForCallbackExtension
+│       ├── WaitForConditionExtension
+│       ├── WithRetryExtension
+│       └── ExtensionConcurrencyCoordinator
+│
+├── extension/                # Public SPI for extension authors
+│   ├── ExtensionContext
+│   ├── ExtensionOperation
+│   ├── ExtensionStepConfig
+│   ├── ExtensionStepResult
+│   ├── ExtensionContextConfig
+│   └── ExtensionContextResult
 │
 ├── execution/
 │   ├── ExecutionManager     # Central coordinator
@@ -311,11 +322,7 @@ software.amazon.lambda.durable
 │   ├── InvokeOperation<T>       # Invoke logic
 │   ├── CallbackOperation<T>     # Callback logic
 │   ├── WaitOperation            # Wait logic
-│   ├── WaitForConditionOperation<T>  # Polling condition logic
-│   ├── ConcurrencyOperation<T>  # Shared base for map/parallel
-│   ├── MapOperation<I,O>        # Map operation logic
-│   ├── ParallelOperation        # Parallel operation logic
-│   └── ChildContextOperation<T> # Per-item child context execution
+│   └── ChildContextOperation<T> # Child context primitive
 │
 ├── logging/
 │   ├── DurableLogger        # Context-aware logger wrapper (MDC-based)

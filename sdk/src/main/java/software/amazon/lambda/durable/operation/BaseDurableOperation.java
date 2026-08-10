@@ -81,7 +81,7 @@ public abstract class BaseDurableOperation {
      *
      * @param operationIdentifier the unique identifier for this operation
      * @param durableContext the parent context this operation belongs to
-     * @param parentOperation the parent operation if this is a branch/iteration of a ConcurrencyOperation
+     * @param parentOperation the operation that owns late-checkpoint suppression, if any
      * @param isVirtual whether this is a virtual operation that should not be persisted
      */
     protected BaseDurableOperation(
@@ -261,8 +261,7 @@ public abstract class BaseDurableOperation {
         // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
         // completionFuture is completed by a user thread (a step or child context thread) when the execution here
         // is between `isOperationCompleted` and `thenRun`.
-        // If this operation is a branch/iteration of a ConcurrencyOperation (map or parallel), the branches/iterations
-        // must be completed sequentially to avoid race conditions.
+        // Operations sharing a late-checkpoint owner must complete sequentially to avoid races with parent completion.
         synchronized (parentOperation == null ? completionFuture : parentOperation.completionFuture) {
             if (!isOperationCompleted()) {
                 // Add a completion stage to completionFuture so that when the completionFuture is completed,

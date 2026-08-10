@@ -27,6 +27,7 @@ import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.extension.MapExtension;
+import software.amazon.lambda.durable.context.extension.ParallelExtension;
 import software.amazon.lambda.durable.context.extension.WaitForCallbackExtension;
 import software.amazon.lambda.durable.context.extension.WaitForConditionExtension;
 import software.amazon.lambda.durable.context.extension.WithRetryExtension;
@@ -41,14 +42,12 @@ import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationDescriptor;
-import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.operation.CallbackOperation;
 import software.amazon.lambda.durable.operation.ChildContextOperation;
 import software.amazon.lambda.durable.operation.InvokeOperation;
-import software.amazon.lambda.durable.operation.ParallelOperation;
 import software.amazon.lambda.durable.operation.StepOperation;
 import software.amazon.lambda.durable.operation.WaitOperation;
 import software.amazon.lambda.durable.util.ParameterValidator;
@@ -450,18 +449,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
 
     @Override
     public ParallelDurableFuture parallel(String name, ParallelConfig config) {
-        Objects.requireNonNull(config, "config cannot be null");
-        var operationId = nextOperationId();
-
-        var parallelOp = new ParallelOperation(
-                OperationIdentifier.of(operationId, name, OperationSubType.PARALLEL),
-                getDurableConfig().getSerDes(),
-                this,
-                config);
-
-        parallelOp.execute();
-
-        return parallelOp;
+        return ParallelExtension.execute(this, name, config);
     }
 
     @Override

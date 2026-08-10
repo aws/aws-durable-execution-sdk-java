@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.NestingType;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -101,6 +102,37 @@ class StaticOperationsIntegrationTest {
         var staticResult = staticRunner.runUntilComplete("input");
 
         assertEquals("[a0, b1]", legacyResult.getResult(String.class));
+        assertEquals(legacyResult.getResult(String.class), staticResult.getResult(String.class));
+        assertEquals(operationHistory(legacyResult), operationHistory(staticResult));
+    }
+
+    @Test
+    void staticParallelMatchesLegacyCheckpointHistory() {
+        var parallelConfig = ParallelConfig.builder()
+                .maxConcurrency(1)
+                .nestingType(NestingType.NESTED)
+                .build();
+        var legacyRunner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            try (var parallel = context.parallel("parallel", parallelConfig)) {
+                parallel.branch("left", String.class, child -> child.step("work", String.class, step -> "L"));
+                parallel.branch("right", String.class, child -> child.step("work", String.class, step -> "R"));
+                return parallel.get().statuses().toString();
+            }
+        });
+        var staticRunner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            try (var parallel = DurableParallelOperations.parallel("parallel", parallelConfig)) {
+                parallel.branch(
+                        "left", String.class, () -> DurableCoreOperations.step("work", String.class, () -> "L"));
+                parallel.branch(
+                        "right", String.class, () -> DurableCoreOperations.step("work", String.class, () -> "R"));
+                return parallel.get().statuses().toString();
+            }
+        });
+
+        var legacyResult = legacyRunner.runUntilComplete("input");
+        var staticResult = staticRunner.runUntilComplete("input");
+
+        assertEquals("[SUCCEEDED, SUCCEEDED]", legacyResult.getResult(String.class));
         assertEquals(legacyResult.getResult(String.class), staticResult.getResult(String.class));
         assertEquals(operationHistory(legacyResult), operationHistory(staticResult));
     }

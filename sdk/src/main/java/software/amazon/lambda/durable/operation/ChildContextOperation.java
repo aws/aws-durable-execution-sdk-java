@@ -53,9 +53,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * <p>A child context runs a user function in a separate thread with its own operation counter and checkpoint log.
  * Operations within the child context use the child's context ID as their parentId.
  *
- * <p>When created as part of a {@link ConcurrencyOperation} (e.g., parallel execution), the child notifies its parent
- * on completion via {@code onItemComplete()} BEFORE closing its own child context. It also skips checkpointing if the
- * parent operation has already succeeded.
+ * <p>When created with a parent operation, the child skips checkpointing if that parent has already completed.
  */
 public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
@@ -78,14 +76,14 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         this(operationIdentifier, function, resultTypeToken, config, durableContext, null);
     }
 
-    // child context for a ConcurrencyOperation branch
+    // child context with a late-checkpoint owner
     public ChildContextOperation(
             OperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
             RunInChildContextConfig config,
             DurableContextImpl durableContext,
-            ConcurrencyOperation<?> parentOperation) {
+            BaseDurableOperation parentOperation) {
         super(
                 operationIdentifier,
                 resultTypeToken,
@@ -202,9 +200,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // - add thread id/type to thread local when the step starts
             // - clear logger properties when the step finishes
             //
-            // When this child is part of a ConcurrencyOperation (parentOperation != null),
-            // we notify the parent BEFORE closing the child context. This ensures the parent
-            // can trigger the next queued branch while the current child context is still valid.
+            // A parent operation may own late-checkpoint suppression for this child.
             var childContext = createChildContext(contextId);
             try (var ignoredContext = DurableContextImpl.attachCurrentContext(childContext);
                     var ignoredLogger = DurableLogger.attachContext()) {
@@ -329,8 +325,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
 
         // Skip checkpointing if
-        // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes after
-        // the parent has already succeeded.
+        // - the owning parent operation has already completed, preventing a late child checkpoint.
         // - this child is not a direct child of a parent context (i.e. nestingType == FLAT), such as a parallel branch.
         if ((parentOperation != null && parentOperation.isOperationCompleted()) || isVirtual) {
             if (isVirtual) {

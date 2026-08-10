@@ -3,16 +3,18 @@
 package software.amazon.lambda.durable;
 
 import software.amazon.lambda.durable.config.ParallelConfig;
+import software.amazon.lambda.durable.context.extension.ParallelExtension;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 
 /** Context-free static facades for durable parallel operations. */
 public final class DurableParallelOperations {
     private DurableParallelOperations() {}
 
     public static ParallelDurableFuture parallel(String name) {
-        return DurableContext.getCurrentContext().parallel(name);
+        return parallel(name, ParallelConfig.builder().build());
     }
 
     public static ParallelDurableFuture parallel(String name, ParallelConfig config) {
-        return DurableContext.getCurrentContext().parallel(name, config);
+        return ParallelExtension.execute(ExtensionContext.getCurrentContext(), name, config);
     }
 }

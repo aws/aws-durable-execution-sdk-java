@@ -72,7 +72,7 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * @param resultSerDes the serializer/deserializer for the result
      * @param durableContext the parent context this operation belongs to
      * @param isVirtual whether this is a virtual operation that should not be persisted
-     * @param parentOperation the parent operation if this is a branch/iteration of a ConcurrencyOperation
+     * @param parentOperation the operation that owns late-checkpoint suppression, if any
      */
     protected SerializableDurableOperation(
             OperationIdentifier operationIdentifier,

@@ -2,21 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.mockito.Answers.CALLS_REAL_METHODS;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import software.amazon.lambda.durable.config.ParallelBranchConfig;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFunction;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
 
 class DurableParallelOperationsTest {
     @AfterEach
@@ -26,29 +26,30 @@ class DurableParallelOperationsTest {
 
     @Test
     void parallelBranchesAcceptContextFreeSuppliers() {
-        var context = mock(DurableContext.class);
-        var parallel = mock(ParallelDurableFuture.class, CALLS_REAL_METHODS);
-        var branchFuture = mockStringFuture();
+        var context = mock(CurrentContext.class);
+        var parent = mock(ExtensionOperation.class);
+        var parentFuture = mockParallelResultFuture();
         BaseContextImpl.setCurrentContext(context);
-        when(context.parallel("parallel")).thenReturn(parallel);
-        when(parallel.branch(eq("branch"), any(TypeToken.class), any(Function.class), any(ParallelBranchConfig.class)))
-                .thenReturn(branchFuture);
+        when(context.getDurableConfig()).thenReturn(DurableConfig.builder().build());
+        when(context.reserve("parallel")).thenReturn(parent);
+        when(parent.runInChildContextAsync(
+                        any(String.class),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(parentFuture);
 
         var result = DurableParallelOperations.parallel("parallel");
-        var resultFuture = result.branch("branch", String.class, () -> "result");
+        result.branch("branch", String.class, () -> "result");
 
-        assertSame(parallel, result);
-        assertSame(branchFuture, resultFuture);
-        @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<DurableContext, String>>)
-                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
-        verify(parallel)
-                .branch(eq("branch"), any(TypeToken.class), function.capture(), any(ParallelBranchConfig.class));
-        assertEquals("result", function.getValue().apply(mock(DurableContext.class)));
+        verify(context).reserve("parallel");
+        verify(context, never()).parallel(eq("parallel"), any(ParallelConfig.class));
     }
 
     @SuppressWarnings("unchecked")
-    private DurableFuture<String> mockStringFuture() {
+    private DurableFuture<software.amazon.lambda.durable.model.ParallelResult> mockParallelResultFuture() {
         return mock(DurableFuture.class);
     }
+
+    private interface CurrentContext extends DurableContext, ExtensionContext {}
 }
