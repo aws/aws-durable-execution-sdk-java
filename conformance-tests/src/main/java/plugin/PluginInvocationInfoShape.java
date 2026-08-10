@@ -20,13 +20,14 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
  * mapped one-to-one to its canonical camelCase name, null / unexposed fields OMITTED (a missing key fails its assertion
  * — the parity signal).
  *
- * <p>Java's {@link InvocationInfo} exposes only {@code requestId}, {@code executionStartTime} (→
- * {@code executionStartTimestamp}) and {@code isFirstInvocation}; it does NOT expose the execution input, the
- * operations map, or an externally-updated-operations collection, so {@code executionInput}, {@code operationsCount}
- * and {@code updatedOperationsCount} are absent. Java's {@link InvocationEndInfo} exposes {@code isFirstInvocation},
+ * <p>Java's {@link InvocationInfo} exposes {@code requestId}, {@code executionStartTime} (→
+ * {@code executionStartTimestamp}), {@code isFirstInvocation} and the {@code operations} / {@code updatedOperations}
+ * maps (dumped as {@code operationsCount} / {@code updatedOperationsCount}); it does NOT expose the execution input, so
+ * {@code executionInput} is absent. Java's {@link InvocationEndInfo} carries the same identity surface plus
  * {@code invocationStatus} (→ {@code status}) and {@code executionError}; it does NOT expose the execution input or the
  * final result, so {@code executionInput} and {@code executionResult} are absent. The single derived scalar
- * {@code terminal} := status in (SUCCEEDED, FAILED). Those omissions are the honest reds the requirement produces.
+ * {@code terminal} := status in (SUCCEEDED, FAILED). Those payload omissions are deliberate — payload surfaces are out
+ * of GA scope.
  */
 @SuppressWarnings("deprecation")
 public class PluginInvocationInfoShape extends DurableHandler<String, String> {
@@ -51,6 +52,8 @@ public class PluginInvocationInfoShape extends DurableHandler<String, String> {
             new Rec("invocation-start")
                     .bool("isFirstInvocation", info.isFirstInvocation())
                     .str("requestId", info.requestId())
+                    .num("operationsCount", info.operations().size())
+                    .num("updatedOperationsCount", info.updatedOperations().size())
                     .time("executionStartTimestamp", info.executionStartTime())
                     .emit(executionArn);
         }
@@ -62,6 +65,8 @@ public class PluginInvocationInfoShape extends DurableHandler<String, String> {
             new Rec("invocation-end")
                     .bool("isFirstInvocation", info.isFirstInvocation())
                     .str("requestId", info.requestId())
+                    .num("operationsCount", info.operations().size())
+                    .time("executionStartTimestamp", info.executionStartTime())
                     .str("status", status == null ? null : status.name())
                     .bool("terminal", terminal)
                     .str("executionError", Rec.msg(info.executionError()))
@@ -81,6 +86,13 @@ public class PluginInvocationInfoShape extends DurableHandler<String, String> {
         Rec str(String key, String value) {
             if (value != null) {
                 raw(key, quote(value));
+            }
+            return this;
+        }
+
+        Rec num(String key, Integer value) {
+            if (value != null) {
+                raw(key, value.toString());
             }
             return this;
         }

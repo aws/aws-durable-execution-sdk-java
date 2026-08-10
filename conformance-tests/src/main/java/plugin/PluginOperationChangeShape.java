@@ -21,10 +21,9 @@ import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
  * {@code updatedOperationsCount}/{@code operationsCount} (map sizes) and the derived {@code inFullMap} := the same id
  * also appears in the info's full operations map. Null / unexposed fields are OMITTED.
  *
- * <p>Java's {@link OperationChangeItemInfo} exposes id/name/type/subType/parentId/startTimestamp/endTimestamp/error/
- * status but does NOT expose the checkpointed serialized result, the attempt number, or a replay indicator, so
- * {@code result}, {@code attempt} and {@code isReplay} are absent on each item — those omissions are the honest reds
- * the requirement produces.
+ * <p>Java's {@link OperationChangeItemInfo} exposes the full operation field surface — id/name/type/subType/parentId/
+ * startTimestamp/endTimestamp/status/attempt/isReplay/error. It does NOT expose the checkpointed serialized result, so
+ * {@code result} is absent; payload surfaces are deliberately out of GA scope.
  */
 @SuppressWarnings("deprecation")
 public class PluginOperationChangeShape extends DurableHandler<Object, String> {
@@ -72,6 +71,8 @@ public class PluginOperationChangeShape extends DurableHandler<Object, String> {
                                         : Rec.upper(item.status().toString()))
                         .time("startTimestamp", item.startTimestamp())
                         .time("endTimestamp", item.endTimestamp())
+                        .num("attempt", item.attempt())
+                        .bool("isReplay", item.isReplay())
                         .str("error", Rec.msg(item.error()))
                         .emit(executionArn);
             }

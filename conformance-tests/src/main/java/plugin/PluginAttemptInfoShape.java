@@ -25,10 +25,12 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  * canonical dump of that hook's OWN info parameter, every exposed component mapped to its canonical camelCase name,
  * null / unexposed fields OMITTED.
  *
- * <p>Java's {@link UserFunctionStartInfo} exposes id/name/type/subType/parentId/startTimestamp/isReplayingChildren/
- * attempt (no endTimestamp/isReplay/outcome/error at start). Java's {@link UserFunctionEndInfo} adds endTimestamp, the
- * {@code succeeded} boolean (presented as the shared {@code outcome} SUCCEEDED/FAILED token) and {@code error}. This is
- * the richest attempt surface — every probed field is present, so the attempt assertions are expected to pass.
+ * <p>Java's {@link UserFunctionStartInfo} exposes id/name/type/subType/parentId/startTimestamp/isReplay/
+ * isReplayingChildren/attempt (no endTimestamp/outcome/error at start). Java's {@link UserFunctionEndInfo} adds
+ * endTimestamp, the {@code succeeded} boolean (presented as the shared {@code outcome} SUCCEEDED/FAILED token) and
+ * {@code error}. {@code isReplay} is the operation-level replay indicator (this operation was present in the
+ * checkpointed state delivered at invocation start); {@code isReplayingChildren} is the distinct context-children
+ * indicator and is dumped unasserted here.
  */
 @SuppressWarnings("deprecation")
 public class PluginAttemptInfoShape extends DurableHandler<Object, String> {
@@ -78,6 +80,7 @@ public class PluginAttemptInfoShape extends DurableHandler<Object, String> {
                     .str("parentId", info.parentId())
                     .num("attempt", info.attempt())
                     .time("startTimestamp", info.startTimestamp())
+                    .bool("isReplay", info.isReplay())
                     .bool("isReplayingChildren", info.isReplayingChildren())
                     .emit(executionArn);
         }
@@ -96,6 +99,7 @@ public class PluginAttemptInfoShape extends DurableHandler<Object, String> {
                     .num("attempt", info.attempt())
                     .time("startTimestamp", info.startTimestamp())
                     .time("endTimestamp", info.endTimestamp())
+                    .bool("isReplay", info.isReplay())
                     .bool("isReplayingChildren", info.isReplayingChildren())
                     .str("outcome", info.succeeded() ? "SUCCEEDED" : "FAILED")
                     .str("error", Rec.msg(info.error()))
