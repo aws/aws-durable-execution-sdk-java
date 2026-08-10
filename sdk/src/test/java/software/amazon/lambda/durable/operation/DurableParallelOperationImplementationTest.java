@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,13 +21,18 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFailure;
 import software.amazon.lambda.durable.extension.ExtensionContextFunction;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionOperation;
@@ -120,6 +126,19 @@ class DurableParallelOperationImplementationTest {
                         branchConfig.capture());
         assertTrue(branchConfig.getValue().isVirtual());
         assertSame(serDes, branchConfig.getValue().serDes());
+        var failedBranch = Operation.builder()
+                .id("branch-id")
+                .name("first")
+                .type(OperationType.CONTEXT)
+                .subType(PARALLEL_BRANCH.getValue())
+                .status(OperationStatus.FAILED)
+                .build();
+        var translated = branchConfig
+                .getValue()
+                .errorHandler()
+                .translate(new ExtensionContextFailure(failedBranch, null, List.of()));
+        var failure = assertInstanceOf(ParallelBranchFailedException.class, translated);
+        assertSame(failedBranch, failure.getOperation());
     }
 
     @Test

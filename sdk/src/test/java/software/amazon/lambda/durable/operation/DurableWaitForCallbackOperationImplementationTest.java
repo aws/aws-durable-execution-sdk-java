@@ -101,9 +101,13 @@ class DurableWaitForCallbackOperationImplementationTest {
                         CallbackDetails.builder().callbackId("callback-id").build())
                 .build();
         var failure = new ExtensionContextFailure(
-                "approval",
-                OperationSubType.WAIT_FOR_CALLBACK.getValue(),
-                null,
+                Operation.builder()
+                        .id("approval")
+                        .name("approval")
+                        .type(OperationType.CONTEXT)
+                        .subType(OperationSubType.WAIT_FOR_CALLBACK.getValue())
+                        .status(OperationStatus.FAILED)
+                        .build(),
                 null,
                 List.of(new ExtensionChildOperationSummary(callback)));
 

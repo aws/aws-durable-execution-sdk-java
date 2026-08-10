@@ -17,6 +17,7 @@ import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
@@ -165,7 +166,8 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             MapResult<O> replayState) {
         var context = ExtensionContext.getCurrentContext();
         var registeredItems = new ArrayList<OperationConcurrencyCoordinator.Item<O>>(items.size());
-        var iterationConfig = childContextConfig(config.serDes(), config.nestingType());
+        var iterationConfig = childContextConfig(
+                config.serDes(), config.nestingType(), failure -> new MapIterationFailedException(failure.operation()));
 
         for (int index = 0; index < items.size(); index++) {
             var item = items.get(index);

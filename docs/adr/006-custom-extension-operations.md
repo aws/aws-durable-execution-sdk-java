@@ -268,8 +268,7 @@ when the original exception cannot be reconstructed.
 
 An `ExtensionContextErrorHandler` receives a read-only `ExtensionContextFailure` containing:
 
-- context name and subtype
-- error metadata
+- the failed context operation, including its ID, name, subtype, status, and error metadata
 - child operation type, subtype, status, and error summaries
 
 Resolution order is:

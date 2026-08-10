@@ -16,6 +16,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
@@ -224,7 +225,8 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
 
         private ExtensionContextConfig branchConfig(ParallelBranchConfig branchConfig) {
             var serDes = branchConfig.serDes() == null ? defaultSerDes : branchConfig.serDes();
-            return childContextConfig(serDes, config.nestingType());
+            return childContextConfig(
+                    serDes, config.nestingType(), failure -> new ParallelBranchFailedException(failure.operation()));
         }
 
         private static OperationConcurrencyCoordinator.ExpectedCompletionStatus expectedCompletion(

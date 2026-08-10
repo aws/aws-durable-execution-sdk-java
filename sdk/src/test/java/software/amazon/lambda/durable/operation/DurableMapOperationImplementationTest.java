@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -18,12 +19,17 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFailure;
 import software.amazon.lambda.durable.extension.ExtensionContextFunction;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionOperation;
@@ -100,6 +106,19 @@ class DurableMapOperationImplementationTest {
                         iterationConfig.capture());
         assertTrue(iterationConfig.getValue().isVirtual());
         assertSame(serDes, iterationConfig.getValue().serDes());
+        var failedIteration = Operation.builder()
+                .id("iteration-id")
+                .name("map-iteration-0")
+                .type(OperationType.CONTEXT)
+                .subType(MAP_ITERATION.getValue())
+                .status(OperationStatus.FAILED)
+                .build();
+        var translated = iterationConfig
+                .getValue()
+                .errorHandler()
+                .translate(new ExtensionContextFailure(failedIteration, null, List.of()));
+        var failure = assertInstanceOf(MapIterationFailedException.class, translated);
+        assertSame(failedIteration, failure.getOperation());
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

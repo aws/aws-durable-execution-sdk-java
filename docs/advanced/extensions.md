@@ -326,8 +326,8 @@ the threshold. Replay metadata is scoped to the framework callback through `Exte
 `ExtensionContextConfig` directly configures the context serializer and whether the context is virtual. It also
 controls framework user-function plugin events and can suppress child checkpoints that finish after the parent. If a
 context fails, the SDK first rethrows a deserialized original exception, then calls the configured error handler, and
-finally falls back to `ChildContextFailedException`. The handler receives read-only context metadata and
-child-operation summaries.
+finally falls back to `ChildContextFailedException`. The handler receives the complete failed context operation
+through `failure.operation()`, plus read-only child-operation summaries.
 
 ## Explicit child contexts
 

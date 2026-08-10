@@ -19,6 +19,7 @@ import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextErrorHandler;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -28,10 +29,12 @@ public abstract class DurableConcurrencyOperation {
 
     DurableConcurrencyOperation() {}
 
-    protected static ExtensionContextConfig childContextConfig(SerDes serDes, NestingType nestingType) {
+    protected static ExtensionContextConfig childContextConfig(
+            SerDes serDes, NestingType nestingType, ExtensionContextErrorHandler errorHandler) {
         return ExtensionContextConfig.builder()
                 .serDes(serDes)
                 .isVirtual(nestingType == NestingType.FLAT)
+                .errorHandler(errorHandler)
                 .build();
     }
 

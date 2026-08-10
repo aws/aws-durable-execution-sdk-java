@@ -133,8 +133,12 @@ class ChildContextPrimitiveTest {
     }
 
     private ChildContextPrimitive<String> createExtensionOperation(ExtensionContextConfig config) {
+        return createExtensionOperation("AcmeContext", config);
+    }
+
+    private ChildContextPrimitive<String> createExtensionOperation(String subType, ExtensionContextConfig config) {
         return new ChildContextPrimitive<>(
-                new OperationIdentifier("1", "test-context", OperationType.CONTEXT, "AcmeContext"),
+                new OperationIdentifier("1", "test-context", OperationType.CONTEXT, subType),
                 () -> ExtensionContextResult.completed("unused"),
                 TypeToken.get(String.class),
                 config,
@@ -262,6 +266,31 @@ class ChildContextPrimitiveTest {
     }
 
     @Test
+    void replayKnownSubtypeWithoutErrorHandlerUsesGenericFailure() {
+        var failedContext = Operation.builder()
+                .id("1")
+                .name("test-context")
+                .type(OperationType.CONTEXT)
+                .subType(OperationSubType.MAP_ITERATION.getValue())
+                .status(OperationStatus.FAILED)
+                .contextDetails(ContextDetails.builder()
+                        .error(ErrorObject.builder()
+                                .errorType("com.nonexistent.SomeException")
+                                .errorMessage("unknown error")
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(failedContext);
+        var config = ExtensionContextConfig.builder().serDes(SERDES).build();
+        var operation = createExtensionOperation(OperationSubType.MAP_ITERATION.getValue(), config);
+
+        operation.execute();
+
+        var thrown = assertThrows(ChildContextFailedException.class, operation::get);
+        assertSame(failedContext, thrown.getOperation());
+    }
+
+    @Test
     void replayFailedUsesExtensionErrorHandlerWithChildSummaries() {
         var contextError = ErrorObject.builder()
                 .errorType("com.nonexistent.ContextException")
@@ -304,6 +333,7 @@ class ChildContextPrimitiveTest {
 
         assertSame(translated, assertThrows(IllegalStateException.class, operation::get));
         var failure = capturedFailure.get();
+        assertSame(failedContext, failure.operation());
         assertEquals("test-context", failure.contextName());
         assertEquals("AcmeContext", failure.subType());
         assertEquals(contextError, failure.error());

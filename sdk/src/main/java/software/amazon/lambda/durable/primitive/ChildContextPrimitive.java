@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.primitive;
 
-import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
-
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
@@ -22,15 +20,8 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.exception.CallbackFailedException;
-import software.amazon.lambda.durable.exception.CallbackSubmitterException;
-import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
-import software.amazon.lambda.durable.exception.MapIterationFailedException;
-import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
-import software.amazon.lambda.durable.exception.StepFailedException;
-import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -43,7 +34,6 @@ import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -339,23 +329,12 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
         }
 
         if (extensionConfig != null && extensionConfig.errorHandler() != null) {
-            var failure = new ExtensionContextFailure(
-                    getName(), getSubTypeValue(), null, errorObject, getChildOperationSummaries());
+            var failure = new ExtensionContextFailure(op, null, getChildOperationSummaries());
             return Objects.requireNonNull(
                     extensionConfig.errorHandler().translate(failure),
                     "Extension context error handler result cannot be null");
         }
 
-        // throw a general failed exception if a user exception is not reconstructed
-        if (OperationSubType.WAIT_FOR_CALLBACK.getValue().equals(getSubTypeValue())) {
-            return handleWaitForCallbackFailure();
-        }
-        if (OperationSubType.MAP_ITERATION.getValue().equals(getSubTypeValue())) {
-            return new MapIterationFailedException(op);
-        }
-        if (OperationSubType.PARALLEL_BRANCH.getValue().equals(getSubTypeValue())) {
-            return new ParallelBranchFailedException(op);
-        }
         return new ChildContextFailedException(op);
     }
 
@@ -370,47 +349,9 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
                 .id(getOperationId())
                 .name(getName())
                 .type(OperationType.CONTEXT)
+                .subType(getSubTypeValue())
                 .status(OperationStatus.FAILED)
                 .contextDetails(ContextDetails.builder().error(errorObject).build())
                 .build();
-    }
-
-    private Throwable handleWaitForCallbackFailure() {
-        var childrenOps = getChildOperations();
-        var callbackOp = childrenOps.stream()
-                .filter(o -> o.type() == OperationType.CALLBACK)
-                .findFirst()
-                .orElse(null);
-        var submitterOp = childrenOps.stream()
-                .filter(o -> o.type() == OperationType.STEP)
-                .findFirst()
-                .orElse(null);
-        if (callbackOp != null) {
-            // if callback failed
-            if (isTerminalStatus(callbackOp.status())) {
-                switch (callbackOp.status()) {
-                    case FAILED -> {
-                        return new CallbackFailedException(callbackOp);
-                    }
-                    case TIMED_OUT -> {
-                        return new CallbackTimeoutException(callbackOp);
-                    }
-                }
-            }
-
-            // if submitter failed
-            if (submitterOp != null
-                    && isTerminalStatus(submitterOp.status())
-                    && submitterOp.status() != OperationStatus.SUCCEEDED) {
-                var stepError = submitterOp.stepDetails().error();
-                if (StepInterruptedException.isStepInterruptedException(stepError)) {
-                    return new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));
-                } else {
-                    return new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));
-                }
-            }
-        }
-
-        return new IllegalStateException("Unknown waitForCallback status");
     }
 }

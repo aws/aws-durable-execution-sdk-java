@@ -3,15 +3,25 @@
 package software.amazon.lambda.durable.extension;
 
 import java.util.List;
+import java.util.Objects;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 
 /** Read-only failure information supplied to an extension CONTEXT error handler. */
 public final class ExtensionContextFailure {
-    private final String contextName;
-    private final String subType;
+    private final Operation operation;
     private final Throwable originalException;
-    private final ErrorObject error;
     private final List<ExtensionChildOperationSummary> childOperations;
+
+    public ExtensionContextFailure(
+            Operation operation, Throwable originalException, List<ExtensionChildOperationSummary> childOperations) {
+        this.operation = Objects.requireNonNull(operation, "operation cannot be null");
+        this.originalException = originalException;
+        this.childOperations = List.copyOf(childOperations);
+    }
 
     public ExtensionContextFailure(
             String contextName,
@@ -19,19 +29,28 @@ public final class ExtensionContextFailure {
             Throwable originalException,
             ErrorObject error,
             List<ExtensionChildOperationSummary> childOperations) {
-        this.contextName = contextName;
-        this.subType = subType;
-        this.originalException = originalException;
-        this.error = error;
-        this.childOperations = List.copyOf(childOperations);
+        this(
+                Operation.builder()
+                        .name(contextName)
+                        .type(OperationType.CONTEXT)
+                        .subType(subType)
+                        .status(OperationStatus.FAILED)
+                        .contextDetails(ContextDetails.builder().error(error).build())
+                        .build(),
+                originalException,
+                childOperations);
+    }
+
+    public Operation operation() {
+        return operation;
     }
 
     public String contextName() {
-        return contextName;
+        return operation.name();
     }
 
     public String subType() {
-        return subType;
+        return operation.subType();
     }
 
     public Throwable originalException() {
@@ -39,7 +58,9 @@ public final class ExtensionContextFailure {
     }
 
     public ErrorObject error() {
-        return error;
+        return operation.contextDetails() == null
+                ? null
+                : operation.contextDetails().error();
     }
 
     public List<ExtensionChildOperationSummary> childOperations() {
