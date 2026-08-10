@@ -3,53 +3,34 @@
 package software.amazon.lambda.durable.context;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import java.time.Duration;
 import java.util.Collection;
-import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
-import java.util.function.Function;
-import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.CallbackConfig;
-import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
-import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
-import software.amazon.lambda.durable.context.extension.MapExtension;
-import software.amazon.lambda.durable.context.extension.ParallelExtension;
-import software.amazon.lambda.durable.context.extension.WaitForCallbackExtension;
-import software.amazon.lambda.durable.context.extension.WaitForConditionExtension;
-import software.amazon.lambda.durable.context.extension.WithRetryExtension;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionContext;
-import software.amazon.lambda.durable.extension.ExtensionContextConfig;
-import software.amazon.lambda.durable.extension.ExtensionContextFunction;
 import software.amazon.lambda.durable.extension.ExtensionOperation;
-import software.amazon.lambda.durable.extension.ExtensionStepConfig;
-import software.amazon.lambda.durable.extension.ExtensionStepFunction;
+import software.amazon.lambda.durable.extension.ExtensionOperationImpl;
 import software.amazon.lambda.durable.model.MapResult;
-import software.amazon.lambda.durable.model.OperationDescriptor;
-import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
-import software.amazon.lambda.durable.operation.BaseDurableOperation;
-import software.amazon.lambda.durable.operation.CallbackOperation;
-import software.amazon.lambda.durable.operation.ChildContextOperation;
-import software.amazon.lambda.durable.operation.InvokeOperation;
-import software.amazon.lambda.durable.operation.StepOperation;
-import software.amazon.lambda.durable.operation.WaitOperation;
+import software.amazon.lambda.durable.operation.DurableMapOperation;
+import software.amazon.lambda.durable.operation.DurableParallelOperation;
+import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation;
+import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation;
+import software.amazon.lambda.durable.operation.DurableWithRetryOperation;
+import software.amazon.lambda.durable.primitive.BasePrimitive;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
@@ -65,7 +46,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             - Math.max(WAIT_FOR_CALLBACK_CALLBACK_SUFFIX.length(), WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX.length());
     private final OperationIdGenerator operationIdGenerator;
     private final DurableContextImpl parentContext;
-    private final BaseDurableOperation lateCheckpointOwner;
+    private final BasePrimitive lateCheckpointOwner;
     private final boolean isVirtual;
     private boolean isReplaying;
 
@@ -78,7 +59,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             String contextName,
             boolean isVirtual,
             DurableContextImpl parentContext,
-            BaseDurableOperation lateCheckpointOwner) {
+            BasePrimitive lateCheckpointOwner) {
         super(executionManager, durableConfig, lambdaContext, contextId, contextName, ThreadType.CONTEXT);
         operationIdGenerator = new OperationIdGenerator(contextId);
         this.parentContext = parentContext;
@@ -115,10 +96,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     }
 
     public DurableContextImpl createChildContext(
-            String childContextId,
-            String childContextName,
-            boolean isVirtual,
-            BaseDurableOperation lateCheckpointOwner) {
+            String childContextId, String childContextName, boolean isVirtual, BasePrimitive lateCheckpointOwner) {
         return new DurableContextImpl(
                 getExecutionManager(),
                 getDurableConfig(),
@@ -148,308 +126,19 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
                 attempt);
     }
 
-    @Override
-    public <T> DurableFuture<T> stepAsync(
-            String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config) {
-        Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        ParameterValidator.validateOperationName(name);
-        return stepAsyncWithId(nextOperationId(), name, resultType, func, config);
-    }
-
-    <T> DurableFuture<T> stepAsyncWithId(
-            String operationId,
-            String name,
-            TypeToken<T> resultType,
-            Function<StepContext, T> func,
-            StepConfig config) {
-        return stepAsyncWithId(operationId, name, OperationSubType.STEP.getValue(), resultType, func, config);
-    }
-
-    <T> DurableFuture<T> stepAsyncWithId(
-            String operationId,
-            String name,
-            String subType,
-            TypeToken<T> resultType,
-            Function<StepContext, T> func,
-            StepConfig config) {
-        Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        ParameterValidator.validateOperationName(name);
-
-        if (config.serDes() == null) {
-            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
-        }
-        // Create and start step operation with TypeToken
-        var operation = new StepOperation<>(
-                new OperationDescriptor(operationId, name, OperationType.STEP, subType),
-                func,
-                resultType,
-                config,
-                this);
-
-        operation.execute(); // Start the step (returns immediately)
-
-        return operation;
-    }
-
-    <T> DurableFuture<T> extensionStepAsyncWithId(
-            String operationId,
-            String name,
-            String subType,
-            TypeToken<T> resultType,
-            ExtensionStepFunction<T> function,
-            ExtensionStepConfig<T> config) {
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(function, "function cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-        ParameterValidator.validateOperationName(name);
-
-        if (config.serDes() == null) {
-            config = ExtensionStepConfig.<T>builder()
-                    .initialState(config.initialState())
-                    .serDes(getDurableConfig().getSerDes())
-                    .build();
-        }
-        var operation = new StepOperation<>(
-                new OperationDescriptor(operationId, name, OperationType.STEP, subType),
-                function,
-                resultType,
-                config,
-                this);
-        operation.execute();
-        return operation;
-    }
-
-    @Override
-    public DurableFuture<Void> waitAsync(String name, Duration duration) {
-        ParameterValidator.validateDuration(duration, "Wait duration");
-        ParameterValidator.validateOperationName(name);
-        return waitAsyncWithId(nextOperationId(), name, duration);
-    }
-
-    DurableFuture<Void> waitAsyncWithId(String operationId, String name, Duration duration) {
-        return waitAsyncWithId(operationId, name, OperationSubType.WAIT.getValue(), duration);
-    }
-
-    DurableFuture<Void> waitAsyncWithId(String operationId, String name, String subType, Duration duration) {
-        ParameterValidator.validateDuration(duration, "Wait duration");
-        ParameterValidator.validateOperationName(name);
-
-        // Create and start wait operation
-        var operation = new WaitOperation(
-                new OperationDescriptor(operationId, name, OperationType.WAIT, subType), duration, this);
-
-        operation.execute(); // Checkpoint the wait
-        return operation;
-    }
-
-    @Override
-    public <T, U> DurableFuture<T> invokeAsync(
-            String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config) {
-        Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        ParameterValidator.validateOperationName(name);
-        return invokeAsyncWithId(nextOperationId(), name, functionName, payload, resultType, config);
-    }
-
-    <T, U> DurableFuture<T> invokeAsyncWithId(
-            String operationId,
-            String name,
-            String functionName,
-            U payload,
-            TypeToken<T> resultType,
-            InvokeConfig config) {
-        return invokeAsyncWithId(
-                operationId,
-                name,
-                OperationSubType.CHAINED_INVOKE.getValue(),
-                functionName,
-                payload,
-                resultType,
-                config);
-    }
-
-    <T, U> DurableFuture<T> invokeAsyncWithId(
-            String operationId,
-            String name,
-            String subType,
-            String functionName,
-            U payload,
-            TypeToken<T> resultType,
-            InvokeConfig config) {
-        Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        ParameterValidator.validateOperationName(name);
-
-        if (config.serDes() == null) {
-            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
-        }
-        if (config.payloadSerDes() == null) {
-            config = config.toBuilder()
-                    .payloadSerDes(getDurableConfig().getSerDes())
-                    .build();
-        }
-        // Create and start invoke operation
-        var operation = new InvokeOperation<>(
-                new OperationDescriptor(operationId, name, OperationType.CHAINED_INVOKE, subType),
-                functionName,
-                payload,
-                resultType,
-                config,
-                this);
-
-        operation.execute(); // checkpoint the invoke operation
-        return operation; // Block (will throw SuspendExecutionException if needed)
-    }
-
-    @Override
-    public <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType, CallbackConfig config) {
-        Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        ParameterValidator.validateOperationName(name);
-        return createCallbackWithId(nextOperationId(), name, resultType, config);
-    }
-
-    <T> DurableCallbackFuture<T> createCallbackWithId(
-            String operationId, String name, TypeToken<T> resultType, CallbackConfig config) {
-        return createCallbackWithId(operationId, name, OperationSubType.CALLBACK.getValue(), resultType, config);
-    }
-
-    <T> DurableCallbackFuture<T> createCallbackWithId(
-            String operationId, String name, String subType, TypeToken<T> resultType, CallbackConfig config) {
-        Objects.requireNonNull(config, "config cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        ParameterValidator.validateOperationName(name);
-        if (config.serDes() == null) {
-            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
-        }
-        var operation = new CallbackOperation<>(
-                new OperationDescriptor(operationId, name, OperationType.CALLBACK, subType), resultType, config, this);
-        operation.execute();
-
-        return operation;
-    }
-
-    /**
-     * Runs a function in a child context, blocking until it completes.
-     *
-     * <p>Child contexts provide isolated operation ID namespaces, allowing nested workflows to be composed without ID
-     * collisions. On replay, the child context's operations are replayed independently.
-     *
-     * @param name the operation name within this context
-     * @param resultType the result class for deserialization
-     * @param func the function to execute, receiving a child {@link DurableContext}
-     * @param config the configuration for the child context
-     * @return the DurableFuture wrapping the child context result
-     */
-    @Override
-    public <T> DurableFuture<T> runInChildContextAsync(
-            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
-        return runInChildContextAsync(name, resultType, func, config, OperationSubType.RUN_IN_CHILD_CONTEXT);
-    }
-
-    private <T> DurableFuture<T> runInChildContextAsync(
-            String name,
-            TypeToken<T> resultType,
-            Function<DurableContext, T> func,
-            RunInChildContextConfig config,
-            OperationSubType subType) {
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(func, "func cannot be null");
-        Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
-        ParameterValidator.validateOperationName(name);
-        return runInChildContextAsyncWithId(nextOperationId(), name, resultType, func, config, subType);
-    }
-
-    <T> DurableFuture<T> runInChildContextAsyncWithId(
-            String operationId,
-            String name,
-            TypeToken<T> resultType,
-            Function<DurableContext, T> func,
-            RunInChildContextConfig config) {
-        return runInChildContextAsyncWithId(
-                operationId, name, OperationSubType.RUN_IN_CHILD_CONTEXT.getValue(), resultType, func, config);
-    }
-
-    private <T> DurableFuture<T> runInChildContextAsyncWithId(
-            String operationId,
-            String name,
-            TypeToken<T> resultType,
-            Function<DurableContext, T> func,
-            RunInChildContextConfig config,
-            OperationSubType subType) {
-        return runInChildContextAsyncWithId(operationId, name, subType.getValue(), resultType, func, config);
-    }
-
-    <T> DurableFuture<T> runInChildContextAsyncWithId(
-            String operationId,
-            String name,
-            String subType,
-            TypeToken<T> resultType,
-            Function<DurableContext, T> func,
-            RunInChildContextConfig config) {
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(func, "func cannot be null");
-        Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
-        ParameterValidator.validateOperationName(name);
-
-        if (config.serDes() == null) {
-            config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
-        }
-
-        var operation = new ChildContextOperation<>(
-                new OperationDescriptor(operationId, name, OperationType.CONTEXT, subType),
-                func,
-                resultType,
-                config,
-                this,
-                lateCheckpointOwner);
-
-        operation.execute();
-        return operation;
-    }
-
-    <T> DurableFuture<T> extensionContextAsyncWithId(
-            String operationId,
-            String name,
-            String subType,
-            TypeToken<T> resultType,
-            ExtensionContextFunction<T> function,
-            ExtensionContextConfig config) {
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(function, "function cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-        ParameterValidator.validateOperationName(name);
-
-        var childConfig = config.childContextConfig();
-        if (childConfig.serDes() == null) {
-            childConfig = childConfig.toBuilder()
-                    .serDes(getDurableConfig().getSerDes())
-                    .build();
-            config = config.toBuilder().childContextConfig(childConfig).build();
-        }
-
-        var operation = new ChildContextOperation<>(
-                new OperationDescriptor(operationId, name, OperationType.CONTEXT, subType),
-                function,
-                resultType,
-                config,
-                this,
-                lateCheckpointOwner);
-        operation.execute();
-        return operation;
+    BasePrimitive getLateCheckpointOwner() {
+        return lateCheckpointOwner;
     }
 
     @Override
     public <I, O> DurableFuture<MapResult<O>> mapAsync(
             String name, Collection<I> items, TypeToken<O> resultType, MapFunction<I, O> function, MapConfig config) {
-        return MapExtension.execute(this, name, items, resultType, function, config);
+        return DurableMapOperation.mapAsync(this, name, items, resultType, function, config.toOperationConfig());
     }
 
     @Override
     public ParallelDurableFuture parallel(String name, ParallelConfig config) {
-        return ParallelExtension.execute(this, name, config);
+        return DurableParallelOperation.parallel(this, name, config.toOperationConfig());
     }
 
     @Override
@@ -458,7 +147,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             TypeToken<T> resultType,
             BiConsumer<String, StepContext> func,
             WaitForCallbackConfig waitForCallbackConfig) {
-        return WaitForCallbackExtension.execute(this, name, resultType, func, waitForCallbackConfig);
+        return DurableWaitForCallbackOperation.waitForCallbackAsync(
+                this, name, resultType, func, waitForCallbackConfig.toOperationConfig());
     }
 
     @Override
@@ -467,7 +157,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             TypeToken<T> resultType,
             BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
             WaitForConditionConfig<T> config) {
-        return WaitForConditionExtension.execute(this, name, resultType, checkFunc, config);
+        return DurableWaitForConditionOperation.waitForConditionAsync(
+                this, name, resultType, checkFunc, config.toOperationConfig());
     }
 
     // =============== withRetry ================
@@ -475,7 +166,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public <T> DurableFuture<T> withRetryAsync(
             String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {
-        return WithRetryExtension.execute(this, name, operation, config);
+        return DurableWithRetryOperation.withRetryAsync(this, name, operation, config.toOperationConfig());
     }
 
     // =============== accessors ================
@@ -504,13 +195,13 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public ExtensionOperation reserve(String name) {
         ParameterValidator.validateOperationName(name);
-        return new ExtensionOperationImpl(this, reserveOperationId(), name);
+        return new ExtensionOperationImpl(this, reserveOperationId(), name, lateCheckpointOwner);
     }
 
     @Override
     public ExtensionOperation reserve(String name, String localOperationId) {
         ParameterValidator.validateOperationName(name);
-        return new ExtensionOperationImpl(this, reserveOperationId(localOperationId), name);
+        return new ExtensionOperationImpl(this, reserveOperationId(localOperationId), name, lateCheckpointOwner);
     }
 
     /** Returns whether this context is currently in replay mode. */

@@ -28,7 +28,7 @@ defining new backend state machines.
 
 ## Decision
 
-### Preserve Existing Operation APIs
+### Preserve Existing Customer Operation APIs
 
 Keep every existing method signature, callback contract, configuration field, result type, exception, and behavior
 unchanged. New capabilities are additive and limited to extension-specific overloads and types.
@@ -45,31 +45,53 @@ This includes:
 - `StepConfig`
 - `RunInChildContextConfig`
 
-Existing methods on `ExtensionContext` and `ExtensionOperation` also remain unchanged; this decision adds overloads
-rather than replacing them.
+`ExtensionContext` and `ExtensionOperation` are new extension-author SPI contracts. `ExtensionOperation` deliberately
+exposes only one fully specified asynchronous method per primitive instead of mirroring the customer-facing overload
+families. Extension libraries can add their own conveniences, and deterministic operations can use the matching
+built-in operation directly.
 
 The existing `DurableContext` methods remain compatibility APIs. Their implementations delegate to the same built-in
-extension implementations used by the static facades.
+operation classes used by the static APIs.
 
-### Expose Core and Built-In Extension Facades
+Each built-in operation owns its public nested configuration type, such as
+`DurableStepOperation.StepConfig` or `DurableMapOperation.MapConfig`. The compatibility types under
+`software.amazon.lambda.durable.config` convert through `toOperationConfig()` at the `DurableContext` boundary.
 
-Expose primitive operations through `DurableCoreOperations`:
+### Expose Primitive and Built-In Extension Facades
 
-- `step`
-- `wait`
-- chained `invoke`
-- `createCallback`
-- `runInChildContext`
+Expose each primitive through an independently maintained class:
+
+| Facade | Primitive |
+| --- | --- |
+| `DurableStepOperation` | STEP |
+| `DurableWaitOperation` | WAIT |
+| `DurableInvokeOperation` | CHAINED_INVOKE |
+| `DurableCallbackOperation` | CALLBACK |
+| `DurableContextOperation` | CONTEXT |
+
+The customer-facing primitive APIs use the extension SPI internally. For example:
+
+```text
+DurableContext.step
+  -> DurableStepOperation.step
+  -> ExtensionOperation.stepAsync
+  -> primitive.StepPrimitive
+```
+
+The other primitives follow the same dependency direction through their matching merged operation class.
+`DurableContextImpl` provides the durable scope and reservation mechanism. Only
+`extension.ExtensionOperationImpl` constructs
+the concrete primitive operation engines, so customer APIs and third-party extensions share one backend boundary.
 
 Expose each built-in extension family through an independently maintained class:
 
 | Facade | Operation family |
 | --- | --- |
-| `DurableMapOperations` | `map`, `mapAsync` |
-| `DurableParallelOperations` | `parallel` and branch construction |
-| `DurableWaitForCallbackOperations` | `waitForCallback`, `waitForCallbackAsync` |
-| `DurableWaitForConditionOperations` | `waitForCondition`, `waitForConditionAsync` |
-| `DurableWithRetryOperations` | `withRetry`, `withRetryAsync` |
+| `DurableMapOperation` | `map`, `mapAsync` |
+| `DurableParallelOperation` | `parallel` and branch construction |
+| `DurableWaitForCallbackOperation` | `waitForCallback`, `waitForCallbackAsync` |
+| `DurableWaitForConditionOperation` | `waitForCondition`, `waitForConditionAsync` |
+| `DurableWithRetryOperation` | `withRetry`, `withRetryAsync` |
 
 An extension is an ordinary static Java method. There is no registration API and no universal
 `DurableExtensions.run` boundary.
@@ -85,13 +107,21 @@ software.amazon.lambda.durable.extension
 This package contains `ExtensionContext`, `ExtensionOperation`, stateful-step contracts, and configurable
 extension-context contracts.
 
+Place merged built-in operation APIs in:
+
+```text
+software.amazon.lambda.durable.operation
+```
+
+Each `Durable*Operation` class owns its context-free overloads and its canonical `ExtensionContext` implementation.
+There are no separate built-in `*Extension` classes.
+
 Keep the following customer-facing types in the root `software.amazon.lambda.durable` package:
 
-- static operation facades such as `DurableCoreOperations` and `DurableMapOperations`
 - operation-specific TLS metadata such as `MapItemContext`, `WaitForCallbackContext`, and `WithRetryContext`
 - established SDK types such as `DurableFuture`, `StepContext`, and `TypeToken`
 
-SDK implementations of built-in extensions remain internal and are not part of the extension-author API.
+Backend primitive engines remain internal under `software.amazon.lambda.durable.primitive`.
 
 ### Use Scoped Current Context
 
@@ -140,21 +170,41 @@ Extension authors never provide or observe the final globally stored operation I
 
 ### Allow Arbitrary Subtype Strings
 
-`ExtensionOperation` provides subtype-aware overloads for every primitive:
+`ExtensionOperation` provides one subtype-aware method for every primitive:
 
 ```java
-reservation.stepAsync("MyStep", ...);
-reservation.waitAsync("MyWait", ...);
-reservation.invokeAsync("MyInvoke", ...);
-reservation.createCallback("MyCallback", ...);
-reservation.runInChildContextAsync("MyContext", ...);
+<T> DurableFuture<T> stepAsync(
+        String subType,
+        TypeToken<T> resultType,
+        ExtensionStepFunction<T> function,
+        ExtensionStepConfig<T> config);
+
+DurableFuture<Void> waitAsync(String subType, Duration duration);
+
+<T, U> DurableFuture<T> invokeAsync(
+        String subType,
+        String functionName,
+        U payload,
+        TypeToken<T> resultType,
+        ExtensionInvokeConfig config);
+
+<T> DurableCallbackFuture<T> createCallback(
+        String subType,
+        TypeToken<T> resultType,
+        ExtensionCallbackConfig config);
+
+<T> DurableFuture<T> runInChildContextAsync(
+        String subType,
+        TypeToken<T> resultType,
+        ExtensionContextFunction<T> function,
+        ExtensionContextConfig config);
 ```
 
 The primitive selector determines the backend operation type. The string controls only the subtype recorded in
 checkpoints, replay validation, plugins, logs, and error metadata.
 
 Subtype strings must be non-null and nonblank. They are not restricted to the existing `OperationSubType` enum.
-Existing no-subtype overloads retain the standard subtype strings.
+Extensions use the corresponding `OperationSubType` value when they want a standard subtype.
 
 ### Keep Primitive State Machines Fixed
 
@@ -238,7 +288,7 @@ Rewrite the existing composed operation families using the extension contract:
 - map uses a `Map` context and reserved `MapIteration` contexts
 - parallel uses a `Parallel` context and dynamically registered `ParallelBranch` contexts
 
-The legacy `DurableContext` methods and static facades adapt into the same canonical family implementations.
+The legacy `DurableContext` methods and static APIs adapt into the same canonical family implementations.
 
 After behavior and checkpoint parity are proven, remove the specialized:
 

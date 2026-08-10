@@ -25,7 +25,8 @@ public final class WithRetryContext {
         return attempt;
     }
 
-    static SafeCloseable attach(int attempt) {
+    /** Attaches retry metadata for the duration of the returned scope. */
+    public static SafeCloseable attach(int attempt) {
         return CURRENT.attach(new WithRetryContext(attempt));
     }
 }

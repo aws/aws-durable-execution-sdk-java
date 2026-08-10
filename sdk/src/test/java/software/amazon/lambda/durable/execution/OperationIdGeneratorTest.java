@@ -25,10 +25,12 @@ class OperationIdGeneratorTest {
     }
 
     @Test
-    void generatedIdsSkipClaimedCustomNumericIds() {
+    void generatedIdsFailWhenNextNumericIdWasClaimed() {
         var generator = new OperationIdGenerator(null);
 
         assertEquals(hashOperationId("2"), generator.nextOperationId("2"));
+        var exception = assertThrows(IllegalArgumentException.class, generator::nextOperationId);
+        assertEquals("Local operation ID is already in use: 2", exception.getMessage());
         assertEquals(hashOperationId("3"), generator.nextOperationId());
     }
 

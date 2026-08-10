@@ -7,8 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static software.amazon.lambda.durable.DurableCoreOperations.step;
+import static software.amazon.lambda.durable.extension.PairOperations.customOperationsAsync;
 import static software.amazon.lambda.durable.extension.PairOperations.pairAsync;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -26,6 +27,7 @@ import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class ExtensionOperationIntegrationTest {
@@ -48,24 +50,28 @@ class ExtensionOperationIntegrationTest {
     }
 
     @Test
-    void customReservationsRemainStableWhenRegistrationOrderChanges() {
-        var invocations = new AtomicInteger();
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var extension = ExtensionContext.getCurrentContext();
-            var replay = invocations.incrementAndGet() > 1;
-            var first = replay ? extension.reserve("right", "right") : extension.reserve("left", "left");
-            var second = replay ? extension.reserve("left", "left") : extension.reserve("right", "right");
-            first.step(String.class, () -> first == second ? "invalid" : "first");
-            second.step(String.class, () -> "second");
-            context.wait("replay", Duration.ofSeconds(1));
-            return "done";
-        });
+    void customExtensionFixtureSupportsLocalIdsAndSubtypesAcrossReplay() {
+        var extensionExecutions = new AtomicInteger();
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> customOperationsAsync("custom", extensionExecutions)
+                        .get());
 
         var result = runner.runUntilComplete("input");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(hash("left"), result.getOperation("left").getId());
-        assertEquals(hash("right"), result.getOperation("right").getId());
+        assertEquals("step:context", result.getResult(String.class));
+        assertTrue(extensionExecutions.get() >= 2);
+        assertEquals(hash("custom-step-id"), result.getOperation("custom-step").getId());
+        assertEquals(OperationType.STEP, result.getOperation("custom-step").getType());
+        assertEquals("AcmeStep", result.getOperation("custom-step").getSubtype());
+        assertEquals(hash("custom-wait-id"), result.getOperation("custom-wait").getId());
+        assertEquals(OperationType.WAIT, result.getOperation("custom-wait").getType());
+        assertEquals("AcmeWait", result.getOperation("custom-wait").getSubtype());
+        assertEquals(
+                hash("custom-context-id"), result.getOperation("custom-context").getId());
+        assertEquals(
+                OperationType.CONTEXT, result.getOperation("custom-context").getType());
+        assertEquals("AcmeContext", result.getOperation("custom-context").getSubtype());
     }
 
     @Test
@@ -92,11 +98,25 @@ class ExtensionOperationIntegrationTest {
     void extensionCanExplicitlyCreateChildContext() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var outer = ExtensionContext.getCurrentContext();
-            return outer.reserve("child").runInChildContext(String.class, () -> {
-                var child = ExtensionContext.getCurrentContext();
-                assertNotSame(outer, child);
-                return child.reserve("value", "node").step(String.class, () -> "nested");
-            });
+            return outer.reserve("child")
+                    .runInChildContextAsync(
+                            OperationSubType.RUN_IN_CHILD_CONTEXT.getValue(),
+                            TypeToken.get(String.class),
+                            () -> {
+                                var child = ExtensionContext.getCurrentContext();
+                                assertNotSame(outer, child);
+                                var nested = child.reserve("value", "node")
+                                        .stepAsync(
+                                                OperationSubType.STEP.getValue(),
+                                                TypeToken.get(String.class),
+                                                state -> ExtensionStepResult.succeed("nested"),
+                                                ExtensionStepConfig.<String>builder()
+                                                        .build())
+                                        .get();
+                                return ExtensionContextResult.completed(nested);
+                            },
+                            ExtensionContextConfig.builder().build())
+                    .get();
         });
 
         var result = runner.runUntilComplete("input");
@@ -111,9 +131,26 @@ class ExtensionOperationIntegrationTest {
     void customPrimitiveSubtypesAreStoredWithoutChangingOperationTypes() {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var extension = ExtensionContext.getCurrentContext();
-            extension.reserve("custom-step").step("AcmeStep", String.class, () -> "step");
-            extension.reserve("custom-wait").wait("AcmeWait", Duration.ofSeconds(1));
-            return extension.reserve("custom-context").runInChildContext("AcmeContext", String.class, () -> "done");
+            extension
+                    .reserve("custom-step")
+                    .stepAsync(
+                            "AcmeStep",
+                            TypeToken.get(String.class),
+                            state -> ExtensionStepResult.succeed("step"),
+                            ExtensionStepConfig.<String>builder().build())
+                    .get();
+            extension
+                    .reserve("custom-wait")
+                    .waitAsync("AcmeWait", Duration.ofSeconds(1))
+                    .get();
+            return extension
+                    .reserve("custom-context")
+                    .runInChildContextAsync(
+                            "AcmeContext",
+                            TypeToken.get(String.class),
+                            () -> ExtensionContextResult.completed("done"),
+                            ExtensionContextConfig.builder().build())
+                    .get();
         });
 
         var result = runner.runUntilComplete("input");
@@ -133,15 +170,16 @@ class ExtensionOperationIntegrationTest {
         var runner =
                 LocalDurableTestRunner.create(Integer.class, (input, context) -> ExtensionContext.getCurrentContext()
                         .reserve("stateful")
-                        .step(
+                        .stepAsync(
                                 "AcmeStateful",
-                                Integer.class,
+                                TypeToken.get(Integer.class),
                                 state -> state >= 2
                                         ? ExtensionStepResult.succeed(state)
                                         : ExtensionStepResult.retry(state + 1, Duration.ofSeconds(1)),
                                 ExtensionStepConfig.<Integer>builder()
                                         .initialState(0)
-                                        .build()));
+                                        .build())
+                        .get());
 
         var result = runner.runUntilComplete(0);
 
@@ -158,9 +196,9 @@ class ExtensionOperationIntegrationTest {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var result = ExtensionContext.getCurrentContext()
                     .reserve("advanced")
-                    .runInChildContext(
+                    .runInChildContextAsync(
                             "AcmeContext",
-                            String.class,
+                            TypeToken.get(String.class),
                             () -> {
                                 executions.incrementAndGet();
                                 var replay = ExtensionContextReplayContext.<String>getCurrentContext();
@@ -169,7 +207,8 @@ class ExtensionOperationIntegrationTest {
                                 }
                                 return ExtensionContextResult.replayChildren("full", "stored");
                             },
-                            ExtensionContextConfig.builder().build());
+                            ExtensionContextConfig.builder().build())
+                    .get();
             context.wait("replay", Duration.ofSeconds(1));
             return result;
         });

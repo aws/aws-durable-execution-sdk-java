@@ -11,7 +11,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
-import software.amazon.lambda.durable.operation.SerializableDurableOperation;
+import software.amazon.lambda.durable.primitive.SerializablePrimitive;
 
 class DurableFutureTest {
     @AfterEach
@@ -71,7 +71,7 @@ class DurableFutureTest {
     void allOfPropagatesException() {
         var op1 = mockOperation("first");
         @SuppressWarnings("unchecked")
-        SerializableDurableOperation<String> op2 = mock(SerializableDurableOperation.class);
+        SerializablePrimitive<String> op2 = mock(SerializablePrimitive.class);
         when(op2.get()).thenThrow(new RuntimeException("Step failed"));
 
         assertThrows(RuntimeException.class, () -> DurableFuture.allOf(op1, op2));
@@ -106,8 +106,8 @@ class DurableFutureTest {
     }
 
     @SuppressWarnings("unchecked")
-    private <T> SerializableDurableOperation<T> mockOperation(T result) {
-        SerializableDurableOperation<T> op = mock(SerializableDurableOperation.class);
+    private <T> SerializablePrimitive<T> mockOperation(T result) {
+        SerializablePrimitive<T> op = mock(SerializablePrimitive.class);
         when(op.get()).thenReturn(result);
         return op;
     }

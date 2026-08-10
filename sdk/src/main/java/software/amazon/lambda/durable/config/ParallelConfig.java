@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.config;
 
 import java.util.Objects;
+import software.amazon.lambda.durable.operation.DurableParallelOperation;
 
 /**
  * Configuration options for parallel operations in durable executions.
@@ -50,6 +51,15 @@ public class ParallelConfig {
                 .maxConcurrency(maxConcurrency)
                 .completionConfig(completionConfig)
                 .nestingType(nestingType);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableParallelOperation.ParallelConfig toOperationConfig() {
+        return DurableParallelOperation.ParallelConfig.builder()
+                .maxConcurrency(maxConcurrency())
+                .completionConfig(completionConfig())
+                .nestingType(nestingType())
+                .build();
     }
 
     /** Builder for creating ParallelConfig instances. */

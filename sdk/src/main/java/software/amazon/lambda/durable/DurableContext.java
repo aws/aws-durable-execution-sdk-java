@@ -18,8 +18,14 @@ import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.BaseContext;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.operation.DurableCallbackOperation;
+import software.amazon.lambda.durable.operation.DurableContextOperation;
+import software.amazon.lambda.durable.operation.DurableInvokeOperation;
+import software.amazon.lambda.durable.operation.DurableStepOperation;
+import software.amazon.lambda.durable.operation.DurableWaitOperation;
 
 public interface DurableContext extends BaseContext {
     /**
@@ -157,8 +163,11 @@ public interface DurableContext extends BaseContext {
      * @param config the step configuration (retry strategy, semantics, custom SerDes)
      * @return a future representing the step result
      */
-    <T> DurableFuture<T> stepAsync(
-            String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config);
+    default <T> DurableFuture<T> stepAsync(
+            String name, TypeToken<T> resultType, Function<StepContext, T> func, StepConfig config) {
+        return DurableStepOperation.stepAsync(
+                (ExtensionContext) this, name, resultType, func, config.toOperationConfig());
+    }
 
     /** @deprecated use the variants accepting StepContext instead */
     @Deprecated
@@ -236,7 +245,9 @@ public interface DurableContext extends BaseContext {
      * @param duration the duration to wait
      * @return a future that completes when the wait duration has elapsed
      */
-    DurableFuture<Void> waitAsync(String name, Duration duration);
+    default DurableFuture<Void> waitAsync(String name, Duration duration) {
+        return DurableWaitOperation.waitAsync((ExtensionContext) this, name, duration);
+    }
 
     /**
      * Invokes another Lambda function by name and blocks until the result is available.
@@ -320,8 +331,11 @@ public interface DurableContext extends BaseContext {
      * @param config the invoke configuration (custom SerDes for result and payload)
      * @return a future representing the invocation result
      */
-    <T, U> DurableFuture<T> invokeAsync(
-            String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config);
+    default <T, U> DurableFuture<T> invokeAsync(
+            String name, String functionName, U payload, TypeToken<T> resultType, InvokeConfig config) {
+        return DurableInvokeOperation.invokeAsync(
+                (ExtensionContext) this, name, functionName, payload, resultType, config.toOperationConfig());
+    }
 
     /** Creates a callback with custom configuration. */
     default <T> DurableCallbackFuture<T> createCallback(String name, Class<T> resultType, CallbackConfig config) {
@@ -351,7 +365,10 @@ public interface DurableContext extends BaseContext {
      * @param config the callback configuration (custom SerDes)
      * @return a future containing the callback ID and eventual result
      */
-    <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType, CallbackConfig config);
+    default <T> DurableCallbackFuture<T> createCallback(String name, TypeToken<T> resultType, CallbackConfig config) {
+        return DurableCallbackOperation.createCallback(
+                (ExtensionContext) this, name, resultType, config.toOperationConfig());
+    }
 
     /**
      * Runs a function in a child context, blocking until it completes.
@@ -487,8 +504,11 @@ public interface DurableContext extends BaseContext {
      * @param config the configuration for the child context
      * @return the DurableFuture wrapping the child context result
      */
-    <T> DurableFuture<T> runInChildContextAsync(
-            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config);
+    default <T> DurableFuture<T> runInChildContextAsync(
+            String name, TypeToken<T> resultType, Function<DurableContext, T> func, RunInChildContextConfig config) {
+        return DurableContextOperation.runInChildContextAsync(
+                (ExtensionContext) this, name, resultType, func, config.toOperationConfig());
+    }
 
     default <I, O> MapResult<O> map(String name, Collection<I> items, Class<O> resultType, MapFunction<I, O> function) {
         return mapAsync(

@@ -16,8 +16,12 @@ import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionStepConfig;
+import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.operation.DurableMapOperation;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
@@ -185,7 +189,14 @@ class PluginIntegrationTest {
     }
 
     private static String customExtension() {
-        return ExtensionContext.getCurrentContext().reserve("inner-step").step(String.class, () -> "done");
+        return ExtensionContext.getCurrentContext()
+                .reserve("inner-step")
+                .stepAsync(
+                        OperationSubType.STEP.getValue(),
+                        TypeToken.get(String.class),
+                        state -> ExtensionStepResult.succeed("done"),
+                        ExtensionStepConfig.<String>builder().build())
+                .get();
     }
 
     @Test
@@ -414,7 +425,7 @@ class PluginIntegrationTest {
         var config = DurableConfig.builder().withPlugins(plugin).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> DurableMapOperations.map(
+                (input, context) -> DurableMapOperation.map(
                                 "items", List.of("a", "b"), String.class, String::toUpperCase)
                         .results()
                         .toString(),
@@ -714,7 +725,7 @@ class PluginIntegrationTest {
                 .toList();
         assertEquals(2, flakyEnds.size(), "Expected two attempts: one failed, one succeeded");
 
-        // First attempt failed — its exception is handled internally by StepOperation, but the
+        // First attempt failed — its exception is handled internally by StepPrimitive, but the
         // onUserFunctionEnd hook must still report it as failed. Look up by attempt number since the
         // retry may run nested within the failed attempt, making end-hook ordering non-deterministic.
         var firstAttempt = flakyEnds.stream()

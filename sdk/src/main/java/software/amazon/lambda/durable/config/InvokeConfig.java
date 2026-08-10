@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.operation.DurableInvokeOperation;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -38,6 +39,15 @@ public class InvokeConfig {
 
     public Builder toBuilder() {
         return new Builder(payloadSerDes, resultSerDes, tenantId);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableInvokeOperation.InvokeConfig toOperationConfig() {
+        return DurableInvokeOperation.InvokeConfig.builder()
+                .payloadSerDes(payloadSerDes())
+                .serDes(serDes())
+                .tenantId(tenantId())
+                .build();
     }
 
     /** Builder for creating InvokeConfig instances. */

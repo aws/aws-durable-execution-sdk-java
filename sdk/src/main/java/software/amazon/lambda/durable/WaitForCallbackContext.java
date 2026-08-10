@@ -26,7 +26,8 @@ public final class WaitForCallbackContext {
         return callbackId;
     }
 
-    static SafeCloseable attach(String callbackId) {
+    /** Attaches callback metadata for the duration of the returned scope. */
+    public static SafeCloseable attach(String callbackId) {
         return CURRENT.attach(new WaitForCallbackContext(callbackId));
     }
 }

@@ -249,11 +249,11 @@ context.step("name", Type.class, stepCtx -> doWork(),
             ▼                                       ▼
 ┌──────────────────────────────┐    ┌──────────────────────────────┐
 │  Operations                  │    │  CheckpointBatcher           │
-│  - StepOperation<T>          │    │  - Queues requests           │
-│  - WaitOperation             │    │  - Batches API calls (750KB) │
-│  - InvokeOperation<T>        │    │                              │
-│  - CallbackOperation<T>      │    │  - Notifies via callback     │
-│  - ChildContextOperation<T>  │
+│  - StepPrimitive<T>          │    │  - Queues requests           │
+│  - WaitPrimitive             │    │  - Batches API calls (750KB) │
+│  - InvokePrimitive<T>        │    │                              │
+│  - CallbackPrimitive<T>      │    │  - Notifies via callback     │
+│  - ChildContextPrimitive<T>  │
 │  - execute() / get()         │
 └──────────────────────────────┘
                                                     │
@@ -282,23 +282,35 @@ software.amazon.lambda.durable
 │   ├── StepConfig           # Step configuration (retry, semantics, serDes)
 │   ├── InvokeConfig         # Invoke configuration (payload/result serDes, tenantId)
 │   ├── CallbackConfig       # Callback configuration (timeout, heartbeat, serDes)
-│   ├── WaitForCallbackConfig # Composite callback + step config
-│   ├── MapConfig            # Map configuration (concurrency, completion, serDes)
-│   ├── ParallelConfig       # Parallel configuration (concurrency, completion)
-│   ├── ParallelBranchConfig # Per-branch configuration
-│   ├── RunInChildContextConfig # Child context configuration
-│   ├── WaitForConditionConfig<T> # Polling configuration (wait strategy, serDes, initialState)
+│   ├── WaitForCallbackConfig # DurableContext compatibility config
+│   ├── MapConfig            # DurableContext compatibility config
+│   ├── ParallelConfig       # DurableContext compatibility config
+│   ├── ParallelBranchConfig # ParallelDurableFuture compatibility config
+│   ├── RunInChildContextConfig # DurableContext compatibility config
+│   ├── WaitForConditionConfig<T> # DurableContext compatibility config
 │   └── CompletionConfig     # Completion criteria for map/parallel
 │
 ├── context/
-│   ├── BaseContext           # Base interface for DurableContext
-│   └── extension/            # Built-in composed operation implementations
-│       ├── MapExtension
-│       ├── ParallelExtension
-│       ├── WaitForCallbackExtension
-│       ├── WaitForConditionExtension
-│       ├── WithRetryExtension
-│       └── ExtensionConcurrencyCoordinator
+│   └── BaseContext           # Base interface for DurableContext
+│
+├── operation/                # Public built-in operation APIs + implementations
+│   ├── DurableStepOperation # Owns nested StepConfig
+│   ├── DurableWaitOperation
+│   ├── DurableInvokeOperation
+│   ├── DurableCallbackOperation
+│   ├── DurableContextOperation
+│   ├── DurableMapOperation
+│   ├── DurableParallelOperation # Owns nested ParallelConfig and ParallelBranchConfig
+│   ├── DurableWaitForCallbackOperation
+│   ├── DurableWaitForConditionOperation
+│   └── DurableWithRetryOperation
+│
+├── primitive/                # Internal checkpoint-backed operation engines
+│   ├── StepPrimitive
+│   ├── WaitPrimitive
+│   ├── InvokePrimitive
+│   ├── CallbackPrimitive
+│   └── ChildContextPrimitive
 │
 ├── extension/                # Public SPI for extension authors
 │   ├── ExtensionContext
@@ -317,12 +329,12 @@ software.amazon.lambda.durable
 │   └── ThreadType           # CONTEXT, STEP
 │
 ├── operation/
-│   ├── BaseDurableOperation<T>  # Common operation logic
-│   ├── StepOperation<T>         # Step logic
-│   ├── InvokeOperation<T>       # Invoke logic
-│   ├── CallbackOperation<T>     # Callback logic
-│   ├── WaitOperation            # Wait logic
-│   └── ChildContextOperation<T> # Child context primitive
+│   ├── BasePrimitive<T>  # Common operation logic
+│   ├── StepPrimitive<T>         # Step logic
+│   ├── InvokePrimitive<T>       # Invoke logic
+│   ├── CallbackPrimitive<T>     # Callback logic
+│   ├── WaitPrimitive            # Wait logic
+│   └── ChildContextPrimitive<T> # Child context primitive
 │
 ├── logging/
 │   ├── DurableLogger        # Context-aware logger wrapper (MDC-based)
@@ -392,12 +404,12 @@ software.amazon.lambda.durable
 sequenceDiagram
     participant UC as User Code
     participant DC as DurableContext
-    participant SO as StepOperation
+    participant SO as StepPrimitive
     participant EM as ExecutionManager
     participant Backend
 
     UC->>DC: step("name", Type.class, stepCtx -> doWork())
-    DC->>SO: new StepOperation(...)
+    DC->>SO: new StepPrimitive(...)
     DC->>SO: execute()
     SO->>EM: sendOperationUpdate(START)
     EM->>Backend: checkpoint(START)
@@ -420,7 +432,7 @@ sequenceDiagram
     participant DE as DurableExecutor
     participant UC as User Code
     participant DC as DurableContext
-    participant SO as StepOperation
+    participant SO as StepPrimitive
     participant EM as ExecutionManager
 
     Note over LR: Re-invocation with existing state
@@ -444,7 +456,7 @@ sequenceDiagram
 sequenceDiagram
     participant UC as User Code
     participant DC as DurableContext
-    participant WO as WaitOperation
+    participant WO as WaitPrimitive
     participant EM as ExecutionManager
     participant Backend
 
@@ -543,7 +555,7 @@ This is a one-way transition (REPLAY → EXECUTION, never back). `DurableLogger`
 
 **Context Flow:**
 1. `DurableLogger` constructor sets execution-level MDC (ARN, requestId) on the handler thread
-2. `StepOperation.executeStepLogic()` calls `durableLogger.setOperationContext()` before user code runs
+2. `StepPrimitive.executeStepLogic()` calls `durableLogger.setOperationContext()` before user code runs
 3. User code logs via `context.getLogger()` - MDC values automatically included
 4. `clearOperationContext()` called in finally block after step completes
 
@@ -576,11 +588,11 @@ Multiple concurrent operations may checkpoint simultaneously. `CheckpointBatcher
 The `checkpointDelay` configuration option (default: 0) controls how long the batcher waits before flushing, allowing more operations to accumulate in a single batch. For functions with many concurrent operations, setting a small delay (e.g., 10ms) can significantly reduce the number of API calls.
 
 ```
-StepOperation 1 ──┐
+StepPrimitive 1 ──┐
                   │
-StepOperation 2 ──┼──► CheckpointBatcher ──► Backend
+StepPrimitive 2 ──┼──► CheckpointBatcher ──► Backend
                   │
-WaitOperation ────┘
+WaitPrimitive ────┘
 ```
 
 Callback mechanism avoids cyclic dependency between `ExecutionManager` and `CheckpointBatcher`:
@@ -687,8 +699,8 @@ The SDK uses a threaded execution model where the handler runs on a user-configu
 
 | ThreadType | Identifier (threadId)                                                          | Created By | Purpose |
 |------------|--------------------------------------------------------------------------------|------------|---------|
-| `CONTEXT` | `null` for root context; the operation ID for child contexts (e.g. `"hash(1)"`) | `DurableExecutor` (root), `ChildContextOperation` (child) | Runs the handler function body or a child context function body. Orchestrates operations. |
-| `STEP` | The step's operation ID (e.g. `"hash(2)"`)                                     | `StepOperation` | Runs user-provided step code (`Function<StepContext, T>`). |
+| `CONTEXT` | `null` for root context; the operation ID for child contexts (e.g. `"hash(1)"`) | `DurableExecutor` (root), `ChildContextPrimitive` (child) | Runs the handler function body or a child context function body. Orchestrates operations. |
+| `STEP` | The step's operation ID (e.g. `"hash(2)"`)                                     | `StepPrimitive` | Runs user-provided step code (`Function<StepContext, T>`). |
 
 Each thread has a `ThreadContext` record (threadId + threadType) stored in a `ThreadLocal` so operations can identify which context they belong to.
 
@@ -741,10 +753,10 @@ A thread deregisters when it cannot make forward progress — typically when it 
 
 ### The `waitForOperationCompletion()` Pattern
 
-This method in `BaseDurableOperation` is the core coordination primitive. It is called by every operation's `get()` method (step, wait, invoke, callback, child context):
+This method in `BasePrimitive` is the core coordination primitive. It is called by every operation's `get()` method (step, wait, invoke, callback, child context):
 
 ```java
-// BaseDurableOperation.waitForOperationCompletion()
+// BasePrimitive.waitForOperationCompletion()
 protected Operation waitForOperationCompletion() {
     var threadContext = getCurrentThreadContext();
 
@@ -772,7 +784,7 @@ The re-registration callback (`thenRun`) runs synchronously on the thread that c
 When `CheckpointManager` receives a checkpoint response, it calls `ExecutionManager.onCheckpointComplete()`, which notifies each registered operation:
 
 ```java
-// BaseDurableOperation.onCheckpointComplete()
+// BasePrimitive.onCheckpointComplete()
 public void onCheckpointComplete(Operation operation) {
     if (ExecutionManager.isTerminalStatus(operation.status())) {
         synchronized (completionFuture) {
@@ -786,12 +798,12 @@ Completing the future triggers the `thenRun` callback (re-registers the waiting 
 
 ### Operation-Specific Threading
 
-#### StepOperation
+#### StepPrimitive
 
 Steps run user code on a separate thread via the user executor:
 
 ```java
-// StepOperation.executeStepLogic()
+// StepPrimitive.executeStepLogic()
 registerActiveThread(getOperationId());  // register BEFORE submitting to executor
 
 CompletableFuture.runAsync(() -> {
@@ -809,12 +821,12 @@ Key details:
 - The step thread is implicitly deregistered when it finishes — it never calls `deregisterActiveThread` directly. Instead, the step thread's work is done after checkpointing, and the checkpoint response completes the `completionFuture`, which re-registers the waiting context thread.
 - For retries, the step sends a RETRY checkpoint and then polls for the READY status before re-executing. If no other threads are active during the retry delay, the execution suspends.
 
-#### WaitOperation
+#### WaitPrimitive
 
 Waits checkpoint a WAIT action with a duration, then poll for completion:
 
 ```java
-// WaitOperation.start()
+// WaitPrimitive.start()
 sendOperationUpdate(OperationUpdate.builder()
     .action(OperationAction.START)
     .waitOptions(WaitOptions.builder().waitSeconds((int) duration.toSeconds()).build()));
@@ -823,20 +835,20 @@ pollForOperationUpdates(remainingWaitTime);
 
 The wait itself doesn't deregister any thread. Suspension happens when the context thread calls `wait()` (synchronous) which calls `get()`, which calls `waitForOperationCompletion()`, which deregisters the context thread. If no other threads are active, the execution suspends and the Lambda returns PENDING. On re-invocation, the wait replays: if the wait period has elapsed, `markAlreadyCompleted()` is called; otherwise, polling resumes with the remaining duration.
 
-#### InvokeOperation
+#### InvokePrimitive
 
-Invokes checkpoint a START action with the target function name and payload, then poll for the result. The threading model is identical to WaitOperation — the invoke itself doesn't create a new thread. The context thread deregisters when it calls `get()` on the invoke future.
+Invokes checkpoint a START action with the target function name and payload, then poll for the result. The threading model is identical to WaitPrimitive — the invoke itself doesn't create a new thread. The context thread deregisters when it calls `get()` on the invoke future.
 
-#### CallbackOperation
+#### CallbackPrimitive
 
 Callbacks checkpoint a START action to obtain a `callbackId`, then poll for an external system to complete the callback. Like waits and invokes, the context thread deregisters when it calls `get()`. The callback can complete via an external API call (success, failure, or heartbeat timeout).
 
-#### ChildContextOperation
+#### ChildContextPrimitive
 
 Child contexts run a user function in a separate thread with its own `DurableContext` and operation counter:
 
 ```java
-// ChildContextOperation.executeChildContext()
+// ChildContextPrimitive.executeChildContext()
 var contextId = getOperationId();
 
 // Register on PARENT thread — prevents race with parent deregistration
@@ -867,7 +879,7 @@ When a context thread calls `ctx.step(...)`, the following coordination occurs:
 
 | Seq | Context Thread                                                                                                                                                                                                | Step Thread                                                                                                                                | System Thread (CheckpointManager)                                                                                                                                  |
 |-----|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1   | Create `StepOperation` + `completionFuture`. Call `execute()`. `execute()` calls `start()` which registers step thread and submits to user executor. Checkpoint START (sync or async depending on semantics). | —                                                                                                                                          | (idle)                                                                                                                                                             |
+| 1   | Create `StepPrimitive` + `completionFuture`. Call `execute()`. `execute()` calls `start()` which registers step thread and submits to user executor. Checkpoint START (sync or async depending on semantics). | —                                                                                                                                          | (idle)                                                                                                                                                             |
 | 2   | `step()` calls `get()` → `waitForOperationCompletion()`. Attach `thenRun(re-register)` to `completionFuture`. Deregister context thread. Block on `join()`.                                                   | User code begins executing. Execute `function.apply(stepContext)`.                                                                         | (idle)                                                                                                                                                             |
 | 3   | (blocked)                                                                                                                                                                                                     | User code completes. Call `handleStepSucceeded(result)` → `sendOperationUpdate(SUCCEED)` (synchronous — blocks until checkpoint response). | Process checkpoint API call. On terminal response, call `onCheckpointComplete()` → `completionFuture.complete(null)`. `thenRun` fires: re-register context thread. |
 | 4   | `join()` returns. Retrieve result from operation.                                                                                                                                                             | Call `deregisterActiveThread` to deregister Step thread. Step thread ends.                                                                 | (idle)                                                                                                                                                             |
@@ -878,7 +890,7 @@ When a context thread calls `ctx.step(...)`, the following coordination occurs:
 
 | Seq | Context Thread                                                                                                                                                             | System Thread          |
 |-----|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------|
-| 1   | Create `WaitOperation` + `completionFuture`. Call `execute()`. `execute()` calls `start()` → checkpoint WAIT with duration → `pollForOperationUpdates(remainingWaitTime)`. | Begin polling backend. |
+| 1   | Create `WaitPrimitive` + `completionFuture`. Call `execute()`. `execute()` calls `start()` → checkpoint WAIT with duration → `pollForOperationUpdates(remainingWaitTime)`. | Begin polling backend. |
 | 2   | `wait()` calls `get()` → `waitForOperationCompletion()`. Attach `thenRun(re-register)`. Deregister context thread.                                                         | (polling)              |
 | 3   | `activeThreads` is empty → `suspendExecution()` → `executionExceptionFuture.completeExceptionally(SuspendExecutionException)`.                                             | —                      |
 | 4   | `runUntilCompleteOrSuspend` resolves with `SuspendExecutionException` → return `PENDING`.                                                                                  | —                      |
@@ -895,8 +907,8 @@ var result = stepFuture.get();
 
 | Seq | Context Thread                                                     | Step Thread                    | System Thread                                                                                           |
 |-----|--------------------------------------------------------------------|--------------------------------|---------------------------------------------------------------------------------------------------------|
-| 1   | Create `StepOperation`, register step thread, submit to executor.  | —                              | —                                                                                                       |
-| 2   | Create `WaitOperation`, checkpoint WAIT, start polling.            | User code begins.              | Begin polling for wait.                                                                                 |
+| 1   | Create `StepPrimitive`, register step thread, submit to executor.  | —                              | —                                                                                                       |
+| 2   | Create `WaitPrimitive`, checkpoint WAIT, start polling.            | User code begins.              | Begin polling for wait.                                                                                 |
 | 3   | `wait()` calls `get()` → deregister context thread.                | (running)                      | (polling)                                                                                               |
 | 4   | (blocked — but step thread is still active, so no suspension)      | Complete → checkpoint SUCCEED. | Process step checkpoint.                                                                                |
 | 5   | (blocked)                                                          | —                              | Wait poll returns SUCCEEDED → `completionFuture.complete(null)` for wait. Context thread re-registered. |

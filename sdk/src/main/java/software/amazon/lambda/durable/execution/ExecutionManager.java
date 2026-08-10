@@ -27,8 +27,8 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
-import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.primitive.BasePrimitive;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -66,7 +66,7 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> updatedOperationIdsSinceLastInvocation;
 
     // ===== Thread Coordination =====
-    private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
+    private final Map<String, BasePrimitive> registeredOperations = new ConcurrentHashMap<>();
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
@@ -134,7 +134,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
-    public void registerOperation(BaseDurableOperation operation) {
+    public void registerOperation(BasePrimitive operation) {
         registeredOperations.put(operation.getOperationId(), operation);
     }
 
@@ -367,7 +367,7 @@ public class ExecutionManager implements SafeCloseable {
 
     private void validateRunningThreads() {
         // This will detect stuck user thread and thread leaks in the thread pool
-        for (BaseDurableOperation op : registeredOperations.values()) {
+        for (BasePrimitive op : registeredOperations.values()) {
             var userHandlerFuture = op.getRunningUserHandler();
             if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
                 // Some user threads can still be running because

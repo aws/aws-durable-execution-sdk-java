@@ -46,10 +46,10 @@ public class OperationIdGenerator {
      * {@code hash("<parentHash>-2")} inside a child context.
      */
     public String nextOperationId() {
-        String localOperationId;
-        do {
-            localOperationId = String.valueOf(operationCounter.incrementAndGet());
-        } while (!allocatedLocalIds.add(localOperationId));
+        var localOperationId = String.valueOf(operationCounter.incrementAndGet());
+        if (!allocatedLocalIds.add(localOperationId)) {
+            throw new IllegalArgumentException("Local operation ID is already in use: " + localOperationId);
+        }
         return hashOperationId(operationIdPrefix + localOperationId);
     }
 

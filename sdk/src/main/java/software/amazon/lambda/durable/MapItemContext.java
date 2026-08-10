@@ -25,7 +25,8 @@ public final class MapItemContext {
         return index;
     }
 
-    static SafeCloseable attach(int index) {
+    /** Attaches map item metadata for the duration of the returned scope. */
+    public static SafeCloseable attach(int index) {
         return CURRENT.attach(new MapItemContext(index));
     }
 }

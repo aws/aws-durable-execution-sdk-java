@@ -3,280 +3,196 @@
 package software.amazon.lambda.durable.context;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doCallRealMethod;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import software.amazon.lambda.durable.DurableCallbackFuture;
-import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.StepContext;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.CallbackConfig;
-import software.amazon.lambda.durable.config.InvokeConfig;
-import software.amazon.lambda.durable.config.RunInChildContextConfig;
-import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
+import software.amazon.lambda.durable.extension.ExtensionInvokeConfig;
 import software.amazon.lambda.durable.extension.ExtensionOperation;
+import software.amazon.lambda.durable.extension.ExtensionOperationImpl;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.primitive.BasePrimitive;
+import software.amazon.lambda.durable.primitive.CallbackPrimitive;
+import software.amazon.lambda.durable.primitive.ChildContextPrimitive;
+import software.amazon.lambda.durable.primitive.InvokePrimitive;
+import software.amazon.lambda.durable.primitive.StepPrimitive;
+import software.amazon.lambda.durable.primitive.WaitPrimitive;
 
 class ExtensionOperationImplTest {
     @Test
     void reservationsKeepSequentialIdsWhenExecutedOutOfOrder() {
-        var context = mock(DurableContextImpl.class);
+        var context = context();
         when(context.reserveOperationId()).thenReturn("sequential-1", "sequential-2");
         doCallRealMethod().when(context).reserve("first");
         doCallRealMethod().when(context).reserve("second");
-        var duration = Duration.ofSeconds(1);
-        when(context.waitAsyncWithId("sequential-1", "first", duration)).thenReturn(mockFuture());
-        when(context.waitAsyncWithId("sequential-2", "second", duration)).thenReturn(mockFuture());
+        replay(context, "sequential-1", "first", OperationType.WAIT, OperationSubType.WAIT.getValue());
+        replay(context, "sequential-2", "second", OperationType.WAIT, OperationSubType.WAIT.getValue());
 
         var first = context.reserve("first");
         var second = context.reserve("second");
-        second.waitAsync(duration);
-        first.waitAsync(duration);
+        var secondFuture = second.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
+        var firstFuture = first.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
 
-        var ordered = inOrder(context);
-        ordered.verify(context).reserveOperationId();
-        ordered.verify(context).reserveOperationId();
-        ordered.verify(context).waitAsyncWithId("sequential-2", "second", duration);
-        ordered.verify(context).waitAsyncWithId("sequential-1", "first", duration);
+        assertEquals(
+                "sequential-2",
+                assertInstanceOf(BasePrimitive.class, secondFuture).getOperationId());
+        assertEquals(
+                "sequential-1",
+                assertInstanceOf(BasePrimitive.class, firstFuture).getOperationId());
     }
 
     @Test
     void customReservationUsesExplicitLocalOperationId() {
-        var context = mock(DurableContextImpl.class);
-        var duration = Duration.ofSeconds(1);
-        var expectedFuture = mockFuture();
+        var context = context();
         when(context.reserveOperationId("node-a")).thenReturn("custom-node-a");
         doCallRealMethod().when(context).reserve("custom", "node-a");
-        when(context.waitAsyncWithId("custom-node-a", "custom", duration)).thenReturn(expectedFuture);
+        replay(context, "custom-node-a", "custom", OperationType.WAIT, OperationSubType.WAIT.getValue());
 
-        var operation = context.reserve("custom", "node-a");
-        var actualFuture = operation.waitAsync(duration);
-
-        verify(context).reserveOperationId("node-a");
-        verify(context).waitAsyncWithId("custom-node-a", "custom", duration);
-        assertEquals(expectedFuture, actualFuture);
-    }
-
-    @Test
-    void reservedStepAdaptsSupplierToStepFunction() {
-        var context = mock(DurableContextImpl.class);
-        var future = mockStringFuture();
-        var resultType = TypeToken.get(String.class);
-        var config = StepConfig.builder().build();
-        var called = new AtomicBoolean();
-        when(context.stepAsyncWithId(eq("1"), eq("step"), eq(resultType), any(), eq(config)))
-                .thenReturn(future);
-        var operation = new ExtensionOperationImpl(context, "1", "step");
+        var future =
+                context.reserve("custom", "node-a").waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
 
         assertEquals(
-                future,
-                operation.stepAsync(
-                        resultType,
-                        () -> {
-                            called.set(true);
-                            return "result";
-                        },
-                        config));
-
-        @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<StepContext, String>>)
-                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
-        verify(context).stepAsyncWithId(eq("1"), eq("step"), eq(resultType), function.capture(), eq(config));
-        assertEquals("result", function.getValue().apply(mock(StepContext.class)));
-        assertEquals(true, called.get());
+                "custom-node-a", assertInstanceOf(BasePrimitive.class, future).getOperationId());
     }
 
     @Test
-    void customSubtypeStepDelegatesExactSubtype() {
-        var context = mock(DurableContextImpl.class);
-        var future = mockStringFuture();
-        var resultType = TypeToken.get(String.class);
-        var config = StepConfig.builder().build();
-        when(context.stepAsyncWithId(eq("1"), eq("step"), eq("AcmeStep"), eq(resultType), any(), eq(config)))
-                .thenReturn(future);
-
-        var actual = new ExtensionOperationImpl(context, "1", "step")
-                .stepAsync("AcmeStep", resultType, () -> "result", config);
-
-        assertEquals(future, actual);
-    }
-
-    @Test
-    void statefulStepDelegatesWithoutExposingStepContext() {
-        var context = mock(DurableContextImpl.class);
-        var future = mockStringFuture();
+    void statefulStepCreatesStepOperationWithExactSubtype() {
+        var context = context();
+        replay(context, "1", "step", OperationType.STEP, "AcmeStateful");
         var resultType = TypeToken.get(String.class);
         var config =
                 ExtensionStepConfig.<String>builder().initialState("initial").build();
-        when(context.extensionStepAsyncWithId(
-                        eq("1"), eq("step"), eq("AcmeStateful"), eq(resultType), any(), eq(config)))
-                .thenReturn(future);
 
-        var actual = new ExtensionOperationImpl(context, "1", "step")
+        var future = new ExtensionOperationImpl(context, "1", "step", null)
                 .stepAsync("AcmeStateful", resultType, state -> ExtensionStepResult.succeed(state + "-done"), config);
 
-        assertEquals(future, actual);
+        assertOperation(future, StepPrimitive.class, "1", "step", "AcmeStateful");
     }
 
     @Test
-    void reservationDelegatesWaitInvokeAndCallback() {
-        var duration = Duration.ofSeconds(2);
-        var waitContext = mock(DurableContextImpl.class);
-        var waitFuture = mockFuture();
-        when(waitContext.waitAsyncWithId("1", "wait", duration)).thenReturn(waitFuture);
-        assertEquals(waitFuture, new ExtensionOperationImpl(waitContext, "1", "wait").waitAsync(duration));
-
-        var invokeContext = mock(DurableContextImpl.class);
-        var invokeFuture = mockStringFuture();
-        var invokeConfig = InvokeConfig.builder().build();
+    void primitiveSelectorsCreateMatchingOperationTypesAndExactSubtypes() {
+        var context = context();
         var resultType = TypeToken.get(String.class);
-        when(invokeContext.invokeAsyncWithId("2", "invoke", "target", "payload", resultType, invokeConfig))
-                .thenReturn(invokeFuture);
-        assertEquals(
-                invokeFuture,
-                new ExtensionOperationImpl(invokeContext, "2", "invoke")
-                        .invokeAsync("target", "payload", resultType, invokeConfig));
+        replay(context, "1", "wait", OperationType.WAIT, "AcmeWait");
+        replay(context, "2", "invoke", OperationType.CHAINED_INVOKE, "AcmeInvoke");
+        replay(context, "3", "callback", OperationType.CALLBACK, "AcmeCallback");
+        replay(context, "4", "child", OperationType.CONTEXT, "AcmeContext");
 
-        var callbackContext = mock(DurableContextImpl.class);
-        @SuppressWarnings("unchecked")
-        var callbackFuture = (DurableCallbackFuture<String>) mock(DurableCallbackFuture.class);
-        var callbackConfig = CallbackConfig.builder().build();
-        when(callbackContext.createCallbackWithId("3", "callback", resultType, callbackConfig))
-                .thenReturn(callbackFuture);
-        assertEquals(
-                callbackFuture,
-                new ExtensionOperationImpl(callbackContext, "3", "callback")
-                        .createCallback(resultType, callbackConfig));
-    }
+        var wait = new ExtensionOperationImpl(context, "1", "wait", null).waitAsync("AcmeWait", Duration.ofSeconds(2));
+        var invoke = new ExtensionOperationImpl(context, "2", "invoke", null)
+                .invokeAsync(
+                        "AcmeInvoke",
+                        "target",
+                        "payload",
+                        resultType,
+                        ExtensionInvokeConfig.builder().build());
+        var callback = new ExtensionOperationImpl(context, "3", "callback", null)
+                .createCallback(
+                        "AcmeCallback",
+                        resultType,
+                        ExtensionCallbackConfig.builder().build());
+        var child = new ExtensionOperationImpl(context, "4", "child", null)
+                .runInChildContextAsync(
+                        "AcmeContext",
+                        resultType,
+                        () -> ExtensionContextResult.completed("result"),
+                        ExtensionContextConfig.builder().build());
 
-    @Test
-    void customSubtypeSelectorsDelegateExactSubtype() {
-        var duration = Duration.ofSeconds(2);
-        var resultType = TypeToken.get(String.class);
-
-        var waitContext = mock(DurableContextImpl.class);
-        var waitFuture = mockFuture();
-        when(waitContext.waitAsyncWithId("1", "wait", "AcmeWait", duration)).thenReturn(waitFuture);
-        assertEquals(waitFuture, new ExtensionOperationImpl(waitContext, "1", "wait").waitAsync("AcmeWait", duration));
-
-        var invokeContext = mock(DurableContextImpl.class);
-        var invokeFuture = mockStringFuture();
-        var invokeConfig = InvokeConfig.builder().build();
-        when(invokeContext.invokeAsyncWithId(
-                        "2", "invoke", "AcmeInvoke", "target", "payload", resultType, invokeConfig))
-                .thenReturn(invokeFuture);
-        assertEquals(
-                invokeFuture,
-                new ExtensionOperationImpl(invokeContext, "2", "invoke")
-                        .invokeAsync("AcmeInvoke", "target", "payload", resultType, invokeConfig));
-
-        var callbackContext = mock(DurableContextImpl.class);
-        @SuppressWarnings("unchecked")
-        var callbackFuture = (DurableCallbackFuture<String>) mock(DurableCallbackFuture.class);
-        var callbackConfig = CallbackConfig.builder().build();
-        when(callbackContext.createCallbackWithId("3", "callback", "AcmeCallback", resultType, callbackConfig))
-                .thenReturn(callbackFuture);
-        assertEquals(
-                callbackFuture,
-                new ExtensionOperationImpl(callbackContext, "3", "callback")
-                        .createCallback("AcmeCallback", resultType, callbackConfig));
-
-        var childContext = mock(DurableContextImpl.class);
-        var childFuture = mockStringFuture();
-        var childConfig = RunInChildContextConfig.builder().build();
-        when(childContext.runInChildContextAsyncWithId(
-                        eq("4"), eq("child"), eq("AcmeContext"), eq(resultType), any(), eq(childConfig)))
-                .thenReturn(childFuture);
-        assertEquals(
-                childFuture,
-                new ExtensionOperationImpl(childContext, "4", "child")
-                        .runInChildContextAsync("AcmeContext", resultType, () -> "result", childConfig));
+        assertOperation(wait, WaitPrimitive.class, "1", "wait", "AcmeWait");
+        assertOperation(invoke, InvokePrimitive.class, "2", "invoke", "AcmeInvoke");
+        assertOperation(callback, CallbackPrimitive.class, "3", "callback", "AcmeCallback");
+        assertOperation(child, ChildContextPrimitive.class, "4", "child", "AcmeContext");
     }
 
     @Test
     void invalidSubtypeDoesNotClaimReservation() {
-        var context = mock(DurableContextImpl.class);
-        var duration = Duration.ofSeconds(1);
-        var future = mockFuture();
-        when(context.waitAsyncWithId("1", "wait", duration)).thenReturn(future);
-        var operation = new ExtensionOperationImpl(context, "1", "wait");
+        var context = context();
+        replay(context, "1", "wait", OperationType.WAIT, "Wait");
+        var operation = new ExtensionOperationImpl(context, "1", "wait", null);
 
-        assertThrows(NullPointerException.class, () -> operation.waitAsync(null, duration));
-        assertThrows(IllegalArgumentException.class, () -> operation.waitAsync(" ", duration));
-        assertEquals(future, operation.waitAsync(duration));
-    }
-
-    @Test
-    void reservedChildContextAdaptsSupplierToChildFunction() {
-        var context = mock(DurableContextImpl.class);
-        var future = mockStringFuture();
-        var resultType = TypeToken.get(String.class);
-        var config = RunInChildContextConfig.builder().build();
-        when(context.runInChildContextAsyncWithId(eq("1"), eq("child"), eq(resultType), any(), eq(config)))
-                .thenReturn(future);
-        var operation = new ExtensionOperationImpl(context, "1", "child");
-
-        assertEquals(future, operation.runInChildContextAsync(resultType, () -> "result", config));
-
-        @SuppressWarnings("unchecked")
-        var function = (ArgumentCaptor<Function<DurableContext, String>>)
-                (ArgumentCaptor<?>) ArgumentCaptor.forClass(Function.class);
-        verify(context)
-                .runInChildContextAsyncWithId(eq("1"), eq("child"), eq(resultType), function.capture(), eq(config));
-        assertEquals("result", function.getValue().apply(mock(DurableContext.class)));
-    }
-
-    @Test
-    void advancedChildContextDelegatesFrameworkFunction() {
-        var context = mock(DurableContextImpl.class);
-        var future = mockStringFuture();
-        var resultType = TypeToken.get(String.class);
-        var config = ExtensionContextConfig.builder().build();
-        when(context.extensionContextAsyncWithId(
-                        eq("1"), eq("child"), eq("AcmeContext"), eq(resultType), any(), eq(config)))
-                .thenReturn(future);
-
-        var actual = new ExtensionOperationImpl(context, "1", "child")
-                .runInChildContextAsync(
-                        "AcmeContext", resultType, () -> ExtensionContextResult.completed("result"), config);
-
-        assertEquals(future, actual);
+        assertThrows(NullPointerException.class, () -> operation.waitAsync(null, Duration.ofSeconds(1)));
+        assertThrows(IllegalArgumentException.class, () -> operation.waitAsync(" ", Duration.ofSeconds(1)));
+        assertOperation(operation.waitAsync("Wait", Duration.ofSeconds(1)), WaitPrimitive.class, "1", "wait", "Wait");
     }
 
     @Test
     void reservationCanOnlyExecuteOnceAcrossPrimitiveSelectors() {
+        var context = context();
+        replay(context, "1", "only-once", OperationType.WAIT, "Wait");
+        ExtensionOperation operation = new ExtensionOperationImpl(context, "1", "only-once", null);
+
+        operation.waitAsync("Wait", Duration.ofSeconds(1));
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> operation.stepAsync(
+                        "Step",
+                        TypeToken.get(String.class),
+                        state -> ExtensionStepResult.succeed("second"),
+                        ExtensionStepConfig.<String>builder().build()));
+    }
+
+    private DurableContextImpl context() {
         var context = mock(DurableContextImpl.class);
-        var duration = Duration.ofSeconds(1);
-        when(context.waitAsyncWithId("1", "only-once", duration)).thenReturn(mockFuture());
-        ExtensionOperation operation = new ExtensionOperationImpl(context, "1", "only-once");
-
-        operation.waitAsync(duration);
-
-        assertThrows(IllegalStateException.class, () -> operation.stepAsync(String.class, () -> "second"));
+        var executionManager = mock(ExecutionManager.class);
+        when(context.getExecutionManager()).thenReturn(executionManager);
+        when(context.getDurableConfig())
+                .thenReturn(DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .build());
+        return context;
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<Void> mockFuture() {
-        return mock(DurableFuture.class);
+    private void replay(DurableContextImpl context, String id, String name, OperationType type, String subType) {
+        var details = type == OperationType.STEP
+                ? StepDetails.builder().result("\"result\"").build()
+                : null;
+        var contextDetails = type == OperationType.CONTEXT
+                ? ContextDetails.builder().result("\"result\"").build()
+                : null;
+        var callbackDetails = type == OperationType.CALLBACK
+                ? CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .result("\"result\"")
+                        .build()
+                : null;
+        when(context.getExecutionManager().getOperationAndUpdateReplayState(id))
+                .thenReturn(Operation.builder()
+                        .id(id)
+                        .name(name)
+                        .type(type)
+                        .subType(subType)
+                        .status(OperationStatus.SUCCEEDED)
+                        .stepDetails(details)
+                        .contextDetails(contextDetails)
+                        .callbackDetails(callbackDetails)
+                        .build());
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<String> mockStringFuture() {
-        return mock(DurableFuture.class);
+    private void assertOperation(
+            Object future, Class<? extends BasePrimitive> type, String id, String name, String subType) {
+        var operation = assertInstanceOf(type, future);
+        assertEquals(id, operation.getOperationId());
+        assertEquals(name, operation.getName());
+        assertEquals(subType, operation.getSubTypeValue());
     }
 }
