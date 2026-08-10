@@ -77,9 +77,25 @@ public final class DurableStepOperation {
                         ignored -> ExtensionStepResult.succeed(function.apply(StepContext.getCurrentContext())),
                         ExtensionStepConfig.<T>builder()
                                 .serDes(config.serDes())
-                                .retryStrategy(config.retryStrategy())
-                                .semanticsPerRetry(config.semanticsPerRetry())
+                                .retryStrategy(adapt(config.retryStrategy()))
+                                .semanticsPerRetry(adapt(config.semanticsPerRetry()))
                                 .build());
+    }
+
+    private static ExtensionStepConfig.RetryStrategy adapt(RetryStrategy retryStrategy) {
+        return (error, attempt) -> {
+            var decision = retryStrategy.makeRetryDecision(error, attempt);
+            return decision.shouldRetry()
+                    ? ExtensionStepConfig.RetryDecision.retry(decision.delay())
+                    : ExtensionStepConfig.RetryDecision.fail();
+        };
+    }
+
+    private static ExtensionStepConfig.StepSemantics adapt(StepSemantics semantics) {
+        return switch (semantics) {
+            case AT_LEAST_ONCE_PER_RETRY -> ExtensionStepConfig.StepSemantics.AT_LEAST_ONCE_PER_RETRY;
+            case AT_MOST_ONCE_PER_RETRY -> ExtensionStepConfig.StepSemantics.AT_MOST_ONCE_PER_RETRY;
+        };
     }
 
     /** Configuration for durable STEP operations. */

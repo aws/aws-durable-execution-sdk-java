@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.extension;
 
-import software.amazon.lambda.durable.config.StepSemantics;
-import software.amazon.lambda.durable.retry.RetryStrategy;
+import java.time.Duration;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -56,6 +55,58 @@ public final class ExtensionStepConfig<T> {
     /** Returns a builder for a stateful extension step. */
     public static <T> Builder<T> builder() {
         return new Builder<>();
+    }
+
+    /** Delivery semantics for each extension step attempt. */
+    public enum StepSemantics {
+        /** The step may be re-executed if an attempt is interrupted. */
+        AT_LEAST_ONCE_PER_RETRY,
+
+        /** The START checkpoint is awaited so an interrupted attempt is not re-executed. */
+        AT_MOST_ONCE_PER_RETRY
+    }
+
+    /** Determines whether a thrown exception should retry the extension step. */
+    @FunctionalInterface
+    public interface RetryStrategy {
+        /**
+         * Returns the retry decision for a failed attempt.
+         *
+         * @param error the thrown exception
+         * @param attempt the current one-based attempt number
+         */
+        RetryDecision makeRetryDecision(Throwable error, int attempt);
+    }
+
+    /** A retry decision and the delay before the next attempt. */
+    public static final class RetryDecision {
+        private final boolean shouldRetry;
+        private final Duration delay;
+
+        private RetryDecision(boolean shouldRetry, Duration delay) {
+            this.shouldRetry = shouldRetry;
+            this.delay = delay != null ? delay : Duration.ZERO;
+        }
+
+        /** Returns a decision to retry after the supplied delay. */
+        public static RetryDecision retry(Duration delay) {
+            return new RetryDecision(true, delay);
+        }
+
+        /** Returns a decision to fail without retrying. */
+        public static RetryDecision fail() {
+            return new RetryDecision(false, Duration.ZERO);
+        }
+
+        /** Returns whether another attempt should run. */
+        public boolean shouldRetry() {
+            return shouldRetry;
+        }
+
+        /** Returns the delay before the next attempt. */
+        public Duration delay() {
+            return delay;
+        }
     }
 
     /** Builder for {@link ExtensionStepConfig}. */

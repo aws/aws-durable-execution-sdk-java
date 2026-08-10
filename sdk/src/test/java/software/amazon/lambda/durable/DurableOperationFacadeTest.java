@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
 import software.amazon.lambda.durable.extension.ExtensionContext;
@@ -44,6 +45,7 @@ import software.amazon.lambda.durable.operation.DurableContextOperation;
 import software.amazon.lambda.durable.operation.DurableInvokeOperation;
 import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
+import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.serde.SerDes;
 
 class DurableOperationFacadeTest {
@@ -125,6 +127,44 @@ class DurableOperationFacadeTest {
                     ExtensionStepResult.Succeeded.class, function.getValue().apply(null));
             assertEquals("result", result.value());
         }
+    }
+
+    @Test
+    void stepAdaptsUserFacingRetryConfigToExtensionSpi() {
+        var context = mock(ExtensionContext.class);
+        var reservation = mock(ExtensionOperation.class);
+        var future = mockStringFuture();
+        var resultType = TypeToken.get(String.class);
+        when(context.reserve("step")).thenReturn(reservation);
+        when(reservation.stepAsync(
+                        eq(STEP.getValue()),
+                        eq(resultType),
+                        any(ExtensionStepFunction.class),
+                        any(ExtensionStepConfig.class)))
+                .thenReturn(future);
+        var config = DurableStepOperation.StepConfig.builder()
+                .retryStrategy((error, attempt) ->
+                        attempt == 1 ? RetryDecision.retry(Duration.ofSeconds(3)) : RetryDecision.fail())
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .build();
+
+        assertSame(future, DurableStepOperation.stepAsync(context, "step", resultType, ignored -> "result", config));
+
+        var extensionConfig = ArgumentCaptor.forClass(ExtensionStepConfig.class);
+        verify(reservation)
+                .stepAsync(
+                        eq(STEP.getValue()),
+                        eq(resultType),
+                        any(ExtensionStepFunction.class),
+                        extensionConfig.capture());
+        assertEquals(
+                ExtensionStepConfig.StepSemantics.AT_MOST_ONCE_PER_RETRY,
+                extensionConfig.getValue().semanticsPerRetry());
+        var retry = extensionConfig.getValue().retryStrategy().makeRetryDecision(new IllegalStateException("retry"), 1);
+        var fail = extensionConfig.getValue().retryStrategy().makeRetryDecision(new IllegalStateException("fail"), 2);
+        assertTrue(retry.shouldRetry());
+        assertEquals(Duration.ofSeconds(3), retry.delay());
+        assertFalse(fail.shouldRetry());
     }
 
     @Test

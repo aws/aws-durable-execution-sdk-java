@@ -9,7 +9,6 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
@@ -236,6 +235,6 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     private boolean isAtMostOnce() {
-        return extensionConfig.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
+        return extensionConfig.semanticsPerRetry() == ExtensionStepConfig.StepSemantics.AT_MOST_ONCE_PER_RETRY;
     }
 }

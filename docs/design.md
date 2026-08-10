@@ -316,7 +316,7 @@ software.amazon.lambda.durable
 ├── extension/                # Public SPI for extension authors
 │   ├── ExtensionContext
 │   ├── ExtensionOperation
-│   ├── ExtensionStepConfig
+│   ├── ExtensionStepConfig # Owns extension StepSemantics and retry contracts
 │   ├── ExtensionStepResult
 │   ├── ExtensionContextConfig
 │   └── ExtensionContextResult

@@ -190,6 +190,36 @@ class ExtensionOperationIntegrationTest {
     }
 
     @Test
+    void extensionStepRetriesExceptionsWithExtensionOwnedStrategy() {
+        var attempts = new AtomicInteger();
+        var runner =
+                LocalDurableTestRunner.create(String.class, (input, context) -> ExtensionContext.getCurrentContext()
+                        .reserve("retry")
+                        .stepAsync(
+                                "AcmeRetry",
+                                TypeToken.get(String.class),
+                                state -> {
+                                    if (attempts.incrementAndGet() == 1) {
+                                        throw new IllegalStateException("retry");
+                                    }
+                                    return ExtensionStepResult.succeed("done");
+                                },
+                                ExtensionStepConfig.<String>builder()
+                                        .retryStrategy((error, attempt) -> attempt < 2
+                                                ? ExtensionStepConfig.RetryDecision.retry(Duration.ofSeconds(1))
+                                                : ExtensionStepConfig.RetryDecision.fail())
+                                        .build())
+                        .get());
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("done", result.getResult(String.class));
+        assertEquals(2, attempts.get());
+        assertEquals(2, result.getOperation("retry").getAttempt());
+    }
+
+    @Test
     void extensionContextExposesStoredReplayStateWhileReplayingChildren() {
         var replayState = new AtomicReference<String>();
         var executions = new AtomicInteger();
