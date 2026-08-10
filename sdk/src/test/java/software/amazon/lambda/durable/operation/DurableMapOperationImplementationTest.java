@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.model.OperationSubType.MAP;
@@ -25,6 +27,8 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
@@ -37,6 +41,74 @@ import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class DurableMapOperationImplementationTest {
+    @Test
+    void invalidItemNameDoesNotReserveParent() {
+        var context = mock(ExtensionContext.class);
+        var config = MapConfig.builder()
+                .serDes(new JacksonSerDes())
+                .itemNamer((item, index) -> "")
+                .build();
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableMapOperation.mapAsync(
+                        context,
+                        "map",
+                        List.of("a"),
+                        TypeToken.get(String.class),
+                        (item, index, child) -> item,
+                        config.toOperationConfig()));
+
+        verify(context, never()).reserve(any());
+    }
+
+    @Test
+    void invalidMinSuccessfulDoesNotReserveParent() {
+        var context = mock(ExtensionContext.class);
+        var config = MapConfig.builder()
+                .serDes(new JacksonSerDes())
+                .completionConfig(CompletionConfig.minSuccessful(2))
+                .build();
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableMapOperation.mapAsync(
+                        context,
+                        "map",
+                        List.of("a"),
+                        TypeToken.get(String.class),
+                        (item, index, child) -> item,
+                        config.toOperationConfig()));
+
+        verify(context, never()).reserve(any());
+    }
+
+    @Test
+    void executeUsesProvidedParentReservation() {
+        var context = mock(ExtensionContext.class);
+        var parent = mock(ExtensionOperation.class);
+        var parentFuture = mockMapFuture();
+        var config = MapConfig.builder().serDes(new JacksonSerDes()).build();
+        when(parent.runInChildContextAsync(
+                        eq(MAP.getValue()),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(parentFuture);
+
+        var actual = DurableMapOperation.mapAsync(
+                context,
+                parent,
+                "map",
+                List.of("a"),
+                TypeToken.get(String.class),
+                (item, index, child) -> item,
+                config.toOperationConfig());
+
+        assertSame(parentFuture, actual);
+        verify(context, never()).reserve(any());
+    }
+
     @Test
     void executeBuildsMapAndIterationContextsFromReservations() {
         var context = mock(ExtensionContext.class);

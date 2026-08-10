@@ -48,6 +48,34 @@ class DurableWaitForConditionOperationImplementationTest {
     }
 
     @Test
+    void executeUsesProvidedReservation() {
+        var reservation = mock(ExtensionOperation.class);
+        var future = mockStringFuture();
+        var resultType = TypeToken.get(String.class);
+        var config = WaitForConditionConfig.<String>builder().build();
+        when(reservation.stepAsync(
+                        eq(OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                        eq(resultType),
+                        any(ExtensionStepFunction.class),
+                        any(ExtensionStepConfig.class)))
+                .thenReturn(future);
+
+        var actual = DurableWaitForConditionOperation.waitForConditionAsync(
+                reservation,
+                resultType,
+                (state, step) -> WaitForConditionResult.stopPolling("done"),
+                config.toOperationConfig());
+
+        assertEquals("done", actual.get());
+        verify(reservation)
+                .stepAsync(
+                        eq(OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                        eq(resultType),
+                        any(ExtensionStepFunction.class),
+                        any(ExtensionStepConfig.class));
+    }
+
+    @Test
     void executeMapsPollingResultsToStatefulStepOutcomes() {
         var context = mock(ExtensionContext.class);
         var reservation = mock(ExtensionOperation.class);
