@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.callback;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 import static software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.waitForCallback;
 import static software.amazon.lambda.durable.operation.DurableWithRetryOperation.withRetry;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackContext;
 import software.amazon.lambda.durable.operation.DurableWithRetryOperation.WithRetryConfig;
@@ -41,8 +41,7 @@ public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest,
                 null,
                 () -> {
                     var attempt = WithRetryContext.getCurrentContext().getAttempt();
-                    return waitForCallback("approval-" + attempt, String.class, () -> StepContext.getCurrentContext()
-                            .getLogger()
+                    return waitForCallback("approval-" + attempt, String.class, () -> getLogger()
                             .info(
                                     "Attempt {}: sending callback {} to approval system",
                                     attempt,

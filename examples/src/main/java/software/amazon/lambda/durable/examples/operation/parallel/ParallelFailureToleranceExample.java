@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.util.ArrayList;
 import java.util.List;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.model.ParallelResult;
@@ -35,8 +35,7 @@ public class ParallelFailureToleranceExample
 
     @Override
     public Output handleRequest(Input input) {
-        var logger = DurableContext.getCurrentContext().getLogger();
-        logger.info("Starting parallel execution with toleratedFailureCount={}", input.toleratedFailures());
+        getLogger().info("Starting parallel execution with toleratedFailureCount={}", input.toleratedFailures());
 
         var config = ParallelConfig.builder()
                 .completionConfig(new CompletionConfig(input.minSuccessful, input.toleratedFailures, null))
@@ -66,16 +65,17 @@ public class ParallelFailureToleranceExample
         }
 
         ParallelResult parallelResult = parallel.get();
-        logger.info(
-                "Parallel complete: succeeded={}, failed={}, status={}",
-                parallelResult.succeeded(),
-                parallelResult.failed(),
-                parallelResult.completionStatus().isSucceeded() ? "succeeded" : "failed");
+        getLogger()
+                .info(
+                        "Parallel complete: succeeded={}, failed={}, status={}",
+                        parallelResult.succeeded(),
+                        parallelResult.failed(),
+                        parallelResult.completionStatus().isSucceeded() ? "succeeded" : "failed");
 
         var succeeded = parallelResult.succeeded();
         var failed = parallelResult.failed();
 
-        logger.info("Completed: {} succeeded, {} failed", succeeded, failed);
+        getLogger().info("Completed: {} succeeded, {} failed", succeeded, failed);
         return new Output(succeeded, failed);
     }
 }

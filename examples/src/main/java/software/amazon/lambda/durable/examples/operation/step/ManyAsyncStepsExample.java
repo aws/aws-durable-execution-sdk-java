@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.step;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
 
@@ -9,7 +10,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
@@ -34,9 +34,8 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsInput, M
         var startTime = System.nanoTime();
         var multiplier = input.multiplier();
         var steps = input.steps();
-        var logger = DurableContext.getCurrentContext().getLogger();
 
-        logger.info("Starting {} async steps with multiplier {}", steps, multiplier);
+        getLogger().info("Starting {} async steps with multiplier {}", steps, multiplier);
 
         // Create async steps
         var futures = new ArrayList<DurableFuture<Integer>>(steps);
@@ -46,7 +45,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsInput, M
             futures.add(future);
         }
 
-        logger.info("All {} async steps created, collecting results", steps);
+        getLogger().info("All {} async steps created, collecting results", steps);
 
         // Collect all results using allOf
         var results = DurableFuture.allOf(futures);
@@ -55,7 +54,7 @@ public class ManyAsyncStepsExample extends DurableHandler<ManyAsyncStepsInput, M
         // checkpoint the executionTime so that we can have the same value when replay
         var executionTimeMs =
                 step("execution-time", Long.class, () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
-        logger.info("Completed {} steps, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
+        getLogger().info("Completed {} steps, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
 
         // Wait 2 seconds to test replay
         DurableWaitOperation.wait("post-compute-wait", Duration.ofSeconds(2));

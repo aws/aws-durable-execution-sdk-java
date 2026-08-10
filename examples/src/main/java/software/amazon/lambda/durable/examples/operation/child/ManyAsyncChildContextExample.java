@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.child;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableContextOperation.runInChildContextAsync;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
@@ -9,7 +10,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.ManyAsyncStepsInput;
@@ -34,9 +34,8 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncStepsI
         var startTime = System.nanoTime();
         var multiplier = input.multiplier();
         var steps = input.steps();
-        var logger = DurableContext.getCurrentContext().getLogger();
 
-        logger.info("Starting {} async child context with multiplier {}", steps, multiplier);
+        getLogger().info("Starting {} async child context with multiplier {}", steps, multiplier);
 
         // Create async steps
         var futures = new ArrayList<DurableFuture<Integer>>(steps);
@@ -49,7 +48,7 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncStepsI
             futures.add(future);
         }
 
-        logger.info("All {} async child context created, collecting results", steps);
+        getLogger().info("All {} async child context created, collecting results", steps);
 
         // Collect all results using allOf
         var results = DurableFuture.allOf(futures);
@@ -58,8 +57,12 @@ public class ManyAsyncChildContextExample extends DurableHandler<ManyAsyncStepsI
         // checkpoint the executionTime so that we can have the same value when replay
         var executionTimeMs =
                 step("execution-time", Long.class, () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
-        logger.info(
-                "Completed {} child context, total sum: {}, execution time: {}ms", steps, totalSum, executionTimeMs);
+        getLogger()
+                .info(
+                        "Completed {} child context, total sum: {}, execution time: {}ms",
+                        steps,
+                        totalSum,
+                        executionTimeMs);
 
         // Wait 2 seconds to test replay
         DurableWaitOperation.wait("post-compute-wait", Duration.ofSeconds(2));

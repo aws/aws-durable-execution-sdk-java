@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.callback;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableCallbackOperation.createCallback;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 import static software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.waitForCallbackAsync;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.operation.DurableCallbackOperation.CallbackConfig;
 import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation.WaitForCallbackContext;
@@ -52,7 +52,7 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
 
         var preapprovalCallback = waitForCallbackAsync("preapproval", String.class, () -> {
             var callbackId = WaitForCallbackContext.getCurrentContext().getCallbackId();
-            StepContext.getCurrentContext().getLogger().info("Sending callback {} to preapproval system", callbackId);
+            getLogger().info("Sending callback {} to preapproval system", callbackId);
         });
 
         var callback = createCallback("approval", String.class, config);
@@ -64,7 +64,7 @@ public class CallbackExample extends DurableHandler<ApprovalRequest, String> {
             var command = String.format(
                     "aws lambda send-durable-execution-callback-success --callback-id %s --result $(echo -n '\"approved\"' | base64)",
                     callbackId);
-            StepContext.getCurrentContext().getLogger().info("To complete this callback, run: {}", command);
+            getLogger().info("To complete this callback, run: {}", command);
             return null;
         });
 

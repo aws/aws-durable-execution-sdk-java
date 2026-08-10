@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.wait;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
 import static software.amazon.lambda.durable.operation.DurableWaitOperation.waitAsync;
 
 import java.time.Duration;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -28,8 +28,7 @@ public class WaitAsyncExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
     public String handleRequest(GreetingRequest input) {
-        var context = DurableContext.getCurrentContext();
-        context.getLogger().info("Starting waitAsync example for {}", input.getName());
+        getLogger().info("Starting waitAsync example for {}", input.getName());
 
         // Start a non-blocking wait — returns immediately
         DurableFuture<Void> waitFuture = waitAsync("min-delay", Duration.ofSeconds(5));
@@ -41,7 +40,7 @@ public class WaitAsyncExample extends DurableHandler<GreetingRequest, String> {
         waitFuture.get();
         var result = stepFuture.get();
 
-        context.getLogger().info("Both wait and step complete: {}", result);
+        getLogger().info("Both wait and step complete: {}", result);
         return result;
     }
 }

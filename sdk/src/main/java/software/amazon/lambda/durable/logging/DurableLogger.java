@@ -38,6 +38,20 @@ public class DurableLogger {
         this.delegate = delegate;
     }
 
+    /** Returns the shared context-aware durable logger. */
+    public static DurableLogger getLogger() {
+        return INSTANCE;
+    }
+
+    /**
+     * Returns a context-aware durable logger wrapping the given SLF4J logger.
+     *
+     * @param delegate the SLF4J logger to wrap
+     */
+    public static DurableLogger getLogger(Logger delegate) {
+        return new DurableLogger(delegate);
+    }
+
     public static SafeCloseable attachContext() {
         var context = BaseContext.getCurrentContext();
         if (context != null) {

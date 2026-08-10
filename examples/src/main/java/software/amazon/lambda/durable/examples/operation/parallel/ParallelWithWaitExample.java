@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.model.ParallelResult;
@@ -38,8 +38,7 @@ public class ParallelWithWaitExample
 
     @Override
     public Output handleRequest(Input input) {
-        var logger = DurableContext.getCurrentContext().getLogger();
-        logger.info("Sending notifications to user {}", input.userId());
+        getLogger().info("Sending notifications to user {}", input.userId());
 
         var config = ParallelConfig.builder().build();
         var futures = new ArrayList<DurableFuture<String>>(3);
@@ -69,7 +68,7 @@ public class ParallelWithWaitExample
         ParallelResult result = parallel.get();
 
         var deliveries = futures.stream().map(DurableFuture::get).toList();
-        logger.info("All {} notifications delivered", deliveries.size());
+        getLogger().info("All {} notifications delivered", deliveries.size());
         // Test replay
         DurableWaitOperation.wait("wait for finalization", Duration.ofSeconds(5));
         return new Output(deliveries, result.succeeded(), result.failed());

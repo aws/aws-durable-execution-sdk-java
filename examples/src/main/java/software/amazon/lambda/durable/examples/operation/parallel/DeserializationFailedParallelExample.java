@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.util.List;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
@@ -36,9 +36,8 @@ public class DeserializationFailedParallelExample
 
     @Override
     public String handleRequest(Input input) {
-        var logger = DurableContext.getCurrentContext().getLogger();
         var items = input.items();
-        logger.info("Starting parallel processing of {} items", items.size());
+        getLogger().info("Starting parallel processing of {} items", items.size());
 
         var config = ParallelConfig.builder().build();
 

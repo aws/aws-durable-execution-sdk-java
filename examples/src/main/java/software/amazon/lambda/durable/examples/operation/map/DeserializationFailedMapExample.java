@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.map;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.time.Duration;
 import java.util.List;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -33,9 +33,8 @@ public class DeserializationFailedMapExample extends DurableHandler<GreetingRequ
 
     @Override
     public String handleRequest(GreetingRequest input) {
-        var context = DurableContext.getCurrentContext();
         var name = input.getName();
-        context.getLogger().info("Starting map example for {}", name);
+        getLogger().info("Starting map example for {}", name);
 
         var names = List.of(name, name.toUpperCase(), name.toLowerCase());
 
@@ -52,7 +51,7 @@ public class DeserializationFailedMapExample extends DurableHandler<GreetingRequ
                 },
                 MapConfig.builder().serDes(new FailedSerDes()).build());
 
-        context.getLogger().info("Map completed: allSucceeded={}, size={}", result.allSucceeded(), result.size());
+        getLogger().info("Map completed: allSucceeded={}, size={}", result.allSucceeded(), result.size());
 
         DurableWaitOperation.wait("suspend and replay", Duration.ofSeconds(1));
 

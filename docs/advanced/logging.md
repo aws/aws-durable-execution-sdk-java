@@ -1,23 +1,27 @@
 ## Logging
 
-The SDK provides a `DurableLogger` via `ctx.getLogger()` that automatically includes execution metadata in log entries and suppresses duplicate logs during replay.
+The SDK provides a shared `DurableLogger` via `getLogger()` that automatically includes execution metadata in log entries and suppresses duplicate logs during replay.
 
 ### Basic Usage
 
 ```java
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
+
 @Override
 protected OrderResult handleRequest(Order order, DurableContext ctx) {
-    ctx.getLogger().info("Processing order: {}", order.getId());
+    getLogger().info("Processing order: {}", order.getId());
     
     var result = ctx.step("validate", String.class, stepCtx -> {
-        stepCtx.getLogger().debug("Validating order details");
+        getLogger().debug("Validating order details");
         return validate(order);
     });
     
-    ctx.getLogger().info("Order processed successfully");
+    getLogger().info("Order processed successfully");
     return new OrderResult(result);
 }
 ```
+
+Use `getLogger(existingLogger)` to wrap an existing SLF4J logger while retaining durable execution context.
 
 ### Log Output
 

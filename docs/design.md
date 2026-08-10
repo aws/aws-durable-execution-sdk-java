@@ -576,7 +576,7 @@ This is a one-way transition (REPLAY → EXECUTION, never back). `DurableLogger`
 **Context Flow:**
 1. `DurableExecutor` or a primitive attaches the current `BaseContext` on its SDK-managed thread
 2. `DurableLogger.attachContext()` derives execution, context, operation, and attempt MDC values from that scope
-3. User code logs via `context.getLogger()` with the MDC values already attached
+3. User code logs via `DurableLogger.getLogger()` with the MDC values already attached
 4. Closing the logger scope clears MDC when the handler, step, or child-context function finishes
 
 **Log Pattern Example (Log4j2):**

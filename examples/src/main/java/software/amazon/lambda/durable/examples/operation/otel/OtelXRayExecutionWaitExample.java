@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.otel;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.ExampleTemplate;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -29,8 +29,7 @@ public class OtelXRayExecutionWaitExample extends DurableHandler<GreetingRequest
 
     @Override
     public String handleRequest(GreetingRequest input) {
-        var context = DurableContext.getCurrentContext();
-        context.getLogger().info("Starting OTel X-Ray execution view wait example for {}", input.getName());
+        getLogger().info("Starting OTel X-Ray execution view wait example for {}", input.getName());
 
         var before = step("exec-before-wait", String.class, () -> "Prepared: " + input.getName());
 
@@ -38,7 +37,7 @@ public class OtelXRayExecutionWaitExample extends DurableHandler<GreetingRequest
 
         var after = step("exec-after-wait", String.class, () -> before + " | Resumed and completed");
 
-        context.getLogger().info("OTel X-Ray execution view wait example complete: {}", after);
+        getLogger().info("OTel X-Ray execution view wait example complete: {}", after);
         return after;
     }
 }

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.parallel;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.util.ArrayList;
 import java.util.List;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.ParallelDurableFuture;
@@ -36,9 +36,8 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
 
     @Override
     public Output handleRequest(Input input) {
-        var logger = DurableContext.getCurrentContext().getLogger();
         var items = input.items();
-        logger.info("Starting parallel processing of {} items", items.size());
+        getLogger().info("Starting parallel processing of {} items", items.size());
 
         var config = ParallelConfig.builder().build();
 
@@ -48,7 +47,7 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
         try (parallel) {
             for (var item : items) {
                 var future = parallel.branch("process-" + item, String.class, branchCtx -> {
-                    branchCtx.getLogger().info("Processing item: {}", item);
+                    getLogger().info("Processing item: {}", item);
                     return step("transform-" + item, String.class, () -> item.toUpperCase());
                 });
                 futures.add(future);
@@ -56,11 +55,12 @@ public class ParallelExample extends DurableHandler<ParallelExample.Input, Paral
         } // join() called here via AutoCloseable
 
         ParallelResult parallelResult = parallel.get();
-        logger.info(
-                "Parallel complete: total={}, succeeded={}, failed={}",
-                parallelResult.size(),
-                parallelResult.succeeded(),
-                parallelResult.failed());
+        getLogger()
+                .info(
+                        "Parallel complete: total={}, succeeded={}, failed={}",
+                        parallelResult.size(),
+                        parallelResult.succeeded(),
+                        parallelResult.failed());
 
         var results = futures.stream().map(DurableFuture::get).toList();
 

@@ -99,12 +99,12 @@ public abstract class BaseContextImpl implements BaseContext {
 
     /** Returns a durable logger for this context. */
     public DurableLogger getLogger() {
-        return DurableLogger.INSTANCE;
+        return DurableLogger.getLogger();
     }
 
     /** Returns a durable logger for this context. */
     public DurableLogger getLogger(Logger delegate) {
-        return new DurableLogger(delegate);
+        return DurableLogger.getLogger(delegate);
     }
 
     public static void setCurrentContext(BaseContext context) {

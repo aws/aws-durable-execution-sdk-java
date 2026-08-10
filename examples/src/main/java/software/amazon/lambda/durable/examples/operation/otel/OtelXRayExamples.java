@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.otel;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableContextOperation.runInChildContext;
 import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
 import static software.amazon.lambda.durable.operation.DurableParallelOperation.parallel;
@@ -12,7 +13,6 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.util.List;
 import software.amazon.lambda.durable.DurableConfig;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
@@ -41,8 +41,7 @@ public final class OtelXRayExamples {
 
         @Override
         public String handleRequest(GreetingRequest input) {
-            var context = DurableContext.getCurrentContext();
-            context.getLogger().info("Starting OTel X-Ray map example for {}", input.getName());
+            getLogger().info("Starting OTel X-Ray map example for {}", input.getName());
 
             var items = List.of("alpha", "beta", "gamma");
             var result = map(
@@ -65,8 +64,7 @@ public final class OtelXRayExamples {
 
         @Override
         public String handleRequest(GreetingRequest input) {
-            var context = DurableContext.getCurrentContext();
-            context.getLogger().info("Starting OTel X-Ray parallel example for {}", input.getName());
+            getLogger().info("Starting OTel X-Ray parallel example for {}", input.getName());
 
             var parallel = parallel("fan-out");
             try (parallel) {
@@ -95,8 +93,7 @@ public final class OtelXRayExamples {
 
         @Override
         public String handleRequest(GreetingRequest input) {
-            var context = DurableContext.getCurrentContext();
-            context.getLogger().info("Starting OTel X-Ray nested context example for {}", input.getName());
+            getLogger().info("Starting OTel X-Ray nested context example for {}", input.getName());
 
             return runInChildContext("outer", String.class, () -> {
                 var intermediate = step("outer-step", String.class, () -> "Hello, " + input.getName());

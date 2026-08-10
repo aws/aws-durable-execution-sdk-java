@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.map;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.util.List;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
@@ -27,9 +27,8 @@ public class SimpleMapExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
     public String handleRequest(GreetingRequest input) {
-        var context = DurableContext.getCurrentContext();
         var name = input.getName();
-        context.getLogger().info("Starting map example for {}", name);
+        getLogger().info("Starting map example for {}", name);
 
         var names = List.of(name, name.toUpperCase(), name.toLowerCase());
 
@@ -39,7 +38,7 @@ public class SimpleMapExample extends DurableHandler<GreetingRequest, String> {
             return step("greet-" + index, String.class, () -> "Hello, " + item + "!");
         });
 
-        context.getLogger().info("Map completed: allSucceeded={}, size={}", result.allSucceeded(), result.size());
+        getLogger().info("Map completed: allSucceeded={}, size={}", result.allSucceeded(), result.size());
 
         return String.join(" | ", result.results());
     }

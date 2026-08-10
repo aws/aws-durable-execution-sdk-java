@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.child;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableContextOperation.runInChildContext;
 import static software.amazon.lambda.durable.operation.DurableContextOperation.runInChildContextAsync;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.time.Duration;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -33,14 +33,13 @@ public class ChildContextExample extends DurableHandler<GreetingRequest, String>
 
     @Override
     public String handleRequest(GreetingRequest input) {
-        var context = DurableContext.getCurrentContext();
         var name = input.getName();
-        context.getLogger().info("Starting child context workflow for {}", name);
+        getLogger().info("Starting child context workflow for {}", name);
 
         // Child context 1: Order validation — step + wait + step
         var orderFuture = runInChildContextAsync("order-validation", String.class, () -> {
             var prepared = step("prepare-order", String.class, () -> "Order for " + name);
-            DurableContext.getCurrentContext().getLogger().info("Order prepared, waiting for validation");
+            getLogger().info("Order prepared, waiting for validation");
 
             DurableWaitOperation.wait("validation-delay", Duration.ofSeconds(5));
 
@@ -50,7 +49,7 @@ public class ChildContextExample extends DurableHandler<GreetingRequest, String>
         // Child context 2: Inventory check — step + wait + step
         var inventoryFuture = runInChildContextAsync("inventory-check", String.class, () -> {
             var stock = step("check-stock", String.class, () -> "Stock available for " + name);
-            DurableContext.getCurrentContext().getLogger().info("Stock checked, waiting for confirmation");
+            getLogger().info("Stock checked, waiting for confirmation");
 
             DurableWaitOperation.wait("confirmation-delay", Duration.ofSeconds(3));
 
@@ -71,12 +70,12 @@ public class ChildContextExample extends DurableHandler<GreetingRequest, String>
         });
 
         // Collect all results using allOf
-        context.getLogger().info("Waiting for all child contexts to complete");
+        getLogger().info("Waiting for all child contexts to complete");
         var results = DurableFuture.allOf(orderFuture, inventoryFuture, shippingFuture);
 
         // Combine into summary
         var summary = String.join(" | ", results);
-        context.getLogger().info("All child contexts complete: {}", summary);
+        getLogger().info("All child contexts complete: {}", summary);
 
         return summary;
     }

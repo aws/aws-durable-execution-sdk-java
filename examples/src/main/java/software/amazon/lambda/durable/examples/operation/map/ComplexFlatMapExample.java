@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.map;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
@@ -9,7 +10,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.NestingType;
@@ -30,8 +30,7 @@ public class ComplexFlatMapExample extends DurableHandler<Integer, String> {
 
     @Override
     public String handleRequest(Integer input) {
-        var context = DurableContext.getCurrentContext();
-        context.getLogger().info("Starting complex map example with {} items", input);
+        getLogger().info("Starting complex map example with {} items", input);
 
         // Part 1: Concurrent map with step + wait inside each branch
         var orderIds = IntStream.range(1, input + 1).mapToObj(x -> "order-" + x).collect(Collectors.toList());
