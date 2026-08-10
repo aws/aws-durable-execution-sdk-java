@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class ExtensionStepConfigTest {

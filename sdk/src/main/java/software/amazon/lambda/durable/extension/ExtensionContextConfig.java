@@ -1,9 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.config;
+package software.amazon.lambda.durable.extension;
 
 import java.util.Objects;
-import software.amazon.lambda.durable.ExtensionContextErrorHandler;
+import software.amazon.lambda.durable.config.RunInChildContextConfig;
 
 /** Extension-only policies for an advanced CONTEXT primitive. */
 public final class ExtensionContextConfig {

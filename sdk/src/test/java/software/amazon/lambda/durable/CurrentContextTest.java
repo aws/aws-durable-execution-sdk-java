@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 
 class CurrentContextTest {
     @AfterEach

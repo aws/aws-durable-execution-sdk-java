@@ -15,16 +15,10 @@ import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.ExtensionContext;
-import software.amazon.lambda.durable.ExtensionContextFunction;
-import software.amazon.lambda.durable.ExtensionOperation;
-import software.amazon.lambda.durable.ExtensionStepFunction;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
-import software.amazon.lambda.durable.config.ExtensionContextConfig;
-import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
@@ -33,11 +27,18 @@ import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.context.extension.WaitForCallbackExtension;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFunction;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
+import software.amazon.lambda.durable.extension.ExtensionStepConfig;
+import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationDescriptor;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -497,42 +498,7 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             TypeToken<T> resultType,
             BiConsumer<String, StepContext> func,
             WaitForCallbackConfig waitForCallbackConfig) {
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(waitForCallbackConfig, "waitForCallbackConfig cannot be null");
-        // waitForCallback adds a suffix for the callback operation name and the submitter operation name so
-        // the length restriction of waitForCallback name is different from the other operations.
-        ParameterValidator.validateOperationName(name, MAX_WAIT_FOR_CALLBACK_NAME_LENGTH);
-
-        var finalWaitForCallbackConfig = waitForCallbackConfig.stepConfig().serDes() == null
-                ? waitForCallbackConfig.toBuilder()
-                        .stepConfig(waitForCallbackConfig.stepConfig().toBuilder()
-                                .serDes(getDurableConfig().getSerDes())
-                                .build())
-                        .build()
-                : waitForCallbackConfig;
-
-        return runInChildContextAsync(
-                name,
-                resultType,
-                childCtx -> {
-                    var callback = childCtx.createCallback(
-                            name + WAIT_FOR_CALLBACK_CALLBACK_SUFFIX,
-                            resultType,
-                            finalWaitForCallbackConfig.callbackConfig());
-                    childCtx.step(
-                            name + WAIT_FOR_CALLBACK_SUBMITTER_SUFFIX,
-                            Void.class,
-                            stepCtx -> {
-                                func.accept(callback.callbackId(), stepCtx);
-                                return null;
-                            },
-                            finalWaitForCallbackConfig.stepConfig());
-                    return callback.get();
-                },
-                RunInChildContextConfig.builder()
-                        .serDes(finalWaitForCallbackConfig.stepConfig().serDes())
-                        .build(),
-                OperationSubType.WAIT_FOR_CALLBACK);
+        return WaitForCallbackExtension.execute(this, name, resultType, func, waitForCallbackConfig);
     }
 
     @Override

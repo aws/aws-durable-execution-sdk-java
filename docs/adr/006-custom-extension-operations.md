@@ -26,11 +26,6 @@ The backend accepts arbitrary operation subtype strings, but each backend operat
 Extensions need subtype control, replay state, and failure translation without receiving raw checkpoint actions or
 defining new backend state machines.
 
-The detailed designs are:
-
-- [Custom Extension Operations Design](../superpowers/specs/2026-08-10-custom-extension-operations-design.md)
-- [Migrate Built-In Operations to the Extension API](../superpowers/specs/2026-08-10-migrate-built-in-extensions-design.md)
-
 ## Decision
 
 ### Preserve Existing Operation APIs
@@ -78,6 +73,25 @@ Expose each built-in extension family through an independently maintained class:
 
 An extension is an ordinary static Java method. There is no registration API and no universal
 `DurableExtensions.run` boundary.
+
+### Separate Extension-Author Contracts
+
+Place contracts intended specifically for extension authors in:
+
+```text
+software.amazon.lambda.durable.extension
+```
+
+This package contains `ExtensionContext`, `ExtensionOperation`, stateful-step contracts, and configurable
+extension-context contracts.
+
+Keep the following customer-facing types in the root `software.amazon.lambda.durable` package:
+
+- static operation facades such as `DurableCoreOperations` and `DurableMapOperations`
+- operation-specific TLS metadata such as `MapItemContext`, `WaitForCallbackContext`, and `WithRetryContext`
+- established SDK types such as `DurableFuture`, `StepContext`, and `TypeToken`
+
+SDK implementations of built-in extensions remain internal and are not part of the extension-author API.
 
 ### Use Scoped Current Context
 

@@ -19,8 +19,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.config.ExtensionContextConfig;
-import software.amazon.lambda.durable.config.ExtensionStepConfig;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
+import software.amazon.lambda.durable.extension.ExtensionContextResult;
+import software.amazon.lambda.durable.extension.ExtensionStepConfig;
+import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 

@@ -4,6 +4,9 @@ Extension operations are ordinary static Java methods that compose SDK-owned dur
 separate Maven module without defining backend operation types, sending checkpoint updates, or depending on SDK
 implementation packages.
 
+Extension-author contracts are in `software.amazon.lambda.durable.extension`. Static operation facades and
+operation-specific TLS metadata contexts remain in `software.amazon.lambda.durable`.
+
 Application code calls only the extension's API:
 
 ```java
@@ -15,6 +18,9 @@ var result = pairAsync("pair", left, right).get();
 The extension retrieves the active scope internally:
 
 ```java
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+
 public final class PairOperations {
     private PairOperations() {}
 
@@ -176,8 +182,9 @@ primitive operations.
 ## Module compatibility
 
 An extension Maven module should depend only on the public SDK artifact and import public types under
-`software.amazon.lambda.durable`. Do not import SDK implementation packages such as `context`, `execution`, or
-`operation`.
+`software.amazon.lambda.durable` and `software.amazon.lambda.durable.extension`. Do not import SDK implementation
+packages such as `context`, `execution`, or `operation`.
 
-The supported extension contracts are `ExtensionContext`, `ExtensionOperation`, the static operation facades, the
-typed TLS contexts, and `DurableFuture.completionFuture()`.
+The extension-author SPI includes `ExtensionContext`, `ExtensionOperation`, stateful-step contracts, and configurable
+extension-context contracts under `software.amazon.lambda.durable.extension`. Static operation facades, typed TLS
+contexts, and `DurableFuture.completionFuture()` remain under `software.amazon.lambda.durable`.

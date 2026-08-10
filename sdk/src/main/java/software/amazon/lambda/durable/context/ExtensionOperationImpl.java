@@ -8,16 +8,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.ExtensionContextFunction;
-import software.amazon.lambda.durable.ExtensionOperation;
-import software.amazon.lambda.durable.ExtensionStepFunction;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
-import software.amazon.lambda.durable.config.ExtensionContextConfig;
-import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFunction;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
+import software.amazon.lambda.durable.extension.ExtensionStepConfig;
+import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 
 final class ExtensionOperationImpl implements ExtensionOperation {
     private final DurableContextImpl context;

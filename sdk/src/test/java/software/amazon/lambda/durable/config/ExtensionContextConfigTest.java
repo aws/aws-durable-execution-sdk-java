@@ -9,7 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.ExtensionContextErrorHandler;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextErrorHandler;
 
 class ExtensionContextConfigTest {
     @Test

@@ -19,13 +19,7 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.ExtensionChildOperationSummary;
-import software.amazon.lambda.durable.ExtensionContextFailure;
-import software.amazon.lambda.durable.ExtensionContextFunction;
-import software.amazon.lambda.durable.ExtensionContextReplayContext;
-import software.amazon.lambda.durable.ExtensionContextResult;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.ExtensionContextConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
@@ -40,6 +34,12 @@ import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.extension.ExtensionChildOperationSummary;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFailure;
+import software.amazon.lambda.durable.extension.ExtensionContextFunction;
+import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
+import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
 import software.amazon.lambda.durable.model.OperationDescriptor;
@@ -395,11 +395,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     private List<ExtensionChildOperationSummary> getChildOperationSummaries() {
         return getChildOperations().stream()
-                .map(operation -> new ExtensionChildOperationSummary(
-                        operation.type(),
-                        operation.subType(),
-                        operation.status(),
-                        BaseDurableOperation.getErrorObject(operation)))
+                .map(ExtensionChildOperationSummary::new)
                 .toList();
     }
 

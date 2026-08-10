@@ -5,45 +5,48 @@ package software.amazon.lambda.durable;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
+import software.amazon.lambda.durable.context.extension.WaitForCallbackExtension;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 
 /** Context-free static facades for durable wait-for-callback operations. */
 public final class DurableWaitForCallbackOperations {
     private DurableWaitForCallbackOperations() {}
 
     public static <T> T waitForCallback(String name, Class<T> resultType, Runnable submitter) {
-        return currentContext().waitForCallback(name, resultType, adapt(submitter));
+        return waitForCallbackAsync(name, resultType, submitter).get();
     }
 
     public static <T> T waitForCallback(String name, TypeToken<T> resultType, Runnable submitter) {
-        return currentContext().waitForCallback(name, resultType, adapt(submitter));
+        return waitForCallbackAsync(name, resultType, submitter).get();
     }
 
     public static <T> T waitForCallback(
             String name, Class<T> resultType, Runnable submitter, WaitForCallbackConfig config) {
-        return currentContext().waitForCallback(name, resultType, adapt(submitter), config);
+        return waitForCallbackAsync(name, resultType, submitter, config).get();
     }
 
     public static <T> T waitForCallback(
             String name, TypeToken<T> resultType, Runnable submitter, WaitForCallbackConfig config) {
-        return currentContext().waitForCallback(name, resultType, adapt(submitter), config);
+        return waitForCallbackAsync(name, resultType, submitter, config).get();
     }
 
     public static <T> DurableFuture<T> waitForCallbackAsync(String name, Class<T> resultType, Runnable submitter) {
-        return currentContext().waitForCallbackAsync(name, resultType, adapt(submitter));
+        return waitForCallbackAsync(name, TypeToken.get(resultType), submitter);
     }
 
     public static <T> DurableFuture<T> waitForCallbackAsync(String name, TypeToken<T> resultType, Runnable submitter) {
-        return currentContext().waitForCallbackAsync(name, resultType, adapt(submitter));
+        return waitForCallbackAsync(
+                name, resultType, submitter, WaitForCallbackConfig.builder().build());
     }
 
     public static <T> DurableFuture<T> waitForCallbackAsync(
             String name, Class<T> resultType, Runnable submitter, WaitForCallbackConfig config) {
-        return currentContext().waitForCallbackAsync(name, resultType, adapt(submitter), config);
+        return waitForCallbackAsync(name, TypeToken.get(resultType), submitter, config);
     }
 
     public static <T> DurableFuture<T> waitForCallbackAsync(
             String name, TypeToken<T> resultType, Runnable submitter, WaitForCallbackConfig config) {
-        return currentContext().waitForCallbackAsync(name, resultType, adapt(submitter), config);
+        return WaitForCallbackExtension.execute(currentContext(), name, resultType, adapt(submitter), config);
     }
 
     private static BiConsumer<String, StepContext> adapt(Runnable submitter) {
@@ -55,7 +58,7 @@ public final class DurableWaitForCallbackOperations {
         };
     }
 
-    private static DurableContext currentContext() {
-        return DurableContext.getCurrentContext();
+    private static ExtensionContext currentContext() {
+        return ExtensionContext.getCurrentContext();
     }
 }

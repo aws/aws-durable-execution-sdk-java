@@ -1,12 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable;
+package software.amazon.lambda.durable.extension;
 
 import java.time.Duration;
 import java.util.function.Supplier;
+import software.amazon.lambda.durable.DurableCallbackFuture;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.CallbackConfig;
-import software.amazon.lambda.durable.config.ExtensionContextConfig;
-import software.amazon.lambda.durable.config.ExtensionStepConfig;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;

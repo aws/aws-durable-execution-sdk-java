@@ -6,7 +6,6 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.ExtensionContext;
 
 /** Example extension library implemented only with public SDK contracts. */
 public final class PairOperations {
