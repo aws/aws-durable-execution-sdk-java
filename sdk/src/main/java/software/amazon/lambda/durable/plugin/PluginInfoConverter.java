@@ -4,6 +4,8 @@ package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -77,12 +79,17 @@ public final class PluginInfoConverter {
      *
      * @param identifier the operation identifier containing id, name, type, and subType
      * @param parentId the parent operation ID (may be null)
-     * @param isReplay true if the user function is called during replay (context operations)
+     * @param isReplay true if this operation was already present in the checkpointed state when it started
+     * @param isReplayingChildren true if the child operations of this context body are replaying from checkpoints
      * @param attempt the 1-based attempt number (null for context operations)
      * @return a UserFunctionStartInfo record
      */
     public static UserFunctionStartInfo toUserFunctionStartInfo(
-            OperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
+            OperationIdentifier identifier,
+            String parentId,
+            boolean isReplay,
+            boolean isReplayingChildren,
+            Integer attempt) {
         return new UserFunctionStartInfo(
                 identifier.operationId(),
                 identifier.name(),
@@ -90,6 +97,7 @@ public final class PluginInfoConverter {
                 identifier.subType() != null ? identifier.subType().getValue() : null,
                 parentId,
                 Instant.now(),
+                isReplay,
                 isReplayingChildren,
                 attempt);
     }
@@ -112,6 +120,7 @@ public final class PluginInfoConverter {
                 startInfo.parentId(),
                 startInfo.startTimestamp(),
                 Instant.now(),
+                startInfo.isReplay(),
                 startInfo.isReplayingChildren(),
                 startInfo.attempt(),
                 succeeded,
@@ -126,25 +135,41 @@ public final class PluginInfoConverter {
      * @param durableExecutionArn the durable execution ARN
      * @param updatedOperations the durable operations whose status changed in this checkpoint response
      * @param allOperations all durable operations tracked for the execution after this response
+     * @param replayedOperationIds ids of the operations delivered in this invocation's initial state, used to populate
+     *     each item's {@code isReplay} indicator
      * @return an OperationChangeInfo record
      */
     public static OperationChangeInfo toOperationChangeInfo(
             String requestId,
             String durableExecutionArn,
             Collection<Operation> updatedOperations,
-            Collection<Operation> allOperations) {
+            Collection<Operation> allOperations,
+            Set<String> replayedOperationIds) {
         return new OperationChangeInfo(
                 requestId,
                 durableExecutionArn,
-                updatedOperations.stream()
-                        .collect(Collectors.toUnmodifiableMap(
-                                Operation::id, PluginInfoConverter::toOperationChangeItemInfo)),
-                allOperations.stream()
-                        .collect(Collectors.toUnmodifiableMap(
-                                Operation::id, PluginInfoConverter::toOperationChangeItemInfo)));
+                toOperationItemMap(updatedOperations, replayedOperationIds),
+                toOperationItemMap(allOperations, replayedOperationIds));
     }
 
-    private static OperationChangeItemInfo toOperationChangeItemInfo(Operation operation) {
+    /**
+     * Converts durable operations to an unmodifiable map of {@link OperationChangeItemInfo}, keyed by operation ID.
+     *
+     * @param operations the durable operations to convert
+     * @param replayedOperationIds ids of the operations delivered in this invocation's initial state, used to populate
+     *     each item's {@code isReplay} indicator
+     * @return an unmodifiable map of operation ID to item info
+     */
+    public static Map<String, OperationChangeItemInfo> toOperationItemMap(
+            Collection<Operation> operations, Set<String> replayedOperationIds) {
+        return operations.stream()
+                .collect(Collectors.toUnmodifiableMap(
+                        Operation::id,
+                        operation ->
+                                toOperationChangeItemInfo(operation, replayedOperationIds.contains(operation.id()))));
+    }
+
+    private static OperationChangeItemInfo toOperationChangeItemInfo(Operation operation, boolean isReplay) {
         return new OperationChangeItemInfo(
                 operation.id(),
                 operation.name(),
@@ -153,7 +178,9 @@ public final class PluginInfoConverter {
                 operation.parentId(),
                 operation.startTimestamp(),
                 operation.endTimestamp(),
-                BaseDurableOperation.extractErrorFromOperation(operation),
-                operation.status());
+                operation.status(),
+                operation.stepDetails() != null ? operation.stepDetails().attempt() : null,
+                isReplay,
+                BaseDurableOperation.extractErrorFromOperation(operation));
     }
 }

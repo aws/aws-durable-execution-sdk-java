@@ -19,6 +19,7 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import java.util.Map;
 import java.util.ServiceLoader;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -71,8 +72,9 @@ class ExecutionOtelPluginTest {
                         .workflowSpanName("Workflow")
                         .instrumentationName("my-custom-scope")
                         .build());
-        customPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        customPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        customPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        customPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();
         assertFalse(spans.isEmpty());
@@ -145,13 +147,14 @@ class ExecutionOtelPluginTest {
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
         var defaultPlugin = new ExecutionOtelPlugin();
-        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        defaultPlugin.onInvocationStart(
+                new InvocationInfo("req-1", "arn:exec1", true, Instant.now(), Map.of(), Map.of()));
         defaultPlugin.onOperationStart(
                 new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, null, false));
         defaultPlugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
-        defaultPlugin.onInvocationEnd(
-                new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
+        defaultPlugin.onInvocationEnd(new InvocationEndInfo(
+                "req-1", "arn:exec1", true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = globalExporter.getFinishedSpanItems();
         // Workflow + Invocation + operation = 3
@@ -178,8 +181,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void terminalInvocation_exportsWorkflowAndInvocationSpans() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(2, spans.size(), "Terminal invocation should export the Workflow span and the invocation span");
@@ -193,8 +197,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void spans_preserveConfiguredServiceName() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         for (var span : spanExporter.getFinishedSpanItems()) {
             assertEquals(
@@ -207,8 +212,9 @@ class ExecutionOtelPluginTest {
     @Test
     void workflowSpan_startsAtExecutionStartTime() {
         var start = Instant.parse("2026-01-15T08:00:00Z");
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, start));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, start, Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var workflowSpan = spanByName(spanExporter.getFinishedSpanItems(), "Workflow");
         assertEquals(
@@ -219,8 +225,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void workflowSpan_hasInternalKind() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         assertEquals(
                 SpanKind.INTERNAL,
@@ -230,8 +237,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void workflowAndInvocationSpans_areIndependentRoots_withoutAmbientContext() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");
@@ -251,9 +259,10 @@ class ExecutionOtelPluginTest {
                 SpanContext.create(traceId, parentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
 
         try (var ignored = Span.wrap(parentSpanContext).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         }
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var invocationSpan = spanByName(spanExporter.getFinishedSpanItems(), "Invocation");
         assertEquals(traceId, invocationSpan.getTraceId());
@@ -262,8 +271,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void nonTerminalInvocation_doesNotExportWorkflowSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         // Only the invocation span is exported; the Workflow span is not ended on non-terminal status.
@@ -275,8 +285,9 @@ class ExecutionOtelPluginTest {
     @Test
     void workflowSpan_exportedOnceAcrossInvocations_sameSpanId() {
         // Invocation 1: non-terminal → no Workflow span exported
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.PENDING, null));
         assertTrue(
                 spanExporter.getFinishedSpanItems().stream()
                         .noneMatch(s -> s.getName().equals("Workflow")),
@@ -284,8 +295,9 @@ class ExecutionOtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: terminal → Workflow span exported with the deterministic ID
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", ARN, false, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var workflowSpan = spanByName(spanExporter.getFinishedSpanItems(), "Workflow");
         assertEquals(StatusCode.OK, workflowSpan.getStatus().getStatusCode());
@@ -296,9 +308,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void failedInvocation_setsErrorOnBothWorkflowAndInvocationSpans() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(
-                new InvocationEndInfo("req-1", ARN, true, InvocationStatus.FAILED, new RuntimeException("boom")));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(new InvocationEndInfo(
+                "req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.FAILED, new RuntimeException("boom")));
 
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(StatusCode.ERROR, spanByName(spans, "Workflow").getStatus().getStatusCode());
@@ -308,9 +320,15 @@ class ExecutionOtelPluginTest {
 
     @Test
     void retryingInvocation_invocationSpanUnset_workflowNotExported() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onInvocationEnd(new InvocationEndInfo(
-                "req-1", ARN, true, InvocationStatus.RETRYING, new RuntimeException("transient")));
+                "req-1",
+                ARN,
+                true,
+                Instant.now(),
+                Map.of(),
+                InvocationStatus.RETRYING,
+                new RuntimeException("transient")));
 
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(1, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
@@ -326,12 +344,13 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationSpan_carriesAttemptNumberAtEnd() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "flaky", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 3, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
         assertEquals(
@@ -344,11 +363,12 @@ class ExecutionOtelPluginTest {
 
     @Test
     void continuationOperationSpan_carriesAttemptNumber() {
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now(), Map.of(), Map.of()));
         // No matching onOperationStart in this invocation — continuation branch.
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 2, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", ARN, false, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
         assertEquals(
@@ -363,11 +383,12 @@ class ExecutionOtelPluginTest {
     void operationSpan_startsAtOperationStartTimestamp() {
         var opStart = Instant.parse("2026-02-01T10:00:00Z");
         var opEnd = Instant.parse("2026-02-01T10:00:03Z");
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, opStart, null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "step-a", "STEP", "Step", null, opStart, opEnd, "SUCCEEDED", null, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-a");
         assertEquals(
@@ -378,12 +399,13 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationSpan_parentedToWorkflow_linkedToInvocation() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");
@@ -402,16 +424,17 @@ class ExecutionOtelPluginTest {
 
     @Test
     void attemptSpan_childOfOperation_linkedToInvocation() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onUserFunctionStart(
-                new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
+                new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, false, 1, true, null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var operationSpan = spanByName(spans, "compute");
@@ -434,12 +457,24 @@ class ExecutionOtelPluginTest {
 
     @Test
     void attemptSpan_carriesOperationSubtype() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onUserFunctionStart(
-                new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onUserFunctionStart(new UserFunctionStartInfo(
+                "op-1", "process-order", "STEP", "Step", null, Instant.now(), false, false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+                "op-1",
+                "process-order",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                false,
+                1,
+                true,
+                null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
                 .filter(s -> s.getName().contains("process-order"))
@@ -453,7 +488,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void childOperation_parentedToParentOperationSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(new OperationInfo(
                 "op-parent", "my-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null, null, false));
         plugin.onOperationStart(new OperationInfo(
@@ -482,7 +517,8 @@ class ExecutionOtelPluginTest {
                 null,
                 false,
                 null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var parentSpan = spanByName(spans, "my-context");
@@ -497,9 +533,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void userFunctionFailure_setsErrorOnAttemptSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onUserFunctionStart(
-                new UserFunctionStartInfo("op-1", "failing", "STEP", "Step", null, Instant.now(), false, 1));
+                new UserFunctionStartInfo("op-1", "failing", "STEP", "Step", null, Instant.now(), false, false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
                 "op-1",
                 "failing",
@@ -509,10 +545,12 @@ class ExecutionOtelPluginTest {
                 Instant.now(),
                 Instant.now(),
                 false,
+                false,
                 1,
                 false,
                 new RuntimeException("step failed")));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.FAILED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.FAILED, null));
 
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
                 .filter(s -> s.getName().contains("attempt"))
@@ -523,12 +561,13 @@ class ExecutionOtelPluginTest {
 
     @Test
     void userFunctionSuccess_setsOkOnAttemptSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onUserFunctionStart(
-                new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
+                new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, false, 1, true, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
                 .filter(s -> s.getName().contains("attempt"))
@@ -539,12 +578,13 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationSuccess_setsOkOnOperationSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-ok", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "step-ok", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-ok");
         assertEquals(StatusCode.OK, operationSpan.getStatus().getStatusCode());
@@ -555,7 +595,7 @@ class ExecutionOtelPluginTest {
         // onOperationEnd fires for every terminal status. A CANCELLED operation (or an error-less
         // FAILED/TIMED_OUT/STOPPED) carries a non-null, non-SUCCEEDED status with a null error. It must NOT be
         // stamped OK — the span status stays UNSET.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -570,7 +610,8 @@ class ExecutionOtelPluginTest {
                 null,
                 false,
                 null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-cancel");
         assertEquals(StatusCode.UNSET, operationSpan.getStatus().getStatusCode());
@@ -580,7 +621,7 @@ class ExecutionOtelPluginTest {
     void operationEnd_withoutStart_nonSuccessStatusAndNoError_leavesContinuationSpanUnset() {
         // Same guard on the continuation-span branch (operation completed between invocations): an error-less
         // TIMED_OUT terminal status must NOT be stamped OK.
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-cb-timeout",
                 "my-callback",
@@ -593,7 +634,8 @@ class ExecutionOtelPluginTest {
                 null,
                 false,
                 null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", ARN, false, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var continuationSpan = spanByName(spanExporter.getFinishedSpanItems(), "my-callback");
         assertEquals(StatusCode.UNSET, continuationSpan.getStatus().getStatusCode());
@@ -603,12 +645,13 @@ class ExecutionOtelPluginTest {
     void operationEnd_withNullStatusAndNoError_setsOkOnOperationSpan() {
         // A successful statusless virtual (FLAT CONTEXT) operation fires onOperationEnd with a null operation ->
         // null status and null error. This is genuine success and must be stamped OK.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), Instant.now(), null, null, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "my-ctx");
         assertEquals(StatusCode.OK, operationSpan.getStatus().getStatusCode());
@@ -616,10 +659,11 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationNotCompleted_notEndedAtInvocationEnd() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, null, false));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         // Only the invocation span is exported. The still-open operation span is NOT force-ended (no PENDING
@@ -634,10 +678,11 @@ class ExecutionOtelPluginTest {
     @Test
     void operationOpenedThenCompletedNextInvocation_exportedOnceOnOperationEnd() {
         // Invocation 1: operation opens but does not complete.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, null, false));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.PENDING, null));
         assertTrue(
                 spanExporter.getFinishedSpanItems().stream()
                         .noneMatch(s -> s.getName().equals("my-wait")),
@@ -645,10 +690,11 @@ class ExecutionOtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: the operation completes → materialized once via onOperationEnd, linked to this invocation.
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", ARN, false, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var waitSpans =
@@ -665,17 +711,19 @@ class ExecutionOtelPluginTest {
 
     @Test
     void allSpansShareTraceId_acrossInvocations() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "step-1", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.PENDING, null));
         var firstTraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
         spanExporter.reset();
 
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", ARN, false, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
         var secondSpans = spanExporter.getFinishedSpanItems();
 
         assertTrue(
@@ -685,7 +733,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationEnd_withoutStart_createsContinuationSpanWithLink() {
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now(), Map.of(), Map.of()));
         // Operation completed between invocations — no matching onOperationStart in this invocation.
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-wait-1",
@@ -699,7 +747,8 @@ class ExecutionOtelPluginTest {
                 null,
                 false,
                 null));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", ARN, false, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var continuationSpan = spanByName(spans, "my-wait");
@@ -713,8 +762,9 @@ class ExecutionOtelPluginTest {
 
     @Test
     void deterministicWorkflowSpanId_stableAcrossInvocations() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
         var firstWorkflowSpanId =
                 spanByName(spanExporter.getFinishedSpanItems(), "Workflow").getSpanId();
         spanExporter.reset();
@@ -728,8 +778,9 @@ class ExecutionOtelPluginTest {
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        plugin2.onInvocationStart(new InvocationInfo("req-9", ARN, true, Instant.now()));
-        plugin2.onInvocationEnd(new InvocationEndInfo("req-9", ARN, true, InvocationStatus.SUCCEEDED, null));
+        plugin2.onInvocationStart(new InvocationInfo("req-9", ARN, true, Instant.now(), Map.of(), Map.of()));
+        plugin2.onInvocationEnd(
+                new InvocationEndInfo("req-9", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
         var secondWorkflowSpanId =
                 spanByName(exporter2.getFinishedSpanItems(), "Workflow").getSpanId();
 
@@ -753,8 +804,9 @@ class ExecutionOtelPluginTest {
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        sampledPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        sampledPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        sampledPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        sampledPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
         assertTrue(exporter.getFinishedSpanItems().isEmpty(), "No spans should be exported with 0% sampling");
     }
 
@@ -771,12 +823,13 @@ class ExecutionOtelPluginTest {
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
-        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        xrayPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();
         assertTrue(spans.size() >= 3, "Workflow + invocation + operation spans expected");
@@ -798,8 +851,9 @@ class ExecutionOtelPluginTest {
                         .workflowSpanName("Workflow")
                         .build());
 
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now(), Map.of(), Map.of()));
+        xrayPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", ARN, true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");

@@ -28,6 +28,7 @@ import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
+import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -67,11 +68,19 @@ public class DurableExecutor {
                         // onInvocationStart runs on the user thread so plugins can
                         // inject ThreadLocal objects, update MDC, etc.
                         // executionStartTime comes from the initial EXECUTION operation in the first backend event.
+                        // The operation maps are snapshots of the state delivered for this invocation; on a replay
+                        // invocation updatedOperations names the operations the backend completed while suspended.
                         pluginRunner.onInvocationStart(new InvocationInfo(
                                 requestId,
                                 executionArn,
                                 isFirstInvocation,
-                                executionManager.getExecutionOperation().startTimestamp()));
+                                executionManager.getExecutionOperation().startTimestamp(),
+                                PluginInfoConverter.toOperationItemMap(
+                                        executionManager.getOperationsSnapshot(),
+                                        executionManager.getInitialOperationIds()),
+                                PluginInfoConverter.toOperationItemMap(
+                                        executionManager.getUpdatedOperationsSnapshot(),
+                                        executionManager.getInitialOperationIds())));
 
                         var userInput = extractUserInput(
                                 executionManager.getExecutionOperation(), config.getSerDes(), inputType);
@@ -99,6 +108,7 @@ public class DurableExecutor {
                                 if (cause instanceof SuspendExecutionException) {
                                     fireOnInvocationEnd(
                                             pluginRunner,
+                                            executionManager,
                                             requestId,
                                             executionArn,
                                             isFirstInvocation,
@@ -115,6 +125,7 @@ public class DurableExecutor {
                                         && unrecoverableDurableExecutionException.isRetryable()) {
                                     fireOnInvocationEnd(
                                             pluginRunner,
+                                            executionManager,
                                             requestId,
                                             executionArn,
                                             isFirstInvocation,
@@ -127,6 +138,7 @@ public class DurableExecutor {
                                 logger.debug("Execution failed: {}", cause.getMessage());
                                 fireOnInvocationEnd(
                                         pluginRunner,
+                                        executionManager,
                                         requestId,
                                         executionArn,
                                         isFirstInvocation,
@@ -141,6 +153,7 @@ public class DurableExecutor {
                                     DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
                             fireOnInvocationEnd(
                                     pluginRunner,
+                                    executionManager,
                                     requestId,
                                     executionArn,
                                     isFirstInvocation,
@@ -159,12 +172,24 @@ public class DurableExecutor {
 
     private static void fireOnInvocationEnd(
             PluginRunner pluginRunner,
+            ExecutionManager executionManager,
             String requestId,
             String executionArn,
             boolean isFirstInvocation,
             InvocationStatus status,
             Throwable error) {
-        pluginRunner.onInvocationEnd(new InvocationEndInfo(requestId, executionArn, isFirstInvocation, status, error));
+        // The end info repeats the start info's identity surface (execution start time, operation snapshot) so an
+        // invocation-end hook never has to correlate back to the start hook. The snapshot is taken at end time, so
+        // unlike the start info it also contains operations created during this invocation.
+        pluginRunner.onInvocationEnd(new InvocationEndInfo(
+                requestId,
+                executionArn,
+                isFirstInvocation,
+                executionManager.getExecutionOperation().startTimestamp(),
+                PluginInfoConverter.toOperationItemMap(
+                        executionManager.getOperationsSnapshot(), executionManager.getInitialOperationIds()),
+                status,
+                error));
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {
