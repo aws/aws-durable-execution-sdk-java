@@ -4,15 +4,21 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-import java.util.function.BiFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
+import software.amazon.lambda.durable.extension.ExtensionContextFunction;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
+import software.amazon.lambda.durable.model.OperationSubType;
 
 class DurableWithRetryOperationsTest {
     @AfterEach
@@ -22,17 +28,44 @@ class DurableWithRetryOperationsTest {
 
     @Test
     void retryBodyUsesSupplierAndScopedAttempt() {
-        var context = mock(DurableContext.class);
+        var context = mock(CurrentExtensionContext.class);
+        var parent = mock(ExtensionOperation.class);
+        var future = mockIntegerFuture();
+        when(context.reserve("retry")).thenReturn(parent);
+        when(future.get()).thenReturn(1);
+        when(parent.runInChildContextAsync(
+                        eq(OperationSubType.WITH_RETRY.getValue()),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(future);
         BaseContextImpl.setCurrentContext(context);
 
-        DurableWithRetryOperations.withRetry(
-                "retry", () -> WithRetryContext.getCurrentContext().getAttempt());
+        assertEquals(1, DurableWithRetryOperations.withRetry("retry", () -> WithRetryContext.getCurrentContext()
+                .getAttempt()));
 
-        @SuppressWarnings("unchecked")
-        var operation = (ArgumentCaptor<BiFunction<Integer, DurableContext, Integer>>)
-                (ArgumentCaptor<?>) ArgumentCaptor.forClass(BiFunction.class);
-        verify(context).withRetry(eq("retry"), operation.capture());
-        assertEquals(2, operation.getValue().apply(2, mock(DurableContext.class)));
+        var function = extensionFunction();
+        verify(parent)
+                .runInChildContextAsync(
+                        eq(OperationSubType.WITH_RETRY.getValue()),
+                        any(TypeToken.class),
+                        function.capture(),
+                        any(ExtensionContextConfig.class));
+        try (var ignored = BaseContextImpl.attachCurrentContext(context)) {
+            assertEquals(1, function.getValue().apply().result());
+        }
         assertThrows(IllegalStateException.class, WithRetryContext::getCurrentContext);
     }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private ArgumentCaptor<ExtensionContextFunction<Object>> extensionFunction() {
+        return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionContextFunction.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private DurableFuture<Integer> mockIntegerFuture() {
+        return mock(DurableFuture.class);
+    }
+
+    private interface CurrentExtensionContext extends DurableContext, ExtensionContext {}
 }

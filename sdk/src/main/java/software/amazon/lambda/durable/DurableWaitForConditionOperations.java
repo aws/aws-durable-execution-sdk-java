@@ -6,6 +6,8 @@ import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.context.extension.WaitForConditionExtension;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 /** Context-free static facades for durable wait-for-condition operations. */
@@ -14,12 +16,12 @@ public final class DurableWaitForConditionOperations {
 
     public static <T> T waitForCondition(
             String name, Class<T> resultType, Function<T, WaitForConditionResult<T>> checkFunction) {
-        return currentContext().waitForCondition(name, resultType, adapt(checkFunction));
+        return waitForConditionAsync(name, resultType, checkFunction).get();
     }
 
     public static <T> T waitForCondition(
             String name, TypeToken<T> resultType, Function<T, WaitForConditionResult<T>> checkFunction) {
-        return currentContext().waitForCondition(name, resultType, adapt(checkFunction));
+        return waitForConditionAsync(name, resultType, checkFunction).get();
     }
 
     public static <T> T waitForCondition(
@@ -27,7 +29,7 @@ public final class DurableWaitForConditionOperations {
             Class<T> resultType,
             Function<T, WaitForConditionResult<T>> checkFunction,
             WaitForConditionConfig<T> config) {
-        return currentContext().waitForCondition(name, resultType, adapt(checkFunction), config);
+        return waitForConditionAsync(name, resultType, checkFunction, config).get();
     }
 
     public static <T> T waitForCondition(
@@ -35,17 +37,21 @@ public final class DurableWaitForConditionOperations {
             TypeToken<T> resultType,
             Function<T, WaitForConditionResult<T>> checkFunction,
             WaitForConditionConfig<T> config) {
-        return currentContext().waitForCondition(name, resultType, adapt(checkFunction), config);
+        return waitForConditionAsync(name, resultType, checkFunction, config).get();
     }
 
     public static <T> DurableFuture<T> waitForConditionAsync(
             String name, Class<T> resultType, Function<T, WaitForConditionResult<T>> checkFunction) {
-        return currentContext().waitForConditionAsync(name, resultType, adapt(checkFunction));
+        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunction);
     }
 
     public static <T> DurableFuture<T> waitForConditionAsync(
             String name, TypeToken<T> resultType, Function<T, WaitForConditionResult<T>> checkFunction) {
-        return currentContext().waitForConditionAsync(name, resultType, adapt(checkFunction));
+        return waitForConditionAsync(
+                name,
+                resultType,
+                checkFunction,
+                WaitForConditionConfig.<T>builder().build());
     }
 
     public static <T> DurableFuture<T> waitForConditionAsync(
@@ -53,7 +59,7 @@ public final class DurableWaitForConditionOperations {
             Class<T> resultType,
             Function<T, WaitForConditionResult<T>> checkFunction,
             WaitForConditionConfig<T> config) {
-        return currentContext().waitForConditionAsync(name, resultType, adapt(checkFunction), config);
+        return waitForConditionAsync(name, TypeToken.get(resultType), checkFunction, config);
     }
 
     public static <T> DurableFuture<T> waitForConditionAsync(
@@ -61,7 +67,7 @@ public final class DurableWaitForConditionOperations {
             TypeToken<T> resultType,
             Function<T, WaitForConditionResult<T>> checkFunction,
             WaitForConditionConfig<T> config) {
-        return currentContext().waitForConditionAsync(name, resultType, adapt(checkFunction), config);
+        return WaitForConditionExtension.execute(currentContext(), name, resultType, adapt(checkFunction), config);
     }
 
     private static <T> BiFunction<T, StepContext, WaitForConditionResult<T>> adapt(
@@ -70,7 +76,7 @@ public final class DurableWaitForConditionOperations {
         return (state, ignored) -> checkFunction.apply(state);
     }
 
-    private static DurableContext currentContext() {
-        return DurableContext.getCurrentContext();
+    private static ExtensionContext currentContext() {
+        return ExtensionContext.getCurrentContext();
     }
 }

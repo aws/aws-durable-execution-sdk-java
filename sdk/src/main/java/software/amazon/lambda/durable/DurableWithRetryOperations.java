@@ -6,25 +6,27 @@ import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.context.extension.WithRetryExtension;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 
 /** Context-free static facades for replay-safe retry operations. */
 public final class DurableWithRetryOperations {
     private DurableWithRetryOperations() {}
 
     public static <T> T withRetry(String name, Supplier<T> operation) {
-        return currentContext().withRetry(name, adapt(operation));
+        return withRetryAsync(name, operation).get();
     }
 
     public static <T> T withRetry(String name, Supplier<T> operation, WithRetryConfig config) {
-        return currentContext().withRetry(name, adapt(operation), config);
+        return withRetryAsync(name, operation, config).get();
     }
 
     public static <T> DurableFuture<T> withRetryAsync(String name, Supplier<T> operation) {
-        return currentContext().withRetryAsync(name, adapt(operation));
+        return withRetryAsync(name, operation, WithRetryConfig.builder().build());
     }
 
     public static <T> DurableFuture<T> withRetryAsync(String name, Supplier<T> operation, WithRetryConfig config) {
-        return currentContext().withRetryAsync(name, adapt(operation), config);
+        return WithRetryExtension.execute(currentContext(), name, adapt(operation), config);
     }
 
     private static <T> BiFunction<Integer, DurableContext, T> adapt(Supplier<T> operation) {
@@ -36,7 +38,7 @@ public final class DurableWithRetryOperations {
         };
     }
 
-    private static DurableContext currentContext() {
-        return DurableContext.getCurrentContext();
+    private static ExtensionContext currentContext() {
+        return ExtensionContext.getCurrentContext();
     }
 }

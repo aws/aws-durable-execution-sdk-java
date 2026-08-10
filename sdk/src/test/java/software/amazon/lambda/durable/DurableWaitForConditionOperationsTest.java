@@ -3,15 +3,22 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-import java.util.function.BiFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
+import software.amazon.lambda.durable.extension.ExtensionStepConfig;
+import software.amazon.lambda.durable.extension.ExtensionStepFunction;
+import software.amazon.lambda.durable.extension.ExtensionStepResult;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 
 class DurableWaitForConditionOperationsTest {
@@ -22,23 +29,48 @@ class DurableWaitForConditionOperationsTest {
 
     @Test
     void conditionFunctionReceivesOnlyStateAndUsesStepContextFromTls() {
-        var context = mock(DurableContext.class);
+        var context = mock(CurrentExtensionContext.class);
+        var reservation = mock(ExtensionOperation.class);
+        var future = mockStringFuture();
         var stepContext = mock(StepContext.class);
+        when(context.reserve("condition")).thenReturn(reservation);
+        when(future.get()).thenReturn("VALUE");
+        when(reservation.stepAsync(
+                        eq(OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                        eq(TypeToken.get(String.class)),
+                        any(ExtensionStepFunction.class),
+                        any(ExtensionStepConfig.class)))
+                .thenReturn(future);
         BaseContextImpl.setCurrentContext(context);
 
-        DurableWaitForConditionOperations.waitForCondition("condition", String.class, state -> {
+        assertEquals("VALUE", DurableWaitForConditionOperations.waitForCondition("condition", String.class, state -> {
             assertEquals(stepContext, StepContext.getCurrentContext());
             return WaitForConditionResult.stopPolling(state.toUpperCase());
-        });
+        }));
 
-        @SuppressWarnings("unchecked")
-        var check = (ArgumentCaptor<BiFunction<String, StepContext, WaitForConditionResult<String>>>)
-                (ArgumentCaptor<?>) ArgumentCaptor.forClass(BiFunction.class);
-        verify(context).waitForCondition(eq("condition"), eq(String.class), check.capture());
+        var check = extensionFunction();
+        verify(reservation)
+                .stepAsync(
+                        eq(OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                        eq(TypeToken.get(String.class)),
+                        check.capture(),
+                        any(ExtensionStepConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(stepContext)) {
-            assertEquals(
-                    WaitForConditionResult.stopPolling("VALUE"),
-                    check.getValue().apply("value", stepContext));
+            var result =
+                    (ExtensionStepResult.Succeeded<String>) check.getValue().apply("value");
+            assertEquals("VALUE", result.value());
         }
     }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private ArgumentCaptor<ExtensionStepFunction<String>> extensionFunction() {
+        return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionStepFunction.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private DurableFuture<String> mockStringFuture() {
+        return mock(DurableFuture.class);
+    }
+
+    private interface CurrentExtensionContext extends DurableContext, ExtensionContext {}
 }
