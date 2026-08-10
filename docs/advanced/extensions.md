@@ -281,14 +281,15 @@ var result = ExtensionContext.getCurrentContext()
 The function may return only `ExtensionStepResult.succeed(value)` or
 `ExtensionStepResult.retry(state, delay)`. Retry state uses the configured `SerDes`; attempt metadata remains
 available through `StepContext.getCurrentContext()`. Thrown exceptions follow the normal STEP failure path.
-`ExtensionStepConfig` owns its retry contracts, so extension libraries can configure exception retries and delivery
-semantics without depending on the customer-facing config or retry packages:
+`ExtensionStepConfig` owns its retry strategy, which returns the same retry outcome used by stateful continuations.
+Extension libraries can therefore configure exception retries and delivery semantics without depending on the
+customer-facing config or retry packages:
 
 ```java
 ExtensionStepConfig.<PollState>builder()
-        .retryStrategy((error, attempt) -> attempt < 3
-                ? ExtensionStepConfig.RetryDecision.retry(Duration.ofSeconds(1))
-                : ExtensionStepConfig.RetryDecision.fail())
+        .retryStrategy((error, state, attempt) -> attempt < 3
+                ? ExtensionStepResult.retry(state, Duration.ofSeconds(1))
+                : ExtensionStepResult.doNotRetry())
         .semanticsPerRetry(ExtensionStepConfig.StepSemantics.AT_MOST_ONCE_PER_RETRY)
         .build();
 ```

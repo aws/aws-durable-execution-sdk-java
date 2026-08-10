@@ -192,6 +192,8 @@ class ExtensionOperationIntegrationTest {
     @Test
     void extensionStepRetriesExceptionsWithExtensionOwnedStrategy() {
         var attempts = new AtomicInteger();
+        var failedState = new AtomicReference<String>();
+        var resumedState = new AtomicReference<String>();
         var runner =
                 LocalDurableTestRunner.create(String.class, (input, context) -> ExtensionContext.getCurrentContext()
                         .reserve("retry")
@@ -202,12 +204,17 @@ class ExtensionOperationIntegrationTest {
                                     if (attempts.incrementAndGet() == 1) {
                                         throw new IllegalStateException("retry");
                                     }
+                                    resumedState.set(state);
                                     return ExtensionStepResult.succeed("done");
                                 },
                                 ExtensionStepConfig.<String>builder()
-                                        .retryStrategy((error, attempt) -> attempt < 2
-                                                ? ExtensionStepConfig.RetryDecision.retry(Duration.ofSeconds(1))
-                                                : ExtensionStepConfig.RetryDecision.fail())
+                                        .initialState("initial")
+                                        .retryStrategy((error, state, attempt) -> {
+                                            failedState.set(state);
+                                            return attempt < 2
+                                                    ? ExtensionStepResult.retry("retried", Duration.ofSeconds(1))
+                                                    : ExtensionStepResult.doNotRetry();
+                                        })
                                         .build())
                         .get());
 
@@ -217,6 +224,8 @@ class ExtensionOperationIntegrationTest {
         assertEquals("done", result.getResult(String.class));
         assertEquals(2, attempts.get());
         assertEquals(2, result.getOperation("retry").getAttempt());
+        assertEquals("initial", failedState.get());
+        assertEquals("retried", resumedState.get());
     }
 
     @Test

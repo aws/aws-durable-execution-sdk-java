@@ -82,12 +82,12 @@ public final class DurableStepOperation {
                                 .build());
     }
 
-    private static ExtensionStepConfig.RetryStrategy adapt(RetryStrategy retryStrategy) {
-        return (error, attempt) -> {
+    private static <T> ExtensionStepConfig.RetryStrategy<T> adapt(RetryStrategy retryStrategy) {
+        return (error, state, attempt) -> {
             var decision = retryStrategy.makeRetryDecision(error, attempt);
             return decision.shouldRetry()
-                    ? ExtensionStepConfig.RetryDecision.retry(decision.delay())
-                    : ExtensionStepConfig.RetryDecision.fail();
+                    ? ExtensionStepResult.retry(state, decision.delay())
+                    : ExtensionStepResult.doNotRetry();
         };
     }
 

@@ -160,11 +160,18 @@ class DurableOperationFacadeTest {
         assertEquals(
                 ExtensionStepConfig.StepSemantics.AT_MOST_ONCE_PER_RETRY,
                 extensionConfig.getValue().semanticsPerRetry());
-        var retry = extensionConfig.getValue().retryStrategy().makeRetryDecision(new IllegalStateException("retry"), 1);
-        var fail = extensionConfig.getValue().retryStrategy().makeRetryDecision(new IllegalStateException("fail"), 2);
-        assertTrue(retry.shouldRetry());
+        var retry = assertInstanceOf(
+                ExtensionStepResult.Retry.class,
+                extensionConfig
+                        .getValue()
+                        .retryStrategy()
+                        .makeRetryDecision(new IllegalStateException("retry"), null, 1));
+        var doNotRetry = extensionConfig
+                .getValue()
+                .retryStrategy()
+                .makeRetryDecision(new IllegalStateException("fail"), null, 2);
         assertEquals(Duration.ofSeconds(3), retry.delay());
-        assertFalse(fail.shouldRetry());
+        assertInstanceOf(ExtensionStepResult.DoNotRetry.class, doNotRetry);
     }
 
     @Test

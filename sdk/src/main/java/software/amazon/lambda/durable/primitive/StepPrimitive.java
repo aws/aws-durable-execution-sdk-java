@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.primitive;
 
 import java.util.concurrent.CompletableFuture;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -126,6 +127,10 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
             return;
         }
         var retry = (ExtensionStepResult.Retry<T>) result;
+        handleExtensionStepRetry(retry, null, attempt);
+    }
+
+    private void handleExtensionStepRetry(ExtensionStepResult.Retry<T> retry, ErrorObject error, int attempt) {
         var serializedState = serializeAndDeserializeResult(retry.state());
         var retryDelaySeconds = Math.toIntExact(retry.delay().toSeconds());
         var update = OperationUpdate.builder()
@@ -134,6 +139,9 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
                 .stepOptions(StepOptions.builder()
                         .nextAttemptDelaySeconds(retryDelaySeconds)
                         .build());
+        if (error != null) {
+            update.error(error);
+        }
         sendOperationUpdate(update);
         pollReadyAndExecuteExtensionStep(serializedState.deserialized(), attempt + 1);
     }
@@ -160,18 +168,9 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
 
         var retryStrategy = extensionConfig.retryStrategy();
         if (retryStrategy != null) {
-            var decision = retryStrategy.makeRetryDecision(exception, attempt);
-            if (decision.shouldRetry()) {
-                var serializedState = serializeAndDeserializeResult(state);
-                var retryDelaySeconds = Math.toIntExact(decision.delay().toSeconds());
-                sendOperationUpdate(OperationUpdate.builder()
-                        .action(OperationAction.RETRY)
-                        .payload(serializedState.serialized())
-                        .error(error)
-                        .stepOptions(StepOptions.builder()
-                                .nextAttemptDelaySeconds(retryDelaySeconds)
-                                .build()));
-                pollReadyAndExecuteExtensionStep(serializedState.deserialized(), attempt + 1);
+            var decision = retryStrategy.makeRetryDecision(exception, state, attempt);
+            if (decision instanceof ExtensionStepResult.Retry<T> retry) {
+                handleExtensionStepRetry(retry, error, attempt);
                 return;
             }
         }

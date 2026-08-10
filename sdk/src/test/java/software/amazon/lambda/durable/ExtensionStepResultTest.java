@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Duration;
@@ -23,6 +24,8 @@ class ExtensionStepResultTest {
 
         assertEquals("next", result.state());
         assertEquals(Duration.ofSeconds(2), result.delay());
+        assertInstanceOf(ExtensionStepResult.RetryDecision.class, result);
+        assertInstanceOf(ExtensionStepResult.RetryDecision.class, ExtensionStepResult.doNotRetry());
     }
 
     @Test

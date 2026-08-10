@@ -3,10 +3,8 @@
 package software.amazon.lambda.durable.extension;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
@@ -26,8 +24,8 @@ class ExtensionStepConfigTest {
     @Test
     void builderRetainsConfiguredValues() {
         var serDes = new JacksonSerDes();
-        ExtensionStepConfig.RetryStrategy retryStrategy =
-                (error, attempt) -> ExtensionStepConfig.RetryDecision.retry(Duration.ofSeconds(attempt));
+        ExtensionStepConfig.RetryStrategy<Integer> retryStrategy =
+                (error, state, attempt) -> ExtensionStepResult.retry(state, Duration.ofSeconds(attempt));
         var config = ExtensionStepConfig.<Integer>builder()
                 .initialState(42)
                 .serDes(serDes)
@@ -42,17 +40,6 @@ class ExtensionStepConfigTest {
     }
 
     @Test
-    void retryDecisionFactoriesExposeExtensionOwnedDecision() {
-        var retry = ExtensionStepConfig.RetryDecision.retry(Duration.ofSeconds(3));
-        var fail = ExtensionStepConfig.RetryDecision.fail();
-
-        assertTrue(retry.shouldRetry());
-        assertEquals(Duration.ofSeconds(3), retry.delay());
-        assertFalse(fail.shouldRetry());
-        assertEquals(Duration.ZERO, fail.delay());
-    }
-
-    @Test
     void retryAndSemanticsContractsAreOwnedByExtensionStepConfig() throws Exception {
         assertEquals(
                 ExtensionStepConfig.RetryStrategy.class,
@@ -61,9 +48,9 @@ class ExtensionStepConfigTest {
                 ExtensionStepConfig.StepSemantics.class,
                 ExtensionStepConfig.class.getMethod("semanticsPerRetry").getReturnType());
         assertEquals(
-                ExtensionStepConfig.RetryDecision.class,
+                ExtensionStepResult.RetryDecision.class,
                 ExtensionStepConfig.RetryStrategy.class
-                        .getMethod("makeRetryDecision", Throwable.class, int.class)
+                        .getMethod("makeRetryDecision", Throwable.class, Object.class, int.class)
                         .getReturnType());
     }
 }

@@ -39,7 +39,6 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
-import software.amazon.lambda.durable.extension.ExtensionStepConfig.RetryDecision;
 import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
@@ -191,13 +190,16 @@ class StatefulExtensionStepPrimitiveTest {
                 },
                 ExtensionStepConfig.<Integer>builder()
                         .serDes(SERDES)
-                        .retryStrategy((error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)))
+                        .retryStrategy(
+                                (error, state, attempt) -> ExtensionStepResult.retry(state, Duration.ofSeconds(1)))
                         .build());
 
         operation.execute();
 
         assertTrue(retrySent.await(2, TimeUnit.SECONDS));
         assertNull(retryUpdate.get().payload());
+        assertEquals(
+                IllegalStateException.class.getName(), retryUpdate.get().error().errorType());
     }
 
     @Test

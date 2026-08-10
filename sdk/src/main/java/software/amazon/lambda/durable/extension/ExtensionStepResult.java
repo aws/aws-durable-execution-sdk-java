@@ -22,11 +22,19 @@ public sealed interface ExtensionStepResult<T> permits ExtensionStepResult.Succe
         return new Retry<>(state, delay);
     }
 
+    /** Creates a decision that a failed attempt should not be retried. */
+    static <T> DoNotRetry<T> doNotRetry() {
+        return new DoNotRetry<>();
+    }
+
+    /** Outcomes supported when deciding whether to retry a failed attempt. */
+    sealed interface RetryDecision<T> permits Retry, DoNotRetry {}
+
     /** Terminal successful outcome. */
     record Succeeded<T>(T value) implements ExtensionStepResult<T> {}
 
     /** Retry outcome. */
-    record Retry<T>(T state, Duration delay) implements ExtensionStepResult<T> {
+    record Retry<T>(T state, Duration delay) implements ExtensionStepResult<T>, RetryDecision<T> {
         public Retry {
             Objects.requireNonNull(delay, "delay cannot be null");
             if (delay.isNegative()) {
@@ -34,4 +42,7 @@ public sealed interface ExtensionStepResult<T> permits ExtensionStepResult.Succe
             }
         }
     }
+
+    /** Decision that a failed attempt should not be retried. */
+    record DoNotRetry<T>() implements RetryDecision<T> {}
 }

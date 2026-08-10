@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.extension;
 
-import java.time.Duration;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -13,7 +12,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 public final class ExtensionStepConfig<T> {
     private final T initialState;
     private final SerDes serDes;
-    private final RetryStrategy retryStrategy;
+    private final RetryStrategy<T> retryStrategy;
     private final StepSemantics semanticsPerRetry;
 
     private ExtensionStepConfig(Builder<T> builder) {
@@ -34,7 +33,7 @@ public final class ExtensionStepConfig<T> {
     }
 
     /** Returns the exception retry strategy, or {@code null} when thrown exceptions are terminal. */
-    public RetryStrategy retryStrategy() {
+    public RetryStrategy<T> retryStrategy() {
         return retryStrategy;
     }
 
@@ -68,52 +67,23 @@ public final class ExtensionStepConfig<T> {
 
     /** Determines whether a thrown exception should retry the extension step. */
     @FunctionalInterface
-    public interface RetryStrategy {
+    public interface RetryStrategy<T> {
         /**
          * Returns the retry decision for a failed attempt.
          *
          * @param error the thrown exception
+         * @param state state supplied to the failed attempt
          * @param attempt the current one-based attempt number
+         * @return a retry outcome with the next state and delay, or a do-not-retry decision
          */
-        RetryDecision makeRetryDecision(Throwable error, int attempt);
-    }
-
-    /** A retry decision and the delay before the next attempt. */
-    public static final class RetryDecision {
-        private final boolean shouldRetry;
-        private final Duration delay;
-
-        private RetryDecision(boolean shouldRetry, Duration delay) {
-            this.shouldRetry = shouldRetry;
-            this.delay = delay != null ? delay : Duration.ZERO;
-        }
-
-        /** Returns a decision to retry after the supplied delay. */
-        public static RetryDecision retry(Duration delay) {
-            return new RetryDecision(true, delay);
-        }
-
-        /** Returns a decision to fail without retrying. */
-        public static RetryDecision fail() {
-            return new RetryDecision(false, Duration.ZERO);
-        }
-
-        /** Returns whether another attempt should run. */
-        public boolean shouldRetry() {
-            return shouldRetry;
-        }
-
-        /** Returns the delay before the next attempt. */
-        public Duration delay() {
-            return delay;
-        }
+        ExtensionStepResult.RetryDecision<T> makeRetryDecision(Throwable error, T state, int attempt);
     }
 
     /** Builder for {@link ExtensionStepConfig}. */
     public static final class Builder<T> {
         private T initialState;
         private SerDes serDes;
-        private RetryStrategy retryStrategy;
+        private RetryStrategy<T> retryStrategy;
         private StepSemantics semanticsPerRetry;
 
         private Builder() {}
@@ -131,7 +101,7 @@ public final class ExtensionStepConfig<T> {
         }
 
         /** Sets the retry strategy used when the extension function throws. */
-        public Builder<T> retryStrategy(RetryStrategy retryStrategy) {
+        public Builder<T> retryStrategy(RetryStrategy<T> retryStrategy) {
             this.retryStrategy = retryStrategy;
             return this;
         }

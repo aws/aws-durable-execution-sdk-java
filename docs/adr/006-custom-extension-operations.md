@@ -205,9 +205,10 @@ DurableFuture<Void> waitAsync(String subType, Duration duration);
         ExtensionContextConfig config);
 ```
 
-`ExtensionStepConfig` owns its nested `StepSemantics`, `RetryStrategy`, and `RetryDecision` contracts. Built-in step
-operations adapt the customer-facing config and retry types at the operation boundary, keeping the extension SPI
-independent of those packages.
+`ExtensionStepConfig` owns its nested `StepSemantics` and `RetryStrategy` contracts. Retry strategies reuse
+`ExtensionStepResult.retry(state, delay)` as their retry decision, so stateful continuations and failed attempts share
+one retry representation. Built-in step operations adapt the customer-facing config and retry types at the operation
+boundary, keeping the extension SPI independent of those packages.
 
 The primitive selector determines the backend operation type. The string controls only the subtype recorded in
 checkpoints, replay validation, plugins, logs, and error metadata.
