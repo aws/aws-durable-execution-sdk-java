@@ -31,7 +31,7 @@ Core operations correspond to SDK-owned primitive behavior:
 - `createCallback`
 - `runInChildContext`
 
-`DurableOperations` exposes context-free static facades for these operations. The facades obtain the active
+`DurableCoreOperations` exposes context-free static facades for these operations. The facades obtain the active
 `DurableContext` from SDK-managed current-context storage and delegate to the existing instance methods. New static
 step APIs use `StepContext` functions and do not reproduce the deprecated `Supplier` step overloads.
 
@@ -46,8 +46,16 @@ Extension operations compose core operations:
 - `parallel`
 - third-party operations such as DAG
 
-`DurableExtensionOperations` exposes the built-in extension operations through the same static-import style.
-Existing `DurableContext` instance methods and their behavior remain unchanged.
+Each built-in extension has an independently maintained static facade:
+
+- `DurableMapOperations`
+- `DurableParallelOperations`
+- `DurableWaitForCallbackOperations`
+- `DurableWaitForConditionOperations`
+- `DurableWithRetryOperations`
+
+Each class owns only its operation's overloads, tests, and documentation. Existing `DurableContext` instance methods
+and their behavior remain unchanged.
 
 An extension does not automatically create a child context. Each extension chooses its scope:
 
@@ -186,16 +194,24 @@ SDK-managed durable context threads.
 
 ## Static Operation Facades
 
-`DurableOperations` contains only core operations. Each method obtains the current durable context internally. Its
-child-context static methods use callbacks that do not require callers to receive a `DurableContext`; code inside the
-callback can use static operations or `ExtensionContext.getCurrentContext()`.
+`DurableCoreOperations` contains only core operations. Each method obtains the current durable context internally.
+Its child-context static methods use callbacks that do not require callers to receive a `DurableContext`; code inside
+the callback can use static operations or `ExtensionContext.getCurrentContext()`.
 
-`DurableExtensionOperations` contains built-in composed operations. The initial implementation delegates to the
-existing `DurableContext` methods to preserve behavior. The classification and static API do not require rewriting
-each established operation implementation in this change.
+Each built-in extension facade contains only one operation family:
 
-Both facade classes are stateless utility classes. Calling either facade outside a supported durable context produces
-the same clear failure as `DurableContext.getCurrentContext()`.
+| Facade | Methods |
+| --- | --- |
+| `DurableMapOperations` | `map`, `mapAsync` |
+| `DurableParallelOperations` | `parallel` and its branch-building API |
+| `DurableWaitForCallbackOperations` | `waitForCallback`, `waitForCallbackAsync` |
+| `DurableWaitForConditionOperations` | `waitForCondition`, `waitForConditionAsync` |
+| `DurableWithRetryOperations` | `withRetry`, `withRetryAsync` |
+
+The initial implementations delegate to the existing `DurableContext` methods to preserve behavior. The
+classification and static API do not require rewriting each established operation implementation in this change.
+Each facade is a stateless utility class. Calling a facade outside a supported durable context produces the same clear
+failure as `DurableContext.getCurrentContext()`.
 
 ## Durable Futures
 
@@ -227,8 +243,12 @@ extension-specific recursion limit is introduced.
 
 Public compatibility guarantees apply to:
 
-- `DurableOperations`
-- `DurableExtensionOperations`
+- `DurableCoreOperations`
+- `DurableMapOperations`
+- `DurableParallelOperations`
+- `DurableWaitForCallbackOperations`
+- `DurableWaitForConditionOperations`
+- `DurableWithRetryOperations`
 - `ExtensionContext`
 - `ExtensionOperation`
 - `DurableFuture.completionFuture()`
