@@ -6,73 +6,57 @@
 
 ## Context
 
-Issue [#571](https://github.com/aws/aws-durable-execution-sdk-java/issues/571) requests a supported way to
-implement reusable durable operations in separate Maven modules without changing or rebuilding the core SDK.
+Issue [#571](https://github.com/aws/aws-durable-execution-sdk-java/issues/571) requests a supported way to implement
+reusable durable operations in separate Maven modules without changing or rebuilding the core SDK.
 
-The SDK currently exposes all operations as instance methods on `DurableContext`. This creates several constraints:
+The SDK historically exposed all operations as instance methods on `DurableContext`. This created several
+constraints:
 
-- Adding an optional operation requires changing the core `DurableContext` interface and `DurableContextImpl`.
-- Extension libraries cannot create primitive operations with stable identities when registration order and execution
-  order differ.
-- Extension code would need SDK implementation classes or public explicit-operation-ID methods to implement schedulers
-  such as DAG.
-- Existing user-function APIs receive SDK-created context and metadata parameters, coupling new APIs to callback
-  signatures instead of the SDK-managed current context.
-- A single facade containing every built-in extension would couple unrelated operation families and make independent
-  maintenance difficult.
+- Adding an optional operation required changing `DurableContext` and `DurableContextImpl`.
+- Extension libraries could not reserve stable operation identities before execution order was known.
+- Extension code needed implementation classes to reproduce subtype-specific checkpoint and replay behavior.
+- User-function APIs received SDK-created contexts and metadata as callback parameters.
+- Built-in composed operations were split between static facades and dedicated operation engines instead of proving
+  the same extension model available to third parties.
 
-Extension operations do not share one execution scope. Some extensions are direct primitive wrappers in the current
-scope, while others deliberately create child contexts. The extension mechanism must not impose a child-context
-boundary.
+Extension operations do not share one execution scope. Some operate directly in the current context, while others
+create child contexts. The extension mechanism must not impose a universal child-context boundary.
 
-The SDK must continue to own primitive operation IDs, checkpointing, replay, suspension, serialization, failures, and
-backend communication. This decision does not make backend operation types extensible.
+The backend accepts arbitrary operation subtype strings, but each backend operation type has a fixed state machine.
+Extensions need subtype control, replay state, and failure translation without receiving raw checkpoint actions or
+defining new backend state machines.
 
-The detailed API specification is in
-[Custom Extension Operations Design](../superpowers/specs/2026-08-10-custom-extension-operations-design.md).
+The detailed designs are:
+
+- [Custom Extension Operations Design](../superpowers/specs/2026-08-10-custom-extension-operations-design.md)
+- [Migrate Built-In Operations to the Extension API](../superpowers/specs/2026-08-10-migrate-built-in-extensions-design.md)
 
 ## Decision
 
-### Preserve DurableContext
+### Preserve Existing Operation APIs
 
-Keep the public `DurableContext` interface unchanged. Its existing instance methods and context-accepting callback
-types remain supported for backward compatibility.
+Keep every existing method signature, callback contract, configuration field, result type, exception, and behavior
+unchanged. New capabilities are additive and limited to extension-specific overloads and types.
 
-SDK-managed handler and child contexts additionally implement a new public `ExtensionContext` interface. Step
-contexts do not implement it.
+This includes:
 
-```java
-public interface ExtensionContext extends BaseContext {
-    static ExtensionContext getCurrentContext() {
-        var context = BaseContext.getCurrentContext();
-        if (context instanceof ExtensionContext extensionContext) {
-            return extensionContext;
-        }
-        throw new IllegalStateException(
-                "ExtensionContext is only available from a durable handler or child-context thread");
-    }
+- `DurableContext`
+- `ParallelDurableFuture`
+- `MapConfig`
+- `ParallelConfig`
+- `WaitForCallbackConfig`
+- `WaitForConditionConfig`
+- `WithRetryConfig`
+- `StepConfig`
+- `RunInChildContextConfig`
 
-    boolean isReplaying();
+Existing methods on `ExtensionContext` and `ExtensionOperation` also remain unchanged; this decision adds overloads
+rather than replacing them.
 
-    ExtensionOperation reserve(String name);
-}
-```
+The existing `DurableContext` methods remain compatibility APIs. Their implementations delegate to the same built-in
+extension implementations used by the static facades.
 
-Extension libraries expose ordinary static methods. There is no required registration mechanism and no universal
-`DurableExtensions.run` method.
-
-```java
-public final class DagOperations {
-    public static DagResult dag(String name, Runnable definition) {
-        var extension = ExtensionContext.getCurrentContext();
-        return executeDag(name, extension, definition);
-    }
-}
-```
-
-An extension decides whether to execute in the current scope or explicitly create a child context.
-
-### Separate Core and Extension Facades
+### Expose Core and Built-In Extension Facades
 
 Expose primitive operations through `DurableCoreOperations`:
 
@@ -92,190 +76,312 @@ Expose each built-in extension family through an independently maintained class:
 | `DurableWaitForConditionOperations` | `waitForCondition`, `waitForConditionAsync` |
 | `DurableWithRetryOperations` | `withRetry`, `withRetryAsync` |
 
-These classes obtain the active durable context from SDK-managed thread-local storage and delegate to existing
-operation implementations. The facade split does not require rewriting the established operation implementations.
+An extension is an ordinary static Java method. There is no registration API and no universal
+`DurableExtensions.run` boundary.
 
-### Use TLS for SDK Context and Metadata
+### Use Scoped Current Context
 
-User functions in the new static APIs receive only application-provided values or values from the application's
-durable data flow. They do not receive `DurableContext`, `StepContext`, `ExtensionContext`, or SDK-generated metadata
-as callback parameters.
+SDK-managed handler and child contexts implement `ExtensionContext`. Step contexts do not.
 
-Examples:
+User functions in the new APIs receive only application-provided values. SDK-created contexts and metadata are
+retrieved from scoped thread-local contexts:
 
-- Step and child-context functions use `Supplier<T>`.
-- Map functions receive the item; `MapItemContext.getCurrentContext()` provides the item index.
-- Parallel branches use `Supplier<T>`.
-- Wait-for-callback submitters use `Runnable`;
-  `WaitForCallbackContext.getCurrentContext()` provides the callback ID.
-- Wait-for-condition checks receive the durable state;
-  `StepContext.getCurrentContext()` provides attempt metadata.
-- With-retry bodies use `Supplier<T>`;
-  `WithRetryContext.getCurrentContext()` provides the attempt number.
+- `DurableContext`
+- `ExtensionContext`
+- `StepContext`
+- `MapItemContext`
+- `WaitForCallbackContext`
+- `WithRetryContext`
+- extension replay contexts
 
-Operation-specific contexts use scoped SDK-managed thread-local storage. Nested scopes restore the previous value, and
-the value is removed when no previous scope exists. Operation-specific metadata TLS is bound in addition to the base
-durable or step context, allowing static core operations to resolve the correct active context.
+Nested scopes restore the preceding value. Current context is available only on SDK-managed threads and is not
+propagated to application-created threads.
 
-Current context is available only on SDK-managed user-code threads. It is not propagated to application-created
-threads.
+### Reserve Sequential or Custom Local Identities
 
-### Reserve Primitive Identities
-
-`ExtensionContext.reserve(name)` immediately allocates the next sequential operation ID in the active durable scope
-and returns an opaque, one-shot `ExtensionOperation`.
+`ExtensionContext` supports sequential and custom-local-ID reservations:
 
 ```java
-public interface ExtensionOperation {
-    <T> DurableFuture<T> stepAsync(
-            TypeToken<T> resultType,
-            Supplier<T> function,
-            StepConfig config);
+ExtensionOperation reserve(String name);
 
-    DurableFuture<Void> waitAsync(Duration duration);
-
-    <T, U> DurableFuture<T> invokeAsync(
-            String functionName,
-            U payload,
-            TypeToken<T> resultType,
-            InvokeConfig config);
-
-    <T> DurableCallbackFuture<T> createCallback(
-            TypeToken<T> resultType,
-            CallbackConfig config);
-
-    <T> DurableFuture<T> runInChildContextAsync(
-            TypeToken<T> resultType,
-            Supplier<T> function,
-            RunInChildContextConfig config);
-}
+ExtensionOperation reserve(String name, String localOperationId);
 ```
 
-The SDK binds the operation name and hidden ID to the reservation. The reservation can create exactly one primitive;
-reusing it throws `IllegalStateException`.
+Both forms return opaque, one-shot `ExtensionOperation` handles.
 
-Extensions with deterministic invocation order can call `DurableCoreOperations` directly. Extensions such as DAG
-reserve identities during deterministic definition, then execute the reservations in any dependency-valid order.
+Sequential reservations use the next available numeric local ID. A custom reservation replaces the sequence number
+for that position with a non-null, nonblank caller-provided local ID.
 
-The implementation may add package-private explicit-ID primitive constructors. Extension code cannot access those
-methods or raw IDs.
+The SDK constructs the final backend ID:
+
+```text
+root context:  sha256(localOperationId)
+child context: sha256(parentContextId + "-" + localOperationId)
+```
+
+Every operation allocation in a context shares one counter and local-ID registry. Custom reservations advance the
+counter once, generated numeric IDs skip already claimed values, and duplicate local IDs fail immediately.
+
+Extension authors never provide or observe the final globally stored operation ID.
+
+### Allow Arbitrary Subtype Strings
+
+`ExtensionOperation` provides subtype-aware overloads for every primitive:
+
+```java
+reservation.stepAsync("MyStep", ...);
+reservation.waitAsync("MyWait", ...);
+reservation.invokeAsync("MyInvoke", ...);
+reservation.createCallback("MyCallback", ...);
+reservation.runInChildContextAsync("MyContext", ...);
+```
+
+The primitive selector determines the backend operation type. The string controls only the subtype recorded in
+checkpoints, replay validation, plugins, logs, and error metadata.
+
+Subtype strings must be non-null and nonblank. They are not restricted to the existing `OperationSubType` enum.
+Existing no-subtype overloads retain the standard subtype strings.
+
+### Keep Primitive State Machines Fixed
+
+Extension authors cannot send raw checkpoint updates or define arbitrary state machines.
+
+Each primitive retains its SDK-owned lifecycle:
+
+| Primitive | Backend operation type | Lifecycle |
+| --- | --- | --- |
+| step | `STEP` | start, retry, ready, succeed, fail |
+| wait | `WAIT` | start, poll, succeed |
+| invoke | `CHAINED_INVOKE` | start, poll, succeed, fail |
+| callback | `CALLBACK` | start, poll, succeed, fail, timeout |
+| child context | `CONTEXT` | start, execute or replay children, succeed, fail |
+
+A stateful extension STEP may return only:
+
+- `ExtensionStepResult.succeed(value)`
+- `ExtensionStepResult.retry(state, delay)`
+
+The SDK maps those outcomes onto the fixed STEP lifecycle. Thrown exceptions follow the normal STEP failure path.
+Attempt metadata remains available through `StepContext`.
+
+### Support Context Replay State
+
+A subtype-aware extension context returns `ExtensionContextResult<T>`, which separates the application result from
+optional replay state.
+
+Supported result policies are:
+
+- completed with the normal result
+- always replay children and store a replay state
+- replay children above a serialized-size threshold and store a replay state
+
+On replay, the framework function receives the stored replay state through scoped TLS. This supports large map
+results and parallel branch reconstruction without exposing checkpoint APIs.
+
+`ExtensionContextConfig` composes the existing `RunInChildContextConfig` and adds extension-only behavior:
+
+- context failure translation
+- whether the framework function emits user-function plugin events
+- whether late child checkpoints are suppressed after parent completion
+
+Existing configuration classes are not changed.
+
+### Allow Context Failure Translation
+
+The CONTEXT state machine always serializes failures and checkpoints `FAIL`. Exception translation is customizable
+when the original exception cannot be reconstructed.
+
+An `ExtensionContextErrorHandler` receives a read-only `ExtensionContextFailure` containing:
+
+- context name and subtype
+- error metadata
+- child operation type, subtype, status, and error summaries
+
+Resolution order is:
+
+1. rethrow a deserialized original exception
+2. invoke the configured error handler
+3. fall back to `ChildContextFailedException`
+
+This preserves the existing fallback behavior for callback failures and timeouts, map iterations, parallel branches,
+with-retry contexts, and ordinary child contexts.
 
 ### Support Composed Durable Futures
 
-Add a public, non-mutating completion signal to `DurableFuture`:
+`DurableFuture.completionFuture()` provides a public, non-mutating completion signal. Custom composed futures override
+it when they support `DurableFuture.anyOf`.
 
-```java
-default CompletableFuture<Void> completionFuture() {
-    throw new UnsupportedOperationException(
-            "This DurableFuture does not expose a completion signal");
-}
-```
+Map and parallel use a shared concurrency coordinator built from reserved extension context operations and public
+completion signals. The coordinator is not a durable operation and creates no checkpoint of its own.
 
-SDK operations return a derived completion future that cannot mutate the underlying durable operation.
-`DurableFuture.anyOf` uses this public contract instead of downcasting to `BaseDurableOperation`. Custom composed
-futures override the method when they support `anyOf`.
+### Implement Built-Ins Through Extensions
 
-### Preserve Primitive Plugin Semantics
+Rewrite the existing composed operation families using the extension contract:
 
-Extensions do not create an automatic lifecycle or checkpoint boundary. Plugins observe the primitives created by an
-extension. If an extension explicitly creates a child context, plugins also observe that context operation.
+- wait for callback uses a `WaitForCallback` context containing callback and step primitives
+- with retry uses a virtual or checkpointed `WithRetry` context plus wait primitives
+- wait for condition uses a stateful `WaitForCondition` step
+- map uses a `Map` context and reserved `MapIteration` contexts
+- parallel uses a `Parallel` context and dynamically registered `ParallelBranch` contexts
 
-No extension-specific backend operation type or raw checkpoint API is added.
+The legacy `DurableContext` methods and static facades adapt into the same canonical family implementations.
+
+After behavior and checkpoint parity are proven, remove the specialized:
+
+- `MapOperation`
+- `ParallelOperation`
+- `ConcurrencyOperation`
+- `WaitForConditionOperation`
+
+Primitive operation classes remain and are generalized for string subtypes, replay state, and extension failure
+policies.
+
+### Preserve Checkpoint and Plugin Compatibility
+
+The migration preserves:
+
+- sequential operation IDs and parent-child namespaces
+- existing type, subtype, name, and operation tree shape
+- checkpoint actions, payloads, statuses, and replay validation
+- map and parallel completion, skipped items, nesting, and large-result behavior
+- wait-for-condition state, attempts, and delays
+- wait-for-callback exception translation
+- retry naming and virtual-context behavior
+- plugin operation and user-function event ordering
+- non-checkpointed empty-map behavior
+
+Extension framework callbacks emit user-function events only when configured. Nested application callbacks retain
+their existing plugin events.
 
 ## Alternatives Considered
 
-### Add extension methods to DurableContext
+### Keep Dedicated Engines Behind Static Facades
 
-Add `runExtensionAsync` or operation-specific methods to `DurableContext`.
+Retain `MapOperation`, `ParallelOperation`, `ConcurrencyOperation`, and `WaitForConditionOperation`, while making only
+the public facades look like extensions.
 
 **Rejected because:**
 
-- It changes the interface that this decision must preserve.
-- Optional extension families would continue to expand the core API.
-- It makes extension execution appear to require a special runtime boundary.
+- Built-ins would not validate that the public extension model is sufficient.
+- Static and legacy APIs would continue to depend on a separate implementation architecture.
+- Extension authors could not reproduce the capabilities exercised by built-ins.
 
-### Require every extension to run in a child context
+### Allow Arbitrary Checkpoint State Machines
 
-Provide a universal `DurableExtensions.run` method that creates a child context.
+Expose raw `START`, `RETRY`, `SUCCEED`, `FAIL`, polling, and operation-update APIs.
+
+**Rejected because:**
+
+- Extensions could violate backend transition rules.
+- Suspension, replay, and error handling would become extension-author responsibilities.
+- The SDK would no longer own checkpoint correctness.
+
+### Restrict Subtypes to OperationSubType
+
+Allow extension operations to use only the SDK's existing enum values.
+
+**Rejected because:**
+
+- The backend accepts arbitrary subtype strings.
+- Third-party extensions need distinct history and plugin identities.
+- Adding an extension subtype would otherwise require a core SDK release.
+
+### Accept Exact Global Operation IDs
+
+Allow callers to provide the final backend operation ID.
+
+**Rejected because:**
+
+- Callers would need to understand context namespaces and hashing.
+- Nested extensions could collide with unrelated operations.
+- Backend identity details would become public workflow contracts.
+
+Custom IDs are therefore local values that the SDK namespaces and hashes.
+
+### Derive IDs from Operation Names
+
+Use operation names as local IDs automatically.
+
+**Rejected because:**
+
+- Names are not required to be unique.
+- Changing a display name would silently change checkpoint identity.
+- Explicit local IDs make the compatibility decision visible.
+
+### Require Every Extension to Run in a Child Context
+
+Provide a universal extension runner that always creates a child context.
 
 **Rejected because:**
 
 - Direct primitive wrappers do not need a child context.
-- Child-context checkpoint and replay behavior would be imposed even when it is not part of the extension semantics.
-- Extensions such as map or retry must remain responsible for selecting their own isolation strategy.
+- It imposes checkpoint and replay behavior unrelated to the extension's semantics.
+- Each extension must select its own scope.
 
-### Compose directly through DurableContext only
+### Add Extension Families to DurableContext
 
-Let extension implementations retrieve `DurableContext` and invoke its existing methods.
-
-**Rejected because:**
-
-- It exposes the entire legacy operation surface instead of a stable extension contract.
-- Operations receive IDs when executed, so schedulers cannot register identities before varying launch order.
-- Extension implementations remain coupled to context-accepting legacy callbacks.
-
-### Expose raw or name-derived operation IDs
-
-Allow extension libraries to supply operation IDs or derive them from operation names.
+Continue adding new built-in or third-party operation methods to `DurableContext`.
 
 **Rejected because:**
 
-- The SDK must retain ownership of global uniqueness and backend identity rules.
-- Name-derived IDs introduce collision, normalization, and compatibility requirements.
-- Public explicit-ID methods expose checkpoint protocol details.
+- It expands the legacy interface for optional features.
+- It prevents independently maintained extension modules.
+- It retains context-bearing callback signatures.
 
-### Pass contexts and generated metadata as callback arguments
+### Pass SDK Contexts and Metadata as Callback Arguments
 
-Mirror the existing `DurableContext` callback signatures in the new static APIs.
-
-**Rejected because:**
-
-- The new API uses SDK-managed current context consistently across core and extension operations.
-- Generated values such as map index, retry attempt, and callback ID belong to typed operation contexts.
-- Context-free callbacks make extension methods compose without threading SDK objects through application code.
-
-### Use one built-in extension facade
-
-Place map, parallel, callback, condition, and retry methods in one `DurableExtensionOperations` class.
+Mirror the existing `DurableContext` callback signatures in the new APIs.
 
 **Rejected because:**
 
-- Unrelated overload sets, tests, and documentation would change together.
-- Large operation families such as map and parallel need independent ownership.
-- Separate classes align the public API with independently maintained extension implementations.
+- New APIs consistently use scoped current contexts.
+- Generated values such as indexes, attempts, and callback IDs belong to typed metadata contexts.
+- Context-free callbacks compose without threading SDK objects through application code.
+
+### Use One Built-In Extension Facade
+
+Place every built-in composed operation in one class.
+
+**Rejected because:**
+
+- Unrelated overloads, tests, and documentation would change together.
+- Map and parallel require independently maintainable APIs.
+- One class would become a second monolithic operation interface.
 
 ## Consequences
 
 **Positive:**
 
-- Third-party Maven modules can publish static durable operations using supported public contracts.
-- Application call sites do not pass or qualify `DurableContext`.
-- `DurableContext` remains source- and binary-compatible.
-- Extensions choose their own scope instead of inheriting a mandatory child-context boundary.
-- Deterministic reservations support replay-safe schedulers whose launch order can vary.
-- Primitive IDs, checkpointing, replay, and backend communication remain SDK-owned.
-- Built-in extension families can evolve independently.
-- New callback APIs consistently use TLS for SDK context and generated metadata.
-- Custom composed futures work with public future combinators without internal downcasts.
+- Third-party Maven modules can implement durable operations using supported public contracts.
+- Custom subtype strings do not require SDK enum changes.
+- Custom local IDs support replay-stable schedulers without exposing global IDs.
+- `DurableContext` and existing operation configurations remain compatible.
+- Built-in operations prove the same extension architecture available to third parties.
+- The SDK continues to own all backend state machines and checkpoint transitions.
+- Replay state and failure translation support advanced context extensions without raw checkpoint access.
+- Static and legacy APIs share one implementation per operation family.
 
 **Negative:**
 
-- The SDK must manage multiple scoped thread-local context types and restore them correctly across nested calls.
-- Static APIs depend on execution from SDK-managed threads and fail from application-created threads.
-- Reservations add package-private explicit-ID paths that must remain consistent with ordinary primitive creation.
-- The static facade API duplicates overloads that remain on `DurableContext` for compatibility.
-- Extension authors must understand that reservation order is part of workflow replay compatibility.
+- Primitive operation implementations become more general and carry extension policies.
+- Custom IDs require per-context collision tracking shared by reserved and direct operations.
+- Extension authors must treat subtype strings, local IDs, and replay state as workflow compatibility contracts.
+- Extension context failure handlers must remain deterministic and side-effect free.
+- Map and parallel require a reusable concurrency coordinator and deferred futures.
+- The SDK must preserve family-specific plugin-hook and late-child-checkpoint behavior through explicit policies.
 
 **Compatibility requirements:**
 
-- Reservations must be created in the same deterministic order on every replay.
-- Reordering, inserting, or removing reservations can rebind existing checkpoints and is a workflow compatibility
-  change.
-- Launching already reserved operations in a different order is supported.
-- Existing `DurableContext` methods and callback signatures remain unchanged.
+- Existing operation interfaces, configs, overloads, results, exceptions, and behavior remain unchanged.
+- Built-in migration must preserve exact operation IDs, topology, subtype strings, payloads, and replay behavior.
+- Sequential reservations remain order-dependent.
+- Custom-ID operations retain stable identities, but surrounding sequential IDs can change when definitions move.
+- Reusing or changing a local ID is a workflow compatibility change.
+- Changing a subtype string is a workflow compatibility change.
+- Launching already reserved operations in a different order remains supported.
 
 **Deferred:**
 
 - A production DAG extension module.
-- Reimplementing every built-in extension through the new public reservation contract.
 - Propagating current context to application-created threads.
+- User-defined backend operation types or checkpoint state machines.
