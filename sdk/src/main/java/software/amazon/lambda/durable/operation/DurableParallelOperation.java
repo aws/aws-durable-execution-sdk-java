@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import static software.amazon.lambda.durable.config.NestingType.FLAT;
 import static software.amazon.lambda.durable.model.OperationSubType.PARALLEL;
 import static software.amazon.lambda.durable.model.OperationSubType.PARALLEL_BRANCH;
-import static software.amazon.lambda.durable.operation.OperationConcurrencyCoordinator.ItemStatus.FAILED;
-import static software.amazon.lambda.durable.operation.OperationConcurrencyCoordinator.ItemStatus.SKIPPED;
+import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator.ItemStatus.FAILED;
+import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator.ItemStatus.SKIPPED;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,8 +16,6 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.CompletionConfig;
-import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
@@ -28,7 +25,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /** Context-free static facade and canonical implementation of durable PARALLEL operations. */
-public final class DurableParallelOperation {
+public final class DurableParallelOperation extends DurableConcurrencyOperation {
     private DurableParallelOperation() {}
 
     public static ParallelDurableFuture parallel(String name) {
@@ -47,8 +44,6 @@ public final class DurableParallelOperation {
     }
 
     private static final class ParallelOperationFuture implements ParallelDurableFuture {
-        private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
-
         private final Object lock = new Object();
         private final ParallelConfig config;
         private final SerDes defaultSerDes;
@@ -67,7 +62,7 @@ public final class DurableParallelOperation {
                     PARALLEL.getValue(),
                     parallelResultType(),
                     this::executeInChildContext,
-                    parentConfig(defaultSerDes));
+                    parentContextConfig(defaultSerDes));
         }
 
         @Override
@@ -228,10 +223,8 @@ public final class DurableParallelOperation {
         }
 
         private ExtensionContextConfig branchConfig(ParallelBranchConfig branchConfig) {
-            return ExtensionContextConfig.builder()
-                    .serDes(branchConfig.serDes() == null ? defaultSerDes : branchConfig.serDes())
-                    .isVirtual(config.nestingType() == FLAT)
-                    .build();
+            var serDes = branchConfig.serDes() == null ? defaultSerDes : branchConfig.serDes();
+            return childContextConfig(serDes, config.nestingType());
         }
 
         private static OperationConcurrencyCoordinator.ExpectedCompletionStatus expectedCompletion(
@@ -239,14 +232,6 @@ public final class DurableParallelOperation {
             return new OperationConcurrencyCoordinator.ExpectedCompletionStatus(
                     replayState.succeeded() + replayState.failed(),
                     CompletionConfig.CompletionDecision.complete(replayState.completionStatus()));
-        }
-
-        private static ExtensionContextConfig parentConfig(SerDes serDes) {
-            return ExtensionContextConfig.builder()
-                    .serDes(serDes)
-                    .emitUserFunctionEvents(false)
-                    .suppressLateChildCheckpoints(true)
-                    .build();
         }
 
         private static TypeToken<ParallelResult> parallelResultType() {

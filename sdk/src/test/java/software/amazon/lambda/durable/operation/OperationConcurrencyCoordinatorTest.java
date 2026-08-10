@@ -8,9 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.ALL_COMPLETED;
 import static software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
-import static software.amazon.lambda.durable.operation.OperationConcurrencyCoordinator.ItemStatus.FAILED;
-import static software.amazon.lambda.durable.operation.OperationConcurrencyCoordinator.ItemStatus.SKIPPED;
-import static software.amazon.lambda.durable.operation.OperationConcurrencyCoordinator.ItemStatus.SUCCEEDED;
+import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator.ItemStatus.FAILED;
+import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator.ItemStatus.SKIPPED;
+import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator.ItemStatus.SUCCEEDED;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -19,7 +19,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig;
+import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator;
 
 class OperationConcurrencyCoordinatorTest {
     @Test

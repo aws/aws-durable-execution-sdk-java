@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.CUSTOM_COMPLETION_SUCCEEDED;
 
 import java.lang.reflect.Modifier;
 import java.time.Duration;
@@ -34,6 +35,12 @@ import software.amazon.lambda.durable.serde.SerDes;
 class DurableOperationConfigTest {
     @Test
     void operationApisOwnTheirConfigTypes() throws Exception {
+        assertEquals(DurableConcurrencyOperation.class, DurableMapOperation.class.getSuperclass());
+        assertEquals(DurableConcurrencyOperation.class, DurableParallelOperation.class.getSuperclass());
+        assertPublicStaticNestedType(DurableConcurrencyOperation.class, "CompletionConfig");
+        assertPublicStaticNestedType(DurableConcurrencyOperation.class, "NestingType");
+        assertProtectedStaticNestedType(DurableConcurrencyOperation.class, "OperationConcurrencyCoordinator");
+        assertProtectedStaticNestedType(DurableConcurrencyOperation.class, "DeferredDurableFuture");
         assertOperationConfig(DurableStepOperation.class, "StepConfig", StepConfig.class);
         assertOperationConfig(DurableInvokeOperation.class, "InvokeConfig", InvokeConfig.class);
         assertOperationConfig(DurableCallbackOperation.class, "CallbackConfig", CallbackConfig.class);
@@ -100,9 +107,9 @@ class DurableOperationConfigTest {
                 .itemNamer(itemNamer)
                 .build());
         assertEquals(3, value(map, "maxConcurrency"));
-        assertSame(completionConfig, value(map, "completionConfig"));
+        assertEquals(completionConfig.toOperationConfig(), value(map, "completionConfig"));
         assertSame(serDes, value(map, "serDes"));
-        assertEquals(NestingType.NESTED, value(map, "nestingType"));
+        assertEquals(DurableConcurrencyOperation.NestingType.NESTED, value(map, "nestingType"));
         assertSame(itemNamer, value(map, "itemNamer"));
 
         var parallel = convert(ParallelConfig.builder()
@@ -111,8 +118,8 @@ class DurableOperationConfigTest {
                 .nestingType(NestingType.FLAT)
                 .build());
         assertEquals(2, value(parallel, "maxConcurrency"));
-        assertSame(completionConfig, value(parallel, "completionConfig"));
-        assertEquals(NestingType.FLAT, value(parallel, "nestingType"));
+        assertEquals(completionConfig.toOperationConfig(), value(parallel, "completionConfig"));
+        assertEquals(DurableConcurrencyOperation.NestingType.FLAT, value(parallel, "nestingType"));
 
         var branch = convert(ParallelBranchConfig.builder().serDes(serDes).build());
         assertSame(serDes, value(branch, "serDes"));
@@ -124,6 +131,21 @@ class DurableOperationConfigTest {
                 .build());
         assertSame(retryStrategy, value(retry, "retryStrategy"));
         assertEquals(true, value(retry, "wrapInChildContext"));
+    }
+
+    @Test
+    void legacyCustomCompletionConfigConvertsStatusAndDecision() {
+        var legacy = CompletionConfig.shouldComplete(status -> status.successCount() == 2 && status.allItemsRegistered()
+                ? CompletionConfig.CompletionDecision.complete(CUSTOM_COMPLETION_SUCCEEDED)
+                : CompletionConfig.CompletionDecision.continueExecution());
+        var operationConfig = legacy.toOperationConfig();
+
+        var decision = operationConfig
+                .completionDecisionFunction()
+                .apply(new DurableConcurrencyOperation.CompletionConfig.CompletionStatus(2, 1, 3, 3, true));
+
+        assertTrue(decision.shouldComplete());
+        assertEquals(CUSTOM_COMPLETION_SUCCEEDED, decision.completionStatus());
     }
 
     @Test
@@ -154,6 +176,18 @@ class DurableOperationConfigTest {
     private static void assertOperationConfig(Class<?> operationClass, String nestedName, Class<?> legacyClass)
             throws Exception {
         assertOperationConfig(operationClass, operationClass, nestedName, legacyClass);
+    }
+
+    private static void assertPublicStaticNestedType(Class<?> owner, String nestedName) throws Exception {
+        var nestedClass = Class.forName(owner.getName() + "$" + nestedName);
+        assertTrue(Modifier.isPublic(nestedClass.getModifiers()));
+        assertTrue(Modifier.isStatic(nestedClass.getModifiers()));
+    }
+
+    private static void assertProtectedStaticNestedType(Class<?> owner, String nestedName) throws Exception {
+        var nestedClass = Class.forName(owner.getName() + "$" + nestedName);
+        assertTrue(Modifier.isProtected(nestedClass.getModifiers()));
+        assertTrue(Modifier.isStatic(nestedClass.getModifiers()));
     }
 
     private static void assertParallelFutureUsesCompatibilityBranchConfig() {

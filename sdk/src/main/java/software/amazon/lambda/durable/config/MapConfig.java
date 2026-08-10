@@ -79,9 +79,9 @@ public class MapConfig {
     public DurableMapOperation.MapConfig toOperationConfig() {
         return DurableMapOperation.MapConfig.builder()
                 .maxConcurrency(maxConcurrency())
-                .completionConfig(completionConfig())
+                .completionConfig(completionConfig().toOperationConfig())
                 .serDes(serDes())
-                .nestingType(nestingType())
+                .nestingType(nestingType().toOperationType())
                 .itemNamer(itemNamer())
                 .build();
     }

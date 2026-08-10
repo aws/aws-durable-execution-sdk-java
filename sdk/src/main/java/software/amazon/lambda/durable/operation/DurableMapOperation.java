@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
-import static software.amazon.lambda.durable.config.NestingType.FLAT;
 import static software.amazon.lambda.durable.model.OperationSubType.MAP;
 import static software.amazon.lambda.durable.model.OperationSubType.MAP_ITERATION;
-import static software.amazon.lambda.durable.operation.OperationConcurrencyCoordinator.ItemStatus.FAILED;
-import static software.amazon.lambda.durable.operation.OperationConcurrencyCoordinator.ItemStatus.SKIPPED;
+import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator.ItemStatus.FAILED;
+import static software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator.ItemStatus.SKIPPED;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -18,12 +17,9 @@ import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.CompletionConfig;
-import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
-import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.model.MapResult;
@@ -33,9 +29,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
 /** Context-free static facade and canonical implementation of durable MAP operations. */
-public final class DurableMapOperation {
-    private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
-
+public final class DurableMapOperation extends DurableConcurrencyOperation {
     private DurableMapOperation() {}
 
     public static <I, O> MapResult<O> map(
@@ -110,7 +104,7 @@ public final class DurableMapOperation {
                 mapResultType(),
                 () -> executeInChildContext(
                         name, itemList, iterationNames, resultType, function, mapConfig, virtualEmptyMap),
-                parentConfig(mapConfig, virtualEmptyMap));
+                parentContextConfig(mapConfig.serDes(), virtualEmptyMap));
     }
 
     private static <I, O> DurableContext.MapFunction<I, O> adapt(Function<I, O> function) {
@@ -171,10 +165,7 @@ public final class DurableMapOperation {
             MapResult<O> replayState) {
         var context = ExtensionContext.getCurrentContext();
         var registeredItems = new ArrayList<OperationConcurrencyCoordinator.Item<O>>(items.size());
-        var iterationConfig = ExtensionContextConfig.builder()
-                .serDes(config.serDes())
-                .isVirtual(config.nestingType() == FLAT)
-                .build();
+        var iterationConfig = childContextConfig(config.serDes(), config.nestingType());
 
         for (int index = 0; index < items.size(); index++) {
             var item = items.get(index);
@@ -253,15 +244,6 @@ public final class DurableMapOperation {
                 result.completionReason());
     }
 
-    private static ExtensionContextConfig parentConfig(MapConfig config, boolean virtualEmptyMap) {
-        return ExtensionContextConfig.builder()
-                .serDes(config.serDes())
-                .isVirtual(virtualEmptyMap)
-                .emitUserFunctionEvents(false)
-                .suppressLateChildCheckpoints(true)
-                .build();
-    }
-
     private static void validateMinSuccessful(List<?> items, MapConfig config) {
         var completionConfig = config.completionConfig();
         if (!completionConfig.hasCustomShouldComplete()
@@ -330,7 +312,7 @@ public final class DurableMapOperation {
             serDes = builder.serDes;
             nestingType = Objects.requireNonNullElse(builder.nestingType, NestingType.NESTED);
             itemNamer = builder.itemNamer;
-            if (itemNamer != null && nestingType == FLAT) {
+            if (itemNamer != null && nestingType == NestingType.FLAT) {
                 throw new IllegalArgumentException("itemNamer is not supported with FLAT map nesting");
             }
         }

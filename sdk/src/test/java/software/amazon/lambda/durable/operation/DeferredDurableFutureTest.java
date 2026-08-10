@@ -14,7 +14,7 @@ import software.amazon.lambda.durable.DurableFuture;
 class DeferredDurableFutureTest {
     @Test
     void getWaitsForBindingThenDelegates() throws Exception {
-        var deferred = new DeferredDurableFuture<String>();
+        var deferred = new DurableConcurrencyOperation.DeferredDurableFuture<String>();
         var getStarted = new CountDownLatch(1);
         var result = CompletableFuture.supplyAsync(() -> {
             getStarted.countDown();
@@ -31,7 +31,7 @@ class DeferredDurableFutureTest {
 
     @Test
     void completionSignalObtainedBeforeBindingTracksDelegate() {
-        var deferred = new DeferredDurableFuture<String>();
+        var deferred = new DurableConcurrencyOperation.DeferredDurableFuture<String>();
         var completion = deferred.completionFuture();
         var delegate = new TestFuture<>("result");
 
@@ -45,7 +45,7 @@ class DeferredDurableFutureTest {
 
     @Test
     void bindRejectsASecondDelegate() {
-        var deferred = new DeferredDurableFuture<String>();
+        var deferred = new DurableConcurrencyOperation.DeferredDurableFuture<String>();
         deferred.bind(new TestFuture<>("first"));
 
         var exception = assertThrows(IllegalStateException.class, () -> deferred.bind(new TestFuture<>("second")));

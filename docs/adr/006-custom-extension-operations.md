@@ -56,6 +56,8 @@ operation classes used by the static APIs.
 Each built-in operation owns its public nested configuration type, such as
 `DurableStepOperation.StepConfig` or `DurableMapOperation.MapConfig`. The compatibility types under
 `software.amazon.lambda.durable.config` convert through `toOperationConfig()` at the `DurableContext` boundary.
+Map and parallel share `DurableConcurrencyOperation.CompletionConfig` and
+`DurableConcurrencyOperation.NestingType`; their legacy config counterparts convert to those operation-owned types.
 
 ### Expose Primitive and Built-In Extension Facades
 
@@ -87,6 +89,7 @@ Expose each built-in extension family through an independently maintained class:
 
 | Facade | Operation family |
 | --- | --- |
+| `DurableConcurrencyOperation` | Shared map/parallel completion, nesting, and coordination support |
 | `DurableMapOperation` | `map`, `mapAsync` |
 | `DurableParallelOperation` | `parallel` and branch construction |
 | `DurableWaitForCallbackOperation` | `waitForCallback`, `waitForCallbackAsync` |

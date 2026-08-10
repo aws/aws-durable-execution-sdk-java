@@ -24,7 +24,6 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
@@ -58,7 +57,9 @@ class DurableParallelOperationImplementationTest {
         var parallel = DurableParallelOperation.parallel(
                 context,
                 "parallel",
-                ParallelConfig.builder().nestingType(NestingType.FLAT).build());
+                ParallelConfig.builder()
+                        .nestingType(DurableConcurrencyOperation.NestingType.FLAT)
+                        .build());
         var firstFuture = parallel.branch("first", String.class, child -> "first");
         var secondFuture = parallel.branch("second", String.class, child -> "second");
         assertSame(parentCompletion, parallel.completionFuture());

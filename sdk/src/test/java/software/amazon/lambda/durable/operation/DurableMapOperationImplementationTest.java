@@ -21,8 +21,6 @@ import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.config.MapConfig;
-import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
@@ -39,8 +37,10 @@ class DurableMapOperationImplementationTest {
         var parent = mock(ExtensionOperation.class);
         var parentFuture = mockMapFuture();
         var serDes = new JacksonSerDes();
-        var config =
-                MapConfig.builder().serDes(serDes).nestingType(NestingType.FLAT).build();
+        var config = DurableMapOperation.MapConfig.builder()
+                .serDes(serDes)
+                .nestingType(DurableConcurrencyOperation.NestingType.FLAT)
+                .build();
         when(context.reserve("map")).thenReturn(parent);
         when(parent.runInChildContextAsync(
                         eq(MAP.getValue()),
@@ -55,7 +55,7 @@ class DurableMapOperationImplementationTest {
                 List.of("a", "b"),
                 TypeToken.get(String.class),
                 (item, index, child) -> item + index,
-                config.toOperationConfig());
+                config);
 
         assertSame(parentFuture, actual);
         var function = extensionFunction();

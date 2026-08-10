@@ -294,13 +294,14 @@ software.amazon.lambda.durable
 │   └── BaseContext           # Base interface for DurableContext
 │
 ├── operation/                # Public built-in operation APIs + implementations
+│   ├── DurableConcurrencyOperation # Shared map/parallel config, futures, and coordination
 │   ├── DurableStepOperation # Owns nested StepConfig
 │   ├── DurableWaitOperation
 │   ├── DurableInvokeOperation
 │   ├── DurableCallbackOperation
 │   ├── DurableContextOperation
-│   ├── DurableMapOperation
-│   ├── DurableParallelOperation # Owns nested ParallelConfig and ParallelBranchConfig
+│   ├── DurableMapOperation # Extends DurableConcurrencyOperation; owns MapConfig
+│   ├── DurableParallelOperation # Extends DurableConcurrencyOperation; owns parallel configs
 │   ├── DurableWaitForCallbackOperation
 │   ├── DurableWaitForConditionOperation
 │   └── DurableWithRetryOperation

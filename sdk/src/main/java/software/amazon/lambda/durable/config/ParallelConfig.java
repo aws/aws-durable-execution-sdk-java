@@ -57,8 +57,8 @@ public class ParallelConfig {
     public DurableParallelOperation.ParallelConfig toOperationConfig() {
         return DurableParallelOperation.ParallelConfig.builder()
                 .maxConcurrency(maxConcurrency())
-                .completionConfig(completionConfig())
-                .nestingType(nestingType())
+                .completionConfig(completionConfig().toOperationConfig())
+                .nestingType(nestingType().toOperationType())
                 .build();
     }
 

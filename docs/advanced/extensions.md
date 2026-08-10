@@ -85,6 +85,9 @@ The same pattern applies to `DurableInvokeOperation.InvokeConfig`,
 `DurableWaitForConditionOperation.WaitForConditionConfig`, and
 `DurableWithRetryOperation.WithRetryConfig`.
 
+Map and parallel extend `DurableConcurrencyOperation` and use its shared
+`DurableConcurrencyOperation.CompletionConfig` and `DurableConcurrencyOperation.NestingType` configuration types.
+
 The compatibility types in `software.amazon.lambda.durable.config` remain accepted by `DurableContext`. They can be
 passed to a static operation through `toOperationConfig()`:
 
