@@ -74,7 +74,6 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
- *
  */
 public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 

@@ -20,11 +20,5 @@ import java.lang.annotation.Target;
  */
 @Documented
 @Retention(RetentionPolicy.CLASS)
-@Target({
-    ElementType.TYPE,
-    ElementType.METHOD,
-    ElementType.FIELD,
-    ElementType.PARAMETER,
-    ElementType.RECORD_COMPONENT
-})
+@Target({ElementType.TYPE, ElementType.METHOD, ElementType.FIELD, ElementType.PARAMETER, ElementType.RECORD_COMPONENT})
 public @interface Experimental {}

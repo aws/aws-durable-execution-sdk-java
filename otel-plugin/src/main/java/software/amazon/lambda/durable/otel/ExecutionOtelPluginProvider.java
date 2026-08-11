@@ -7,7 +7,6 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 
 /**
  * Dynamically loads {@link ExecutionOtelPlugin} when {@code DURABLE_EXECUTION_PLUGINS} contains {@code otel-execution}.
- *
  */
 public final class ExecutionOtelPluginProvider implements DurableExecutionPluginProvider {
 

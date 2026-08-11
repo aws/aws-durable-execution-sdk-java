@@ -28,7 +28,6 @@ import java.util.Map;
  * <p>Defaults: {@code contextExtractor = new XRayContextExtractor()}, {@code enableMdc = true}, {@code workflowSpanName
  * = "Workflow"}, {@code instrumentationName = "aws-durable-execution-sdk-java"}, {@code providerSource =
  * ProviderSource.GLOBAL}. A {@code null} passed to any builder setter falls back to the corresponding default.
- *
  */
 public final class OtelPluginConfig {
 
@@ -108,10 +107,7 @@ public final class OtelPluginConfig {
         return otlpHeaders;
     }
 
-    /**
-     * Builder for {@link OtelPluginConfig}.
-     *
-     */
+    /** Builder for {@link OtelPluginConfig}. */
     public static final class Builder {
 
         private ContextExtractor contextExtractor;

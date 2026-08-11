@@ -9,7 +9,6 @@ package software.amazon.lambda.durable.otel;
  * {@link ExtractedContext} containing the trace ID and optional parent span ID.
  *
  * <p>Called once per invocation in {@code onInvocationStart} to establish the parent trace context.
- *
  */
 @FunctionalInterface
 public interface ContextExtractor {

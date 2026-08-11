@@ -23,7 +23,6 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>Span IDs for operations are deterministic (derived from execution ARN + operation ID), ensuring the same operation
  * produces the same span across invocations. When no pending operation ID is set, falls back to random generation.
- *
  */
 public class DeterministicIdGenerator implements IdGenerator {
 

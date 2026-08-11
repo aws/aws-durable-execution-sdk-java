@@ -9,10 +9,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
-/**
- * Utility methods for converting SDK internal types to plugin info records.
- *
- */
+/** Utility methods for converting SDK internal types to plugin info records. */
 public final class PluginInfoConverter {
 
     private PluginInfoConverter() {}

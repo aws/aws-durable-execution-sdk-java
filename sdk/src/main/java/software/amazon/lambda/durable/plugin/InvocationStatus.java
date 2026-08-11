@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
-/**
- * Status of a Lambda invocation at the end of its execution.
- *
- */
+/** Status of a Lambda invocation at the end of its execution. */
 public enum InvocationStatus {
     /** Execution completed successfully in this invocation. */
     SUCCEEDED,

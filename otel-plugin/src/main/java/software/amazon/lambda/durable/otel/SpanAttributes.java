@@ -4,10 +4,7 @@ package software.amazon.lambda.durable.otel;
 
 import io.opentelemetry.api.common.AttributeKey;
 
-/**
- * OTel span attribute keys for durable execution spans.
- *
- */
+/** OTel span attribute keys for durable execution spans. */
 final class SpanAttributes {
 
     private SpanAttributes() {}

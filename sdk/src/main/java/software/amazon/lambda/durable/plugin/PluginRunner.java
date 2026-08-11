@@ -15,7 +15,6 @@ import org.slf4j.LoggerFactory;
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
- *
  */
 public class PluginRunner {
 

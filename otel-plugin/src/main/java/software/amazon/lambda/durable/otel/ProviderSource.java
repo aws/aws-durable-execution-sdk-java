@@ -20,7 +20,6 @@ package software.amazon.lambda.durable.otel;
  * <p>This is the single knob that selects a plugin's tracer provider. {@link OtelPluginConfig#providerSource()} carries
  * it for the config-only constructors; the {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructors always
  * report {@link #EXPLICIT}.
- *
  */
 public enum ProviderSource {
     /** Caller-supplied {@code SdkTracerProviderBuilder}; plugin-owned. */
