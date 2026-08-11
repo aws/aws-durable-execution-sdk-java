@@ -28,10 +28,7 @@ import java.util.Map;
  * <p>Defaults: {@code contextExtractor = new XRayContextExtractor()}, {@code enableMdc = true}, {@code workflowSpanName
  * = "Workflow"}, {@code instrumentationName = "aws-durable-execution-sdk-java"}, {@code providerSource =
  * ProviderSource.GLOBAL}. A {@code null} passed to any builder setter falls back to the corresponding default.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public final class OtelPluginConfig {
 
     static final String DEFAULT_INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
@@ -110,12 +107,7 @@ public final class OtelPluginConfig {
         return otlpHeaders;
     }
 
-    /**
-     * Builder for {@link OtelPluginConfig}.
-     *
-     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
-     */
-    @Deprecated
+    /** Builder for {@link OtelPluginConfig}. */
     public static final class Builder {
 
         private ContextExtractor contextExtractor;

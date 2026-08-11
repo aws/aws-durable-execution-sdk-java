@@ -15,7 +15,6 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  * {@code invocation-start first=true}; the step throws, no retry is attempted, and the plugin's invocation-end hook
  * fires with {@code status=FAILED}.
  */
-@SuppressWarnings("deprecation")
 public class PluginTerminalFailure extends DurableHandler<Object, String> {
 
     @Override

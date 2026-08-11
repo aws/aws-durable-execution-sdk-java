@@ -17,10 +17,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The Root field is converted to OTel format by stripping "1-" and removing dashes:
  * {@code 5759e988bd862e3fe1be46a994272793}
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public class XRayContextExtractor implements ContextExtractor {
 
     private static final Logger logger = LoggerFactory.getLogger(XRayContextExtractor.class);

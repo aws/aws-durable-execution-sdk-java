@@ -16,7 +16,6 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
  * logs with prefix {@code CONFPLUGIN-A}, plugin B with prefix {@code CONFPLUGIN-B}, emitting exactly the lines the
  * requirement documents: {@code <prefix> invocation-start} and {@code <prefix> invocation-end status=<status>}.
  */
-@SuppressWarnings("deprecation")
 public class PluginMultiplePlugins extends DurableHandler<String, String> {
 
     /** Minimal plugin emitting exactly the 10-5 documented invocation lines. */

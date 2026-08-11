@@ -13,7 +13,6 @@ import software.amazon.lambda.durable.DurableHandler;
  * throws. The SDK must catch and ignore every plugin exception so the execution result and history are identical to
  * running without the plugin.
  */
-@SuppressWarnings("deprecation")
 public class PluginErrorIsolation extends DurableHandler<String, String> {
 
     @Override

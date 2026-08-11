@@ -22,7 +22,6 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  * delay). The plugin, filtering to step-type operations, logs operation-start with the SDK's is-replayed indicator
  * ({@code OperationInfo#isReplay()}) and operation-end with the terminal status.
  */
-@SuppressWarnings("deprecation")
 public class PluginReplayFlags extends DurableHandler<Object, String> {
 
     @Override

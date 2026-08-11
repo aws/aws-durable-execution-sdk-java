@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
+import software.amazon.lambda.durable.annotations.Experimental;
+
 /**
  * Information provided at the end of a Lambda invocation.
  *
@@ -9,13 +11,11 @@ package software.amazon.lambda.durable.plugin;
  * @param durableExecutionArn the durable execution ARN
  * @param isFirstInvocation true if this is the first invocation of the execution
  * @param invocationStatus the invocation outcome (SUCCEEDED, FAILED, or PENDING)
- * @param executionError non-null if the execution failed
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+ * @param executionError non-null if the execution failed; this component is experimental
  */
-@Deprecated
 public record InvocationEndInfo(
         String requestId,
         String durableExecutionArn,
         boolean isFirstInvocation,
         InvocationStatus invocationStatus,
-        Throwable executionError) {}
+        @Experimental Throwable executionError) {}

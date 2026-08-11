@@ -18,9 +18,7 @@ import java.time.Instant;
  * @param startTimestamp when the user function started
  * @param isReplayingChildren true if child operations within this context are being replayed from checkpoints
  * @param attempt 1-based attempt number for steps/waitForCondition, null for context operations
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public record UserFunctionStartInfo(
         String id,
         String name,

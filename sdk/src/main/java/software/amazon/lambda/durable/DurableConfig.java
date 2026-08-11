@@ -220,9 +220,7 @@ public final class DurableConfig {
      * <p>Returns a no-op runner if no plugins were registered via the builder or loaded dynamically.
      *
      * @return PluginRunner instance (never null)
-     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
      */
-    @Deprecated
     public PluginRunner getPluginRunner() {
         return pluginRunner;
     }
@@ -471,9 +469,7 @@ public final class DurableConfig {
          * @param plugins the plugins to register
          * @return This builder
          * @throws NullPointerException if any plugin is null
-         * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
          */
-        @Deprecated
         public Builder withPlugins(DurableExecutionPlugin... plugins) {
             Objects.requireNonNull(plugins, "Plugins array cannot be null");
             var newPlugins = new ArrayList<DurableExecutionPlugin>(plugins.length);

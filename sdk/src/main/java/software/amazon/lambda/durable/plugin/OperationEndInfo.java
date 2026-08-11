@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Extended operation information for operation end events.
@@ -17,10 +18,8 @@ import java.time.Instant;
  * @param status the operation's terminal status (e.g., SUCCEEDED, FAILED, TIMED_OUT) — may be null for virtual ops
  * @param attempt the total number of attempts for retriable operations (STEP, WAIT_FOR_CONDITION) — null for others
  * @param isReplay true if this operation already existed in the execution state (completed in a prior invocation)
- * @param error non-null if the operation failed
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+ * @param error non-null if the operation failed; this component is experimental
  */
-@Deprecated
 public record OperationEndInfo(
         String id,
         String name,
@@ -32,4 +31,4 @@ public record OperationEndInfo(
         String status,
         Integer attempt,
         boolean isReplay,
-        Throwable error) {}
+        @Experimental Throwable error) {}
