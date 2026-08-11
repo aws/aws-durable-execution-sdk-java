@@ -185,6 +185,44 @@ class ChildContextPrimitiveTest {
         assertFalse(functionCalled.get(), "Function should not be called during SUCCEEDED replay");
     }
 
+    @Test
+    void extensionCanValidateCompletedReplayWithCachedState() {
+        when(executionManager.getOperationAndUpdateReplayState("1"))
+                .thenReturn(Operation.builder()
+                        .id("1")
+                        .name("test-context")
+                        .type(OperationType.CONTEXT)
+                        .subType("AcmeContext")
+                        .status(OperationStatus.SUCCEEDED)
+                        .contextDetails(ContextDetails.builder()
+                                .result("\"cached-value\"")
+                                .build())
+                        .build());
+        var functionCalled = new AtomicBoolean();
+        var config = ExtensionContextConfig.builder()
+                .serDes(SERDES)
+                .validateCompletedReplay(true)
+                .build();
+        var operation = createExtensionOperation(
+                "AcmeContext",
+                () -> {
+                    var replay = ExtensionContextReplayContext.<String>getCurrentContext();
+                    assertFalse(replay.isReplayingChildren());
+                    assertTrue(replay.isValidatingReplay());
+                    assertEquals("cached-value", replay.getReplayState());
+                    functionCalled.set(true);
+                    return ExtensionContextResult.completed(replay.getReplayState());
+                },
+                config);
+
+        operation.execute();
+
+        assertEquals("cached-value", operation.get());
+        assertTrue(functionCalled.get());
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+    }
+
     /** Virtual contexts are always executed, even during SUCCEEDED replay. */
     @Test
     void executeVirtualContext() {

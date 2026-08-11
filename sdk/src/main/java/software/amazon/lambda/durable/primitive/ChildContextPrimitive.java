@@ -52,6 +52,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     private final ExtensionContextFunction<T> extensionFunction;
     private final ExtensionContextConfig extensionConfig;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
+    private final AtomicBoolean validatingReplay = new AtomicBoolean(false);
     private final AtomicReference<T> replayState = new AtomicReference<>(null);
     private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
 
@@ -127,25 +128,32 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     @Override
     protected void replay(Operation existing) {
         switch (existing.status()) {
-            case SUCCEEDED -> {
-                if (existing.contextDetails() != null
-                        && Boolean.TRUE.equals(existing.contextDetails().replayChildren())) {
-                    replayChildren.set(true);
-                    var result = existing.contextDetails().result();
-                    if (extensionFunction != null && result != null && !result.isEmpty()) {
-                        replayState.set(deserializeResult(result));
-                    }
-                    executeChildContext();
-                } else {
-                    markAlreadyCompleted();
-                }
-            }
+            case SUCCEEDED -> replaySucceeded(existing);
             case FAILED -> markAlreadyCompleted();
             case STARTED -> executeChildContext();
             default ->
                 throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected child context status: " + existing.status());
         }
+    }
+
+    private void replaySucceeded(Operation existing) {
+        var details = existing.contextDetails();
+        var shouldReplayChildren = details != null && Boolean.TRUE.equals(details.replayChildren());
+        var shouldValidateReplay =
+                extensionFunction != null && extensionConfig.validateCompletedReplay() && !shouldReplayChildren;
+        if (!shouldReplayChildren && !shouldValidateReplay) {
+            markAlreadyCompleted();
+            return;
+        }
+
+        replayChildren.set(shouldReplayChildren);
+        validatingReplay.set(shouldValidateReplay);
+        var result = details != null ? details.result() : null;
+        if (extensionFunction != null && result != null && !result.isEmpty()) {
+            replayState.set(deserializeResult(result));
+        }
+        executeChildContext();
     }
 
     private void executeChildContext() {
@@ -191,7 +199,8 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
             return;
         }
 
-        try (var ignoredReplayContext = ExtensionContextReplayContext.attach(replayChildren.get(), replayState.get())) {
+        try (var ignoredReplayContext =
+                ExtensionContextReplayContext.attach(replayChildren.get(), validatingReplay.get(), replayState.get())) {
             var result = extensionConfig.emitUserFunctionEvents()
                     ? runUserFunction(null, extensionFunction::apply)
                     : extensionFunction.apply();
@@ -238,7 +247,10 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     private boolean shouldSkipCheckpoint() {
-        return replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted();
+        return replayChildren.get()
+                || validatingReplay.get()
+                || isVirtual
+                || parentOperation != null && parentOperation.isOperationCompleted();
     }
 
     private void cacheSuccessAndComplete(T result) {

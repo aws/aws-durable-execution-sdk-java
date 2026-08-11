@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.primitive;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -63,7 +64,14 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
     protected void replay(Operation existing) {
         switch (existing.status()) {
             case SUCCEEDED, FAILED -> markAlreadyCompleted();
-            case PENDING -> pollReadyAndResumeExtensionStep();
+            case PENDING -> {
+                var details = existing.stepDetails();
+                if (details == null || details.nextAttemptTimestamp() == null) {
+                    throw terminateExecutionWithIllegalDurableOperationException(
+                            "Unexpected PENDING step without nextAttemptTimestamp: " + getOperationId());
+                }
+                pollReadyAndResumeExtensionStep(details.nextAttemptTimestamp());
+            }
             case STARTED -> {
                 if (isAtMostOnce()) {
                     handleExtensionStepFailure(
@@ -95,11 +103,11 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
                 : extensionConfig.initialState();
     }
 
-    private void pollReadyAndResumeExtensionStep() {
-        pollForOperationUpdates()
+    private void pollReadyAndResumeExtensionStep(Instant nextAttemptTimestamp) {
+        pollForOperationUpdates(nextAttemptTimestamp)
                 .thenCompose(op -> op.status() == OperationStatus.READY
                         ? CompletableFuture.completedFuture(op)
-                        : pollForOperationUpdates())
+                        : pollForOperationUpdates(nextAttemptTimestamp))
                 .thenAccept(this::resumeExtensionStep);
     }
 
@@ -155,14 +163,15 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
             update.error(error);
         }
         sendOperationUpdate(update);
-        pollReadyAndExecuteExtensionStep(serializedState.deserialized(), attempt + 1);
+        pollReadyAndExecuteExtensionStep(
+                serializedState.deserialized(), attempt + 1, Instant.now().plusSeconds(retryDelaySeconds));
     }
 
-    private void pollReadyAndExecuteExtensionStep(T state, int attempt) {
-        pollForOperationUpdates()
+    private void pollReadyAndExecuteExtensionStep(T state, int attempt, Instant nextAttemptTimestamp) {
+        pollForOperationUpdates(nextAttemptTimestamp)
                 .thenCompose(op -> op.status() == OperationStatus.READY
                         ? CompletableFuture.completedFuture(op)
-                        : pollForOperationUpdates())
+                        : pollForOperationUpdates(nextAttemptTimestamp))
                 .thenRun(() -> executeExtensionStepLogic(state, attempt));
     }
 

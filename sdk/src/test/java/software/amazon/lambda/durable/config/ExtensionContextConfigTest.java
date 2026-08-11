@@ -23,6 +23,7 @@ class ExtensionContextConfigTest {
         assertNull(config.errorHandler());
         assertTrue(config.emitUserFunctionEvents());
         assertFalse(config.suppressLateChildCheckpoints());
+        assertFalse(config.validateCompletedReplay());
     }
 
     @Test
@@ -35,6 +36,7 @@ class ExtensionContextConfigTest {
                 .errorHandler(handler)
                 .emitUserFunctionEvents(false)
                 .suppressLateChildCheckpoints(true)
+                .validateCompletedReplay(true)
                 .build();
 
         assertSame(serDes, config.serDes());
@@ -42,5 +44,6 @@ class ExtensionContextConfigTest {
         assertEquals(handler, config.errorHandler());
         assertFalse(config.emitUserFunctionEvents());
         assertTrue(config.suppressLateChildCheckpoints());
+        assertTrue(config.validateCompletedReplay());
     }
 }

@@ -11,6 +11,7 @@ public final class ExtensionContextConfig {
     private final ExtensionContextErrorHandler errorHandler;
     private final boolean emitUserFunctionEvents;
     private final boolean suppressLateChildCheckpoints;
+    private final boolean validateCompletedReplay;
 
     private ExtensionContextConfig(Builder builder) {
         serDes = builder.serDes;
@@ -18,6 +19,7 @@ public final class ExtensionContextConfig {
         errorHandler = builder.errorHandler;
         emitUserFunctionEvents = builder.emitUserFunctionEvents;
         suppressLateChildCheckpoints = builder.suppressLateChildCheckpoints;
+        validateCompletedReplay = builder.validateCompletedReplay;
     }
 
     public SerDes serDes() {
@@ -40,13 +42,18 @@ public final class ExtensionContextConfig {
         return suppressLateChildCheckpoints;
     }
 
+    public boolean validateCompletedReplay() {
+        return validateCompletedReplay;
+    }
+
     public Builder toBuilder() {
         return new Builder()
                 .serDes(serDes)
                 .isVirtual(virtual)
                 .errorHandler(errorHandler)
                 .emitUserFunctionEvents(emitUserFunctionEvents)
-                .suppressLateChildCheckpoints(suppressLateChildCheckpoints);
+                .suppressLateChildCheckpoints(suppressLateChildCheckpoints)
+                .validateCompletedReplay(validateCompletedReplay);
     }
 
     public static Builder builder() {
@@ -59,6 +66,7 @@ public final class ExtensionContextConfig {
         private ExtensionContextErrorHandler errorHandler;
         private boolean emitUserFunctionEvents = true;
         private boolean suppressLateChildCheckpoints;
+        private boolean validateCompletedReplay;
 
         private Builder() {}
 
@@ -84,6 +92,11 @@ public final class ExtensionContextConfig {
 
         public Builder suppressLateChildCheckpoints(boolean suppressLateChildCheckpoints) {
             this.suppressLateChildCheckpoints = suppressLateChildCheckpoints;
+            return this;
+        }
+
+        public Builder validateCompletedReplay(boolean validateCompletedReplay) {
+            this.validateCompletedReplay = validateCompletedReplay;
             return this;
         }
 

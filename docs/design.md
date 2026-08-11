@@ -837,7 +837,9 @@ Key details:
   deregisters before the step thread starts.
 - The wrapper deregisters the step thread in `finally`; terminal checkpoint completion re-registers and wakes a
   context thread waiting on the primitive future.
-- For retries, the step sends a RETRY checkpoint and then polls for the READY status before re-executing. If no other threads are active during the retry delay, the execution suspends.
+- For retries, the step sends a RETRY checkpoint and polls for READY at the computed retry-ready timestamp before
+  re-executing. A replayed `PENDING` step uses `stepDetails.nextAttemptTimestamp()` from the checkpoint. If no other
+  threads are active during the retry delay, the execution suspends.
 
 #### WaitPrimitive
 
@@ -888,6 +890,9 @@ Key details:
   empty payload with `replayChildren=true` and re-executes the child context on replay to reconstruct the result.
 - Extension contexts use the same empty payload for a `null` replay state. Legacy empty replay payloads are therefore
   interpreted as `null` instead of being deserialized.
+- An extension context can opt completed checkpoints with `replayChildren=false` into validation-only replay. The
+  framework callback receives the checkpointed result and can recreate deterministic child reservations, while the
+  completed parent context suppresses new checkpoints.
 
 ### In-Process Completion
 

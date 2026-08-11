@@ -1976,6 +1976,53 @@ class MapIntegrationTest {
     }
 
     @Test
+    void testAddingItemNamerFailsSmallCachedDefaultNamedMapReplay() {
+        var useItemNamer = new AtomicBoolean();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = MapConfig.builder();
+            if (useItemNamer.get()) {
+                config.itemNamer((item, index) -> "custom-" + item);
+            }
+            var result = context.map(
+                    "default-named-map",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    config.build());
+            return String.join(",", result.results());
+        });
+
+        var initial = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, initial.getStatus());
+        assertFalse(Boolean.TRUE.equals(
+                initial.getOperation("default-named-map").getContextDetails().replayChildren()));
+        useItemNamer.set(true);
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
+    void testChangingItemCountFailsSmallCachedDefaultNamedMapReplay() {
+        var items = new AtomicReference<>(List.of("a", "b"));
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "default-named-map", items.get(), String.class, (item, index, ctx) -> item.toUpperCase());
+            return String.join(",", result.results());
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        items.set(List.of("a", "b", "c"));
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
     void testEmptyMapDoesNotInvokeItemNamer() {
         var namerCalls = new AtomicInteger();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {

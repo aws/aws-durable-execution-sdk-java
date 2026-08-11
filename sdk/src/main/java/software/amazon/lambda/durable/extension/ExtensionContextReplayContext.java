@@ -9,10 +9,12 @@ public final class ExtensionContextReplayContext<T> {
     private static final ThreadLocal<ExtensionContextReplayContext<?>> CURRENT = new ThreadLocal<>();
 
     private final boolean replayingChildren;
+    private final boolean validatingReplay;
     private final T replayState;
 
-    private ExtensionContextReplayContext(boolean replayingChildren, T replayState) {
+    private ExtensionContextReplayContext(boolean replayingChildren, boolean validatingReplay, T replayState) {
         this.replayingChildren = replayingChildren;
+        this.validatingReplay = validatingReplay;
         this.replayState = replayState;
     }
 
@@ -31,6 +33,11 @@ public final class ExtensionContextReplayContext<T> {
         return replayingChildren;
     }
 
+    /** Returns whether a completed CONTEXT is re-entering its framework callback only to validate replay. */
+    public boolean isValidatingReplay() {
+        return validatingReplay;
+    }
+
     /** Returns the checkpointed replay state, or {@code null} on initial execution. */
     public T getReplayState() {
         return replayState;
@@ -38,8 +45,13 @@ public final class ExtensionContextReplayContext<T> {
 
     /** Attaches replay metadata for the duration of an SDK-managed framework callback. */
     public static <T> SafeCloseable attach(boolean replayingChildren, T replayState) {
+        return attach(replayingChildren, false, replayState);
+    }
+
+    /** Attaches replay and validation metadata for the duration of an SDK-managed framework callback. */
+    public static <T> SafeCloseable attach(boolean replayingChildren, boolean validatingReplay, T replayState) {
         var previous = CURRENT.get();
-        CURRENT.set(new ExtensionContextReplayContext<>(replayingChildren, replayState));
+        CURRENT.set(new ExtensionContextReplayContext<>(replayingChildren, validatingReplay, replayState));
         return () -> {
             if (previous == null) {
                 CURRENT.remove();

@@ -72,6 +72,7 @@ class DurableMapOperationImplementationTest {
         assertSame(serDes, parentConfig.getValue().serDes());
         assertFalse(parentConfig.getValue().emitUserFunctionEvents());
         assertTrue(parentConfig.getValue().suppressLateChildCheckpoints());
+        assertTrue(parentConfig.getValue().validateCompletedReplay());
 
         var child = mock(CurrentContext.class);
         var first = mock(ExtensionOperation.class);

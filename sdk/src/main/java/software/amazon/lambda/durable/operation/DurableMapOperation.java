@@ -18,11 +18,14 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -100,12 +103,15 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
 
         var mapConfig = config;
         var virtualEmptyMap = itemList.isEmpty() && !context.getDurableConfig().shouldCheckpointEmptyMap();
+        var parentConfig = parentContextConfig(mapConfig.serDes(), virtualEmptyMap).toBuilder()
+                .validateCompletedReplay(true)
+                .build();
         return parent.runInChildContextAsync(
                 MAP.getValue(),
                 mapResultType(),
                 () -> executeInChildContext(
                         name, itemList, iterationNames, resultType, function, mapConfig, virtualEmptyMap),
-                parentContextConfig(mapConfig.serDes(), virtualEmptyMap));
+                parentConfig);
     }
 
     private static <I, O> DurableContext.MapFunction<I, O> adapt(Function<I, O> function) {
@@ -137,9 +143,13 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         }
 
         var replay = ExtensionContextReplayContext.<MapResult<O>>getCurrentContext();
-        var replayState = replay.isReplayingChildren() ? replay.getReplayState() : null;
-        if (replay.isReplayingChildren() && replayState == null) {
+        var replayingCompletedMap = replay.isReplayingChildren() || replay.isValidatingReplay();
+        var replayState = replayingCompletedMap ? replay.getReplayState() : null;
+        if (replayingCompletedMap && replayState == null) {
             throw new IllegalStateException("Missing result in completed Map operation");
+        }
+        if (replay.isValidatingReplay()) {
+            return validateCompletedReplay(name, items, iterationNames, resultType, function, config, replayState);
         }
 
         var coordinator = new OperationConcurrencyCoordinator(config.maxConcurrency(), config.completionConfig());
@@ -154,6 +164,48 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         return config.itemNamer() == null
                 ? ExtensionContextResult.replayChildrenAboveSize(result, strippedResult, LARGE_RESULT_THRESHOLD)
                 : ExtensionContextResult.replayChildren(result, strippedResult);
+    }
+
+    private static <I, O> ExtensionContextResult<MapResult<O>> validateCompletedReplay(
+            String name,
+            List<I> items,
+            List<String> iterationNames,
+            TypeToken<O> resultType,
+            DurableContext.MapFunction<I, O> function,
+            MapConfig config,
+            MapResult<O> replayState) {
+        if (items.size() != replayState.size()) {
+            throw new NonDeterministicExecutionException(String.format(
+                    "Map item count mismatch for \"%s\". Expected %d, got %d", name, replayState.size(), items.size()));
+        }
+        if (config.nestingType() == NestingType.NESTED) {
+            validateNestedIterations(items, iterationNames, resultType, function, config, replayState);
+        }
+        return ExtensionContextResult.completed(replayState);
+    }
+
+    private static <I, O> void validateNestedIterations(
+            List<I> items,
+            List<String> iterationNames,
+            TypeToken<O> resultType,
+            DurableContext.MapFunction<I, O> function,
+            MapConfig config,
+            MapResult<O> replayState) {
+        var context = ExtensionContext.getCurrentContext();
+        var iterationConfig = childContextConfig(
+                config.serDes(), config.nestingType(), failure -> new MapIterationFailedException(failure.operation()));
+        for (int index = 0; index < items.size(); index++) {
+            if (replayState.getItem(index).status() == MapResult.MapResultItem.Status.SKIPPED) {
+                continue;
+            }
+            launchIteration(
+                    context.reserve(iterationNames.get(index)),
+                    items.get(index),
+                    index,
+                    resultType,
+                    function,
+                    iterationConfig);
+        }
     }
 
     private static <I, O> List<OperationConcurrencyCoordinator.Item<O>> registerItems(
@@ -176,17 +228,27 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             var skipped = replayState != null
                     && replayState.getItem(index).status() == MapResult.MapResultItem.Status.SKIPPED;
             registeredItems.add(coordinator.register(
-                    () -> reservation.runInChildContextAsync(
-                            MAP_ITERATION.getValue(),
-                            resultType,
-                            () -> ExtensionContextResult.replayChildrenAboveSize(
-                                    function.apply(item, itemIndex, DurableContext.requireCurrentContext()),
-                                    null,
-                                    LARGE_RESULT_THRESHOLD),
-                            iterationConfig),
+                    () -> launchIteration(reservation, item, itemIndex, resultType, function, iterationConfig),
                     skipped));
         }
         return registeredItems;
+    }
+
+    private static <I, O> DurableFuture<O> launchIteration(
+            ExtensionOperation reservation,
+            I item,
+            int index,
+            TypeToken<O> resultType,
+            DurableContext.MapFunction<I, O> function,
+            ExtensionContextConfig config) {
+        return reservation.runInChildContextAsync(
+                MAP_ITERATION.getValue(),
+                resultType,
+                () -> ExtensionContextResult.replayChildrenAboveSize(
+                        function.apply(item, index, DurableContext.requireCurrentContext()),
+                        null,
+                        LARGE_RESULT_THRESHOLD),
+                config);
     }
 
     private static List<String> resolveIterationNames(String mapName, List<?> items, MapConfig config) {

@@ -246,8 +246,9 @@ A stateful extension STEP may return only:
 The fixed-delay retry checkpoints the supplied state and delay. The normalization-aware retry first serializes and
 deserializes the state with the configured SerDes, evaluates the delay strategy against that normalized state, then
 checkpoints the normalized state and selected delay. This keeps first execution and replay behavior consistent for
-normalizing serializers. The SDK maps both outcomes onto the fixed STEP lifecycle. Thrown exceptions follow the
-normal STEP failure path. Attempt metadata remains available through `StepContext`.
+normalizing serializers. The SDK maps both outcomes onto the fixed STEP lifecycle and polls at the computed
+retry-ready timestamp. A replayed `PENDING` extension step polls using its checkpointed `nextAttemptTimestamp`.
+Thrown exceptions follow the normal STEP failure path. Attempt metadata remains available through `StepContext`.
 
 ### Support Context Replay State
 
@@ -274,6 +275,11 @@ behavior:
 - context failure translation
 - whether the framework function emits user-function plugin events
 - whether late child checkpoints are suppressed after parent completion
+- whether completed contexts with `replayChildren=false` re-enter the framework function for validation-only replay
+
+During validation-only replay, `ExtensionContextReplayContext.isValidatingReplay()` is true and `getReplayState()`
+contains the checkpointed result. The framework can recreate deterministic child reservations to validate operation
+identity without replacing the completed parent checkpoint.
 
 Existing configuration classes are not changed.
 

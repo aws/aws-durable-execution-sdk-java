@@ -3,14 +3,19 @@
 package software.amazon.lambda.durable.primitive;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -21,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -144,14 +150,19 @@ class StatefulExtensionStepPrimitiveTest {
 
     @Test
     void replayPendingPollsUntilReadyAndResumes() throws Exception {
+        var nextAttemptTimestamp = Instant.parse("2026-08-10T12:00:00Z");
         var pending = operation(
                 OperationStatus.PENDING,
-                StepDetails.builder().attempt(1).result("5").build());
+                StepDetails.builder()
+                        .attempt(1)
+                        .result("5")
+                        .nextAttemptTimestamp(nextAttemptTimestamp)
+                        .build());
         var ready = operation(
                 OperationStatus.READY,
                 StepDetails.builder().attempt(1).result("5").build());
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(pending);
-        when(executionManager.pollForOperationUpdates(OPERATION_ID))
+        when(executionManager.pollForOperationUpdates(OPERATION_ID, nextAttemptTimestamp))
                 .thenReturn(CompletableFuture.completedFuture(ready));
         var called = new CountDownLatch(1);
         var operation = createOperation(state -> {
@@ -162,6 +173,19 @@ class StatefulExtensionStepPrimitiveTest {
         operation.execute();
 
         assertTrue(called.await(2, TimeUnit.SECONDS));
+        verify(executionManager).pollForOperationUpdates(OPERATION_ID, nextAttemptTimestamp);
+    }
+
+    @Test
+    void replayPendingWithoutReadyTimestampFails() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(operation(
+                        OperationStatus.PENDING,
+                        StepDetails.builder().attempt(1).result("5").build()));
+
+        var operation = createOperation(ExtensionStepResult::succeed);
+
+        assertThrows(IllegalDurableOperationException.class, operation::execute);
     }
 
     @Test
@@ -187,7 +211,8 @@ class StatefulExtensionStepPrimitiveTest {
     @Test
     void exceptionRetryWithoutStateDoesNotCheckpointPayload() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
-        when(executionManager.pollForOperationUpdates(OPERATION_ID)).thenReturn(new CompletableFuture<>());
+        when(executionManager.pollForOperationUpdates(eq(OPERATION_ID), any(Instant.class)))
+                .thenReturn(new CompletableFuture<>());
         var retryUpdate = new AtomicReference<OperationUpdate>();
         var retrySent = new CountDownLatch(1);
         when(executionManager.sendOperationUpdate(any())).thenAnswer(invocation -> {
@@ -219,7 +244,8 @@ class StatefulExtensionStepPrimitiveTest {
     @Test
     void retryDelayUsesCheckpointNormalizedState() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
-        when(executionManager.pollForOperationUpdates(OPERATION_ID)).thenReturn(new CompletableFuture<>());
+        when(executionManager.pollForOperationUpdates(eq(OPERATION_ID), any(Instant.class)))
+                .thenReturn(new CompletableFuture<>());
         var retryUpdate = new AtomicReference<OperationUpdate>();
         var retrySent = new CountDownLatch(1);
         when(executionManager.sendOperationUpdate(any())).thenAnswer(invocation -> {
@@ -247,12 +273,18 @@ class StatefulExtensionStepPrimitiveTest {
                         .build(),
                 durableContext);
 
+        var beforeRetry = Instant.now();
         operation.execute();
 
         assertTrue(retrySent.await(2, TimeUnit.SECONDS));
+        var pollAt = ArgumentCaptor.forClass(Instant.class);
+        verify(executionManager, timeout(1000)).pollForOperationUpdates(eq(OPERATION_ID), pollAt.capture());
+        var afterRetry = Instant.now();
         assertEquals("normalized", strategyState.get());
         assertEquals("\"raw\"", retryUpdate.get().payload());
         assertEquals(7, retryUpdate.get().stepOptions().nextAttemptDelaySeconds());
+        assertFalse(pollAt.getValue().isBefore(beforeRetry.plusSeconds(7)));
+        assertFalse(pollAt.getValue().isAfter(afterRetry.plusSeconds(7)));
     }
 
     @Test

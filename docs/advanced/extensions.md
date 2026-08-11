@@ -295,6 +295,9 @@ strategy against that checkpoint-normalized state. Both retry forms checkpoint t
 remains available through `StepContext.requireCurrentContext()`. Thrown exceptions follow the normal STEP failure
 path.
 
+After checkpointing a retry, the SDK polls at the computed retry-ready timestamp. When replaying a `PENDING` extension
+step, it uses the checkpointed `nextAttemptTimestamp`, preserving the same scheduling behavior across invocations.
+
 `ExtensionStepConfig` owns its exception retry strategy. It returns the fixed-delay retry outcome or a do-not-retry
 decision, allowing extension libraries to configure exception retries and delivery semantics without depending on the
 customer-facing config or retry packages:
@@ -342,9 +345,14 @@ is exposed as a `null` replay state instead of being deserialized. This also all
 large-result checkpoints written by earlier SDK versions.
 
 `ExtensionContextConfig` directly configures the context serializer and whether the context is virtual. It also
-controls framework user-function plugin events and can suppress child checkpoints that finish after the parent. If a
-context fails, the SDK first rethrows a deserialized original exception, then calls the configured error handler, and
-finally falls back to `ChildContextFailedException`. The handler receives the complete failed context operation
+controls framework user-function plugin events, can suppress child checkpoints that finish after the parent, and can
+enable validation-only replay with `validateCompletedReplay(true)`. In validation-only replay, the framework callback
+is re-entered for a completed context even when `replayChildren` is false. The callback can detect this through
+`ExtensionContextReplayContext.isValidatingReplay()`, inspect the checkpointed result through `getReplayState()`, and
+recreate deterministic child reservations without emitting a new parent checkpoint.
+
+If a context fails, the SDK first rethrows a deserialized original exception, then calls the configured error handler,
+and finally falls back to `ChildContextFailedException`. The handler receives the complete failed context operation
 through `failure.operation()`, plus read-only child-operation summaries.
 
 ## Explicit child contexts
