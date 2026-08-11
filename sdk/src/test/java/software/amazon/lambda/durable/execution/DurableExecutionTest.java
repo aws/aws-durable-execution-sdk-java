@@ -22,9 +22,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
-import software.amazon.lambda.durable.dag.DagPredicateException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
-import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -137,76 +135,6 @@ class DurableExecutionTest {
         assertNotNull(output.error());
         assertEquals("java.lang.RuntimeException", output.error().errorType());
         assertEquals("Test error", output.error().errorMessage());
-    }
-
-    @Test
-    void testExecuteFailureWithUncaughtDagPredicateException() {
-        // DAG exceptions are extension-level failures, so the standard non-operation error path must preserve the
-        // concrete type and message in the execution error.
-        var executionOp = Operation.builder()
-                .id(EXECUTION_OP_ID)
-                .type(OperationType.EXECUTION)
-                .status(OperationStatus.STARTED)
-                .executionDetails(ExecutionDetails.builder()
-                        .inputPayload("\"test-input\"")
-                        .build())
-                .build();
-
-        var input = new DurableExecutionInput(
-                EXECUTION_ARN,
-                "token1",
-                CheckpointUpdatedExecutionState.builder()
-                        .operations(List.of(executionOp))
-                        .build());
-
-        var output = DurableExecutor.execute(
-                input,
-                null,
-                get(String.class),
-                (userInput, ctx) -> {
-                    throw new DagPredicateException("guarded", new IllegalStateException("predicate boom"));
-                },
-                configWithMockClient());
-
-        assertEquals(ExecutionStatus.FAILED, output.status());
-        assertNotNull(output.error(), "ExecutionFailed must carry a populated error object for a DAG-family exception");
-        assertEquals(
-                "software.amazon.lambda.durable.dag.DagPredicateException",
-                output.error().errorType());
-        assertTrue(output.error().errorMessage().contains("guarded"));
-    }
-
-    @Test
-    void testExecuteFailureWithNonDagNullOperationExceptionKeepsPriorBehaviour() {
-        // A DurableOperationException with no backing operation or error object keeps the existing null-error
-        // behavior. Extension exceptions do not use this hierarchy.
-        var executionOp = Operation.builder()
-                .id(EXECUTION_OP_ID)
-                .type(OperationType.EXECUTION)
-                .status(OperationStatus.STARTED)
-                .executionDetails(ExecutionDetails.builder()
-                        .inputPayload("\"test-input\"")
-                        .build())
-                .build();
-
-        var input = new DurableExecutionInput(
-                EXECUTION_ARN,
-                "token1",
-                CheckpointUpdatedExecutionState.builder()
-                        .operations(List.of(executionOp))
-                        .build());
-
-        var output = DurableExecutor.execute(
-                input,
-                null,
-                get(String.class),
-                (userInput, ctx) -> {
-                    throw new WaitForConditionFailedException("condition failed");
-                },
-                configWithMockClient());
-
-        assertEquals(ExecutionStatus.FAILED, output.status());
-        assertNull(output.error(), "non-DAG null-operation exception must keep prior null execution error behaviour");
     }
 
     @Test

@@ -31,6 +31,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Experimental DAG extension -->
+        <dependency>
+            <groupId>software.amazon.lambda.durable</groupId>
+            <artifactId>aws-durable-execution-sdk-java-dag</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- OTel Plugin -->
         <dependency>
             <groupId>software.amazon.lambda.durable</groupId>

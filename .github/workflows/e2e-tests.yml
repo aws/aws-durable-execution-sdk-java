@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/**' # for testing Github Actions
       - 'sdk/**'
+      - 'dag/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'examples/**'
@@ -18,6 +19,7 @@ on:
     paths:
       - '.github/**'
       - 'sdk/**'
+      - 'dag/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'examples/**'

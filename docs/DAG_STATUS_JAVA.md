@@ -2,9 +2,12 @@
 
 **Stability:** EXPERIMENTAL (`@Experimental` on public DAG symbols).
 
+**Artifact:** `software.amazon.lambda.durable:aws-durable-execution-sdk-java-dag`.
+
 ## Extension SPI migration
 
 - Public entry points are static `DurableDagOperation.dag(...)` and `dagAsync(...)` methods.
+- DAG API and implementation classes are isolated from the core SDK in the optional `dag` Maven module.
 - `DurableContext` has no DAG-specific methods.
 - The DAG container and tasks use `ExtensionContext` and opaque `ExtensionOperation` reservations.
 - Task IDs use `reserve(name, "DAG_NODE_T_" + name)`; no DAG-specific operation-ID API is required.

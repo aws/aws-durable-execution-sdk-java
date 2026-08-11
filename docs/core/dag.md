@@ -2,8 +2,20 @@
 
 > **⚠️ EXPERIMENTAL.** DAG support is an experimental feature and may be changed or removed in future releases
 > **without a major-version bump**. Every public DAG type/method is annotated with
-> `@software.amazon.lambda.durable.annotations.Experimental` and carries a Javadoc `@apiNote`. Do not depend on it in
+> `@software.amazon.lambda.durable.dag.Experimental` and carries a Javadoc `@apiNote`. Do not depend on it in
 > production until it is promoted to stable.
+
+## Installation
+
+DAG support is distributed as a separate opt-in artifact. Add it alongside the core SDK using the same version:
+
+```xml
+<dependency>
+    <groupId>software.amazon.lambda.durable</groupId>
+    <artifactId>aws-durable-execution-sdk-java-dag</artifactId>
+    <version>${aws-lambda-durable-sdk.version}</version>
+</dependency>
+```
 
 `DurableDagOperation.dag(...)` declares and runs a **directed acyclic graph of tasks** with typed dependencies. You describe
 the graph once in a declarative registration phase; the runtime schedules tasks topologically, runs independent chains
@@ -19,7 +31,7 @@ that local ID, so graph traversal order can change without changing task operati
 ## Entry points
 
 ```java
-import static software.amazon.lambda.durable.operation.DurableDagOperation.dag;
+import static software.amazon.lambda.durable.dag.DurableDagOperation.dag;
 
 DagResult dag(String name, Consumer<DagContext> register);
 DagResult dag(String name, Consumer<DagContext> register, DagConfig config);
