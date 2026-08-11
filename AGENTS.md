@@ -67,12 +67,12 @@ sdk/                    # Core SDK module
 │   ├── serde/                   # JSON serialization
 │   ├── client/                  # AWS Lambda Durable Functions client integration
 │   ├── logging/                 # DurableLogger and logger configuration
-│   ├── plugin/                  # Preview lifecycle plugin API
+│   ├── plugin/                  # Lifecycle plugin API
 │   └── exception/               # Domain exceptions
 
 sdk-testing/            # LocalDurableTestRunner, CloudDurableTestRunner, test helpers
 sdk-integration-tests/  # Integration tests using sdk-testing
-otel-plugin/            # Preview OpenTelemetry plugin implementation
+otel-plugin/            # OpenTelemetry plugin implementation
 examples/               # Customer-facing examples with local and cloud tests
 coverage-report/        # Aggregated JaCoCo coverage report module
 docs/                   # User docs, design notes, ADRs, migration guide
@@ -277,7 +277,7 @@ Do NOT add conformance tests — conformance tests live in a separate repository
 | `MapOperation` | Applies a function across items concurrently via child contexts |
 | `ParallelOperation` | Runs named child-context branches concurrently |
 | `ConcurrencyOperation` | Shared base for map/parallel concurrency limiting and completion evaluation |
-| `DurableExecutionPlugin` | Preview lifecycle hook interface |
+| `DurableExecutionPlugin` | Lifecycle hook interface |
 | `InvocationOtelPlugin` | OpenTelemetry plugin implementation in `otel-plugin` |
 
 ### Serialization

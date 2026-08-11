@@ -18,12 +18,7 @@ import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path).
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
- */
-@Deprecated
+/** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
 final class OtelPluginSupport {
 
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
@@ -89,10 +84,7 @@ final class OtelPluginSupport {
     /**
      * The tracer provider, tracer, and ID generator resolved for a config-only plugin constructor, plus the
      * {@link ProviderSource} that produced them.
-     *
-     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
      */
-    @Deprecated
     record ProviderSetup(
             ProviderSource source,
             SdkTracerProvider sdkTracerProvider,

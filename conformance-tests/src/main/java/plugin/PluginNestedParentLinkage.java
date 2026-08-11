@@ -16,7 +16,6 @@ import software.amazon.lambda.durable.plugin.OperationEndInfo;
  * a terminal status, with the operation id, its parent id (the literal string {@code NONE} when absent), and status.
  * The inner step ends with the child context as its parent; the child context ends with no parent.
  */
-@SuppressWarnings("deprecation")
 public class PluginNestedParentLinkage extends DurableHandler<String, String> {
 
     @Override

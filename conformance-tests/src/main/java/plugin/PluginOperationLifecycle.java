@@ -13,7 +13,6 @@ import software.amazon.lambda.durable.DurableHandler;
  * operations, logs {@code operation-start} when the step's STARTED checkpoint is observed and {@code operation-end
  * status=SUCCEEDED} when the step reaches its terminal status.
  */
-@SuppressWarnings("deprecation")
 public class PluginOperationLifecycle extends DurableHandler<String, String> {
 
     @Override

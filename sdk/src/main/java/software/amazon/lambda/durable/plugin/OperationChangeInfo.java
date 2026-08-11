@@ -13,9 +13,7 @@ import java.util.Map;
  * @param durableExecutionArn the durable execution ARN
  * @param updatedOperations operations whose status changed in this checkpoint response, keyed by operation ID
  * @param operations a snapshot of all known operations after the update, keyed by operation ID
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public record OperationChangeInfo(
         String requestId,
         String durableExecutionArn,
