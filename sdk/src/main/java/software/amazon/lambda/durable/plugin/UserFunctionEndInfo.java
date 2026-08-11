@@ -16,6 +16,9 @@ import java.time.Instant;
  * @param parentId parent operation ID (null for root-level operations)
  * @param startTimestamp when the user function started
  * @param endTimestamp when the user function ended
+ * @param isReplay true if THIS operation was already present in the execution's checkpointed state when it started
+ *     (i.e. observed via replay rather than created fresh in this invocation). Distinct from
+ *     {@code isReplayingChildren}, which is about the child operations of a context body.
  * @param isReplayingChildren true if child operations within this context are being replayed from checkpoints
  * @param attempt 1-based attempt number for steps/waitForCondition, null for context operations
  * @param succeeded true if the user function completed without error
@@ -31,6 +34,7 @@ public record UserFunctionEndInfo(
         String parentId,
         Instant startTimestamp,
         Instant endTimestamp,
+        boolean isReplay,
         boolean isReplayingChildren,
         Integer attempt,
         boolean succeeded,

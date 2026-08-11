@@ -137,12 +137,23 @@ class PluginRunnerTest {
 
     private static InvocationInfo invocationInfo() {
         return new InvocationInfo(
-                "req-123", "arn:aws:lambda:us-east-1:123456789012:function:test", false, Instant.now());
+                "req-123",
+                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                false,
+                Instant.now(),
+                Map.of(),
+                Map.of());
     }
 
     private static InvocationEndInfo invocationEndInfo() {
         return new InvocationEndInfo(
-                "req-123", "arn:aws:lambda:us-east-1:123456789012:function:test", false, null, null);
+                "req-123",
+                "arn:aws:lambda:us-east-1:123456789012:function:test",
+                false,
+                Instant.now(),
+                Map.of(),
+                null,
+                null);
     }
 
     private static OperationInfo operationInfo() {
@@ -160,12 +171,12 @@ class PluginRunnerTest {
     }
 
     private static UserFunctionStartInfo attemptInfo() {
-        return new UserFunctionStartInfo("op-1", "test-step", "STEP", null, null, Instant.now(), false, 1);
+        return new UserFunctionStartInfo("op-1", "test-step", "STEP", null, null, Instant.now(), false, false, 1);
     }
 
     private static UserFunctionEndInfo attemptEndInfo() {
         return new UserFunctionEndInfo(
-                "op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), false, 1, true, null);
+                "op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), false, false, 1, true, null);
     }
 
     // ─── Test plugin implementations ─────────────────────────────────────

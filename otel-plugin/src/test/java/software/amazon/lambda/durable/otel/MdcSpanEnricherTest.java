@@ -8,6 +8,7 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
@@ -63,10 +64,11 @@ class MdcSpanEnricherTest {
                         .enableMdc(true)
                         .build());
 
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-mdc-test", true, Instant.now()));
+        plugin.onInvocationStart(
+                new InvocationInfo("req-1", "arn:exec-mdc-test", true, Instant.now(), Map.of(), Map.of()));
 
         plugin.onUserFunctionStart(
-                new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1));
+                new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, false, 1));
 
         // MDC should have trace fields after onUserFunctionStart
         assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
@@ -74,15 +76,15 @@ class MdcSpanEnricherTest {
         assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
 
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, false, 1, true, null));
 
         // After onUserFunctionEnd: span_id is cleared, but trace_id remains for handler-level logs between steps
         assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID), "trace_id should persist between steps");
         assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID), "span_id should be cleared after step");
         assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED), "trace_flags should persist between steps");
 
-        plugin.onInvocationEnd(
-                new InvocationEndInfo("req-1", "arn:exec-mdc-test", true, InvocationStatus.SUCCEEDED, null));
+        plugin.onInvocationEnd(new InvocationEndInfo(
+                "req-1", "arn:exec-mdc-test", true, Instant.now(), Map.of(), InvocationStatus.SUCCEEDED, null));
 
         // After onInvocationEnd: all MDC fields are cleared
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
