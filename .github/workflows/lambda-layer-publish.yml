@@ -110,12 +110,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          mvn -B -q -pl otel-plugin -am install -DskipTests --no-transfer-progress
+          mvn -B -q -pl otel-plugin -am package -DskipTests --no-transfer-progress
           mkdir -p layer/java/lib dist
-          mvn -B -q -pl otel-plugin dependency:copy-dependencies \
-            -DincludeScope=runtime \
-            -DoutputDirectory="$GITHUB_WORKSPACE/layer/java/lib" \
-            --no-transfer-progress
           cp "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${SDK_VERSION}.jar" \
             layer/java/lib/
           cp LICENSE NOTICE layer/
@@ -134,10 +130,13 @@ jobs:
           set -euo pipefail
 
           unzip -Z1 "$LAYER_ZIP" > layer-contents.txt
-          grep -Fx "java/lib/aws-durable-execution-sdk-java-${SDK_VERSION}.jar" layer-contents.txt
           grep -Fx "java/lib/aws-durable-execution-sdk-java-plugin-otel-${SDK_VERSION}.jar" layer-contents.txt
           grep -Fx "LICENSE" layer-contents.txt
           grep -Fx "NOTICE" layer-contents.txt
+          if [ "$(grep -Ec '^java/lib/[^/]+\.jar$' layer-contents.txt)" -ne 1 ]; then
+            echo "The layer must contain only the OTel plugin JAR." >&2
+            exit 1
+          fi
 
       - name: Upload layer artifact
         uses: actions/upload-artifact@v7
