@@ -23,7 +23,6 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  * and attempt-end (with outcome) from the real user-function hooks (which carry the 1-based attempt number) and
  * operation-end when the step reaches its terminal FAILED status.
  */
-@SuppressWarnings("deprecation")
 public class PluginRetryExhaustion extends DurableHandler<Object, String> {
 
     @Override

@@ -29,9 +29,7 @@ import java.util.Map;
  * = "Workflow"}, {@code instrumentationName = "aws-durable-execution-sdk-java"}, {@code providerSource =
  * ProviderSource.GLOBAL}. A {@code null} passed to any builder setter falls back to the corresponding default.
  *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public final class OtelPluginConfig {
 
     static final String DEFAULT_INSTRUMENTATION_NAME = "aws-durable-execution-sdk-java";
@@ -113,9 +111,7 @@ public final class OtelPluginConfig {
     /**
      * Builder for {@link OtelPluginConfig}.
      *
-     * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
      */
-    @Deprecated
     public static final class Builder {
 
         private ContextExtractor contextExtractor;

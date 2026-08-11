@@ -88,9 +88,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
  *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(InvocationOtelPlugin.class);

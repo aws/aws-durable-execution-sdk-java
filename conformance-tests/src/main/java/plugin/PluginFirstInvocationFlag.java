@@ -14,7 +14,6 @@ import software.amazon.lambda.durable.DurableHandler;
  * {@code first=true} (then suspends), and the replay invocation reports {@code first=false} and finalizes with
  * {@code status=SUCCEEDED}.
  */
-@SuppressWarnings("deprecation")
 public class PluginFirstInvocationFlag extends DurableHandler<Object, String> {
 
     @Override

@@ -10,9 +10,7 @@ package software.amazon.lambda.durable.otel;
  *
  * <p>Called once per invocation in {@code onInvocationStart} to establish the parent trace context.
  *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 @FunctionalInterface
 public interface ContextExtractor {
 

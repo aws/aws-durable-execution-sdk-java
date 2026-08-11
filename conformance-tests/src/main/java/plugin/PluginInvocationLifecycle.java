@@ -13,7 +13,6 @@ import software.amazon.lambda.durable.DurableHandler;
  * {@code first=true} before the handler runs and its invocation-end hook logs {@code status=SUCCEEDED} after the result
  * is finalized. The step body logs its running line via the context logger.
  */
-@SuppressWarnings("deprecation")
 public class PluginInvocationLifecycle extends DurableHandler<String, String> {
 
     @Override

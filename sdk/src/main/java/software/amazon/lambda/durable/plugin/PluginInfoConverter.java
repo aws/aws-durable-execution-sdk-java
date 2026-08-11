@@ -12,9 +12,7 @@ import software.amazon.lambda.durable.operation.BaseDurableOperation;
 /**
  * Utility methods for converting SDK internal types to plugin info records.
  *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public final class PluginInfoConverter {
 
     private PluginInfoConverter() {}

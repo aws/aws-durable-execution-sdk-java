@@ -20,9 +20,7 @@ import java.time.Instant;
  * @param status current operation status (may be null before the first checkpoint)
  * @param isReplay true if this operation already exists in the execution state from a prior invocation. Plugins can use
  *     this to avoid generating duplicate span IDs.
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public record OperationInfo(
         String id,
         String name,

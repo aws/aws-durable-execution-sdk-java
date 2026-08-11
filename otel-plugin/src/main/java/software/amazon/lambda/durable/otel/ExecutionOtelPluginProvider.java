@@ -8,9 +8,7 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 /**
  * Dynamically loads {@link ExecutionOtelPlugin} when {@code DURABLE_EXECUTION_PLUGINS} contains {@code otel-execution}.
  *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public final class ExecutionOtelPluginProvider implements DurableExecutionPluginProvider {
 
     @Override

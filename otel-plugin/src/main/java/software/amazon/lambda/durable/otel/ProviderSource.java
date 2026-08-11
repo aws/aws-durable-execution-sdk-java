@@ -21,9 +21,7 @@ package software.amazon.lambda.durable.otel;
  * it for the config-only constructors; the {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructors always
  * report {@link #EXPLICIT}.
  *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public enum ProviderSource {
     /** Caller-supplied {@code SdkTracerProviderBuilder}; plugin-owned. */
     EXPLICIT,
