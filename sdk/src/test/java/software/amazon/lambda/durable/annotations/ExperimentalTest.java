@@ -29,6 +29,8 @@ class ExperimentalTest {
     @Test
     void isDocumentedAndRetainedInClassFiles() {
         assertTrue(Experimental.class.isAnnotationPresent(Documented.class));
-        assertEquals(RetentionPolicy.CLASS, Experimental.class.getAnnotation(Retention.class).value());
+        assertEquals(
+                RetentionPolicy.CLASS,
+                Experimental.class.getAnnotation(Retention.class).value());
     }
 }
