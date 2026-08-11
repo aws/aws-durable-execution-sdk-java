@@ -10,6 +10,7 @@ import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.internal.InternalApi;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.primitive.BasePrimitive;
 import software.amazon.lambda.durable.primitive.CallbackPrimitive;
@@ -19,6 +20,12 @@ import software.amazon.lambda.durable.primitive.StepPrimitive;
 import software.amazon.lambda.durable.primitive.WaitPrimitive;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
+/**
+ * Internal bridge from extension reservations to checkpoint primitives.
+ *
+ * @hidden
+ */
+@InternalApi
 public final class ExtensionOperationImpl implements ExtensionOperation {
     private final DurableContextImpl context;
     private final String operationId;

@@ -31,7 +31,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  *   <li>Proper thread coordination via future
  * </ul>
  */
-public abstract class SerializablePrimitive<T> extends BasePrimitive implements DurableFuture<T> {
+abstract class SerializablePrimitive<T> extends BasePrimitive implements DurableFuture<T> {
     private static final Logger logger = LoggerFactory.getLogger(SerializablePrimitive.class);
 
     protected record SerializedResult<T>(String serialized, T deserialized) {}

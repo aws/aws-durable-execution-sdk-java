@@ -82,7 +82,7 @@ DurableContext.step
 
 The other primitives follow the same dependency direction through their matching merged operation class.
 `DurableContextImpl` provides the durable scope and reservation mechanism. Only
-`extension.ExtensionOperationImpl` constructs
+the internal `extension.ExtensionOperationImpl` constructs
 the concrete primitive operation engines, so customer APIs and third-party extensions share one backend boundary.
 
 Expose each built-in extension family through an independently maintained class:
