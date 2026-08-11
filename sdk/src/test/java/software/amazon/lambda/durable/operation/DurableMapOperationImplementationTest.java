@@ -9,9 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED;
 import static software.amazon.lambda.durable.model.OperationSubType.MAP;
 import static software.amazon.lambda.durable.model.OperationSubType.MAP_ITERATION;
 
@@ -120,6 +123,64 @@ class DurableMapOperationImplementationTest {
                 .translate(new ExtensionContextFailure(failedIteration, null, List.of()));
         var failure = assertInstanceOf(MapIterationFailedException.class, translated);
         assertSame(failedIteration, failure.getOperation());
+    }
+
+    @Test
+    void validateCompletedReplayReservesSkippedIterationsBeforeCompletedIterations() {
+        var context = mock(ExtensionContext.class);
+        var parent = mock(ExtensionOperation.class);
+        var config = DurableMapOperation.MapConfig.builder()
+                .serDes(new JacksonSerDes())
+                .build();
+        when(context.reserve("map")).thenReturn(parent);
+        when(parent.runInChildContextAsync(
+                        eq(MAP.getValue()),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(mockMapFuture());
+
+        DurableMapOperation.mapAsync(
+                context,
+                "map",
+                List.of("skipped", "completed"),
+                TypeToken.get(String.class),
+                (item, index, child) -> item,
+                config);
+
+        var function = extensionFunction();
+        verify(parent).runInChildContextAsync(eq(MAP.getValue()), any(TypeToken.class), function.capture(), any());
+        var child = mock(CurrentContext.class);
+        var skipped = mock(ExtensionOperation.class);
+        var completed = mock(ExtensionOperation.class);
+        when(child.reserve("map-iteration-0")).thenReturn(skipped);
+        when(child.reserve("map-iteration-1")).thenReturn(completed);
+        when(completed.runInChildContextAsync(
+                        eq(MAP_ITERATION.getValue()),
+                        eq(TypeToken.get(String.class)),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(new CompletedFuture<>("completed"));
+        var replayState = new MapResult<>(
+                List.of(MapResult.MapResultItem.<String>skipped(), MapResult.MapResultItem.succeeded("completed")),
+                MIN_SUCCESSFUL_REACHED);
+
+        MapResult<String> result;
+        try (var ignoredContext = BaseContextImpl.attachCurrentContext(child);
+                var ignoredReplay = ExtensionContextReplayContext.attach(false, true, replayState)) {
+            result = function.getValue().apply().result();
+        }
+
+        assertEquals(replayState, result);
+        var reservations = inOrder(child);
+        reservations.verify(child).reserve("map-iteration-0");
+        reservations.verify(child).reserve("map-iteration-1");
+        verify(skipped, never())
+                .runInChildContextAsync(
+                        any(String.class),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class));
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

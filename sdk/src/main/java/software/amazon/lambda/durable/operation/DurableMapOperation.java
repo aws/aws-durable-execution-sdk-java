@@ -195,16 +195,11 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         var iterationConfig = childContextConfig(
                 config.serDes(), config.nestingType(), failure -> new MapIterationFailedException(failure.operation()));
         for (int index = 0; index < items.size(); index++) {
+            var reservation = context.reserve(iterationNames.get(index));
             if (replayState.getItem(index).status() == MapResult.MapResultItem.Status.SKIPPED) {
                 continue;
             }
-            launchIteration(
-                    context.reserve(iterationNames.get(index)),
-                    items.get(index),
-                    index,
-                    resultType,
-                    function,
-                    iterationConfig);
+            launchIteration(reservation, items.get(index), index, resultType, function, iterationConfig);
         }
     }
 
