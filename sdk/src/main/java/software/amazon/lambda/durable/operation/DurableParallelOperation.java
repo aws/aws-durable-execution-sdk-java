@@ -21,7 +21,6 @@ import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
-import software.amazon.lambda.durable.extension.ExtensionOperation;
 import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ParameterValidator;
@@ -42,22 +41,7 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         ParameterValidator.validateOperationName(name);
-        return parallel(context, context.reserve(name), config);
-    }
-
-    /**
-     * Creates a parallel operation using an identity reserved by an extension scheduler.
-     *
-     * @param context the active extension context
-     * @param parent the reserved identity for the parallel container
-     * @param config the parallel configuration
-     */
-    public static ParallelDurableFuture parallel(
-            ExtensionContext context, ExtensionOperation parent, ParallelConfig config) {
-        Objects.requireNonNull(context, "context cannot be null");
-        Objects.requireNonNull(parent, "parent cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-        return new ParallelOperationFuture(context, parent, config);
+        return new ParallelOperationFuture(context, name, config);
     }
 
     private static final class ParallelOperationFuture implements ParallelDurableFuture {
@@ -71,9 +55,10 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
         private ParallelResult replayState;
         private boolean registrationClosed;
 
-        ParallelOperationFuture(ExtensionContext context, ExtensionOperation parent, ParallelConfig config) {
+        ParallelOperationFuture(ExtensionContext context, String name, ParallelConfig config) {
             this.config = config;
             defaultSerDes = context.getDurableConfig().getSerDes();
+            var parent = context.reserve(name);
             parentFuture = parent.runInChildContextAsync(
                     PARALLEL.getValue(),
                     parallelResultType(),

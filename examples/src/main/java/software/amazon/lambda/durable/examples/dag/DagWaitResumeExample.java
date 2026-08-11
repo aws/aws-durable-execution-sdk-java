@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.dag;
 
-import static software.amazon.lambda.durable.dag.DagOperations.dag;
+import static software.amazon.lambda.durable.operation.DurableDagOperation.dag;
 
 import java.time.Duration;
 import software.amazon.lambda.durable.DurableContext;

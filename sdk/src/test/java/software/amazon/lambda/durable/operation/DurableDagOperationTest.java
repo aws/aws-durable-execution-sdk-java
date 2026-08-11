@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.dag;
+package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.dag.DagResult;
 import software.amazon.lambda.durable.dag.internal.DagResultSerDes;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
@@ -35,7 +36,7 @@ import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
-class DagOperationsTest {
+class DurableDagOperationTest {
     @Test
     void dagUsesExtensionReservationsForContainerAndTasks() {
         var context = mock(ExtensionContext.class);
@@ -60,7 +61,7 @@ class DagOperationsTest {
 
         DurableFuture<DagResult> actual;
         try (var ignored = BaseContextImpl.attachCurrentContext(context)) {
-            actual = DagOperations.dagAsync(
+            actual = DurableDagOperation.dagAsync(
                     "graph", dag -> dag.step("node", String.class, (deps, step) -> "done", stepConfig));
         }
 
@@ -111,7 +112,7 @@ class DagOperationsTest {
         try (var ignored = BaseContextImpl.attachCurrentContext(context)) {
             assertThrows(
                     IllegalArgumentException.class,
-                    () -> DagOperations.dagAsync("", dag -> registrationCalled.set(true)));
+                    () -> DurableDagOperation.dagAsync("", dag -> registrationCalled.set(true)));
         }
 
         assertEquals(false, registrationCalled.get());

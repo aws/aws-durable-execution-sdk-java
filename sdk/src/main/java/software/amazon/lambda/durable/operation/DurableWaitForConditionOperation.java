@@ -12,7 +12,6 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
-import software.amazon.lambda.durable.extension.ExtensionOperation;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -93,34 +92,16 @@ public final class DurableWaitForConditionOperation {
         Objects.requireNonNull(checkFunction, "checkFunction cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         ParameterValidator.validateOperationName(name);
-        return waitForConditionAsync(context.reserve(name), resultType, checkFunction, config);
-    }
 
-    /**
-     * Creates a wait-for-condition operation using an identity reserved by an extension scheduler.
-     *
-     * @param operation the reserved step identity
-     * @param resultType the state and result type
-     * @param checkFunction the condition function
-     * @param config the wait-for-condition configuration
-     */
-    public static <T> DurableFuture<T> waitForConditionAsync(
-            ExtensionOperation operation,
-            TypeToken<T> resultType,
-            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunction,
-            WaitForConditionConfig<T> config) {
-        Objects.requireNonNull(operation, "operation cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(checkFunction, "checkFunction cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-        var future = operation.stepAsync(
-                OperationSubType.WAIT_FOR_CONDITION.getValue(),
-                resultType,
-                state -> evaluate(state, checkFunction, config),
-                ExtensionStepConfig.<T>builder()
-                        .initialState(config.initialState())
-                        .serDes(config.serDes())
-                        .build());
+        var future = context.reserve(name)
+                .stepAsync(
+                        OperationSubType.WAIT_FOR_CONDITION.getValue(),
+                        resultType,
+                        state -> evaluate(state, checkFunction, config),
+                        ExtensionStepConfig.<T>builder()
+                                .initialState(config.initialState())
+                                .serDes(config.serDes())
+                                .build());
         return new WaitForConditionFuture<>(future);
     }
 

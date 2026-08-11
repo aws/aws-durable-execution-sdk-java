@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,26 +42,6 @@ import software.amazon.lambda.durable.operation.DurableParallelOperation.Paralle
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class DurableParallelOperationImplementationTest {
-    @Test
-    void executeUsesProvidedParentReservation() {
-        var context = mock(ExtensionContext.class);
-        var parent = mock(ExtensionOperation.class);
-        var parentFuture = mockParallelResultFuture();
-        when(context.getDurableConfig()).thenReturn(DurableConfig.builder().build());
-        when(parent.runInChildContextAsync(
-                        eq(PARALLEL.getValue()),
-                        any(TypeToken.class),
-                        any(ExtensionContextFunction.class),
-                        any(ExtensionContextConfig.class)))
-                .thenReturn(parentFuture);
-
-        var actual = DurableParallelOperation.parallel(
-                context, parent, ParallelConfig.builder().build());
-
-        assertNotNull(actual);
-        verify(context, never()).reserve(any());
-    }
-
     @Test
     void executeBuildsParallelAndBranchContextsFromReservations() {
         var context = mock(ExtensionContext.class);

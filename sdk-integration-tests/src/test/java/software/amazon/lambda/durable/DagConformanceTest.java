@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static software.amazon.lambda.durable.dag.DagOperations.dag;
+import static software.amazon.lambda.durable.operation.DurableDagOperation.dag;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -469,8 +469,8 @@ class DagConformanceTest {
     }
 
     // ── DAG-11..15 (validation) ─────────────────────────────────────────────
-    // DagOperations registers and validates the graph eagerly at the dag() call site before reserving the extension
-    // context container. We drive that exact path to observe the typed DagException raised by validation.
+    // DurableDagOperation registers and validates the graph eagerly at the dag() call site before reserving the
+    // extension context container. We drive that exact path to observe the typed DagException raised by validation.
 
     @Test
     void dag11_cycle() {
@@ -812,8 +812,8 @@ class DagConformanceTest {
     }
 
     /**
-     * Asserts the shipped {@link DagValidator} (the validation used by {@code DagOperations}) raises the expected typed
-     * {@link DagException} for a graph, and records the normalized error token.
+     * Asserts the shipped {@link DagValidator} (the validation used by {@code DurableDagOperation}) raises the expected
+     * typed {@link DagException} for a graph, and records the normalized error token.
      */
     private void assertValidation(
             String scenario,

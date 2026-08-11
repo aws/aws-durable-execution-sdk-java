@@ -1,19 +1,22 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.dag;
+package software.amazon.lambda.durable.operation;
 
 import java.util.Objects;
 import java.util.function.Consumer;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.annotations.Experimental;
+import software.amazon.lambda.durable.dag.DagConfig;
+import software.amazon.lambda.durable.dag.DagContext;
+import software.amazon.lambda.durable.dag.DagResult;
 import software.amazon.lambda.durable.dag.internal.DagContextImpl;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
-/** Static entry points for the experimental DAG extension operation. */
+/** Context-free static facade and canonical implementation of experimental durable DAG operations. */
 @Experimental
-public final class DagOperations {
-    private DagOperations() {}
+public final class DurableDagOperation {
+    private DurableDagOperation() {}
 
     /** Declares and runs a DAG using the current durable extension context. */
     public static DagResult dag(String name, Consumer<DagContext> register) {

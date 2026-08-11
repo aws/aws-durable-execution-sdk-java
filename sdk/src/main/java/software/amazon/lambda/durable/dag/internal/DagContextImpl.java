@@ -308,7 +308,15 @@ public final class DagContextImpl implements DagContext {
         var typeToken = TypeToken.get(type);
         recordResultType(name, typeToken);
         TaskExecutor<S> exec = (ctx, operation, deps) -> DurableWaitForConditionOperation.waitForConditionAsync(
-                operation, typeToken, (state, step) -> check.apply(deps, state, step), config.toOperationConfig());
+                new ReservedOperationContext(ctx, name, operation),
+                name,
+                typeToken,
+                (state, step) -> {
+                    var result = check.apply(deps, state, step);
+                    return new DurableWaitForConditionOperation.WaitForConditionResult<>(
+                            result.value(), result.isDone());
+                },
+                config.toOperationConfig());
         return register(new TaskHandleImpl<>(name, TaskKind.WAIT_FOR_CONDITION, exec, config));
     }
 
@@ -353,7 +361,12 @@ public final class DagContextImpl implements DagContext {
             String name, Function<Deps, Collection<I>> items, Class<O> type, MapFunction<I, O> fn, MapConfig config) {
         var typeToken = TypeToken.get(type);
         TaskExecutor<MapResult<O>> exec = (ctx, operation, deps) -> DurableMapOperation.mapAsync(
-                ctx, operation, name, items.apply(deps), typeToken, fn, config.toOperationConfig());
+                new ReservedOperationContext(ctx, name, operation),
+                name,
+                items.apply(deps),
+                typeToken,
+                fn,
+                config.toOperationConfig());
         return register(new TaskHandleImpl<>(name, TaskKind.MAP, exec, config));
     }
 
@@ -368,7 +381,8 @@ public final class DagContextImpl implements DagContext {
             String name, Consumer<ParallelDurableFuture> branches, ParallelConfig config) {
         recordResultType(name, TypeToken.get(ParallelResult.class));
         TaskExecutor<ParallelResult> exec = (ctx, operation, deps) -> {
-            ParallelDurableFuture p = DurableParallelOperation.parallel(ctx, operation, config.toOperationConfig());
+            ParallelDurableFuture p = DurableParallelOperation.parallel(
+                    new ReservedOperationContext(ctx, name, operation), name, config.toOperationConfig());
             branches.accept(p);
             return p;
         };

@@ -25,7 +25,6 @@ import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
-import software.amazon.lambda.durable.extension.ExtensionOperation;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -90,39 +89,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         Objects.requireNonNull(config, "config cannot be null");
         ParameterValidator.validateOperationName(name);
         ParameterValidator.validateOrderedCollection(items);
-        var preparedMap = prepareMap(context, name, items, config);
-        return startMap(context, context.reserve(name), name, preparedMap, resultType, function);
-    }
 
-    /**
-     * Creates a map using an operation identity reserved by an extension scheduler.
-     *
-     * @param context the active extension context
-     * @param parent the reserved identity for the map container
-     * @param name the map operation name
-     */
-    public static <I, O> DurableFuture<MapResult<O>> mapAsync(
-            ExtensionContext context,
-            ExtensionOperation parent,
-            String name,
-            Collection<I> items,
-            TypeToken<O> resultType,
-            DurableContext.MapFunction<I, O> function,
-            MapConfig config) {
-        Objects.requireNonNull(context, "context cannot be null");
-        Objects.requireNonNull(parent, "parent cannot be null");
-        Objects.requireNonNull(items, "items cannot be null");
-        Objects.requireNonNull(function, "function cannot be null");
-        Objects.requireNonNull(resultType, "resultType cannot be null");
-        Objects.requireNonNull(config, "config cannot be null");
-        ParameterValidator.validateOperationName(name);
-        ParameterValidator.validateOrderedCollection(items);
-        var preparedMap = prepareMap(context, name, items, config);
-        return startMap(context, parent, name, preparedMap, resultType, function);
-    }
-
-    private static <I> PreparedMap<I> prepareMap(
-            ExtensionContext context, String name, Collection<I> items, MapConfig config) {
         if (config.serDes() == null) {
             config = config.toBuilder()
                     .serDes(context.getDurableConfig().getSerDes())
@@ -130,20 +97,10 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         }
         var itemList = List.copyOf(items);
         var iterationNames = resolveIterationNames(name, itemList, config);
+        var parent = context.reserve(name);
         validateMinSuccessful(itemList, config);
-        return new PreparedMap<>(itemList, iterationNames, config);
-    }
 
-    private static <I, O> DurableFuture<MapResult<O>> startMap(
-            ExtensionContext context,
-            ExtensionOperation parent,
-            String name,
-            PreparedMap<I> preparedMap,
-            TypeToken<O> resultType,
-            DurableContext.MapFunction<I, O> function) {
-        var itemList = preparedMap.items();
-        var iterationNames = preparedMap.iterationNames();
-        var mapConfig = preparedMap.config();
+        var mapConfig = config;
         var virtualEmptyMap = itemList.isEmpty() && !context.getDurableConfig().shouldCheckpointEmptyMap();
         var parentConfig = parentContextConfig(mapConfig.serDes(), virtualEmptyMap).toBuilder()
                 .validateCompletedReplay(true)
@@ -403,8 +360,6 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             }
         }
     }
-
-    private record PreparedMap<I>(List<I> items, List<String> iterationNames, MapConfig config) {}
 
     /** Configuration for durable MAP operations. */
     public static final class MapConfig {

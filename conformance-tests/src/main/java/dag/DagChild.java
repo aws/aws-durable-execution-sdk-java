@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package dag;
 
-import static software.amazon.lambda.durable.dag.DagOperations.dag;
+import static software.amazon.lambda.durable.operation.DurableDagOperation.dag;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
