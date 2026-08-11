@@ -28,6 +28,16 @@ final class PluginSupport {
     }
 
     /**
+     * Operation type token for context operations (parallel, map, run-in-child-context, wait-for-callback) as reported
+     * by {@code OperationInfo#type()} / {@code UserFunctionStartInfo#type()} ({@code OperationType.CONTEXT}). Both the
+     * parallel parent and its branches report this token; the branch is distinguished by the {@code ParallelBranch}
+     * sub-type.
+     */
+    static boolean isContext(String type) {
+        return "CONTEXT".equals(type);
+    }
+
+    /**
      * Operation type token for step operations as reported by {@code OperationChangeItemInfo#type()}
      * ({@code Operation#typeAsString()} straight off the checkpoint response). Compared case-insensitively because it
      * is a different source string than the {@code OperationType} enum used elsewhere.
