@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -219,12 +220,16 @@ class ExecutionManagerTest {
     void awaitFutureDeregistersAndReregistersCurrentContextThread() {
         var manager = spy(createManager(List.of(executionOp())));
         var deregistered = new CountDownLatch(1);
+        manager.registerActiveThread("context");
+        manager.registerActiveThread("other");
+        clearInvocations(manager);
         doAnswer(invocation -> {
+                    invocation.callRealMethod();
                     deregistered.countDown();
                     return null;
                 })
                 .when(manager)
-                .deregisterActiveThread("context");
+                .deregisterActiveThreadForFuture(any(), any());
         var future = new CompletableFuture<String>();
         manager.setCurrentThreadContext(new ThreadContext("context", ThreadType.CONTEXT));
         CompletableFuture.runAsync(() -> {
@@ -238,7 +243,38 @@ class ExecutionManagerTest {
         });
 
         assertEquals("done", manager.awaitFuture(future));
-        verify(manager).deregisterActiveThread("context");
+        verify(manager).deregisterActiveThreadForFuture(any(), any());
         verify(manager).registerActiveThread("context");
+        assertFalse(manager.isExecutionCompletedExceptionally());
+    }
+
+    @Test
+    void awaitFutureDoesNotSuspendWhenFutureCompletesDuringDeregistration() {
+        var manager = spy(createManager(List.of(executionOp())));
+        var future = new CompletableFuture<String>();
+        manager.registerActiveThread("context");
+        clearInvocations(manager);
+        manager.setCurrentThreadContext(new ThreadContext("context", ThreadType.CONTEXT));
+        doAnswer(invocation -> {
+                    future.complete("done");
+                    invocation.callRealMethod();
+                    return null;
+                })
+                .when(manager)
+                .deregisterActiveThreadForFuture(any(), any());
+
+        assertEquals("done", manager.awaitFuture(future));
+        verify(manager).registerActiveThread("context");
+        assertFalse(manager.isExecutionCompletedExceptionally());
+    }
+
+    @Test
+    void awaitFutureSuspendsWhenFutureRemainsPendingAndNoOtherThreadsAreActive() {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("context");
+        manager.setCurrentThreadContext(new ThreadContext("context", ThreadType.CONTEXT));
+
+        assertThrows(SuspendExecutionException.class, () -> manager.awaitFuture(new CompletableFuture<>()));
+        assertTrue(manager.isExecutionCompletedExceptionally());
     }
 }
