@@ -19,7 +19,7 @@ concurrency:
 
 env:
   LAYER_NAME: aws-durable-execution-sdk-java-otel-plugin
-  SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || github.event.release.tag_name }}
+  SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.release.tag_name }}
   DEFAULT_LAYER_REGIONS: >-
     af-south-1,
     ap-east-1,
@@ -65,12 +65,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sdk_version: ${{ steps.version.outputs.sdk_version }}
+      source_sha: ${{ steps.source.outputs.sha }}
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           ref: ${{ env.SOURCE_REF }}
+
+      - name: Record source revision
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -100,6 +107,21 @@ jobs:
           fi
 
           echo "sdk_version=$sdk_version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release source
+        if: github.event_name == 'release'
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin "$BASE_BRANCH"
+          if ! git merge-base --is-ancestor "${RELEASE_TAG}^{commit}" "origin/${BASE_BRANCH}"; then
+            echo "Release tag $RELEASE_TAG does not point to a commit on $BASE_BRANCH." >&2
+            exit 1
+          fi
 
       - name: Build layer zip
         id: build-layer
@@ -175,6 +197,7 @@ jobs:
         env:
           LAYER_ZIP: dist/${{ env.LAYER_NAME }}.zip
           SDK_VERSION: ${{ needs.build-layer.outputs.sdk_version }}
+          SOURCE_SHA: ${{ needs.build-layer.outputs.source_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -190,7 +213,7 @@ jobs:
               continue
             fi
 
-            LAYER_DESCRIPTION="AWS Durable Execution SDK for Java ${SDK_VERSION} OTel plugin sha256:${LOCAL_CODE_SHA256}"
+            LAYER_DESCRIPTION="AWS Durable Execution SDK for Java ${SDK_VERSION} OTel plugin source:${SOURCE_SHA}"
             if ! EXISTING_RESULT=$(aws lambda list-layer-versions \
                 --layer-name "$LAYER_NAME" \
                 --region "$REGION" \
