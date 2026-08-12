@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Invocation-level information available to plugin hooks.
@@ -13,15 +14,14 @@ import java.time.Instant;
  * @param executionStartTime the start timestamp of the durable execution, taken from the initial EXECUTION operation in
  *     the first event delivered by the backend. Stable across all invocations of the same execution.
  * @param executionInput the deserialized execution input passed to the user handler, or null when no plugins are
- *     registered or the input could not be deserialized. This is a preview API that is experimental and may be changed
- *     or removed in future releases.
+ *     registered or the input could not be deserialized; this component is experimental
  */
 public record InvocationInfo(
         String requestId,
         String durableExecutionArn,
         boolean isFirstInvocation,
         Instant executionStartTime,
-        @Deprecated Object executionInput) {
+        @Experimental Object executionInput) {
 
     /**
      * Creates invocation information without an execution input.
