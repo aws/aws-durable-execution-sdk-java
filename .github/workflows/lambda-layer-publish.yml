@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: lambda-layer-publish-${{ github.event.release.tag_name || github.ref_name }}
+  group: lambda-layer-publish-${{ github.sha }}
   cancel-in-progress: false
 
 env:
@@ -77,7 +77,11 @@ jobs:
       - name: Record source revision
         id: source
         shell: bash
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+
+          echo "epoch=$(git show -s --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -128,19 +132,41 @@ jobs:
         env:
           LAYER_ZIP: dist/${{ env.LAYER_NAME }}.zip
           SDK_VERSION: ${{ steps.version.outputs.sdk_version }}
+          SOURCE_DATE_EPOCH: ${{ steps.source.outputs.epoch }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          TZ: UTC
         shell: bash
         run: |
           set -euo pipefail
 
-          mvn -B -q -pl otel-plugin -am package -DskipTests --no-transfer-progress
-          mkdir -p layer/java/lib dist
-          cp "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${SDK_VERSION}.jar" \
-            layer/java/lib/
-          cp LICENSE NOTICE layer/
-          (
-            cd layer
-            zip -q -r "$GITHUB_WORKSPACE/$LAYER_ZIP" .
-          )
+          build_layer() {
+            local output_zip=$1
+
+            mvn -B -q -pl otel-plugin -am clean package \
+              -DskipTests \
+              -Dproject.build.outputTimestamp="$SOURCE_DATE_EPOCH" \
+              --no-transfer-progress
+            rm -rf layer
+            rm -f "$output_zip"
+            mkdir -p layer/java/lib "$(dirname "$output_zip")"
+            cp "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${SDK_VERSION}.jar" \
+              layer/java/lib/
+            cp LICENSE NOTICE layer/
+            find layer -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
+            (
+              cd layer
+              find . -type f -print | LC_ALL=C sort | zip -X -q "$GITHUB_WORKSPACE/$output_zip" -@
+            )
+          }
+
+          rebuild_zip="${LAYER_ZIP%.zip}-rebuild.zip"
+          build_layer "$LAYER_ZIP"
+          build_layer "$rebuild_zip"
+          if ! cmp --silent "$LAYER_ZIP" "$rebuild_zip"; then
+            echo "Layer builds for source $SOURCE_SHA are not reproducible." >&2
+            exit 1
+          fi
+          rm "$rebuild_zip"
           echo "layer_zip=$LAYER_ZIP" >> "$GITHUB_OUTPUT"
 
       - name: Verify layer contents
@@ -285,6 +311,44 @@ jobs:
                 FAILED_REGIONS+=("$REGION")
                 continue
               fi
+            fi
+
+            if ! POLICY_RESULT=$(aws lambda get-layer-version-policy \
+                --layer-name "$LAYER_NAME" \
+                --version-number "$VERSION_NUMBER" \
+                --region "$REGION" \
+                --query Policy \
+                --output text 2>&1); then
+              echo "$POLICY_RESULT" >&2
+              echo "::warning::Failed to read the access policy for ${LAYER_VERSION_ARN}"
+              FAILED_REGIONS+=("$REGION")
+              continue
+            fi
+            if ! jq -e '
+                .Statement
+                | if type == "array" then . else [.] end
+                | any(.[];
+                    .Sid == "public-layer-access"
+                    and .Effect == "Allow"
+                    and (
+                      .Action == "lambda:GetLayerVersion"
+                      or (
+                        (.Action | type) == "array"
+                        and (.Action | index("lambda:GetLayerVersion")) != null
+                      )
+                    )
+                    and (
+                      .Principal == "*"
+                      or (
+                        (.Principal | type) == "object"
+                        and .Principal.AWS == "*"
+                      )
+                    )
+                  )
+              ' <<< "$POLICY_RESULT" > /dev/null; then
+              echo "::error::Expected public access policy is missing for ${LAYER_VERSION_ARN}"
+              FAILED_REGIONS+=("$REGION")
+              continue
             fi
 
             echo "Available ${LAYER_VERSION_ARN}"
