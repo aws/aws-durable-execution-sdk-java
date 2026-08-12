@@ -67,20 +67,33 @@ public class DurableExecutor {
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
+                        // Deserialize once and share the value with the plugin hooks and the handler below. A second
+                        // deserialization would double the cost, hand plugins a different object than the handler, and
+                        // re-run any side effects in a stateful custom SerDes. A failure is captured rather than thrown
+                        // so onInvocationStart still fires before it surfaces, keeping the start/end hooks paired.
+                        I userInput = null;
+                        RuntimeException inputFailure = null;
+                        try {
+                            userInput = extractUserInput(
+                                    executionManager.getExecutionOperation(), config.getSerDes(), inputType);
+                        } catch (RuntimeException e) {
+                            inputFailure = e;
+                        }
+                        pluginExecutionInput.set(userInput);
+
                         // onInvocationStart runs on the user thread so plugins can
                         // inject ThreadLocal objects, update MDC, etc.
                         // executionStartTime comes from the initial EXECUTION operation in the first backend event.
-                        pluginExecutionInput.set(extractUserInputForPlugins(
-                                pluginRunner, executionManager.getExecutionOperation(), config.getSerDes(), inputType));
                         pluginRunner.onInvocationStart(new InvocationInfo(
                                 requestId,
                                 executionArn,
                                 isFirstInvocation,
                                 executionManager.getExecutionOperation().startTimestamp(),
-                                pluginExecutionInput.get()));
+                                userInput));
+                        if (inputFailure != null) {
+                            throw inputFailure;
+                        }
 
-                        var userInput = extractUserInput(
-                                executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                         var context = DurableContextImpl.createRootContext(executionManager, config, lambdaContext);
                         DurableContextImpl.setCurrentContext(context);
                         // use a try-with-resources to clear logger properties
@@ -182,26 +195,6 @@ public class DurableExecutor {
             Object executionResult) {
         pluginRunner.onInvocationEnd(new InvocationEndInfo(
                 requestId, executionArn, isFirstInvocation, status, error, executionInput, executionResult));
-    }
-
-    /**
-     * Deserializes the execution input for the plugin hooks, or returns null when it is not needed or not available.
-     *
-     * <p>Skipped entirely when no plugins are registered, so plugin-less executions pay nothing. A deserialization
-     * failure yields null rather than propagating: the authoritative extraction below still surfaces the error at its
-     * original point, so the plugin hooks must not change when the invocation fails.
-     */
-    private static <I> Object extractUserInputForPlugins(
-            PluginRunner pluginRunner, Operation executionOp, SerDes serDes, TypeToken<I> inputType) {
-        if (pluginRunner.isEmpty()) {
-            return null;
-        }
-        try {
-            return extractUserInput(executionOp, serDes, inputType);
-        } catch (RuntimeException e) {
-            logger.debug("Could not deserialize execution input for plugins: {}", e.getMessage());
-            return null;
-        }
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {

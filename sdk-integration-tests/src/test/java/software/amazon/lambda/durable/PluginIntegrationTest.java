@@ -8,7 +8,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -19,6 +22,8 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.retry.RetryStrategies;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 /** Integration tests verifying plugin hooks fire correctly during durable execution lifecycle. */
@@ -192,6 +197,56 @@ class PluginIntegrationTest {
         assertEquals(InvocationStatus.PENDING, end.invocationStatus());
         assertEquals("input", end.executionInput());
         assertNull(end.executionResult(), "a suspended invocation has not produced a result yet");
+    }
+
+    @Test
+    void plugin_executionInput_isDeserializedOnce_andSharedWithHandler() {
+        var serDes = new CountingSerDes();
+        var plugin = new RecordingPlugin();
+        var config =
+                DurableConfig.builder().withPlugins(plugin).withSerDes(serDes).build();
+        var handlerInput = new AtomicReference<Object>();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    handlerInput.set(input);
+                    return context.step("greet", String.class, stepCtx -> "Hello " + input);
+                },
+                config);
+
+        var result = runner.runUntilComplete("World");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // The handler input is deserialized once and that same instance reaches the hooks — a second
+        // deserialization would double the cost and re-run side effects in a stateful SerDes.
+        assertEquals(1, serDes.inputDeserializations("World"));
+        assertSame(handlerInput.get(), plugin.invocationStarts.get(0).executionInput());
+        assertSame(handlerInput.get(), plugin.invocationEnds.get(0).executionInput());
+    }
+
+    /** SerDes that counts how many times each payload is deserialized. */
+    static class CountingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final Map<String, AtomicInteger> deserializations = new ConcurrentHashMap<>();
+
+        @Override
+        public String serialize(Object value) {
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializations
+                    .computeIfAbsent(data, ignored -> new AtomicInteger())
+                    .incrementAndGet();
+            return delegate.deserialize(data, typeToken);
+        }
+
+        int inputDeserializations(String value) {
+            var counter = deserializations.get(delegate.serialize(value));
+            return counter == null ? 0 : counter.get();
+        }
     }
 
     // ─── Operation-level hooks ───────────────────────────────────────────

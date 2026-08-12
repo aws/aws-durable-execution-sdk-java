@@ -38,4 +38,17 @@ public record InvocationInfo(
             String requestId, String durableExecutionArn, boolean isFirstInvocation, Instant executionStartTime) {
         this(requestId, durableExecutionArn, isFirstInvocation, executionStartTime, null);
     }
+
+    /**
+     * Returns a representation that omits {@code executionInput}.
+     *
+     * <p>The generated representation would render the execution input, so plugins that log this object whole would
+     * start emitting customer payloads, potentially including secrets or personal data. Read the component explicitly
+     * to record it.
+     */
+    @Override
+    public String toString() {
+        return "InvocationInfo[requestId=" + requestId + ", durableExecutionArn=" + durableExecutionArn
+                + ", isFirstInvocation=" + isFirstInvocation + ", executionStartTime=" + executionStartTime + "]";
+    }
 }

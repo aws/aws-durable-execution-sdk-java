@@ -46,4 +46,18 @@ public record InvocationEndInfo(
             Throwable executionError) {
         this(requestId, durableExecutionArn, isFirstInvocation, invocationStatus, executionError, null, null);
     }
+
+    /**
+     * Returns a representation that omits {@code executionInput} and {@code executionResult}.
+     *
+     * <p>The generated representation would render both payloads, so plugins that log this object whole would start
+     * emitting customer inputs and results, potentially including secrets or personal data. Read the components
+     * explicitly to record them.
+     */
+    @Override
+    public String toString() {
+        return "InvocationEndInfo[requestId=" + requestId + ", durableExecutionArn=" + durableExecutionArn
+                + ", isFirstInvocation=" + isFirstInvocation + ", invocationStatus=" + invocationStatus
+                + ", executionError=" + executionError + "]";
+    }
 }
