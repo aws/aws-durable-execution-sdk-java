@@ -4,6 +4,7 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /** Integration tests verifying plugin hooks fire correctly during durable execution lifecycle. */
 class PluginIntegrationTest {
@@ -246,6 +248,45 @@ class PluginIntegrationTest {
         int inputDeserializations(String value) {
             var counter = deserializations.get(delegate.serialize(value));
             return counter == null ? 0 : counter.get();
+        }
+    }
+
+    @Test
+    void plugin_hooksStayPaired_whenSerDesSneakyThrowsCheckedException() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(plugin)
+                .withSerDes(new SneakyThrowingSerDes())
+                .build();
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unreachable", config);
+
+        var result = runner.run("input");
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        // SerDes.deserialize declares no checked exceptions, so an implementation can sneaky-throw one. The start
+        // hook must still fire, otherwise a plugin keying state on it sees an end with no start.
+        assertEquals(1, plugin.invocationStarts.size(), "onInvocationStart must fire before the failure surfaces");
+        assertNull(plugin.invocationStarts.get(0).executionInput(), "input could not be deserialized");
+        assertEquals(1, plugin.invocationEnds.size());
+        assertEquals(InvocationStatus.FAILED, plugin.invocationEnds.get(0).invocationStatus());
+    }
+
+    /**
+     * SerDes that sneaky-throws a checked exception from deserialize, as DurableInputOutputSerDes does on IO errors.
+     */
+    static class SneakyThrowingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+
+        @Override
+        public String serialize(Object value) {
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            ExceptionHelper.sneakyThrow(new IOException("sneaky checked failure"));
+            return null;
         }
     }
 

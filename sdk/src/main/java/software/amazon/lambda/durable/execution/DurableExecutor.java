@@ -71,13 +71,15 @@ public class DurableExecutor {
                         // deserialization would double the cost, hand plugins a different object than the handler, and
                         // re-run any side effects in a stateful custom SerDes. A failure is captured rather than thrown
                         // so onInvocationStart still fires before it surfaces, keeping the start/end hooks paired.
+                        // SerDes is a public extension point whose deserialize declares no checked exceptions, so an
+                        // implementation may sneaky-throw one; capture every Throwable and rethrow it unchanged.
                         I userInput = null;
-                        RuntimeException inputFailure = null;
+                        Throwable inputFailure = null;
                         try {
                             userInput = extractUserInput(
                                     executionManager.getExecutionOperation(), config.getSerDes(), inputType);
-                        } catch (RuntimeException e) {
-                            inputFailure = e;
+                        } catch (Throwable t) {
+                            inputFailure = t;
                         }
                         pluginExecutionInput.set(userInput);
 
@@ -91,7 +93,7 @@ public class DurableExecutor {
                                 executionManager.getExecutionOperation().startTimestamp(),
                                 userInput));
                         if (inputFailure != null) {
-                            throw inputFailure;
+                            ExceptionHelper.sneakyThrow(inputFailure);
                         }
 
                         var context = DurableContextImpl.createRootContext(executionManager, config, lambdaContext);
