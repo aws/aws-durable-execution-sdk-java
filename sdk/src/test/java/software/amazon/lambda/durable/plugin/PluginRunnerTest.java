@@ -133,6 +133,41 @@ class PluginRunnerTest {
         assertEquals(List.of("p1:onInvocationStart"), calls);
     }
 
+    // ─── Execution input / result components ─────────────────────────────
+
+    @Test
+    void invocationInfo_compatibilityConstructor_leavesExecutionInputNull() {
+        var info = new InvocationInfo("req-123", "arn:test", false, Instant.now());
+
+        assertNull(info.executionInput());
+    }
+
+    @Test
+    void invocationInfo_carriesExecutionInput() {
+        var input = Map.of("name", "World");
+
+        var info = new InvocationInfo("req-123", "arn:test", true, Instant.now(), input);
+
+        assertEquals(input, info.executionInput());
+    }
+
+    @Test
+    void invocationEndInfo_compatibilityConstructor_leavesExecutionInputAndResultNull() {
+        var info = new InvocationEndInfo("req-123", "arn:test", false, InvocationStatus.SUCCEEDED, null);
+
+        assertNull(info.executionInput());
+        assertNull(info.executionResult());
+    }
+
+    @Test
+    void invocationEndInfo_carriesExecutionInputAndResult() {
+        var info = new InvocationEndInfo(
+                "req-123", "arn:test", false, InvocationStatus.SUCCEEDED, null, "World", "Hello World");
+
+        assertEquals("World", info.executionInput());
+        assertEquals("Hello World", info.executionResult());
+    }
+
     // ─── Helper methods ──────────────────────────────────────────────────
 
     private static InvocationInfo invocationInfo() {

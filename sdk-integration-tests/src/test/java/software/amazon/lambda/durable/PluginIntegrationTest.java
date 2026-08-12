@@ -122,6 +122,78 @@ class PluginIntegrationTest {
         assertNotNull(plugin.invocationEnds.get(0).executionError());
     }
 
+    @Test
+    void plugin_invocationHooks_carryExecutionInputAndResult_onSuccess() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step("greet", String.class, stepCtx -> "Hello " + input),
+                config);
+
+        var result = runner.runUntilComplete("World");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // The deserialized handler input reaches the start hook ...
+        assertEquals("World", plugin.invocationStarts.get(0).executionInput());
+        // ... and the end hook, alongside the value the handler returned.
+        var end = plugin.invocationEnds.get(0);
+        assertEquals("World", end.executionInput());
+        assertEquals("Hello World", end.executionResult());
+    }
+
+    @Test
+    void plugin_invocationEnd_omitsExecutionResult_onFailure() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "failing",
+                        String.class,
+                        stepCtx -> {
+                            throw new RuntimeException("boom");
+                        },
+                        StepConfig.builder()
+                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                                .build()),
+                config);
+
+        var result = runner.run("input");
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        var end = plugin.invocationEnds.get(0);
+        assertEquals("input", end.executionInput());
+        assertNull(end.executionResult(), "a failed execution produced no result");
+    }
+
+    @Test
+    void plugin_invocationEnd_omitsExecutionResult_onSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.wait("pause", Duration.ofMinutes(5));
+                    return "complete";
+                },
+                config);
+
+        var result = runner.run("input");
+
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        var end = plugin.invocationEnds.get(0);
+        assertEquals(InvocationStatus.PENDING, end.invocationStatus());
+        assertEquals("input", end.executionInput());
+        assertNull(end.executionResult(), "a suspended invocation has not produced a result yet");
+    }
+
     // ─── Operation-level hooks ───────────────────────────────────────────
 
     @Test
