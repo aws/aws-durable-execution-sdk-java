@@ -243,7 +243,7 @@ jobs:
             if ! EXISTING_RESULT=$(aws lambda list-layer-versions \
                 --layer-name "$LAYER_NAME" \
                 --region "$REGION" \
-                --query "LayerVersions[?Description=='${LAYER_DESCRIPTION}'] | [0].[LayerVersionArn,Version]" \
+                --query "LayerVersions[?Description=='${LAYER_DESCRIPTION}'].[LayerVersionArn,Version]" \
                 --output text 2>&1); then
               if [[ "$EXISTING_RESULT" == *"ResourceNotFoundException"* ]]; then
                 EXISTING_RESULT=""
@@ -255,7 +255,7 @@ jobs:
               fi
             fi
 
-            if [ -n "$EXISTING_RESULT" ] && [ "$EXISTING_RESULT" != "None" ]; then
+            if [ -n "$EXISTING_RESULT" ]; then
               read -r LAYER_VERSION_ARN VERSION_NUMBER <<< "$EXISTING_RESULT"
               if ! EXISTING_CODE_SHA256=$(aws lambda get-layer-version \
                   --layer-name "$LAYER_NAME" \
