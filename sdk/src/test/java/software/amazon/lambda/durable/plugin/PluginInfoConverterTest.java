@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
+import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -111,6 +114,103 @@ class PluginInfoConverterTest {
         var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
 
         assertEquals("\"hello\"", info.result());
+    }
+
+    @Test
+    void toOperationEndInfo_extractsResult_fromSucceededChainedInvoke() {
+        var operation = Operation.builder()
+                .startTimestamp(START)
+                .endTimestamp(END)
+                .type(OperationType.CHAINED_INVOKE)
+                .status(OperationStatus.SUCCEEDED)
+                .chainedInvokeDetails(
+                        ChainedInvokeDetails.builder().result("\"invoked\"").build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
+
+        assertEquals("\"invoked\"", info.result());
+    }
+
+    @Test
+    void toOperationEndInfo_extractsResult_fromSucceededCallback() {
+        var operation = Operation.builder()
+                .startTimestamp(START)
+                .endTimestamp(END)
+                .type(OperationType.CALLBACK)
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(
+                        CallbackDetails.builder().result("\"called-back\"").build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
+
+        assertEquals("\"called-back\"", info.result());
+    }
+
+    @Test
+    void toOperationEndInfo_extractsResult_fromSucceededContext() {
+        var operation = Operation.builder()
+                .startTimestamp(START)
+                .endTimestamp(END)
+                .type(OperationType.CONTEXT)
+                .status(OperationStatus.SUCCEEDED)
+                .contextDetails(
+                        ContextDetails.builder().result("\"child-done\"").build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
+
+        assertEquals("\"child-done\"", info.result());
+    }
+
+    @Test
+    void toOperationEndInfo_resultIsNull_whenFailedWaitForConditionRetainsCheckpointState() {
+        // A wait-for-condition is checkpointed as STEP and reuses stepDetails().result() to carry its
+        // intermediate check-loop state between attempts, so a failed one can still hold state.
+        var operation = Operation.builder()
+                .startTimestamp(START)
+                .endTimestamp(END)
+                .type(OperationType.STEP)
+                .status(OperationStatus.FAILED)
+                .stepDetails(
+                        StepDetails.builder().attempt(3).result("{\"polls\":2}").build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationEndInfo(operation, STEP_IDENTIFIER, null, false, null);
+
+        assertNull(info.result(), "a failed operation must not report intermediate state as its result");
+    }
+
+    @Test
+    void operationEndInfo_compatibilityConstructor_leavesResultNull() {
+        var info = new OperationEndInfo(
+                OPERATION_ID, OPERATION_NAME, "STEP", "Step", PARENT_ID, START, END, "SUCCEEDED", 1, false, null);
+
+        assertNull(info.result());
+    }
+
+    @Test
+    void operationEndInfo_toString_omitsResult() {
+        var info = new OperationEndInfo(
+                OPERATION_ID,
+                OPERATION_NAME,
+                "STEP",
+                "Step",
+                PARENT_ID,
+                START,
+                END,
+                "SUCCEEDED",
+                1,
+                false,
+                null,
+                "s3cret-result");
+
+        var rendered = info.toString();
+
+        assertFalse(rendered.contains("s3cret-result"), "operation result must not leak into logs");
+        assertTrue(rendered.contains(OPERATION_ID));
+        assertTrue(rendered.contains("SUCCEEDED"));
     }
 
     @Test
