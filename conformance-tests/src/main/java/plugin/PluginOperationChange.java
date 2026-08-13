@@ -17,7 +17,6 @@ import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
  * operation in the change's updated-operations delta, logs the operation id, its post-change status, and whether that
  * id is also present in the change info's full operation map.
  */
-@SuppressWarnings("deprecation")
 public class PluginOperationChange extends DurableHandler<String, String> {
 
     @Override

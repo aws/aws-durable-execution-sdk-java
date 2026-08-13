@@ -23,7 +23,6 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * and fn-end (with outcome) from the real user-function hooks, carrying the branch operation id and the parallel parent
  * id. These hooks run on the branch's own thread, so start-before-end order per branch is deterministic.
  */
-@SuppressWarnings("deprecation")
 public class PluginParallelBranchHooks extends DurableHandler<Object, List<String>> {
 
     @Override

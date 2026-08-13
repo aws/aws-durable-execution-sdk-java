@@ -7,6 +7,7 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,9 +61,27 @@ public class DurableExecutor {
             var executionArn = input.durableExecutionArn();
 
             executionManager.registerActiveThread(null);
+            // Captured for onInvocationEnd, which runs outside the handler thread below.
+            var pluginExecutionInput = new AtomicReference<>();
             var handlerFuture = CompletableFuture.supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
+
+                        // Deserialize once and share the value with the plugin hooks and the handler below. A second
+                        // deserialization would double the cost, hand plugins a different object than the handler, and
+                        // re-run any side effects in a stateful custom SerDes. A failure is captured rather than thrown
+                        // so onInvocationStart still fires before it surfaces, keeping the start/end hooks paired.
+                        // SerDes is a public extension point whose deserialize declares no checked exceptions, so an
+                        // implementation may sneaky-throw one; capture every Throwable and rethrow it unchanged.
+                        I userInput = null;
+                        Throwable inputFailure = null;
+                        try {
+                            userInput = extractUserInput(
+                                    executionManager.getExecutionOperation(), config.getSerDes(), inputType);
+                        } catch (Throwable t) {
+                            inputFailure = t;
+                        }
+                        pluginExecutionInput.set(userInput);
 
                         // onInvocationStart runs on the user thread so plugins can
                         // inject ThreadLocal objects, update MDC, etc.
@@ -71,10 +90,12 @@ public class DurableExecutor {
                                 requestId,
                                 executionArn,
                                 isFirstInvocation,
-                                executionManager.getExecutionOperation().startTimestamp()));
+                                executionManager.getExecutionOperation().startTimestamp(),
+                                userInput));
+                        if (inputFailure != null) {
+                            ExceptionHelper.sneakyThrow(inputFailure);
+                        }
 
-                        var userInput = extractUserInput(
-                                executionManager.getExecutionOperation(), config.getSerDes(), inputType);
                         var context = DurableContextImpl.createRootContext(executionManager, config, lambdaContext);
                         DurableContextImpl.setCurrentContext(context);
                         // use a try-with-resources to clear logger properties
@@ -103,6 +124,8 @@ public class DurableExecutor {
                                             executionArn,
                                             isFirstInvocation,
                                             InvocationStatus.PENDING,
+                                            null,
+                                            pluginExecutionInput.get(),
                                             null);
                                     return DurableExecutionOutput.pending();
                                 }
@@ -119,7 +142,9 @@ public class DurableExecutor {
                                             executionArn,
                                             isFirstInvocation,
                                             InvocationStatus.RETRYING,
-                                            cause);
+                                            cause,
+                                            pluginExecutionInput.get(),
+                                            null);
                                     throw unrecoverableDurableExecutionException;
                                 }
 
@@ -131,7 +156,9 @@ public class DurableExecutor {
                                         executionArn,
                                         isFirstInvocation,
                                         InvocationStatus.FAILED,
-                                        cause);
+                                        cause,
+                                        pluginExecutionInput.get(),
+                                        null);
                                 return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
                             }
                             // user handler complete successfully
@@ -145,7 +172,9 @@ public class DurableExecutor {
                                     executionArn,
                                     isFirstInvocation,
                                     InvocationStatus.SUCCEEDED,
-                                    null);
+                                    null,
+                                    pluginExecutionInput.get(),
+                                    result);
                             return output;
                         })
                         .join();
@@ -163,8 +192,11 @@ public class DurableExecutor {
             String executionArn,
             boolean isFirstInvocation,
             InvocationStatus status,
-            Throwable error) {
-        pluginRunner.onInvocationEnd(new InvocationEndInfo(requestId, executionArn, isFirstInvocation, status, error));
+            Throwable error,
+            Object executionInput,
+            Object executionResult) {
+        pluginRunner.onInvocationEnd(new InvocationEndInfo(
+                requestId, executionArn, isFirstInvocation, status, error, executionInput, executionResult));
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {

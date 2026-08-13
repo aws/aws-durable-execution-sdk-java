@@ -19,7 +19,6 @@ import software.amazon.lambda.durable.plugin.OperationInfo;
  * STARTED checkpoint is observed and operation-end with the terminal status. The type token is normalized to upper-case
  * (WAIT).
  */
-@SuppressWarnings("deprecation")
 public class PluginWaitOperationHooks extends DurableHandler<Object, String> {
 
     @Override

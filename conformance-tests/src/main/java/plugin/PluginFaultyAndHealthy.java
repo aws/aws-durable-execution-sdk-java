@@ -24,7 +24,6 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * plugin. Attempt boundaries are the real user-function hooks ({@code onUserFunctionStart}/{@code onUserFunctionEnd},
  * filtered to step attempts); the healthy attempt-end reports the SDK's real success/failure outcome.
  */
-@SuppressWarnings("deprecation")
 public class PluginFaultyAndHealthy extends DurableHandler<String, String> {
 
     @Override

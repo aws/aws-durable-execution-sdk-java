@@ -42,7 +42,7 @@ The `withExecutorService()` option configures the thread pool used for running u
 
 ### Dynamic plugin loading
 
-Dynamic plugin loading is an experimental, opt-in alternative to registering plugins in application code. Put provider JARs on the application class path, then set `DURABLE_EXECUTION_PLUGINS` to an ordered, comma-separated list of provider names:
+Dynamic plugin loading is an opt-in alternative to registering plugins in application code. Put provider JARs on the application class path, then set `DURABLE_EXECUTION_PLUGINS` to an ordered, comma-separated list of provider names:
 
 ```text
 DURABLE_EXECUTION_PLUGINS=otel-invocation,com.example.audit
