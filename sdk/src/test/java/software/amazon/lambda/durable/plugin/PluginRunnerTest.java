@@ -133,6 +133,65 @@ class PluginRunnerTest {
         assertEquals(List.of("p1:onInvocationStart"), calls);
     }
 
+    // ─── Execution input / result components ─────────────────────────────
+
+    @Test
+    void invocationInfo_compatibilityConstructor_leavesExecutionInputNull() {
+        var info = new InvocationInfo("req-123", "arn:test", false, Instant.now());
+
+        assertNull(info.executionInput());
+    }
+
+    @Test
+    void invocationInfo_carriesExecutionInput() {
+        var input = Map.of("name", "World");
+
+        var info = new InvocationInfo("req-123", "arn:test", true, Instant.now(), input);
+
+        assertEquals(input, info.executionInput());
+    }
+
+    @Test
+    void invocationEndInfo_compatibilityConstructor_leavesExecutionInputAndResultNull() {
+        var info = new InvocationEndInfo("req-123", "arn:test", false, InvocationStatus.SUCCEEDED, null);
+
+        assertNull(info.executionInput());
+        assertNull(info.executionResult());
+    }
+
+    @Test
+    void invocationEndInfo_carriesExecutionInputAndResult() {
+        var info = new InvocationEndInfo(
+                "req-123", "arn:test", false, InvocationStatus.SUCCEEDED, null, "World", "Hello World");
+
+        assertEquals("World", info.executionInput());
+        assertEquals("Hello World", info.executionResult());
+    }
+
+    @Test
+    void invocationInfo_toString_omitsExecutionInput() {
+        var info = new InvocationInfo("req-123", "arn:test", true, Instant.now(), "s3cret-input");
+
+        var rendered = info.toString();
+
+        assertFalse(rendered.contains("s3cret-input"), "execution input must not leak into logs");
+        assertTrue(rendered.contains("req-123"));
+        assertTrue(rendered.contains("arn:test"));
+    }
+
+    @Test
+    void invocationEndInfo_toString_omitsExecutionInputAndResult() {
+        var info = new InvocationEndInfo(
+                "req-123", "arn:test", false, InvocationStatus.SUCCEEDED, null, "s3cret-input", "s3cret-result");
+
+        var rendered = info.toString();
+
+        assertFalse(rendered.contains("s3cret-input"), "execution input must not leak into logs");
+        assertFalse(rendered.contains("s3cret-result"), "execution result must not leak into logs");
+        assertTrue(rendered.contains("req-123"));
+        assertTrue(rendered.contains("SUCCEEDED"));
+    }
+
     // ─── Helper methods ──────────────────────────────────────────────────
 
     private static InvocationInfo invocationInfo() {
