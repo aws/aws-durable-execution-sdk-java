@@ -525,6 +525,25 @@ class PluginIntegrationTest {
     }
 
     @Test
+    void plugin_operationEnd_includesResult_whenStepSucceeds() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("my-step", String.class, stepCtx -> "task-a"), config);
+
+        runner.runUntilComplete("input");
+
+        var stepEnd = plugin.operationEnds.stream()
+                .filter(info -> "my-step".equals(info.name()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(stepEnd, "onOperationEnd should fire for successful step");
+        assertNotNull(stepEnd.result(), "result should be present for successful step");
+        assertEquals("\"task-a\"", stepEnd.result(), "result should contain the serialized step output");
+    }
+
+    @Test
     void plugin_operationStartAndEnd_balanced_forEmptyMap() {
         var plugin = new RecordingPlugin();
         // withCheckpointEmptyMap is a temporary flag expected to be removed in a future major version.
