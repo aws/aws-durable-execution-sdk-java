@@ -66,37 +66,75 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
+    void defaultConstructor_retriesGlobalProviderBindingOnNextInvocation() {
         GlobalOpenTelemetry.resetForTest();
-
-        var error = assertThrows(IllegalStateException.class, InvocationOtelPlugin::new);
-
-        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
-        assertTrue(error.getMessage().contains("OTEL_JAVAAGENT_EXTENSIONS"));
-    }
-
-    @Test
-    void defaultConstructor_throwsWhenGlobalOpenTelemetryIsNotInitializedBySpi() {
         OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
 
-        var error = assertThrows(IllegalStateException.class, InvocationOtelPlugin::new);
+        var defaultPlugin = new InvocationOtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-disabled", "arn:disabled", true, Instant.now()));
+        defaultPlugin.onOperationStart(new OperationInfo(
+                "op-disabled", "disabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-disabled",
+                "disabled-step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-disabled", "arn:disabled", true, InvocationStatus.SUCCEEDED, null));
 
-        assertTrue(error.getMessage().contains("GlobalOpenTelemetry"));
-        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
-    }
+        assertFalse(GlobalOpenTelemetry.isSet(), "An unavailable provider must not install the no-op global");
 
-    @Test
-    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
-        OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var globalTracerProvider = SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-enabled", "arn:enabled", true, Instant.now()));
+        defaultPlugin.onOperationStart(new OperationInfo(
+                "op-enabled", "enabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-enabled",
+                "enabled-step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-enabled", "arn:enabled", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertEquals(3, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("enabled-step")));
+        assertFalse(spans.stream().anyMatch(span -> span.getName().equals("disabled-step")));
+    }
+
+    @Test
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
         var defaultPlugin = new InvocationOtelPlugin();
+        assertFalse(GlobalOpenTelemetry.isSet());
+
+        OtelPluginAutoConfigurationState.markInstalled();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
         defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         defaultPlugin.onOperationStart(
                 new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, null, false));

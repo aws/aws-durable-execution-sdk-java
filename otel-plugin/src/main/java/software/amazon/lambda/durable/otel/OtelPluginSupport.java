@@ -19,46 +19,56 @@ final class OtelPluginSupport {
 
     private OtelPluginSupport() {}
 
-    /** Gets the global TracerProvider after validating the SPI was installed. */
-    static TracerProvider getDefaultTracerProvider(String pluginName) {
-        validateAutoConfigurationCustomizerProviderInstalled(pluginName);
-
-        var globalTracerProvider = GlobalOpenTelemetry.getTracerProvider();
-        if (globalTracerProvider == TracerProvider.noop()) {
-            throw new IllegalStateException(pluginName + "() requires GlobalOpenTelemetry to be initialized by "
-                    + "OtelPluginAutoConfigurationCustomizerProvider through the OpenTelemetry Java agent.");
-        }
-        logger.info(
-                "{} initialized from existing GlobalOpenTelemetry tracer provider {}; assuming "
-                        + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider",
-                pluginName,
-                globalTracerProvider.getClass().getName());
-        return globalTracerProvider;
-    }
-
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {
         return new DeterministicIdGenerator();
     }
 
-    /** The tracer provider, tracer, and ID generator resolved for a config-only plugin constructor. */
-    record ProviderSetup(SdkTracerProvider sdkTracerProvider, Tracer tracer, DeterministicIdGenerator idGenerator) {}
+    /** The tracer provider and tracer resolved from the global OpenTelemetry instance. */
+    record ProviderSetup(SdkTracerProvider sdkTracerProvider, Tracer tracer) {}
 
     /**
-     * Resolves the ADOT/global tracer provider for config-only plugin constructors. Explicit providers are supplied
-     * through the {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructors instead.
+     * Tries to resolve the ADOT/global tracer provider without installing OpenTelemetry's no-op global. This is called
+     * at invocation start so a plugin constructed before the Java agent finishes initialization can bind later.
      *
-     * @param config the plugin configuration
+     * @param instrumentationName the instrumentation scope name
      * @param pluginName the plugin name used in diagnostics/flush logging
-     * @return the resolved provider, tracer, and ID generator
+     * @return the resolved provider and tracer, or {@code null} when telemetry must be disabled for this invocation
      */
-    static ProviderSetup resolveGlobalProvider(OtelPluginConfig config, String pluginName) {
-        var idGenerator = createDefaultIdGenerator();
-        var tracerProvider = getDefaultTracerProvider(pluginName);
+    static ProviderSetup tryResolveGlobalProvider(String instrumentationName, String pluginName) {
+        if (!OtelPluginAutoConfigurationState.isInstalled()) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because "
+                            + "OtelPluginAutoConfigurationCustomizerProvider is not installed yet. Provider resolution "
+                            + "will be retried on the next invocation. {}",
+                    pluginName,
+                    javaAgentExtensionsDiagnostic());
+            return null;
+        }
+        if (!GlobalOpenTelemetry.isSet()) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because GlobalOpenTelemetry is not initialized yet. "
+                            + "Provider resolution will be retried on the next invocation.",
+                    pluginName);
+            return null;
+        }
+
+        var tracerProvider = GlobalOpenTelemetry.getOrNoop().getTracerProvider();
+        if (tracerProvider == TracerProvider.noop()) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because GlobalOpenTelemetry contains a no-op tracer "
+                            + "provider. Provider resolution will be retried on the next invocation.",
+                    pluginName);
+            return null;
+        }
+
+        logger.info(
+                "{} initialized from existing GlobalOpenTelemetry tracer provider {}; assuming "
+                        + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider",
+                pluginName,
+                tracerProvider.getClass().getName());
         return new ProviderSetup(
-                getSdkTracerProviderForFlush(tracerProvider, pluginName),
-                tracerProvider.get(config.instrumentationName()),
-                idGenerator);
+                getSdkTracerProviderForFlush(tracerProvider, pluginName), tracerProvider.get(instrumentationName));
     }
 
     /** Extracts trace context from the current OTel span (fallback when X-Ray header is unavailable). */
@@ -82,18 +92,6 @@ final class OtelPluginSupport {
                 pluginName,
                 tracerProvider.getClass().getName());
         return null;
-    }
-
-    private static void validateAutoConfigurationCustomizerProviderInstalled(String pluginName) {
-        if (OtelPluginAutoConfigurationState.isInstalled()) {
-            return;
-        }
-        throw new IllegalStateException(
-                pluginName + "() requires OtelPluginAutoConfigurationCustomizerProvider to be installed by the "
-                        + "OpenTelemetry Java agent. Package this plugin jar as an agent extension and set "
-                        + "OTEL_JAVAAGENT_EXTENSIONS or -Dotel.javaagent.extensions to that jar before constructing "
-                        + pluginName + "(). "
-                        + javaAgentExtensionsDiagnostic());
     }
 
     private static String javaAgentExtensionsDiagnostic() {

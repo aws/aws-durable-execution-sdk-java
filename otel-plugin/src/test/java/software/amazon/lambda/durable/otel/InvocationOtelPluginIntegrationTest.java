@@ -544,17 +544,18 @@ class InvocationOtelPluginIntegrationTest {
     }
 
     @Test
-    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
+    void defaultConstructor_lateBindsGlobalSdkTracerProviderAtInvocationStart() {
+        var defaultPlugin = new InvocationOtelPlugin();
+        assertFalse(GlobalOpenTelemetry.isSet());
+
         OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var globalTracerProvider = SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
-        var defaultConfig =
-                DurableConfig.builder().withPlugins(new InvocationOtelPlugin()).build();
+        var defaultConfig = DurableConfig.builder().withPlugins(defaultPlugin).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step("global-step", String.class, stepCtx -> "Hello " + input),

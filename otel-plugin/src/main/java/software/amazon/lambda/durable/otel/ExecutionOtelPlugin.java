@@ -58,6 +58,9 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *
  * <p>The Workflow trace ID is derived from the execution start time and ARN, and is independent of the ambient
  * Lambda/X-Ray trace. Invocation spans inherit the active ambient context, or extracted upstream context as a fallback.
+ * When using {@link #ExecutionOtelPlugin()}, the plugin resolves the global provider at invocation start. If the
+ * OpenTelemetry Java agent is not initialized yet, telemetry is disabled for that entire invocation and provider
+ * resolution is retried on the next invocation.
  *
  * <p>Status mapping (parity with the Python/JS references):
  *
@@ -78,14 +81,16 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
 
-    private final SdkTracerProvider sdkTracerProvider;
-    private final Tracer tracer;
+    private volatile SdkTracerProvider sdkTracerProvider;
+    private volatile Tracer tracer;
     private final DeterministicIdGenerator idGenerator;
     private final ContextExtractor contextExtractor;
     private final boolean enableMdc;
     private final String workflowSpanName;
+    private final String instrumentationName;
 
     // Per-invocation state
+    private volatile boolean tracingEnabled;
     private volatile Span workflowSpan;
     private volatile Span invocationSpan;
     private volatile String durableExecutionArn;
@@ -117,8 +122,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     /**
      * Creates a Workflow-rooted OTel plugin with default settings: X-Ray context extraction and MDC enabled.
      *
-     * <p>Uses {@code GlobalOpenTelemetry} directly and assumes deterministic ID generation was installed by
-     * {@code OtelPluginAutoConfigurationCustomizerProvider}.
+     * <p>Resolves {@code GlobalOpenTelemetry} at invocation start. If the ADOT Java agent has not initialized it yet,
+     * telemetry is disabled for that invocation and resolution is retried on the next invocation.
      */
     public ExecutionOtelPlugin() {
         this(OtelPluginConfig.defaults());
@@ -148,6 +153,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
+        this.instrumentationName = config.instrumentationName();
     }
 
     /**
@@ -162,17 +168,19 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
-
-        var setup = OtelPluginSupport.resolveGlobalProvider(config, "ExecutionOtelPlugin");
-        this.idGenerator = setup.idGenerator();
-        this.sdkTracerProvider = setup.sdkTracerProvider();
-        this.tracer = setup.tracer();
+        this.instrumentationName = config.instrumentationName();
+        this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────
 
     @Override
     public void onInvocationStart(InvocationInfo info) {
+        tracingEnabled = false;
+        if (!bindTracer()) {
+            return;
+        }
+
         this.durableExecutionArn = info.durableExecutionArn();
 
         // Prefer the active Java-agent span, then fall back to explicitly extracted upstream context.
@@ -225,10 +233,16 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                     MdcSpanEnricher.MDC_TRACE_ID,
                     invocationSpan.getSpanContext().getTraceId());
         }
+        tracingEnabled = true;
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
+        if (!tracingEnabled) {
+            return;
+        }
+        tracingEnabled = false;
+
         // Clear invocation-level MDC
         if (enableMdc) {
             MdcSpanEnricher.clear();
@@ -295,6 +309,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onOperationStart(OperationInfo info) {
+        if (!tracingEnabled) return;
         if (info.id() == null) return;
 
         var parentContext = resolveParentContext(info.parentId());
@@ -326,6 +341,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onOperationEnd(OperationEndInfo info) {
+        if (!tracingEnabled) return;
         if (info.id() == null) return;
 
         var span = operationSpans.remove(info.id());
@@ -404,6 +420,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionStart(UserFunctionStartInfo info) {
+        if (!tracingEnabled) return;
+
         // Skip attempt spans for CONTEXT operations — they are a scoping construct, not a retriable unit of work. Still
         // make the operation span current so auto-instrumented calls become children.
         if ("CONTEXT".equals(info.type())) {
@@ -459,6 +477,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
+        if (!tracingEnabled) return;
+
         var key = attemptKey(info.id(), info.attempt());
 
         // Close scope first (must happen on same thread as makeCurrent)
@@ -489,6 +509,24 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
+
+    private boolean bindTracer() {
+        if (tracer != null) {
+            return true;
+        }
+        synchronized (this) {
+            if (tracer != null) {
+                return true;
+            }
+            var setup = OtelPluginSupport.tryResolveGlobalProvider(instrumentationName, "ExecutionOtelPlugin");
+            if (setup == null) {
+                return false;
+            }
+            sdkTracerProvider = setup.sdkTracerProvider();
+            tracer = setup.tracer();
+            return true;
+        }
+    }
 
     private void applyInvocationStatus(Span span, InvocationEndInfo info) {
         // Invocation span status mapping:
