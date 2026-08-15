@@ -84,7 +84,6 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private final ContextExtractor contextExtractor;
     private final boolean enableMdc;
     private final String workflowSpanName;
-    private final ProviderSource providerSource;
 
     // Per-invocation state
     private volatile Span workflowSpan;
@@ -149,33 +148,25 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
-        this.providerSource = ProviderSource.EXPLICIT;
     }
 
     /**
      * Creates a Workflow-rooted OTel plugin from configuration alone (no caller-supplied tracer provider builder).
      *
-     * <p>The config-only constructor uses the ADOT/global provider. {@link ProviderSource#EXPLICIT} is rejected here;
-     * supply a {@code SdkTracerProviderBuilder} via the two-arg constructor for an application-owned provider.
+     * <p>The config-only constructor uses the ADOT/global provider. Supply a {@code SdkTracerProviderBuilder} via the
+     * two-arg constructor for an application-owned provider.
      *
      * @param config the plugin configuration
-     * @throws IllegalArgumentException if {@code config.providerSource()} is {@link ProviderSource#EXPLICIT}
      */
     public ExecutionOtelPlugin(OtelPluginConfig config) {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
 
-        var setup = OtelPluginSupport.resolveConfiguredProvider(config, "ExecutionOtelPlugin");
-        this.providerSource = setup.source();
+        var setup = OtelPluginSupport.resolveGlobalProvider(config, "ExecutionOtelPlugin");
         this.idGenerator = setup.idGenerator();
         this.sdkTracerProvider = setup.sdkTracerProvider();
         this.tracer = setup.tracer();
-    }
-
-    /** The tier that produced this plugin's tracer provider. */
-    public ProviderSource providerSource() {
-        return providerSource;
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────

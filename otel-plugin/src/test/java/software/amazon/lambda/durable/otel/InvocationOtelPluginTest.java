@@ -316,24 +316,6 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void configOnlyConstructor_defaultsToGlobalProvider() {
-        OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
-        OpenTelemetrySdk.builder()
-                .setTracerProvider(SdkTracerProvider.builder().build())
-                .buildAndRegisterGlobal();
-
-        var plugin = new InvocationOtelPlugin(OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
-    }
-
-    @Test
-    void builderConstructor_isExplicitSource() {
-        var plugin = new InvocationOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
-    }
-
-    @Test
     void explicitProvider_unrelatedRootSpansKeepFreshTraceIds() {
         var provider = sdkTracerProvider(plugin);
         var unrelatedTracer = provider.get("unrelated-library");
@@ -385,20 +367,6 @@ class InvocationOtelPluginTest {
         during.end();
         after.end();
         provider.close();
-    }
-
-    @Test
-    void configProviderSource_defaultsToGlobal() {
-        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
-    }
-
-    @Test
-    void configOnlyConstructor_rejectsExplicitProviderSource() {
-        var config = OtelPluginConfig.builder()
-                .providerSource(ProviderSource.EXPLICIT)
-                .build();
-        var error = assertThrows(IllegalArgumentException.class, () -> new InvocationOtelPlugin(config));
-        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
     }
 
     @Test

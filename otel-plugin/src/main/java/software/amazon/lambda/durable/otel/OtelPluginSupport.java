@@ -41,49 +41,24 @@ final class OtelPluginSupport {
         return new DeterministicIdGenerator();
     }
 
-    /**
-     * The tracer provider, tracer, and ID generator resolved for a config-only plugin constructor, plus the
-     * {@link ProviderSource} that produced them.
-     */
-    record ProviderSetup(
-            ProviderSource source,
-            SdkTracerProvider sdkTracerProvider,
-            Tracer tracer,
-            DeterministicIdGenerator idGenerator) {}
+    /** The tracer provider, tracer, and ID generator resolved for a config-only plugin constructor. */
+    record ProviderSetup(SdkTracerProvider sdkTracerProvider, Tracer tracer, DeterministicIdGenerator idGenerator) {}
 
     /**
-     * Resolves the tracer provider for the config-only plugin constructors from
-     * {@link OtelPluginConfig#providerSource()}, centralizing the {@link ProviderSource} branching shared by
-     * {@link InvocationOtelPlugin} and {@link ExecutionOtelPlugin}:
-     *
-     * <ul>
-     *   <li>{@link ProviderSource#GLOBAL} — binds to the ADOT/global provider (not plugin-owned); the deterministic ID
-     *       generator is created for the application-side state bridge.
-     *   <li>{@link ProviderSource#EXPLICIT} — rejected: an explicit provider requires the
-     *       {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructor.
-     * </ul>
+     * Resolves the ADOT/global tracer provider for config-only plugin constructors. Explicit providers are supplied
+     * through the {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructors instead.
      *
      * @param config the plugin configuration
      * @param pluginName the plugin name used in diagnostics/flush logging
-     * @return the resolved provider, tracer, ID generator, and source
-     * @throws IllegalArgumentException if {@code config.providerSource()} is {@link ProviderSource#EXPLICIT}
+     * @return the resolved provider, tracer, and ID generator
      */
-    static ProviderSetup resolveConfiguredProvider(OtelPluginConfig config, String pluginName) {
-        return switch (config.providerSource()) {
-            case GLOBAL -> {
-                var idGenerator = createDefaultIdGenerator();
-                var tracerProvider = getDefaultTracerProvider(pluginName);
-                yield new ProviderSetup(
-                        ProviderSource.GLOBAL,
-                        getSdkTracerProviderForFlush(tracerProvider, pluginName),
-                        tracerProvider.get(config.instrumentationName()),
-                        idGenerator);
-            }
-            case EXPLICIT ->
-                throw new IllegalArgumentException(
-                        "OtelPluginConfig.providerSource(EXPLICIT) requires a caller-supplied SdkTracerProviderBuilder; "
-                                + "use the (SdkTracerProviderBuilder, OtelPluginConfig) constructor.");
-        };
+    static ProviderSetup resolveGlobalProvider(OtelPluginConfig config, String pluginName) {
+        var idGenerator = createDefaultIdGenerator();
+        var tracerProvider = getDefaultTracerProvider(pluginName);
+        return new ProviderSetup(
+                getSdkTracerProviderForFlush(tracerProvider, pluginName),
+                tracerProvider.get(config.instrumentationName()),
+                idGenerator);
     }
 
     /** Extracts trace context from the current OTel span (fallback when X-Ray header is unavailable). */

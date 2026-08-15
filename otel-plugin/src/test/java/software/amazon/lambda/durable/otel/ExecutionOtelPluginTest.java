@@ -82,38 +82,6 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void configOnlyConstructor_defaultsToGlobalProvider() {
-        OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
-        OpenTelemetrySdk.builder()
-                .setTracerProvider(SdkTracerProvider.builder().build())
-                .buildAndRegisterGlobal();
-
-        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
-    }
-
-    @Test
-    void builderConstructor_isExplicitSource() {
-        var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
-    }
-
-    @Test
-    void configProviderSource_defaultsToGlobal() {
-        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
-    }
-
-    @Test
-    void configOnlyConstructor_rejectsExplicitProviderSource() {
-        var config = OtelPluginConfig.builder()
-                .providerSource(ProviderSource.EXPLICIT)
-                .build();
-        var error = assertThrows(IllegalArgumentException.class, () -> new ExecutionOtelPlugin(config));
-        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
-    }
-
-    @Test
     void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
         GlobalOpenTelemetry.resetForTest();
         var error = assertThrows(IllegalStateException.class, ExecutionOtelPlugin::new);
