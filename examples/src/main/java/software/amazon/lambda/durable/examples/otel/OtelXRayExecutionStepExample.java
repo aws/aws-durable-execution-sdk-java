@@ -13,7 +13,8 @@ import software.amazon.lambda.durable.otel.ExecutionOtelPlugin;
  * OTel + X-Ray example using the ExecutionOtelPlugin with the no-arg constructor.
  *
  * <p>{@link ExecutionOtelPlugin#ExecutionOtelPlugin()} uses the global provider initialized by the ADOT Java agent. The
- * ExecutionOtelPlugin renders the Workflow span as the trace root with operations as siblings of the invocation span.
+ * ExecutionOtelPlugin renders the Workflow span as the durable trace root with operations beneath it. Operations link
+ * to the Invocation span in the ambient Lambda trace.
  */
 @ExampleTemplate(tracing = true, javaAgent = true)
 public class OtelXRayExecutionStepExample extends DurableHandler<GreetingRequest, String> {

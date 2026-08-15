@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
-import java.util.Map;
-
 /**
  * Immutable configuration for {@link InvocationOtelPlugin} and {@link ExecutionOtelPlugin}.
  *
@@ -39,8 +37,6 @@ public final class OtelPluginConfig {
     private final String workflowSpanName;
     private final String instrumentationName;
     private final ProviderSource providerSource;
-    private final String otlpEndpoint;
-    private final Map<String, String> otlpHeaders;
 
     private OtelPluginConfig(Builder builder) {
         this.contextExtractor =
@@ -51,8 +47,6 @@ public final class OtelPluginConfig {
         this.instrumentationName =
                 builder.instrumentationName != null ? builder.instrumentationName : DEFAULT_INSTRUMENTATION_NAME;
         this.providerSource = builder.providerSource != null ? builder.providerSource : ProviderSource.GLOBAL;
-        this.otlpEndpoint = builder.otlpEndpoint;
-        this.otlpHeaders = builder.otlpHeaders != null ? Map.copyOf(builder.otlpHeaders) : Map.of();
     }
 
     /** Returns a new builder with all fields defaulted. */
@@ -87,24 +81,13 @@ public final class OtelPluginConfig {
 
     /**
      * The tracer-provider source to use when no {@code SdkTracerProviderBuilder} is supplied (the config-only
-     * constructors). {@link ProviderSource#GLOBAL} (the default) uses the globally configured (ADOT) provider;
-     * {@link ProviderSource#AUTO_OTLP} makes the plugin build and own an OTLP/HTTP provider.
+     * constructors). {@link ProviderSource#GLOBAL} (the default) uses the globally configured ADOT provider.
      *
      * <p>{@link ProviderSource#EXPLICIT} is not valid here — it is implied by using a {@code (SdkTracerProviderBuilder,
      * OtelPluginConfig)} constructor and is rejected by the config-only constructors.
      */
     public ProviderSource providerSource() {
         return providerSource;
-    }
-
-    /** OTLP/HTTP endpoint for the auto-configured provider, or {@code null} to use the OTel default / env var. */
-    public String otlpEndpoint() {
-        return otlpEndpoint;
-    }
-
-    /** Extra headers sent by the auto-configured OTLP exporter (never {@code null}). */
-    public Map<String, String> otlpHeaders() {
-        return otlpHeaders;
     }
 
     /** Builder for {@link OtelPluginConfig}. */
@@ -115,8 +98,6 @@ public final class OtelPluginConfig {
         private String workflowSpanName;
         private String instrumentationName;
         private ProviderSource providerSource = ProviderSource.GLOBAL;
-        private String otlpEndpoint;
-        private Map<String, String> otlpHeaders;
 
         private Builder() {}
 
@@ -166,42 +147,18 @@ public final class OtelPluginConfig {
         }
 
         /**
-         * Sets the tracer-provider source used when no {@code SdkTracerProviderBuilder} is supplied. Defaults to
-         * {@link ProviderSource#GLOBAL} (the globally configured ADOT provider); pass {@link ProviderSource#AUTO_OTLP}
-         * to make the plugin build and own an OTLP/HTTP provider. A {@code null} falls back to
+         * Sets the tracer-provider source used when no {@code SdkTracerProviderBuilder} is supplied. The config-only
+         * constructors accept {@link ProviderSource#GLOBAL}; a {@code null} also falls back to
          * {@link ProviderSource#GLOBAL}.
          *
          * <p>{@link ProviderSource#EXPLICIT} is not accepted through the config-only constructors — supply a
          * {@code SdkTracerProviderBuilder} via the two-arg constructor instead.
          *
-         * @param providerSource the provider source, {@link ProviderSource#GLOBAL} or {@link ProviderSource#AUTO_OTLP}
+         * @param providerSource the provider source
          * @return this builder
          */
         public Builder providerSource(ProviderSource providerSource) {
             this.providerSource = providerSource != null ? providerSource : ProviderSource.GLOBAL;
-            return this;
-        }
-
-        /**
-         * Sets the OTLP/HTTP endpoint for the auto-configured provider. When null, the OTel default (or
-         * {@code OTEL_EXPORTER_OTLP_ENDPOINT}) is used.
-         *
-         * @param otlpEndpoint the OTLP/HTTP traces endpoint
-         * @return this builder
-         */
-        public Builder otlpEndpoint(String otlpEndpoint) {
-            this.otlpEndpoint = otlpEndpoint;
-            return this;
-        }
-
-        /**
-         * Sets extra headers for the auto-configured OTLP exporter (e.g. auth headers for a third-party endpoint).
-         *
-         * @param otlpHeaders header name/value pairs; null is treated as empty
-         * @return this builder
-         */
-        public Builder otlpHeaders(Map<String, String> otlpHeaders) {
-            this.otlpHeaders = otlpHeaders;
             return this;
         }
 

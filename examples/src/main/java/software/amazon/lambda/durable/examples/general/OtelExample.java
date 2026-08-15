@@ -17,7 +17,7 @@ import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
  * <p>This handler configures the OTel plugin with:
  *
  * <ul>
- *   <li>Deterministic trace/span IDs (all invocations of the same execution share one trace)
+ *   <li>Deterministic Workflow trace/span IDs with provider-generated Invocation roots
  *   <li>MDC log enrichment (traceId, spanId, traceSampled in every log line)
  *   <li>Logging exporter (spans printed to stdout → CloudWatch Logs)
  * </ul>
@@ -28,11 +28,13 @@ import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
  * <p>Expected trace structure:
  *
  * <pre>
- * durable.invocation
- * ├── durable.step:create-greeting [attempt 1]
- * ├── durable.step:create-greeting (operation, backfilled)
- * ├── durable.step:transform [attempt 1]
- * └── durable.step:transform (operation, backfilled)
+ * Workflow
+ *
+ * Invocation
+ * ├── create-greeting
+ * │   └── create-greeting attempt 1
+ * └── transform
+ *     └── transform attempt 1
  * </pre>
  */
 public class OtelExample extends DurableHandler<GreetingRequest, String> {

@@ -7,8 +7,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -22,6 +22,7 @@ import software.amazon.awssdk.services.xray.model.BatchGetTracesRequest;
 import software.amazon.awssdk.services.xray.model.GetTraceSummariesRequest;
 import software.amazon.awssdk.services.xray.model.Segment;
 import software.amazon.awssdk.services.xray.model.TimeRangeType;
+import software.amazon.awssdk.services.xray.model.Trace;
 import software.amazon.awssdk.services.xray.model.TraceSummary;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -41,10 +42,10 @@ import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
  * <p>After invoking the function, the test queries the X-Ray API to verify:
  *
  * <ul>
- *   <li>A single trace exists for the execution (deterministic trace ID works)
+ *   <li>A deterministic Workflow trace exists separately from the ambient Invocation trace
  *   <li>Expected span/segment names are present
  *   <li>Parent-child nesting is correct
- *   <li>Multi-invocation scenarios produce one unified trace
+ *   <li>Multi-invocation scenarios retain Workflow correlation
  * </ul>
  *
  * <p>Enable with: {@code -Dtest.cloud.enabled=true}
@@ -112,7 +113,7 @@ class CloudBasedOtelIntegrationTest {
     // ─── Test: Simple Steps (Single Invocation) ──────────────────────────
 
     @Test
-    void simpleSteps_producesUnifiedTraceInXRay() throws Exception {
+    void simpleSteps_producesCorrelatedWorkflowAndInvocationTracesInXRay() throws Exception {
         var startTime = Instant.now();
 
         // 1. Invoke the function (use unique input to avoid stale executions)
@@ -128,11 +129,12 @@ class CloudBasedOtelIntegrationTest {
         Thread.sleep(XRAY_INGESTION_DELAY.toMillis());
 
         // 3. Query X-Ray for the trace, retrying until durable spans appear
-        var durableTrace = queryTraceWithDurableSpans(startTime, "otel-xray-step-example", "create-greeting");
+        var invocationTrace = queryTraceWithDurableSpans(startTime, "otel-xray-step-example", "create-greeting");
+        var workflowTrace = queryTraceWithDurableSpans(startTime, "otel-xray-step-example", "Workflow");
 
         // 5. Verify span structure
         var segmentDocuments =
-                durableTrace.segments().stream().map(Segment::document).toList();
+                invocationTrace.segments().stream().map(Segment::document).toList();
         var allSegmentText = String.join("\n", segmentDocuments);
 
         // Verify expected span names appear in the trace
@@ -142,19 +144,20 @@ class CloudBasedOtelIntegrationTest {
         assertTrue(allSegmentText.contains("create-greeting"), "Expected create-greeting span in trace");
         assertTrue(allSegmentText.contains("transform"), "Expected transform span in trace");
 
-        // Verify all segments share the same trace ID (single unified trace)
-        var uniqueTraceIds =
-                durableTrace.segments().stream().map(seg -> durableTrace.id()).collect(Collectors.toSet());
-        assertEquals(1, uniqueTraceIds.size(), "All segments should belong to a single trace");
+        assertNotEquals(
+                workflowTrace.id(),
+                invocationTrace.id(),
+                "Workflow and Invocation spans must not create disconnected roots in one trace");
 
         System.out.println("✅ Simple steps test passed — "
-                + durableTrace.segments().size() + " segments in trace " + durableTrace.id());
+                + invocationTrace.segments().size() + " invocation segments correlated with Workflow trace "
+                + workflowTrace.id());
     }
 
     // ─── Test: Wait + Resume (Multi-Invocation) ─────────────────────────
 
     @Test
-    void waitAndResume_producesUnifiedTraceAcrossInvocations() throws Exception {
+    void waitAndResume_preservesWorkflowCorrelationAcrossInvocations() throws Exception {
         var startTime = Instant.now();
 
         // 1. Invoke the function — will suspend on wait, then resume automatically
@@ -172,14 +175,22 @@ class CloudBasedOtelIntegrationTest {
         Thread.sleep(XRAY_INGESTION_DELAY.plus(Duration.ofSeconds(5)).toMillis());
 
         // 3. Query X-Ray for the trace, retrying until durable spans appear
-        var durableTrace = queryTraceWithDurableSpans(startTime, "otel-xray-wait-example", "before-wait");
+        var firstInvocationTrace = queryTraceWithDurableSpans(startTime, "otel-xray-wait-example", "before-wait");
+        var secondInvocationTrace = queryTraceWithDurableSpans(startTime, "otel-xray-wait-example", "after-wait");
+        var workflowTrace = queryTraceWithDurableSpans(startTime, "otel-xray-wait-example", "Workflow");
 
         // 4. Verify multi-invocation trace structure
-        var segmentDocuments =
-                durableTrace.segments().stream().map(Segment::document).toList();
+        var segmentDocuments = new ArrayList<String>();
+        segmentDocuments.addAll(
+                firstInvocationTrace.segments().stream().map(Segment::document).toList());
+        if (!firstInvocationTrace.id().equals(secondInvocationTrace.id())) {
+            segmentDocuments.addAll(secondInvocationTrace.segments().stream()
+                    .map(Segment::document)
+                    .toList());
+        }
         var allSegmentText = String.join("\n", segmentDocuments);
 
-        // Verify spans from BOTH invocations appear in the same trace
+        // Verify spans from both invocations were exported.
         assertTrue(allSegmentText.contains("before-wait"), "Expected before-wait span from first invocation");
         assertTrue(allSegmentText.contains("after-wait"), "Expected after-wait span from second invocation");
         assertTrue(allSegmentText.contains("pause"), "Expected wait:pause span in trace");
@@ -190,15 +201,13 @@ class CloudBasedOtelIntegrationTest {
                 invocationCount >= 2,
                 "Expected at least 2 invocation spans (multi-invocation), got " + invocationCount);
 
-        // Critical assertion: all segments under ONE trace (deterministic ID worked)
-        assertEquals(
-                1,
-                Set.of(durableTrace.id()).size(),
-                "All segments should belong to a single trace — deterministic trace ID must work across invocations");
+        assertNotEquals(workflowTrace.id(), firstInvocationTrace.id());
+        assertNotEquals(workflowTrace.id(), secondInvocationTrace.id());
 
-        System.out.println(
-                "✅ Wait + resume test passed — " + durableTrace.segments().size() + " segments across "
-                        + invocationCount + " invocations in trace " + durableTrace.id());
+        System.out.println("✅ Wait + resume test passed — "
+                + invocationCount
+                + " invocations correlated with Workflow trace "
+                + workflowTrace.id());
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
@@ -206,8 +215,6 @@ class CloudBasedOtelIntegrationTest {
     /** Queries X-Ray for traces with retry logic to handle eventual consistency. */
     private List<TraceSummary> queryTracesWithRetry(Instant startTime, Instant endTime, String functionName)
             throws InterruptedException {
-        // Query by durable.invocation service — our spans are in a separate trace from Lambda's
-        // built-in X-Ray segment (durable backend propagates its own trace root)
         // Filter by the Lambda function's service name — each function has a unique one.
         // This avoids picking up traces from other durable functions that share service.name="invocation".
         var filterExpression = "service(\"" + functionNamePrefix + functionName + "\")";
@@ -285,8 +292,8 @@ class CloudBasedOtelIntegrationTest {
      * Queries X-Ray for a trace containing durable spans, retrying until the expected span appears or timeout is
      * reached. Handles eventual consistency where the trace exists but OTLP-exported spans haven't been ingested yet.
      */
-    private software.amazon.awssdk.services.xray.model.Trace queryTraceWithDurableSpans(
-            Instant startTime, String functionName, String expectedSpanName) throws InterruptedException {
+    private Trace queryTraceWithDurableSpans(Instant startTime, String functionName, String expectedSpanName)
+            throws InterruptedException {
         var maxAttempts = 5;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             var traces = queryTracesWithRetry(startTime, Instant.now(), functionName);
@@ -295,7 +302,7 @@ class CloudBasedOtelIntegrationTest {
             }
 
             var traceIds = traces.stream().map(TraceSummary::id).toList();
-            var allTraces = new java.util.ArrayList<software.amazon.awssdk.services.xray.model.Trace>();
+            var allTraces = new ArrayList<Trace>();
             for (int i = 0; i < traceIds.size(); i += 5) {
                 var batch = traceIds.subList(i, Math.min(i + 5, traceIds.size()));
                 var batchResult = xrayClient.batchGetTraces(

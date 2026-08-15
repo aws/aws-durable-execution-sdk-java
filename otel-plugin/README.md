@@ -1,10 +1,12 @@
 # AWS Durable Execution SDK - OpenTelemetry Plugin
 
-OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK for Java. Emits distributed traces that correlate across multiple Lambda invocations of a single durable execution, producing deterministic span and trace IDs so that spans from different invocations are stitched into a single coherent trace.
+OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK for Java. Emits a deterministic Workflow trace for durable-execution correlation while keeping each Invocation span in the ambient Lambda trace.
 
 ## Features
 
-- **Deterministic Trace IDs**: All invocations of the same durable execution share a single trace, derived from the X-Ray trace header or execution ARN
+- **Deterministic Workflow Traces**: Workflow trace IDs are derived from the execution start time and ARN; stable span IDs are derived from the ARN
+- **Ambient Invocation Traces**: Invocation spans inherit the active Lambda/X-Ray context, or receive a fresh provider-generated root trace ID
+- **Scoped ID Generation**: Unrelated instrumentation scopes retain their provider's normal root trace ID generation
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
 - **Log Correlation**: Injects `trace_id`, `span_id`, and `traceSampled` into SLF4J MDC for end-to-end observability
@@ -90,7 +92,7 @@ Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-exe
 
 ### 2. AWS X-Ray Active Tracing
 
-Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header to derive deterministic trace IDs that remain consistent across all invocations of the same durable execution.
+Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header to parent Invocation spans to the ambient Lambda/X-Ray trace. The Workflow trace remains independent and deterministic.
 
 **AWS Console:** Lambda > Configuration > Monitoring and operations tools > Active tracing > Enable
 
@@ -155,22 +157,28 @@ The function's execution role needs the `AWSXRayDaemonWriteAccess` managed polic
 
 ## Trace Structure
 
-The plugin creates spans at four levels:
+With `InvocationOtelPlugin`, the plugin creates two correlated traces:
 
 ```
-Workflow (deterministic ID, exported once on terminal invocation)
-Invocation
-├── fetch-data
-│   └── fetch-data attempt 1
-├── cool-down
-└── process
-    └── process attempt 1
+Workflow trace:
+Workflow (deterministic trace/span IDs, exported once)
+
+Ambient invocation trace:
+Lambda/X-Ray parent
+└── Invocation
+    ├── fetch-data
+    │   └── fetch-data attempt 1
+    ├── cool-down
+    └── process
+        └── process attempt 1
 ```
 
-- **Workflow span** — one logical span per durable execution with a deterministic ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED). Serves as a correlation anchor across invocations.
-- **Invocation span** — one per Lambda invocation
+- **Workflow span** — one logical root per durable execution with a deterministic, X-Ray-compatible trace ID derived from the execution start time and ARN, plus a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
+- **Invocation span** — one per Lambda invocation, parented to ambient context when available
 - **Operation span** — one per durable operation, named after your step/wait names
 - **Attempt span** — one per user function execution (retries produce additional attempt spans)
+
+Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` reverses that relationship: operations are children of Workflow and link to the current Invocation span.
 
 ## Span Attributes
 
@@ -255,8 +263,9 @@ new InvocationOtelPlugin(
 
 ### ExecutionOtelPlugin
 
-The `ExecutionOtelPlugin` renders the Workflow span as the trace root with operations as siblings of the invocation
-span. It takes the same `(SdkTracerProviderBuilder, OtelPluginConfig)` constructor:
+The `ExecutionOtelPlugin` renders the Workflow span as the durable trace root with operations beneath it. Invocation
+spans remain in the ambient Lambda trace, and operations link to the Invocation that ran them. It takes the same
+`(SdkTracerProviderBuilder, OtelPluginConfig)` constructor:
 
 ```java
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
@@ -295,7 +304,7 @@ The plugin's spans do not appear as nested subsegments of the Lambda platform se
 
 ### Workflow Span
 
-The Workflow span appears as a separate root segment in the X-Ray trace because it uses `setNoParent()` with a deterministic span ID. This is expected — it serves as a correlation anchor across invocations.
+The Workflow span appears in a separate deterministic trace because it uses `setNoParent()`. Invocation spans remain in the ambient Lambda/X-Ray trace. Links correlate durable operations with the other trace.
 
 ## Verification
 
@@ -304,10 +313,10 @@ After deploying your function with the plugin configured:
 1. **Invoke your durable function** — trigger at least one execution that includes multiple steps or a wait/resume cycle.
 
 2. **Check CloudWatch console** — Navigate to CloudWatch > Traces. Enable "Group by nodes" to see:
-   - A Workflow span covering the entire execution
-   - An Invocation span per Lambda invocation
+   - A deterministic Workflow trace covering the entire execution
+   - Ambient Lambda traces containing one Invocation span per Lambda invocation
    - Child spans for each durable operation (named after your step names)
-   - All invocations of the same execution grouped under one trace ID
+   - Links between durable Workflow/operation spans and Invocation spans
 
 3. **Check log correlation** — Verify that the Logs section at the bottom of the trace view shows both platform logs and application logs correlated with the trace.
 
@@ -316,7 +325,7 @@ After deploying your function with the plugin configured:
 | Symptom | Likely Cause |
 |---------|-------------|
 | No traces appear | ADOT layer not added, or `AWS_LAMBDA_EXEC_WRAPPER` not set |
-| Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
+| Invocation spans are not parented to Lambda | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
 | Plugin spans missing but Lambda/runtime spans appear | Plugin jar not configured in `OTEL_JAVAAGENT_EXTENSIONS` |

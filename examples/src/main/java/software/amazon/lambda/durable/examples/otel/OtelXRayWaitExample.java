@@ -28,15 +28,18 @@ import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
  *   <li>{@code OTEL_JAVAAGENT_EXTENSIONS} pointing at the OTel plugin jar
  * </ul>
  *
- * <p>Expected trace structure in X-Ray (all under one trace ID — backend propagates same Root):
+ * <p>Expected trace structure in X-Ray:
  *
  * <pre>
- * Trace (single trace ID across both invocations)
- * ├── invocation (invocation 1)
+ * Workflow trace:
+ * Workflow
+ *
+ * Ambient invocation trace:
+ * ├── Invocation (invocation 1)
  * │   ├── before-wait
  * │   │   └── before-wait attempt 1
  * │   └── pause (ended as PENDING)
- * └── invocation (invocation 2)
+ * └── Invocation (invocation 2)
  *     ├── pause (completed)
  *     └── after-wait
  *         └── after-wait attempt 1

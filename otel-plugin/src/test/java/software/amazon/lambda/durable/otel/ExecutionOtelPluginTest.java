@@ -94,28 +94,14 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void configWithAutoOtlp_buildsPluginOwnedProvider() {
-        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.builder()
-                .providerSource(ProviderSource.AUTO_OTLP)
-                .build());
-        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
-    }
-
-    @Test
     void builderConstructor_isExplicitSource() {
         var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
         assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
     }
 
     @Test
-    void configProviderSource_defaultsToGlobalAndHonorsAutoOtlp() {
+    void configProviderSource_defaultsToGlobal() {
         assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
-        assertEquals(
-                ProviderSource.AUTO_OTLP,
-                OtelPluginConfig.builder()
-                        .providerSource(ProviderSource.AUTO_OTLP)
-                        .build()
-                        .providerSource());
     }
 
     @Test
@@ -250,7 +236,8 @@ class ExecutionOtelPluginTest {
 
         assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must be a root");
         assertFalse(invocationSpan.getParentSpanContext().isValid(), "Invocation span must be a root");
-        assertEquals(workflowSpan.getTraceId(), invocationSpan.getTraceId());
+        assertNotEquals(
+                workflowSpan.getTraceId(), invocationSpan.getTraceId(), "Independent roots must not share a trace ID");
         assertEquals(SpanKind.INTERNAL, invocationSpan.getKind());
     }
 
@@ -756,8 +743,9 @@ class ExecutionOtelPluginTest {
     // ─── Cross-invocation stitching ──────────────────────────────────────
 
     @Test
-    void allSpansShareTraceId_acrossInvocations() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+    void workflowTraceIsStableAndInvocationRootsAreFresh_acrossInvocations() {
+        var executionStartTime = Instant.parse("2026-08-15T00:00:00Z");
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, executionStartTime));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -774,16 +762,21 @@ class ExecutionOtelPluginTest {
                 null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
-        var firstTraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
+        var firstSpans = spanExporter.getFinishedSpanItems();
+        var workflowTraceId = spanByName(firstSpans, "step-1").getTraceId();
+        var firstInvocationTraceId = spanByName(firstSpans, "Invocation").getTraceId();
         spanExporter.reset();
 
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, executionStartTime));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
         var secondSpans = spanExporter.getFinishedSpanItems();
+        var workflowSpan = spanByName(secondSpans, "Workflow");
+        var secondInvocationSpan = spanByName(secondSpans, "Invocation");
 
-        assertTrue(
-                secondSpans.stream().allMatch(s -> s.getTraceId().equals(firstTraceId)),
-                "All spans of one execution must share the same trace ID");
+        assertEquals(workflowTraceId, workflowSpan.getTraceId());
+        assertNotEquals(workflowTraceId, firstInvocationTraceId);
+        assertNotEquals(workflowTraceId, secondInvocationSpan.getTraceId());
+        assertNotEquals(firstInvocationTraceId, secondInvocationSpan.getTraceId());
     }
 
     @Test
@@ -865,13 +858,14 @@ class ExecutionOtelPluginTest {
     // ─── X-Ray trace ID ──────────────────────────────────────────────────
 
     @Test
-    void xrayExtraction_allSpansShareExtractedTraceId() {
+    void xrayExtraction_keepsWorkflowTraceIndependent() {
         var xrayTraceId = "aabbccddee112233445566778899aabb";
+        var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
         var xrayPlugin = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
-                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, null))
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
@@ -895,9 +889,13 @@ class ExecutionOtelPluginTest {
 
         var spans = exporter.getFinishedSpanItems();
         assertTrue(spans.size() >= 3, "Workflow + invocation + operation spans expected");
-        assertTrue(
-                spans.stream().allMatch(s -> s.getTraceId().equals(xrayTraceId)),
-                "All spans must share the extracted X-Ray trace ID");
+        var workflowSpan = spanByName(spans, "Workflow");
+        var invocationSpan = spanByName(spans, "Invocation");
+        var operationSpan = spanByName(spans, "step-a");
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
+        assertNotEquals(xrayTraceId, workflowSpan.getTraceId());
+        assertEquals(workflowSpan.getTraceId(), operationSpan.getTraceId());
     }
 
     @Test
