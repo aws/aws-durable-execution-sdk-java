@@ -173,9 +173,9 @@ Lambda/X-Ray parent
         └── process attempt 1
 ```
 
-- **Workflow span** — one logical root per durable execution with a deterministic, X-Ray-compatible trace ID derived from the execution start time and ARN, plus a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
+- **Workflow span** — one logical root per durable execution with a deterministic, X-Ray-compatible trace ID derived from the execution start time and ARN, plus a stable span ID derived from the ARN. Started and ended on the terminal invocation (SUCCEEDED/FAILED), so it is exported exactly once. On non-terminal invocations (PENDING/RETRYING) it is represented only by its deterministic span context, which operations parent onto or link to.
 - **Invocation span** — one per Lambda invocation, parented to ambient context when available
-- **Operation span** — one per durable operation, named after your step/wait names
+- **Operation span** — one per durable operation, named after your step/wait names. In `ExecutionOtelPlugin` an operation span is emitted when the operation completes, so an operation that suspends and resumes in a later invocation is exported once, by the invocation that completes it.
 - **Attempt span** — one per user function execution (retries produce additional attempt spans)
 
 Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` reverses that relationship: operations are children of Workflow and link to the current Invocation span.
@@ -307,6 +307,19 @@ The plugin's spans do not appear as nested subsegments of the Lambda platform se
 
 The Workflow span appears in a separate deterministic trace because it uses `setNoParent()`. Invocation spans remain in the ambient Lambda/X-Ray trace. Links correlate durable operations with the other trace.
 
+### Sampling
+
+Because the Workflow span is a root (`setNoParent()`), its sampling is decided by the configured sampler's **root** behavior, not by the ambient Lambda/X-Ray parent. The Invocation span, which is parented to the ambient context, follows that parent instead. With a parent-based sampler these two can differ — for example `parentBased(alwaysOff())` with a sampled ambient parent keeps the Invocation span but drops the Workflow span.
+
+Each plugin keeps its own subtree internally consistent:
+
+- `ExecutionOtelPlugin` parents operations to the Workflow span, so it resolves the Workflow root's sampling decision from the provider's sampler and applies it to operation and attempt spans. The Workflow trace is therefore exported as a whole or dropped as a whole — a dropped Workflow span never leaves orphaned operations behind.
+- `InvocationOtelPlugin` parents operations to the Invocation span, so operations and attempts follow the Invocation span's decision. The Workflow span is only a link target, and a link to a dropped Workflow span does not affect what is recorded.
+
+One consequence for `ExecutionOtelPlugin`: an operation can be recorded while the invocation it links to was not (or vice versa), leaving that link unresolved in the trace viewer.
+
+When the global provider is not an `SdkTracerProvider` visible to the application class loader (the same condition that disables `forceFlush`, logged at startup), the sampler cannot be queried and the Workflow trace is assumed to be sampled. Spans are still created and exported by the agent's provider using its real sampler. If that hidden sampler drops root spans, operation spans can be exported while the Workflow span is dropped. ADOT's default sampler keeps root spans, so this combination is not expected in a default deployment.
+
 ## Verification
 
 After deploying your function with the plugin configured:
@@ -328,6 +341,7 @@ After deploying your function with the plugin configured:
 | No traces appear | ADOT layer not added, or `AWS_LAMBDA_EXEC_WRAPPER` not set |
 | Invocation spans are not parented to Lambda | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
+| Workflow span (and its operations) missing while Invocation spans appear | The sampler drops root spans, e.g. `parentBased(alwaysOff())`; the Workflow span is a root. See [Sampling](#sampling) |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
 | Plugin spans missing but Lambda/runtime spans appear | Plugin jar not configured in `OTEL_JAVAAGENT_EXTENSIONS` |
 | Logs not correlated | Ensure `LoggingConfig: JSON` is set and logging framework outputs MDC fields |

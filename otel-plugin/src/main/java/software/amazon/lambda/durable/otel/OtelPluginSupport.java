@@ -3,12 +3,18 @@
 package software.amazon.lambda.durable.otel;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
+import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.samplers.SamplingDecision;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +75,37 @@ final class OtelPluginSupport {
                 tracerProvider.getClass().getName());
         return new ProviderSetup(
                 getSdkTracerProviderForFlush(tracerProvider, pluginName), tracerProvider.get(instrumentationName));
+    }
+
+    /**
+     * Resolves the Workflow root's sampling decision by querying the provider's sampler with the inputs the Workflow
+     * span uses: no parent and the deterministic Workflow trace ID. No span is started, and the result matches what the
+     * Workflow span itself will be assigned.
+     *
+     * <p>When the provider is null the sampler cannot be queried and the Workflow trace is treated as sampled, matching
+     * the default provider configuration.
+     *
+     * @param sdkTracerProvider the resolved provider, or null when it is not visible to the application
+     * @param workflowTraceId the deterministic Workflow trace ID
+     * @param workflowSpanName the Workflow span name passed to the sampler
+     * @return the trace flags for Workflow and operation contexts
+     */
+    static TraceFlags resolveWorkflowTraceFlags(
+            SdkTracerProvider sdkTracerProvider, String workflowTraceId, String workflowSpanName) {
+        if (sdkTracerProvider == null) {
+            return TraceFlags.getSampled();
+        }
+        var decision = sdkTracerProvider
+                .getSampler()
+                .shouldSample(
+                        Context.root(),
+                        workflowTraceId,
+                        workflowSpanName,
+                        SpanKind.INTERNAL,
+                        Attributes.empty(),
+                        Collections.emptyList())
+                .getDecision();
+        return decision == SamplingDecision.RECORD_AND_SAMPLE ? TraceFlags.getSampled() : TraceFlags.getDefault();
     }
 
     /** Extracts trace context from the current OTel span (fallback when X-Ray header is unavailable). */

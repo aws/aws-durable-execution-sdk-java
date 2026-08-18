@@ -38,9 +38,10 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Creates spans at these levels:
  *
  * <ul>
- *   <li><b>Workflow span</b> — one logical span per durable execution (deterministic ID from the ARN, exported once on
- *       the terminal invocation). Operation and attempt spans carry a <em>link</em> to it for execution-level
- *       correlation; they remain parented to the per-invocation span (this plugin is invocation-rooted).
+ *   <li><b>Workflow span</b> — one logical span per durable execution (deterministic ID from the ARN, started and
+ *       exported once on the terminal invocation). Between invocations it is represented by a deterministic
+ *       {@link SpanContext} that operation and attempt spans <em>link</em> to for execution-level correlation; they
+ *       remain parented to the per-invocation span (this plugin is invocation-rooted).
  *   <li><b>Invocation span</b> — one per Lambda invocation
  *   <li><b>Operation span</b> — created when an operation starts, ended when it completes or when the invocation ends
  *   <li><b>Attempt span</b> — one per user function execution (step attempt, child context run)
@@ -96,7 +97,12 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     // Per-invocation state
     private volatile boolean tracingEnabled;
-    private volatile Span workflowSpan;
+
+    // Between invocations the Workflow span exists only as this deterministic context, which operation and attempt
+    // spans link to. The recording span is started and ended on the terminal invocation, beginning at
+    // executionStartTime.
+    private volatile SpanContext workflowSpanContext;
+    private volatile Instant executionStartTime;
     private volatile Span invocationSpan;
     private volatile String durableExecutionArn;
 
@@ -204,19 +210,17 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             invocationParent = contextExtractor.extract();
         }
 
-        // Workflow root span — one logical span per durable execution, created unconditionally (independent of the
-        // X-Ray parent below). Deterministic span ID from the ARN so it is the same across invocations; exported once,
-        // on the terminal invocation. Operation and attempt spans link to it for execution-level correlation while
-        // remaining parented to the per-invocation span (this plugin stays invocation-rooted).
-        var workflowSpanBuilder = tracer.spanBuilder(workflowSpanName)
-                .setSpanKind(SpanKind.INTERNAL)
-                .setNoParent()
-                .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
-                .setStartTimestamp(info.executionStartTime());
+        // Compute the Workflow root's deterministic IDs and sampling decision so operation and attempt spans can link
+        // to it before the recording span exists, and so those links describe the linked span's actual fate. Operation
+        // sampling is unaffected: operations are parented to the invocation span, and links do not feed the sampler.
+        this.executionStartTime = info.executionStartTime();
         var workflowTraceId =
                 idGenerator.generateTraceIdForExecution(info.durableExecutionArn(), info.executionStartTime());
         var workflowSpanId = idGenerator.generateWorkflowSpanId(info.durableExecutionArn());
-        workflowSpan = idGenerator.startSpan(workflowSpanBuilder, workflowTraceId, workflowSpanId);
+        var workflowTraceFlags =
+                OtelPluginSupport.resolveWorkflowTraceFlags(sdkTracerProvider, workflowTraceId, workflowSpanName);
+        workflowSpanContext =
+                SpanContext.create(workflowTraceId, workflowSpanId, workflowTraceFlags, TraceState.getDefault());
 
         // Determine parent context for the invocation span.
         Context parentContext;
@@ -301,28 +305,35 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         invocationSpan.end();
         invocationSpan = null;
 
-        // End the Workflow span only on a terminal status, so it is exported exactly once per execution
-        // (SUCCEEDED -> OK, FAILED -> ERROR; non-terminal statuses leave it un-ended / not exported this invocation).
-        if (workflowSpan != null) {
-            if (isTerminal(info)) {
-                workflowSpan.setAttribute(
-                        DURABLE_EXECUTION_STATUS, info.invocationStatus().name());
-                switch (info.invocationStatus()) {
-                    case FAILED -> {
-                        var message = info.executionError() != null
-                                ? info.executionError().getMessage()
-                                : null;
-                        workflowSpan.setStatus(StatusCode.ERROR, message);
-                        if (info.executionError() != null) {
-                            workflowSpan.recordException(info.executionError());
-                        }
+        // The Workflow span is materialized on a terminal status only: started and ended in the same call so it is
+        // exported once per execution (SUCCEEDED -> OK, FAILED -> ERROR). Non-terminal statuses (PENDING/RETRYING)
+        // export no Workflow span.
+        if (isTerminal(info) && workflowSpanContext != null) {
+            var workflowSpanBuilder = tracer.spanBuilder(workflowSpanName)
+                    .setSpanKind(SpanKind.INTERNAL)
+                    .setNoParent()
+                    .setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn)
+                    .setStartTimestamp(executionStartTime != null ? executionStartTime : Instant.now());
+            var workflowSpan = idGenerator.startSpan(
+                    workflowSpanBuilder, workflowSpanContext.getTraceId(), workflowSpanContext.getSpanId());
+            workflowSpan.setAttribute(
+                    DURABLE_EXECUTION_STATUS, info.invocationStatus().name());
+            switch (info.invocationStatus()) {
+                case FAILED -> {
+                    var message = info.executionError() != null
+                            ? info.executionError().getMessage()
+                            : null;
+                    workflowSpan.setStatus(StatusCode.ERROR, message);
+                    if (info.executionError() != null) {
+                        workflowSpan.recordException(info.executionError());
                     }
-                    default -> workflowSpan.setStatus(StatusCode.OK); // SUCCEEDED
                 }
-                workflowSpan.end();
+                default -> workflowSpan.setStatus(StatusCode.OK); // SUCCEEDED
             }
-            workflowSpan = null;
+            workflowSpan.end();
         }
+        workflowSpanContext = null;
+        executionStartTime = null;
 
         if (sdkTracerProvider != null) {
             // Flush spans before Lambda freezes
@@ -398,6 +409,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             }
             span.end();
         } else {
+            // Operation completed between invocations: its onOperationStart ran in a prior invocation, whose open span
+            // was force-ended at that invocation's end. Emit a continuation span now, linked to the Workflow span.
             var parentContext = resolveParentContext(info.parentId());
 
             var spanBuilder = tracer.spanBuilder(spanName(info.type(), info.subType(), info.name()))
@@ -598,11 +611,11 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         return Context.current();
     }
 
-    /** Adds a link to the Workflow span, if one exists, for execution-level correlation. */
+    /** Adds a link to the Workflow span's deterministic context, if one exists, for execution-level correlation. */
     private void addWorkflowLink(SpanBuilder spanBuilder) {
-        var currentWorkflowSpan = workflowSpan;
-        if (currentWorkflowSpan != null) {
-            spanBuilder.addLink(currentWorkflowSpan.getSpanContext());
+        var currentWorkflowSpanContext = workflowSpanContext;
+        if (currentWorkflowSpanContext != null) {
+            spanBuilder.addLink(currentWorkflowSpanContext);
         }
     }
 
