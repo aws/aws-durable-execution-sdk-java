@@ -220,6 +220,9 @@ public class DeterministicIdGenerator implements IdGenerator {
     public boolean generatesRandomTraceIds() {
         var override = currentOverride();
         if (override != null && override.traceId() != null) {
+            // SdkSpanBuilder calls this immediately after generateTraceId() and before invoking samplers or span
+            // processors. Consume the override here so synchronous instrumentation cannot reuse the durable trace ID.
+            consumeScopedTraceId(override);
             return false;
         }
         if (extractedTraceId.get() != null || arnDerivedTraceId.get() != null) {
@@ -273,6 +276,13 @@ public class DeterministicIdGenerator implements IdGenerator {
             }
         }
         throw new IllegalStateException("Unable to locate the configured OpenTelemetry ID generator");
+    }
+
+    private void consumeScopedTraceId(IdOverride override) {
+        if (scopedIds.get() != null) {
+            scopedIds.set(new IdOverride(null, override.spanId()));
+        }
+        System.clearProperty(scopedTraceIdProperty());
     }
 
     private void consumeScopedSpanId(IdOverride override) {

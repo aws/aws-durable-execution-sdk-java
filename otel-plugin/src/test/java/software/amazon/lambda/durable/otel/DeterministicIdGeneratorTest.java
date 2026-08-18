@@ -4,12 +4,21 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.LinkData;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
+import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -88,6 +97,35 @@ class DeterministicIdGeneratorTest {
             assertEquals(workflowTraceId, workflow.getSpanContext().getTraceId());
             assertEquals(workflowSpanId, workflow.getSpanContext().getSpanId());
             assertNotEquals(workflowTraceId, agentGenerator.generateTraceId());
+            workflow.end();
+        }
+    }
+
+    @Test
+    void scopedTraceId_isConsumedBeforeSamplerStartsNestedRoot() {
+        var fallbackTraceId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var fallbackSpanId = "cccccccccccccccc";
+        var agentGenerator = new DeterministicIdGenerator(fixedIds(fallbackTraceId, fallbackSpanId));
+        var tracerReference = new AtomicReference<Tracer>();
+        var nestedSpanContext = new AtomicReference<SpanContext>();
+        var sampler = nestedRootSampler(tracerReference, nestedSpanContext);
+        try (var provider = SdkTracerProvider.builder()
+                .setIdGenerator(agentGenerator)
+                .setSampler(sampler)
+                .build()) {
+            var tracer = provider.get("durable-plugin");
+            tracerReference.set(tracer);
+            var workflowTraceId = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
+            var workflowSpanId = generator.generateWorkflowSpanId("arn:exec1");
+
+            var workflow =
+                    generator.startSpan(tracer.spanBuilder("Workflow").setNoParent(), workflowTraceId, workflowSpanId);
+
+            assertEquals(workflowTraceId, workflow.getSpanContext().getTraceId());
+            assertEquals(workflowSpanId, workflow.getSpanContext().getSpanId());
+            assertNotNull(nestedSpanContext.get());
+            assertEquals(fallbackTraceId, nestedSpanContext.get().getTraceId());
+            assertEquals(fallbackSpanId, nestedSpanContext.get().getSpanId());
             workflow.end();
         }
     }
@@ -398,6 +436,36 @@ class DeterministicIdGeneratorTest {
         var result = generator.generateTraceId();
         assertEquals(xrayTraceId, result);
         assertTrue(result.matches("[0-9a-f]{32}"));
+    }
+
+    private static Sampler nestedRootSampler(
+            AtomicReference<Tracer> tracerReference, AtomicReference<SpanContext> nestedSpanContext) {
+        return new Sampler() {
+            @Override
+            public SamplingResult shouldSample(
+                    Context parentContext,
+                    String traceId,
+                    String name,
+                    SpanKind spanKind,
+                    Attributes attributes,
+                    List<LinkData> parentLinks) {
+                if ("Workflow".equals(name)) {
+                    var nested = tracerReference
+                            .get()
+                            .spanBuilder("nested-root")
+                            .setNoParent()
+                            .startSpan();
+                    nestedSpanContext.set(nested.getSpanContext());
+                    nested.end();
+                }
+                return SamplingResult.recordAndSample();
+            }
+
+            @Override
+            public String getDescription() {
+                return "NestedRootSampler";
+            }
+        };
     }
 
     private static SpanContext scopedSpanContext(
