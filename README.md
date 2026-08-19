@@ -3,6 +3,8 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Java](https://img.shields.io/badge/java-%3E%3D17-brightgreen)](https://openjdk.org/)
 [![Build](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/build.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/build.yml)
+[![Core Conformance](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/conformance-tests.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/conformance-tests.yml)
+[![OpenTelemetry Conformance](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/otel-conformance-tests.yml/badge.svg)](https://github.com/aws/aws-durable-execution-sdk-java/actions/workflows/otel-conformance-tests.yml)
 [![Javadoc](https://img.shields.io/badge/JavaDoc-Online-green)](https://aws.github.io/aws-durable-execution-sdk-java/javadoc/)
 [![Maven](https://badges.mvnrepository.com/badge/software.amazon.lambda.durable/aws-durable-execution-sdk-java/badge.svg?label=Maven)](https://mvnrepository.com/artifact/software.amazon.lambda.durable/aws-durable-execution-sdk-java)
 [![Coverage](https://aws.github.io/aws-durable-execution-sdk-java/coverage/jacoco.svg)](https://aws.github.io/aws-durable-execution-sdk-java/coverage/)
