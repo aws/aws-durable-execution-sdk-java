@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
+import static java.util.Objects.requireNonNull;
+
 import java.time.Instant;
 import software.amazon.lambda.durable.annotations.Experimental;
 
@@ -12,7 +14,7 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param durableExecutionArn the durable execution ARN
  * @param isFirstInvocation true if this is the first invocation of the execution (not a replay invocation)
  * @param executionStartTime the start timestamp of the durable execution, taken from the initial EXECUTION operation in
- *     the first event delivered by the backend. Stable across all invocations of the same execution.
+ *     the first event delivered by the backend. Never null and stable across all invocations of the same execution.
  * @param executionInput the deserialized execution input passed to the user handler, or null when no plugins are
  *     registered or the input could not be deserialized; this component is experimental
  */
@@ -22,6 +24,10 @@ public record InvocationInfo(
         boolean isFirstInvocation,
         Instant executionStartTime,
         @Experimental Object executionInput) {
+
+    public InvocationInfo {
+        requireNonNull(executionStartTime, "executionStartTime");
+    }
 
     /**
      * Creates invocation information without an execution input.
@@ -33,6 +39,7 @@ public record InvocationInfo(
      * @param durableExecutionArn the durable execution ARN
      * @param isFirstInvocation true if this is the first invocation of the execution
      * @param executionStartTime the start timestamp of the durable execution
+     * @throws NullPointerException if {@code executionStartTime} is null
      */
     public InvocationInfo(
             String requestId, String durableExecutionArn, boolean isFirstInvocation, Instant executionStartTime) {

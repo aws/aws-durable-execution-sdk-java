@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import static java.util.Objects.requireNonNull;
+
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.sdk.trace.IdGenerator;
@@ -121,7 +123,7 @@ public class DeterministicIdGenerator implements IdGenerator {
     }
 
     String generateTraceIdForExecution(String arn, Instant executionStartTime) {
-        var timestamp = executionStartTime != null ? executionStartTime : Instant.now();
+        var timestamp = requireNonNull(executionStartTime, "executionStartTime");
         var timestampHex = String.format("%08x", timestamp.getEpochSecond() & 0xffffffffL);
         return timestampHex + sha256(arn != null ? arn : "").substring(0, 24);
     }

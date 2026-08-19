@@ -212,7 +212,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 .setSpanKind(SpanKind.INTERNAL)
                 .setNoParent()
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
-                .setStartTimestamp(info.executionStartTime() != null ? info.executionStartTime() : Instant.now());
+                .setStartTimestamp(info.executionStartTime());
         var workflowTraceId =
                 idGenerator.generateTraceIdForExecution(info.durableExecutionArn(), info.executionStartTime());
         var workflowSpanId = idGenerator.generateWorkflowSpanId(info.durableExecutionArn());

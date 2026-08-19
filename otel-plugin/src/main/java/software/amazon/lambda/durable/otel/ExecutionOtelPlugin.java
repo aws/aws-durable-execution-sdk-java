@@ -191,12 +191,12 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
         // Workflow root span — deterministic span ID from the ARN, no parent. Recreated every invocation with the
         // same ID so it is exported once as a single logical span (on the terminal invocation only). Its start time
-        // is the execution start time from the backend (falling back to now if unavailable).
+        // is the execution start time from the backend.
         var workflowSpanBuilder = tracer.spanBuilder(workflowSpanName)
                 .setSpanKind(SpanKind.INTERNAL)
                 .setNoParent()
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
-                .setStartTimestamp(info.executionStartTime() != null ? info.executionStartTime() : Instant.now());
+                .setStartTimestamp(info.executionStartTime());
         workflowTraceId =
                 idGenerator.generateTraceIdForExecution(info.durableExecutionArn(), info.executionStartTime());
         var workflowSpanId = idGenerator.generateWorkflowSpanId(info.durableExecutionArn());

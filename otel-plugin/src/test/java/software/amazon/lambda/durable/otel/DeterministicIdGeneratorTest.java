@@ -197,6 +197,14 @@ class DeterministicIdGeneratorTest {
     }
 
     @Test
+    void executionTraceId_requiresStartTimestamp() {
+        var exception = assertThrows(
+                NullPointerException.class, () -> generator.generateTraceIdForExecution("arn:exec1", null));
+
+        assertEquals("executionStartTime", exception.getMessage());
+    }
+
+    @Test
     void generateTraceId_withArn_returnsDeterministic() {
         generator.setDurableExecutionArn("arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1");
 
