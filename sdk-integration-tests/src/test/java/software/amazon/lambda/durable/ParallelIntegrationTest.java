@@ -7,8 +7,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.config.CompletionConfig;
@@ -24,6 +26,34 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestOperation;
 
 class ParallelIntegrationTest {
+
+    @Test
+    void singleWorkerForkJoinPoolDoesNotStarveCoordinator() {
+        var executor = new ForkJoinPool(1);
+        try {
+            var config = DurableConfig.builder().withExecutorService(executor).build();
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, context) -> {
+                        var futures = new ArrayList<DurableFuture<String>>();
+                        var parallel = context.parallel("process-items");
+                        try (parallel) {
+                            futures.add(parallel.branch("branch-a", String.class, ctx -> "A"));
+                            futures.add(parallel.branch("branch-b", String.class, ctx -> "B"));
+                        }
+                        parallel.get();
+                        return String.join(
+                                ",", futures.stream().map(DurableFuture::get).toList());
+                    },
+                    config);
+
+            var result = assertTimeoutPreemptively(Duration.ofSeconds(5), () -> runner.runUntilComplete("test"));
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            assertEquals("A,B", result.getResult(String.class));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 
     @ParameterizedTest
     @CsvSource({"FLAT, 2", "NESTED, 8"})

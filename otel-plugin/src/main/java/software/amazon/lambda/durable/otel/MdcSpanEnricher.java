@@ -22,10 +22,7 @@ import org.slf4j.MDC;
  * <p>Usage: Call {@link #inject()} in {@code onUserFunctionStart} (after span is active) and {@link #clear()} in
  * {@code onUserFunctionEnd}. Or use the convenience plugin {@link InvocationOtelPlugin} which handles this
  * automatically when MDC enrichment is enabled.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public final class MdcSpanEnricher {
 
     // MDC key names are aligned with the JS and Python SDK OTel plugins
