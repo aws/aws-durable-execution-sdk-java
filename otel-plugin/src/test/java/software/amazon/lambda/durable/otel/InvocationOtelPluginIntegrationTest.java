@@ -71,17 +71,29 @@ class InvocationOtelPluginIntegrationTest {
 
         var spans = spanExporter.getFinishedSpanItems();
 
-        // Should have: invocation + operation (backfilled) + attempt = 3
-        assertTrue(spans.size() >= 3, "Expected at least 3 spans, got " + spans.size());
+        // Should have: Workflow + invocation + operation + attempt = 4
+        assertTrue(spans.size() >= 4, "Expected at least 4 spans, got " + spans.size());
 
         // Verify span names
+        assertSpanExists(spans, "Workflow");
         assertSpanExists(spans, "Invocation");
         assertSpanExists(spans, "greet");
         assertSpanExists(spans, "greet attempt 1");
 
-        // All spans share the same trace ID
-        var traceId = spans.get(0).getTraceId();
-        assertTrue(spans.stream().allMatch(s -> s.getTraceId().equals(traceId)));
+        var workflowTraceId = spans.stream()
+                .filter(span -> span.getName().equals("Workflow"))
+                .findFirst()
+                .orElseThrow()
+                .getTraceId();
+        var invocationTraceId = spans.stream()
+                .filter(span -> span.getName().equals("Invocation"))
+                .findFirst()
+                .orElseThrow()
+                .getTraceId();
+        assertNotEquals(workflowTraceId, invocationTraceId);
+        assertTrue(spans.stream()
+                .filter(span -> !span.getName().equals("Workflow"))
+                .allMatch(span -> span.getTraceId().equals(invocationTraceId)));
     }
 
     @Test
@@ -532,17 +544,18 @@ class InvocationOtelPluginIntegrationTest {
     }
 
     @Test
-    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
+    void defaultConstructor_lateBindsGlobalSdkTracerProviderAtInvocationStart() {
+        var defaultPlugin = new InvocationOtelPlugin();
+        assertFalse(GlobalOpenTelemetry.isSet());
+
         OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var globalTracerProvider = SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
-        var defaultConfig =
-                DurableConfig.builder().withPlugins(new InvocationOtelPlugin()).build();
+        var defaultConfig = DurableConfig.builder().withPlugins(defaultPlugin).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step("global-step", String.class, stepCtx -> "Hello " + input),

@@ -10,7 +10,6 @@ on:
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
-      - 'otel-plugin/**'
       - 'examples/**'
       - 'pom.xml'
   push:
@@ -21,7 +20,6 @@ on:
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
-      - 'otel-plugin/**'
       - 'examples/**'
       - 'pom.xml'
 
@@ -96,7 +94,7 @@ jobs:
           mvn clean test -B \
             -Dtest.cloud.enabled=true \
             -Dtest.aws.account='${{ secrets.TEST_ACCOUNT_ID }}' \
-            -Dtest="CloudBasedIntegrationTest,CloudBasedOtelIntegrationTest" \
+            -Dtest=CloudBasedIntegrationTest \
             -Dtest.function.name.prefix='Java${{ matrix.java }}-' \
             -Djunit.jupiter.execution.parallel.enabled=true \
             -Djunit.jupiter.execution.parallel.mode.default=concurrent \

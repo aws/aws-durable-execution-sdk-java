@@ -50,22 +50,16 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *
  * <ul>
  *   <li>When using the ADOT Java agent ({@link #InvocationOtelPlugin()}), the Workflow span appears as a separate root
- *       segment in the X-Ray trace because it uses {@code setNoParent()} with a deterministic span ID. This is expected
- *       — it serves as a correlation anchor across invocations. The Invocation span and its children nest under the
- *       ADOT agent's Lambda segment as subsegments.
+ *       trace because it uses {@code setNoParent()} with deterministic trace and span IDs. It serves as a correlation
+ *       anchor across invocations. The Invocation span and its children nest under the ADOT agent's Lambda segment as
+ *       subsegments.
  *   <li>When using a custom {@link io.opentelemetry.sdk.trace.SdkTracerProviderBuilder} (no ADOT agent), the Workflow
- *       span is similarly unparented but all spans share the same trace ID. Operation and attempt spans link to the
- *       Workflow span for execution-level correlation.
+ *       span is similarly unparented. Invocation roots receive provider-generated trace IDs, and operation and attempt
+ *       spans link to the Workflow span for execution-level correlation.
  * </ul>
  *
- * <p>Trace ID resolution:
- *
- * <ol>
- *   <li>Uses the X-Ray trace ID from {@code _X_AMZN_TRACE_ID} when available. The durable execution backend propagates
- *       the same Root to all invocations of the same execution, naturally unifying the trace.
- *   <li>Falls back to a deterministic trace ID derived from the execution ARN (for local tests or non-Lambda
- *       environments).
- * </ol>
+ * <p>The Workflow trace ID is derived from the execution start time and ARN, and is independent of the ambient
+ * Lambda/X-Ray trace. Invocation spans inherit the active ambient context, or extracted upstream context as a fallback.
  *
  * <p>Requires the ADOT Lambda Layer for trace export. Configure with:
  *
@@ -74,16 +68,16 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *   <li>Tracing: Active (to populate {@code _X_AMZN_TRACE_ID})
  * </ul>
  *
- * <p>When using {@link #InvocationOtelPlugin()}, the plugin requires
- * {@code OtelPluginAutoConfigurationCustomizerProvider} to have been installed by the OpenTelemetry Java agent and uses
- * the global provider directly.
+ * <p>When using {@link #InvocationOtelPlugin()}, the plugin resolves the global provider at invocation start. If the
+ * OpenTelemetry Java agent is not initialized yet, telemetry is disabled for that entire invocation and provider
+ * resolution is retried on the next invocation.
  *
  * <p><b>X-Ray console limitation:</b> In the X-Ray "Segments Timeline" ungrouped view, the plugin's spans (Invocation,
  * operation, attempt) do not appear as nested subsegments of the Lambda platform segment. This is a known limitation of
  * the OTLP-to-X-Ray conversion: the ADOT collector cannot attach OTLP-exported spans as subsegments of the Lambda
  * service's native X-Ray segment because that segment is created outside the OTLP pipeline. Use the "Group by nodes"
- * view to see the full span hierarchy correctly — it stitches all spans together by trace ID and parent-child
- * relationships regardless of segment boundaries.
+ * view to inspect parent-child relationships within the ambient Invocation trace and the links to the independent
+ * Workflow trace.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
@@ -92,15 +86,16 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(InvocationOtelPlugin.class);
 
-    private final SdkTracerProvider sdkTracerProvider;
-    private final Tracer tracer;
+    private volatile SdkTracerProvider sdkTracerProvider;
+    private volatile Tracer tracer;
     private final DeterministicIdGenerator idGenerator;
     private final ContextExtractor contextExtractor;
     private final boolean enableMdc;
     private final String workflowSpanName;
-    private final ProviderSource providerSource;
+    private final String instrumentationName;
 
     // Per-invocation state
+    private volatile boolean tracingEnabled;
     private volatile Span workflowSpan;
     private volatile Span invocationSpan;
     private volatile String durableExecutionArn;
@@ -133,7 +128,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      *     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)));
      * }</pre>
      *
-     * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
+     * @param tracerProviderBuilder the tracer provider builder (its ID generator will be wrapped)
      */
     public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder) {
         this(tracerProviderBuilder, OtelPluginConfig.defaults());
@@ -142,8 +137,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     /**
      * Creates an OTel plugin with default settings: X-Ray context extraction and MDC enabled.
      *
-     * <p>Uses {@code GlobalOpenTelemetry} directly and assumes deterministic ID generation was installed by
-     * {@code OtelPluginAutoConfigurationCustomizerProvider}.
+     * <p>Resolves {@code GlobalOpenTelemetry} at invocation start. If the ADOT Java agent has not initialized it yet,
+     * telemetry is disabled for that invocation and resolution is retried on the next invocation.
      */
     public InvocationOtelPlugin() {
         this(OtelPluginConfig.defaults());
@@ -162,71 +157,52 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      *     OtelPluginConfig.builder().enableMdc(false).workflowSpanName("Workflow").build());
      * }</pre>
      *
-     * @param tracerProviderBuilder the tracer provider builder (ID generator will be overridden)
+     * @param tracerProviderBuilder the tracer provider builder (its ID generator will be wrapped)
      * @param config the plugin configuration
      */
     public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
-        this.idGenerator = new DeterministicIdGenerator();
+        this.idGenerator = DeterministicIdGenerator.installOn(tracerProviderBuilder);
 
-        this.sdkTracerProvider =
-                tracerProviderBuilder.setIdGenerator(idGenerator).build();
+        this.sdkTracerProvider = tracerProviderBuilder.build();
         this.tracer = sdkTracerProvider.get(config.instrumentationName());
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
-        this.providerSource = ProviderSource.EXPLICIT;
+        this.instrumentationName = config.instrumentationName();
     }
 
     /**
      * Creates an OTel plugin from configuration alone (no caller-supplied tracer provider builder).
      *
-     * <p>The provider is taken from {@link OtelPluginConfig#providerSource()}: {@link ProviderSource#GLOBAL} uses the
-     * ADOT/global provider, otherwise the default {@link ProviderSource#AUTO_OTLP} builds a plugin-owned OTLP/HTTP
-     * provider (matching the JavaScript and Python SDK plugins). {@link ProviderSource#EXPLICIT} is rejected here —
-     * supply a {@code SdkTracerProviderBuilder} via the two-arg constructor for that.
+     * <p>The config-only constructor uses the ADOT/global provider. Supply a {@code SdkTracerProviderBuilder} via the
+     * two-arg constructor for an application-owned provider.
      *
      * @param config the plugin configuration
-     * @throws IllegalArgumentException if {@code config.providerSource()} is {@link ProviderSource#EXPLICIT}
      */
     public InvocationOtelPlugin(OtelPluginConfig config) {
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
-
-        var setup = OtelPluginSupport.resolveConfiguredProvider(config, "InvocationOtelPlugin");
-        this.providerSource = setup.source();
-        this.idGenerator = setup.idGenerator();
-        this.sdkTracerProvider = setup.sdkTracerProvider();
-        this.tracer = setup.tracer();
-    }
-
-    /** The tier that produced this plugin's tracer provider. */
-    public ProviderSource providerSource() {
-        return providerSource;
+        this.instrumentationName = config.instrumentationName();
+        this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────
 
     @Override
     public void onInvocationStart(InvocationInfo info) {
+        tracingEnabled = false;
+        if (!bindTracer()) {
+            return;
+        }
+
         this.durableExecutionArn = info.durableExecutionArn();
 
-        // Set execution ARN for deterministic span ID generation
-        idGenerator.setDurableExecutionArn(info.durableExecutionArn());
-
-        // Extract trace context from environment (X-Ray header)
-        var extractedContext = contextExtractor.extract();
-        if (extractedContext == null) {
-            extractedContext = extractCurrentSpanContext();
+        // Prefer the active Java-agent span, then fall back to explicitly extracted upstream context.
+        var invocationParent = extractCurrentSpanContext();
+        if (invocationParent == null) {
+            invocationParent = contextExtractor.extract();
         }
-
-        if (extractedContext != null) {
-            // Use the X-Ray trace ID — backend propagates same Root across all invocations
-            idGenerator.setExtractedTraceId(extractedContext.traceId());
-        } else {
-            idGenerator.setExtractedTraceId(null);
-        }
-        // If no extracted context, idGenerator falls back to ARN-derived trace ID
 
         // Workflow root span — one logical span per durable execution, created unconditionally (independent of the
         // X-Ray parent below). Deterministic span ID from the ARN so it is the same across invocations; exported once,
@@ -236,18 +212,20 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 .setSpanKind(SpanKind.INTERNAL)
                 .setNoParent()
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
-                .setStartTimestamp(info.executionStartTime() != null ? info.executionStartTime() : Instant.now());
-        idGenerator.setNextSpanId(idGenerator.generateWorkflowSpanId());
-        workflowSpan = workflowSpanBuilder.startSpan();
+                .setStartTimestamp(info.executionStartTime());
+        var workflowTraceId =
+                idGenerator.generateTraceIdForExecution(info.durableExecutionArn(), info.executionStartTime());
+        var workflowSpanId = idGenerator.generateWorkflowSpanId(info.durableExecutionArn());
+        workflowSpan = idGenerator.startSpan(workflowSpanBuilder, workflowTraceId, workflowSpanId);
 
         // Determine parent context for the invocation span.
         Context parentContext;
-        if (extractedContext != null && extractedContext.parentSpanId() != null) {
+        if (invocationParent != null && invocationParent.parentSpanId() != null) {
             // Reconstruct a remote parent from the extracted trace context (X-Ray header or current span).
             // This connects plugin spans to the Lambda service's X-Ray segments.
             var parentSpanContext = SpanContext.createFromRemoteParent(
-                    extractedContext.traceId(),
-                    extractedContext.parentSpanId(),
+                    invocationParent.traceId(),
+                    invocationParent.parentSpanId(),
                     TraceFlags.getSampled(),
                     TraceState.getDefault());
             parentContext = Context.root().with(Span.wrap(parentSpanContext));
@@ -271,13 +249,20 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         // Inject MDC on the handler thread so handler-level logs (between steps) have trace context.
         // This runs on the same thread as context.getLogger() calls in the handler.
         if (enableMdc) {
-            var traceId = idGenerator.generateTraceId();
-            MDC.put(MdcSpanEnricher.MDC_TRACE_ID, traceId);
+            MDC.put(
+                    MdcSpanEnricher.MDC_TRACE_ID,
+                    invocationSpan.getSpanContext().getTraceId());
         }
+        tracingEnabled = true;
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
+        if (!tracingEnabled) {
+            return;
+        }
+        tracingEnabled = false;
+
         // Clear invocation-level MDC (set in onInvocationStart on the handler thread)
         if (enableMdc) {
             MdcSpanEnricher.clear();
@@ -352,6 +337,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onOperationStart(OperationInfo info) {
+        if (!tracingEnabled) return;
         if (info.id() == null) return;
 
         var parentContext = resolveParentContext(info.parentId());
@@ -363,19 +349,6 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 .setAttribute(DURABLE_OPERATION_TYPE, info.type())
                 .setAttribute(DURABLE_OPERATION_STATUS, info.status() != null ? info.status() : "STARTED");
 
-        if (info.isReplay()) {
-            // Operation was already started in a prior invocation — use a random span ID
-            // and add a Link to the deterministic span from the original invocation for correlation.
-            var deterministicSpanId = idGenerator.generateSpanIdForOperation(info.id());
-            var traceId = idGenerator.generateTraceId();
-            var linkedSpanContext =
-                    SpanContext.create(traceId, deterministicSpanId, TraceFlags.getSampled(), TraceState.getDefault());
-            spanBuilder.addLink(linkedSpanContext);
-        } else {
-            // First execution — use deterministic span ID so continuations can link back
-            idGenerator.setNextSpanOperationId(info.id());
-        }
-
         // Link to the Workflow span for execution-level correlation (operation stays parented to the invocation span).
         addWorkflowLink(spanBuilder);
 
@@ -386,7 +359,10 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             spanBuilder.setAttribute(DURABLE_OPERATION_SUBTYPE, info.subType());
         }
 
-        var span = spanBuilder.startSpan();
+        var span = info.isReplay()
+                ? spanBuilder.startSpan()
+                : idGenerator.startSpan(
+                        spanBuilder, null, idGenerator.generateSpanIdForOperation(durableExecutionArn, info.id()));
 
         // Store the open span — will be ended in onOperationEnd or onInvocationEnd
         operationSpans.put(info.id(), span);
@@ -396,6 +372,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onOperationEnd(OperationEndInfo info) {
+        if (!tracingEnabled) return;
         if (info.id() == null) return;
 
         var span = operationSpans.remove(info.id());
@@ -421,18 +398,10 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             }
             span.end();
         } else {
-            // Operation was started in a prior invocation — create a continuation span with Link
-            // to the deterministic span ID from the original invocation.
-            var deterministicSpanId = idGenerator.generateSpanIdForOperation(info.id());
-            var traceId = idGenerator.generateTraceId();
-            var linkedSpanContext =
-                    SpanContext.create(traceId, deterministicSpanId, TraceFlags.getSampled(), TraceState.getDefault());
-
             var parentContext = resolveParentContext(info.parentId());
 
             var spanBuilder = tracer.spanBuilder(spanName(info.type(), info.subType(), info.name()))
                     .setParent(parentContext)
-                    .addLink(linkedSpanContext)
                     .setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn)
                     .setAttribute(DURABLE_OPERATION_ID, info.id())
                     .setAttribute(DURABLE_OPERATION_TYPE, info.type());
@@ -471,6 +440,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionStart(UserFunctionStartInfo info) {
+        if (!tracingEnabled) return;
+
         // Skip attempt spans for CONTEXT operations — they are a scoping construct, not a
         // retriable unit of work, so attempt number/outcome attributes don't apply.
         // The operation span itself provides parent context for auto-instrumented calls.
@@ -529,6 +500,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
+        if (!tracingEnabled) return;
+
         var key = attemptKey(info.id(), info.attempt());
 
         // Close scope first (must happen on same thread as makeCurrent)
@@ -569,6 +542,24 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 
+    private boolean bindTracer() {
+        if (tracer != null) {
+            return true;
+        }
+        synchronized (this) {
+            if (tracer != null) {
+                return true;
+            }
+            var setup = OtelPluginSupport.tryResolveGlobalProvider(instrumentationName, "InvocationOtelPlugin");
+            if (setup == null) {
+                return false;
+            }
+            sdkTracerProvider = setup.sdkTracerProvider();
+            tracer = setup.tracer();
+            return true;
+        }
+    }
+
     private void endOpenSpansChildFirst() {
         // Attempt spans are children of operation spans.
         for (var scope : attemptScopes.values()) {
@@ -599,12 +590,6 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             if (parentSpanContext != null) {
                 return Context.current().with(Span.wrap(parentSpanContext));
             }
-            // Parent operation from a prior invocation — create non-recording placeholder
-            var deterministicParentSpanId = idGenerator.generateSpanIdForOperation(parentId);
-            var traceId = idGenerator.generateTraceId();
-            var placeholderContext = SpanContext.create(
-                    traceId, deterministicParentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
-            return Context.current().with(Span.wrap(placeholderContext));
         }
         // Fall back to invocation span as parent
         if (invocationSpan != null) {

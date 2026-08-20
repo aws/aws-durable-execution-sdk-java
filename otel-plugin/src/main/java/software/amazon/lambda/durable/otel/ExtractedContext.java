@@ -5,9 +5,8 @@ package software.amazon.lambda.durable.otel;
 /**
  * Trace context extracted from the Lambda runtime environment.
  *
- * <p>Contains the trace ID (always present) and an optional parent span ID. When the durable execution backend
- * propagates the same X-Ray Root across all invocations, the trace ID will be consistent, enabling spans from different
- * invocations to be stitched into a single trace.
+ * <p>Contains the trace ID (always present) and an optional parent span ID used to parent an Invocation span to ambient
+ * Lambda/X-Ray context.
  *
  * @param traceId 32-character lowercase hex trace ID (OTel format, no dashes)
  * @param parentSpanId 16-character lowercase hex parent span ID (may be null if no parent available)

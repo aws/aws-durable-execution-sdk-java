@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ class DurableExecutionTest {
     private static final String EXECUTION_NAME = "exec-name";
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
             + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+    private static final Instant EXECUTION_START_TIME = Instant.parse("2026-08-15T00:00:00Z");
 
     private DurableConfig configWithMockClient() {
         return DurableConfig.builder()
@@ -47,6 +49,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -77,6 +80,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -110,6 +114,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -143,6 +148,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -179,6 +185,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -256,6 +263,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .build();
 
         var input = new DurableExecutionInput(
@@ -286,6 +294,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input-1\"")
                         .build())
@@ -314,6 +323,7 @@ class DurableExecutionTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input-2\"")
                         .build())
