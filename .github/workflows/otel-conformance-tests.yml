@@ -25,6 +25,8 @@ on:
       - "conformance-tests-otel/**"
       - "pom.xml"
       - ".github/workflows/otel-conformance-tests.yml"
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
     inputs:
       phase:
