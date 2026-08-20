@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -908,6 +909,30 @@ class PluginIntegrationTest {
         assertTrue(
                 childEnd.error() instanceof SuspendExecutionException,
                 "Suspension should surface the SuspendExecutionException, not a user error");
+    }
+
+    @Test
+    void plugin_userFunctionEnd_unwrapsCompletionExceptionForSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var suspension = new SuspendExecutionException();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step("wrapped-suspension", String.class, step -> {
+                    throw new CompletionException(suspension);
+                }),
+                config);
+
+        var result = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        var stepEnd = plugin.userFunctionEnds.stream()
+                .filter(info -> "wrapped-suspension".equals(info.name()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("onUserFunctionEnd should fire for the suspended step"));
+        assertEquals(UserFunctionOutcome.INCOMPLETE, stepEnd.outcome());
+        assertSame(suspension, stepEnd.error(), "The event should expose the unwrapped suspension");
     }
 
     @Test

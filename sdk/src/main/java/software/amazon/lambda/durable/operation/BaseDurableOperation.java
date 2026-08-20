@@ -359,10 +359,11 @@ public abstract class BaseDurableOperation {
                     PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
             return result;
         } catch (Throwable e) {
-            var outcome = e instanceof SuspendExecutionException
+            var error = ExceptionHelper.unwrapCompletableFuture(e);
+            var outcome = error instanceof SuspendExecutionException
                     ? UserFunctionOutcome.INCOMPLETE
                     : UserFunctionOutcome.FAILED;
-            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, outcome, e));
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, outcome, error));
             ExceptionHelper.sneakyThrow(e);
             return null; // unreachable — sneakyThrow always throws
         }
