@@ -220,6 +220,11 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     private void handleExtensionContextSuccess(ExtensionContextResult<T> result) {
+        if (validatingReplay.get()) {
+            cacheSuccessAndComplete(replayState.get());
+            return;
+        }
+
         var serializedResult = serializeAndDeserializeResult(result.result());
         if (shouldSkipCheckpoint()) {
             cacheSuccessAndComplete(serializedResult.deserialized());
@@ -247,10 +252,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     private boolean shouldSkipCheckpoint() {
-        return replayChildren.get()
-                || validatingReplay.get()
-                || isVirtual
-                || parentOperation != null && parentOperation.isOperationCompleted();
+        return replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted();
     }
 
     private void cacheSuccessAndComplete(T result) {

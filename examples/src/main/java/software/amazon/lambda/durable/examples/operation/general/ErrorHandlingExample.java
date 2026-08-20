@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.exception.StepFailedException;
@@ -28,8 +27,6 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  * step order/names changed). It should be fixed in code, not caught.
  */
 public class ErrorHandlingExample extends DurableHandler<Object, String> {
-
-    private static final Logger logger = LoggerFactory.getLogger(ErrorHandlingExample.class);
 
     /** Custom exception to demonstrate that original exception types are preserved across checkpoints. */
     public static class ServiceUnavailableException extends RuntimeException {
@@ -68,7 +65,7 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
                             .build());
         } catch (ServiceUnavailableException e) {
             // Catch the specific custom exception type - the SDK reconstructs the original exception
-            logger.warn("Service '{}' unavailable, using fallback: {}", e.getServiceName(), e.getMessage());
+            getLogger().warn("Service '{}' unavailable, using fallback: {}", e.getServiceName(), e.getMessage());
             primaryResult = step("call-fallback-service", String.class, () -> "fallback-result");
         }
 
@@ -88,9 +85,10 @@ public class ErrorHandlingExample extends DurableHandler<Object, String> {
                             .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
         } catch (StepInterruptedException e) {
-            logger.warn(
-                    "Payment step interrupted, checking external status: {}",
-                    e.getOperation().id());
+            getLogger()
+                    .warn(
+                            "Payment step interrupted, checking external status: {}",
+                            e.getOperation().id());
             // In real code: check payment provider for transaction status
             // If payment went through, return success; otherwise, handle appropriately
             paymentResult = step("verify-payment-status", String.class, () -> "verified-payment");

@@ -186,7 +186,7 @@ class ChildContextPrimitiveTest {
     }
 
     @Test
-    void extensionCanValidateCompletedReplayWithCachedState() {
+    void extensionValidationReplayPreservesCachedResult() {
         when(executionManager.getOperationAndUpdateReplayState("1"))
                 .thenReturn(Operation.builder()
                         .id("1")
@@ -211,7 +211,7 @@ class ChildContextPrimitiveTest {
                     assertTrue(replay.isValidatingReplay());
                     assertEquals("cached-value", replay.getReplayState());
                     functionCalled.set(true);
-                    return ExtensionContextResult.completed(replay.getReplayState());
+                    return ExtensionContextResult.completed("recomputed-value");
                 },
                 config);
 

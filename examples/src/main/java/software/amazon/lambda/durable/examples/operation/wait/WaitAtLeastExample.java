@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.wait;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
 
 import java.time.Duration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -28,23 +27,22 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  */
 public class WaitAtLeastExample extends DurableHandler<GreetingRequest, String> {
 
-    private static final Logger logger = LoggerFactory.getLogger(WaitAtLeastExample.class);
-
     @Override
     public String handleRequest(GreetingRequest input) {
-        logger.info("Starting concurrent step + wait example for: {}", input.getName());
+        getLogger().info("Starting concurrent step + wait example for: {}", input.getName());
 
         // Start an async step that takes 2 seconds
         DurableFuture<String> asyncStep = stepAsync(
                 "async-operation",
                 String.class,
                 () -> {
-                    logger.info(
-                            "Async operation starting in thread: {}",
-                            Thread.currentThread().getName());
+                    getLogger()
+                            .info(
+                                    "Async operation starting in thread: {}",
+                                    Thread.currentThread().getName());
                     try {
                         Thread.sleep(2000); // 2 seconds
-                        logger.info("Async operation completed successfully");
+                        getLogger().info("Async operation completed successfully");
                         return "Processed: " + input.getName();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -57,13 +55,13 @@ public class WaitAtLeastExample extends DurableHandler<GreetingRequest, String> 
 
         // Immediately wait for 3 seconds
         // The async step will complete during this wait
-        logger.info("Waiting 3 seconds (async step will complete in 2s)");
+        getLogger().info("Waiting 3 seconds (async step will complete in 2s)");
         DurableWaitOperation.wait("wait-3-seconds", Duration.ofSeconds(3));
 
         // After wait, get the async step result
-        logger.info("Resumed after wait");
+        getLogger().info("Resumed after wait");
         String result = asyncStep.get();
-        logger.info("Final result: {}", result);
+        getLogger().info("Final result: {}", result);
 
         return result;
     }

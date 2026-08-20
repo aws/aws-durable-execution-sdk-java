@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.step;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.time.Duration;
 import java.time.Instant;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
 import software.amazon.lambda.durable.operation.DurableWaitOperation;
@@ -26,15 +25,13 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  */
 public class RetryExample extends DurableHandler<Object, String> {
 
-    private static final Logger logger = LoggerFactory.getLogger(RetryExample.class);
-
     private Instant startTime;
 
     @Override
     public String handleRequest(Object input) {
         // Step 1: Record start time
         startTime = step("record-start-time", Instant.class, () -> Instant.now());
-        logger.info("Recorded start time: {}", startTime);
+        getLogger().info("Recorded start time: {}", startTime);
 
         // Step 2: Call that never retries (fails immediately)
         try {
@@ -48,7 +45,7 @@ public class RetryExample extends DurableHandler<Object, String> {
                             .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
         } catch (Exception e) {
-            logger.info("No-retry step failed as expected: {}", e.getMessage());
+            getLogger().info("No-retry step failed as expected: {}", e.getMessage());
         }
 
         // Step 3: Flaky API call that succeeds after retries
@@ -64,13 +61,13 @@ public class RetryExample extends DurableHandler<Object, String> {
                         var message = String.format(
                                 "Flaky API failing - elapsed time (%.1fs) < %.1fs",
                                 elapsed.toMillis() / 1000.0, failForMillis / 1000.0);
-                        logger.warn(message);
+                        getLogger().warn(message);
                         throw new RuntimeException(message);
                     } else {
                         var message = String.format(
                                 "Flaky API succeeded - elapsed time (%.1fs) >= %.1fs",
                                 elapsed.toMillis() / 1000.0, failForMillis / 1000.0);
-                        logger.info(message);
+                        getLogger().info(message);
                         return message;
                     }
                 },
@@ -78,12 +75,12 @@ public class RetryExample extends DurableHandler<Object, String> {
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build());
 
-        logger.info("Flaky API result: {}", result);
+        getLogger().info("Flaky API result: {}", result);
 
         // Step 4: Wait a bit before finishing
         DurableWaitOperation.wait(null, Duration.ofSeconds(2));
 
-        logger.info("Retry example completed successfully");
+        getLogger().info("Retry example completed successfully");
         return "Retry example completed: " + result;
     }
 }
