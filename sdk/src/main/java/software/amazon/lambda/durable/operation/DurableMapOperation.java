@@ -17,6 +17,7 @@ import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
+import software.amazon.lambda.durable.extension.ExtensionOperation;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -102,6 +104,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
 
         var mapConfig = config;
         var virtualEmptyMap = itemList.isEmpty() && !context.getDurableConfig().shouldCheckpointEmptyMap();
+        transitionEmptyMapToExecution(context, virtualEmptyMap);
         var parentConfig = parentContextConfig(mapConfig.serDes(), virtualEmptyMap).toBuilder()
                 .validateCompletedReplay(true)
                 .build();
@@ -111,6 +114,12 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
                 () -> executeInChildContext(
                         name, itemList, iterationNames, resultType, function, mapConfig, virtualEmptyMap),
                 parentConfig);
+    }
+
+    private static void transitionEmptyMapToExecution(ExtensionContext context, boolean virtualEmptyMap) {
+        if (virtualEmptyMap && context.isReplaying() && context instanceof DurableContextImpl durableContext) {
+            durableContext.setExecutionMode();
+        }
     }
 
     private static <I, O> DurableContext.MapFunction<I, O> adapt(Function<I, O> function) {
@@ -147,6 +156,9 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         if (replayingCompletedMap && replayState == null) {
             throw new IllegalStateException("Missing result in completed Map operation");
         }
+        if (replayState != null) {
+            validateReplayCardinality(name, items, replayState);
+        }
         if (replay.isValidatingReplay()) {
             return validateCompletedReplay(name, items, iterationNames, resultType, function, config, replayState);
         }
@@ -173,14 +185,17 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             DurableContext.MapFunction<I, O> function,
             MapConfig config,
             MapResult<O> replayState) {
-        if (items.size() != replayState.size()) {
-            throw new NonDeterministicExecutionException(String.format(
-                    "Map item count mismatch for \"%s\". Expected %d, got %d", name, replayState.size(), items.size()));
-        }
         if (config.nestingType() == NestingType.NESTED) {
             validateNestedIterations(items, iterationNames, resultType, function, config, replayState);
         }
         return ExtensionContextResult.completed(replayState);
+    }
+
+    private static void validateReplayCardinality(String name, List<?> items, MapResult<?> replayState) {
+        if (items.size() != replayState.size()) {
+            throw new NonDeterministicExecutionException(String.format(
+                    "Map item count mismatch for \"%s\". Expected %d, got %d", name, replayState.size(), items.size()));
+        }
     }
 
     private static <I, O> void validateNestedIterations(
@@ -194,16 +209,11 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         var iterationConfig = childContextConfig(
                 config.serDes(), config.nestingType(), failure -> new MapIterationFailedException(failure.operation()));
         for (int index = 0; index < items.size(); index++) {
+            var reservation = context.reserve(iterationNames.get(index));
             if (replayState.getItem(index).status() == MapResult.MapResultItem.Status.SKIPPED) {
                 continue;
             }
-            launchIteration(
-                    context.reserve(iterationNames.get(index)),
-                    items.get(index),
-                    index,
-                    resultType,
-                    function,
-                    iterationConfig);
+            launchIteration(reservation, items.get(index), index, resultType, function, iterationConfig);
         }
     }
 

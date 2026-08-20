@@ -31,9 +31,9 @@ import software.amazon.lambda.durable.extension.ExtensionContextFailure;
 import software.amazon.lambda.durable.extension.ExtensionContextFunction;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
-import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -58,7 +58,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
 
     // child context for RunInChildContext
     public ChildContextPrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
             RunInChildContextConfig config,
@@ -68,7 +68,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
 
     // child context with a late-checkpoint owner
     public ChildContextPrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             Function<DurableContext, T> function,
             TypeToken<T> resultTypeToken,
             RunInChildContextConfig config,
@@ -87,7 +87,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     public ChildContextPrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             ExtensionContextFunction<T> function,
             TypeToken<T> resultTypeToken,
             ExtensionContextConfig config,
@@ -96,7 +96,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     public ChildContextPrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             ExtensionContextFunction<T> function,
             TypeToken<T> resultTypeToken,
             ExtensionContextConfig config,
@@ -220,6 +220,11 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     private void handleExtensionContextSuccess(ExtensionContextResult<T> result) {
+        if (validatingReplay.get()) {
+            cacheSuccessAndComplete(replayState.get());
+            return;
+        }
+
         var serializedResult = serializeAndDeserializeResult(result.result());
         if (shouldSkipCheckpoint()) {
             cacheSuccessAndComplete(serializedResult.deserialized());
@@ -247,10 +252,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     private boolean shouldSkipCheckpoint() {
-        return replayChildren.get()
-                || validatingReplay.get()
-                || isVirtual
-                || parentOperation != null && parentOperation.isOperationCompleted();
+        return replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted();
     }
 
     private void cacheSuccessAndComplete(T result) {
@@ -300,7 +302,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
         }
 
         var op = createVirtualOperation(errorObject);
-        cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
+        cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject, exception)));
 
         // Skip checkpointing if
         // - the owning parent operation has already completed, preventing a late child checkpoint.
@@ -333,12 +335,12 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
             var contextDetails = op.contextDetails();
             var errorObject = (contextDetails != null) ? contextDetails.error() : null;
 
-            ExceptionHelper.sneakyThrow(translateException(op, errorObject));
+            ExceptionHelper.sneakyThrow(translateException(op, errorObject, null));
             return null;
         }
     }
 
-    private Throwable translateException(Operation op, ErrorObject errorObject) {
+    private Throwable translateException(Operation op, ErrorObject errorObject, Throwable originalException) {
         // Attempt to reconstruct and throw the original exception
         Throwable original = deserializeException(errorObject);
         if (original != null) {
@@ -346,7 +348,7 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
         }
 
         if (extensionConfig != null && extensionConfig.errorHandler() != null) {
-            var failure = new ExtensionContextFailure(op, null, getChildOperationSummaries());
+            var failure = new ExtensionContextFailure(op, originalException, getChildOperationSummaries());
             return Objects.requireNonNull(
                     extensionConfig.errorHandler().translate(failure),
                     "Extension context error handler result cannot be null");

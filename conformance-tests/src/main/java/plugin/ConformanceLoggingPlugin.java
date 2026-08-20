@@ -18,7 +18,6 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * filtered to step-type operations to match the requirement vocabulary. All lines are emitted from the real SDK plugin
  * hooks; nothing is hand-rolled.
  */
-@SuppressWarnings("deprecation")
 public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
 
     private final String prefix;

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static software.amazon.lambda.durable.TypeToken.get;
 
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
@@ -28,6 +29,7 @@ class DurableExecutionWrapperTest {
     private static final String EXECUTION_NAME = "exec-name";
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
             + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+    private static final Instant EXECUTION_START_TIME = Instant.parse("2026-08-15T00:00:00Z");
 
     static class TestInput {
         public String value;
@@ -72,6 +74,7 @@ class DurableExecutionWrapperTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload(serDes.serialize(new TestInput("test")))
                         .build())
@@ -108,6 +111,7 @@ class DurableExecutionWrapperTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload(serDes.serialize(new TestInput("method-ref")))
                         .build())

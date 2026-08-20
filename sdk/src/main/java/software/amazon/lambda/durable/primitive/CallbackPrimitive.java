@@ -12,7 +12,7 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 
 /** Durable operation for creating and waiting on external callbacks. */
 public class CallbackPrimitive<T> extends SerializablePrimitive<T> implements DurableCallbackFuture<T> {
@@ -22,7 +22,7 @@ public class CallbackPrimitive<T> extends SerializablePrimitive<T> implements Du
     private String callbackId;
 
     public CallbackPrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             ExtensionCallbackConfig config,
             DurableContextImpl durableContext) {

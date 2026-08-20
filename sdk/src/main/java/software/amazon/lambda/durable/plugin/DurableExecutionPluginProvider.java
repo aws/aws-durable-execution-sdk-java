@@ -8,10 +8,7 @@ package software.amazon.lambda.durable.plugin;
  * <p>Provider JARs register implementations in
  * {@code META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider}. The SDK only creates
  * plugins from providers explicitly selected through {@code DURABLE_EXECUTION_PLUGINS}.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public interface DurableExecutionPluginProvider {
 
     /** Current version of the dynamic plugin provider contract. */

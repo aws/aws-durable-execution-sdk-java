@@ -24,8 +24,8 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.logging.DurableLogger;
-import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -43,7 +43,7 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
     private final ExtensionStepConfig<T> extensionConfig;
 
     public StepPrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             ExtensionStepFunction<T> function,
             TypeToken<T> resultTypeToken,
             ExtensionStepConfig<T> config,

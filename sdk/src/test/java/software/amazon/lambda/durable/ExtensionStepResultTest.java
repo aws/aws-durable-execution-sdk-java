@@ -31,6 +31,8 @@ class ExtensionStepResultTest {
     @Test
     void retryRejectsInvalidDelay() {
         assertThrows(NullPointerException.class, () -> ExtensionStepResult.retry("next", null));
+        assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retry("next", Duration.ZERO));
+        assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retry("next", Duration.ofMillis(999)));
         assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retry("next", Duration.ofSeconds(-1)));
     }
 
@@ -49,6 +51,12 @@ class ExtensionStepResultTest {
         assertThrows(
                 NullPointerException.class, () -> ExtensionStepResult.retryAfterNormalization("next", state -> null)
                         .delay("normalized"));
+        assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retryAfterNormalization(
+                        "next", state -> Duration.ZERO)
+                .delay("normalized"));
+        assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retryAfterNormalization(
+                        "next", state -> Duration.ofMillis(999))
+                .delay("normalized"));
         assertThrows(IllegalArgumentException.class, () -> ExtensionStepResult.retryAfterNormalization(
                         "next", state -> Duration.ofSeconds(-1))
                 .delay("normalized"));

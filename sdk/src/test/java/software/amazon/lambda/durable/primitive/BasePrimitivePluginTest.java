@@ -23,8 +23,8 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.OperationInfo;
@@ -58,7 +58,7 @@ class BasePrimitivePluginTest {
         var durableContext = mockDurableContext(executionManager, plugin);
 
         var operation = new WaitPrimitive(
-                OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
+                PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
                 Duration.ofMinutes(5),
                 durableContext);
 
@@ -90,7 +90,7 @@ class BasePrimitivePluginTest {
         var durableContext = mockDurableContext(executionManager, plugin);
 
         var operation = new WaitPrimitive(
-                OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
+                PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
                 Duration.ofMinutes(5),
                 durableContext);
 
@@ -110,7 +110,7 @@ class BasePrimitivePluginTest {
         var durableContext = mockDurableContext(executionManager, plugin);
 
         var operation = new WaitPrimitive(
-                OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
+                PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
                 Duration.ofMinutes(5),
                 durableContext);
 

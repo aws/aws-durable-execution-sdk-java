@@ -23,15 +23,15 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionInvokeConfig;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class InvokePrimitiveTest {
     private static final String OPERATION_ID = "2";
     private static final String OPERATION_NAME = "test-invoke";
-    private static final OperationIdentifier OPERATION_IDENTIFIER =
-            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.CHAINED_INVOKE);
+    private static final PrimitiveOperationIdentifier OPERATION_IDENTIFIER =
+            PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.CHAINED_INVOKE);
 
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;

@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.general;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
@@ -23,18 +22,16 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 public class GenericInputOutputExample
         extends DurableHandler<Map<String, String>, Map<String, Map<String, List<String>>>> {
 
-    private static final Logger logger = LoggerFactory.getLogger(GenericInputOutputExample.class);
-
     @Override
     public Map<String, Map<String, List<String>>> handleRequest(Map<String, String> input) {
-        logger.info("Starting generic types example for user: {}", input.get("userId"));
+        getLogger().info("Starting generic types example for user: {}", input.get("userId"));
 
         // Fetch nested generic type with retry (Map<String, List<String>>)
         Map<String, List<String>> categories = step(
                 "fetch-categories",
                 new TypeToken<Map<String, List<String>>>() {},
                 () -> {
-                    logger.info("Fetching category details");
+                    getLogger().info("Fetching category details");
                     var result = new HashMap<String, List<String>>();
                     result.put("electronics", List.of("laptop", "phone"));
                     result.put("books", List.of("fiction"));
@@ -44,8 +41,8 @@ public class GenericInputOutputExample
                 StepConfig.builder()
                         .retryStrategy(RetryStrategies.Presets.DEFAULT)
                         .build());
-        logger.info("Fetched {} category details", categories.size());
-        logger.info("Generic types example completed successfully");
+        getLogger().info("Fetched {} category details", categories.size());
+        getLogger().info("Generic types example completed successfully");
 
         // return a result of Map<String, Map<String, List<String>>>
         return new HashMap<>(Map.of("categories", categories));

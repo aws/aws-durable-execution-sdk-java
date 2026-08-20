@@ -19,7 +19,6 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
  * The suspending first invocation reports a non-terminal status (PENDING → terminal=false); the resuming invocation
  * reports terminal SUCCEEDED (terminal=true).
  */
-@SuppressWarnings("deprecation")
 public class PluginSuspensionInvocationEnd extends DurableHandler<Object, String> {
 
     @Override

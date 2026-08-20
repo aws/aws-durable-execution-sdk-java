@@ -17,7 +17,6 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * thrown exception must be swallowed by the SDK so the execution result and history are identical to running without
  * the plugin. Operation- and attempt-level hooks are filtered to step-type operations.
  */
-@SuppressWarnings("deprecation")
 public class FaultyConformancePlugin implements DurableExecutionPlugin {
 
     private static boolean isStep(String type) {

@@ -17,6 +17,7 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.MapResult;
@@ -443,6 +444,26 @@ class MapIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @Test
+    void testMapWithThrowingShouldCompleteTerminatesExecution() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = MapConfig.builder()
+                    .completionConfig(CompletionConfig.shouldComplete(status -> {
+                        throw new IllegalStateException("completion failed");
+                    }))
+                    .build();
+            context.map("throwing-completion", List.of("a"), String.class, (item, index, child) -> item, config);
+            return "unreachable";
+        });
+
+        var result = runner.runUntilComplete("test");
+        var error = result.getError().orElseThrow();
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertEquals(IllegalDurableOperationException.class.getName(), error.errorType());
+        assertTrue(error.errorMessage().contains("completion failed"));
     }
 
     @ParameterizedTest
@@ -1828,6 +1849,31 @@ class MapIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"FLAT", "NESTED"})
+    void testNonCheckpointedEmptyMapTransitionsOutOfReplay(NestingType nestingType) {
+        var replayingBeforeMap = new AtomicBoolean();
+        var replayingAfterMap = new AtomicBoolean();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            context.step("before-map", String.class, step -> "done");
+            replayingBeforeMap.set(context.isReplaying());
+            context.map(
+                    "empty-map",
+                    List.<String>of(),
+                    String.class,
+                    (item, index, child) -> item,
+                    MapConfig.builder().nestingType(nestingType).build());
+            replayingAfterMap.set(context.isReplaying());
+            return "done";
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.run("test").getStatus());
+
+        assertTrue(replayingBeforeMap.get());
+        assertFalse(replayingAfterMap.get());
     }
 
     @ParameterizedTest

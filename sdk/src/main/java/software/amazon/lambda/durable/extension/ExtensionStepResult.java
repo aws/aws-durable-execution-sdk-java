@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.extension;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.Function;
+import software.amazon.lambda.durable.util.ParameterValidator;
 
 /**
  * Fixed outcomes supported by a stateful extension STEP primitive.
@@ -63,9 +64,7 @@ public sealed interface ExtensionStepResult<T>
 
     private static Duration validateDelay(Duration delay) {
         Objects.requireNonNull(delay, "delay cannot be null");
-        if (delay.isNegative()) {
-            throw new IllegalArgumentException("delay cannot be negative");
-        }
+        ParameterValidator.validateDuration(delay, "delay");
         return delay;
     }
 }

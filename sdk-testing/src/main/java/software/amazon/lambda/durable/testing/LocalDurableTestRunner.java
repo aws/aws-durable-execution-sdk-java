@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.testing;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -41,6 +42,7 @@ public class LocalDurableTestRunner<I, O> {
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
+    private final Instant executionStartTime = Instant.now();
 
     private LocalDurableTestRunner(
             TypeToken<I> inputType,
@@ -339,6 +341,7 @@ public class LocalDurableTestRunner<I, O> {
                 .name(executionName)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(executionStartTime)
                 .executionDetails(
                         ExecutionDetails.builder().inputPayload(inputJson).build())
                 .build();

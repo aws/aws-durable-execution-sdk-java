@@ -33,17 +33,10 @@
             <version>${opentelemetry.version}</version>
         </dependency>
 
-        <!-- OpenTelemetry SDK (compile — needed for the auto-configured OTLP provider default;
-             the ADOT agent / a custom builder still override it at runtime). -->
+        <!-- OpenTelemetry SDK (compile — needed for explicit provider builders and plugin span management). -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk</artifactId>
-            <version>${opentelemetry.version}</version>
-        </dependency>
-        <!-- OTLP/HTTP span exporter for the auto-configured provider (ProviderSource.AUTO_OTLP). -->
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-exporter-otlp</artifactId>
             <version>${opentelemetry.version}</version>
         </dependency>
         <!-- OpenTelemetry Java agent supplies this SPI when loading OTEL_JAVAAGENT_EXTENSIONS. -->
@@ -59,13 +52,6 @@
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-context</artifactId>
             <version>${opentelemetry.version}</version>
-        </dependency>
-
-        <!-- OpenTelemetry Semantic Conventions (for ServiceAttributes.SERVICE_NAME) -->
-        <dependency>
-            <groupId>io.opentelemetry.semconv</groupId>
-            <artifactId>opentelemetry-semconv</artifactId>
-            <version>1.43.0</version>
         </dependency>
 
         <!-- SLF4J for logging -->
@@ -100,7 +86,7 @@
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.6.1</version>
+            <version>1.6.3</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

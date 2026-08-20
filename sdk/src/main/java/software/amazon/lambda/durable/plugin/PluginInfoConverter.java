@@ -6,15 +6,12 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.primitive.BasePrimitive;
 
-/**
- * Utility methods for converting SDK internal types to plugin info records.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
- */
-@Deprecated
+/** Utility methods for converting SDK internal types to plugin info records. */
 public final class PluginInfoConverter {
 
     private PluginInfoConverter() {}
@@ -28,6 +25,11 @@ public final class PluginInfoConverter {
      * @return an OperationInfo record
      */
     public static OperationInfo toOperationInfo(Operation operation, OperationIdentifier identifier, String parentId) {
+        return toOperationInfo(operation, PrimitiveOperationIdentifier.from(identifier), parentId);
+    }
+
+    public static OperationInfo toOperationInfo(
+            Operation operation, PrimitiveOperationIdentifier identifier, String parentId) {
         return new OperationInfo(
                 identifier.operationId(),
                 identifier.name(),
@@ -54,6 +56,15 @@ public final class PluginInfoConverter {
      */
     public static OperationEndInfo toOperationEndInfo(
             Operation operation, OperationIdentifier identifier, String parentId, boolean isReplay, Throwable error) {
+        return toOperationEndInfo(operation, PrimitiveOperationIdentifier.from(identifier), parentId, isReplay, error);
+    }
+
+    public static OperationEndInfo toOperationEndInfo(
+            Operation operation,
+            PrimitiveOperationIdentifier identifier,
+            String parentId,
+            boolean isReplay,
+            Throwable error) {
         return new OperationEndInfo(
                 identifier.operationId(),
                 identifier.name(),
@@ -69,7 +80,38 @@ public final class PluginInfoConverter {
                         ? operation.stepDetails().attempt()
                         : null,
                 isReplay,
-                error);
+                error,
+                extractResult(operation));
+    }
+
+    /**
+     * Extracts the serialized result from an operation based on its type. Returns null if the operation has no result
+     * (e.g., failed or still running).
+     *
+     * <p>Only a SUCCEEDED operation reports a result. The status guard is required, not just defensive: a
+     * wait-for-condition is checkpointed as {@link OperationType#STEP} and reuses {@code stepDetails().result()} to
+     * carry its intermediate check-loop state between attempts, so a failed one can still hold state that must not be
+     * surfaced as that operation's result.
+     */
+    private static String extractResult(Operation operation) {
+        if (operation == null || operation.type() == null || operation.status() != OperationStatus.SUCCEEDED) {
+            return null;
+        }
+        return switch (operation.type()) {
+            case STEP ->
+                operation.stepDetails() != null ? operation.stepDetails().result() : null;
+            case CHAINED_INVOKE ->
+                operation.chainedInvokeDetails() != null
+                        ? operation.chainedInvokeDetails().result()
+                        : null;
+            case CALLBACK ->
+                operation.callbackDetails() != null
+                        ? operation.callbackDetails().result()
+                        : null;
+            case CONTEXT ->
+                operation.contextDetails() != null ? operation.contextDetails().result() : null;
+            default -> null;
+        };
     }
 
     /**
@@ -83,6 +125,12 @@ public final class PluginInfoConverter {
      */
     public static UserFunctionStartInfo toUserFunctionStartInfo(
             OperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
+        return toUserFunctionStartInfo(
+                PrimitiveOperationIdentifier.from(identifier), parentId, isReplayingChildren, attempt);
+    }
+
+    public static UserFunctionStartInfo toUserFunctionStartInfo(
+            PrimitiveOperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
         return new UserFunctionStartInfo(
                 identifier.operationId(),
                 identifier.name(),

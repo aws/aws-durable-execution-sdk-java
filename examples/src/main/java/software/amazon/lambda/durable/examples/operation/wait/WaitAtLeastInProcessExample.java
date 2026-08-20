@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.wait;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
 
 import java.time.Duration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -28,23 +27,22 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  */
 public class WaitAtLeastInProcessExample extends DurableHandler<GreetingRequest, String> {
 
-    private static final Logger logger = LoggerFactory.getLogger(WaitAtLeastInProcessExample.class);
-
     @Override
     public String handleRequest(GreetingRequest input) {
-        logger.info("Starting concurrent step + wait example for: {}", input.getName());
+        getLogger().info("Starting concurrent step + wait example for: {}", input.getName());
 
         // Start an async step that takes 10 seconds
         DurableFuture<String> asyncStep = stepAsync(
                 "async-operation",
                 String.class,
                 () -> {
-                    logger.info(
-                            "Async operation starting in thread: {}",
-                            Thread.currentThread().getName());
+                    getLogger()
+                            .info(
+                                    "Async operation starting in thread: {}",
+                                    Thread.currentThread().getName());
                     try {
                         Thread.sleep(10000); // 10 seconds
-                        logger.info("Async operation completed successfully");
+                        getLogger().info("Async operation completed successfully");
                         return "Processed: " + input.getName();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -57,13 +55,13 @@ public class WaitAtLeastInProcessExample extends DurableHandler<GreetingRequest,
 
         // Immediately wait for 3 seconds
         // The async step will still be running and will complete after the wait
-        logger.info("Waiting 3 seconds (async step will complete in 10s - no suspension expected)");
+        getLogger().info("Waiting 3 seconds (async step will complete in 10s - no suspension expected)");
         DurableWaitOperation.wait("wait-3-seconds", Duration.ofSeconds(3));
 
         // After wait, get the async step result
-        logger.info("Wait completed, getting async result");
+        getLogger().info("Wait completed, getting async result");
         String result = asyncStep.get();
-        logger.info("Final result: {}", result);
+        getLogger().info("Final result: {}", result);
 
         return result;
     }

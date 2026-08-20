@@ -27,8 +27,8 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
-import software.amazon.lambda.durable.primitive.BasePrimitive;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -66,10 +66,18 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> updatedOperationIdsSinceLastInvocation;
 
     // ===== Thread Coordination =====
-    private final Map<String, BasePrimitive> registeredOperations = new ConcurrentHashMap<>();
+    private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
+
+    enum FutureWaitState {
+        ACTIVE,
+        DEREGISTERING,
+        WAITING,
+        COMPLETED,
+        SUSPENDED
+    }
 
     // ===== Checkpoint Batching =====
     private final CheckpointManager checkpointManager;
@@ -134,7 +142,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
-    public void registerOperation(BasePrimitive operation) {
+    public void registerOperation(BaseDurableOperation operation) {
         registeredOperations.put(operation.getOperationId(), operation);
     }
 
@@ -244,20 +252,11 @@ public class ExecutionManager implements SafeCloseable {
         CompletableFuture<T> awaitedFuture = future;
 
         if (threadContext != null && !future.isDone()) {
-            var coordinationLock = new Object();
-            var deregistered = new boolean[1];
-            synchronized (coordinationLock) {
-                awaitedFuture = future.whenComplete((ignored, throwable) -> {
-                    synchronized (coordinationLock) {
-                        if (deregistered[0] && !isExecutionCompletedExceptionally()) {
-                            registerActiveThread(threadContext.threadId());
-                        }
-                    }
-                });
-                if (!future.isDone()) {
-                    deregistered[0] = true;
-                    deregisterActiveThread(threadContext.threadId());
-                }
+            var waitState = new AtomicReference<>(FutureWaitState.ACTIVE);
+            awaitedFuture = future.whenComplete(
+                    (ignored, throwable) -> completeFutureWait(threadContext.threadId(), waitState));
+            if (waitState.compareAndSet(FutureWaitState.ACTIVE, FutureWaitState.DEREGISTERING)) {
+                deregisterActiveThreadForFuture(threadContext.threadId(), waitState);
             }
         }
 
@@ -266,6 +265,45 @@ public class ExecutionManager implements SafeCloseable {
         } catch (Throwable throwable) {
             ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
             return null;
+        }
+    }
+
+    private void completeFutureWait(String threadId, AtomicReference<FutureWaitState> waitState) {
+        while (true) {
+            var current = waitState.get();
+            if (current == FutureWaitState.COMPLETED || current == FutureWaitState.SUSPENDED) {
+                return;
+            }
+            if (waitState.compareAndSet(current, FutureWaitState.COMPLETED)) {
+                if (current == FutureWaitState.WAITING) {
+                    registerActiveThreadIfRunning(threadId);
+                }
+                return;
+            }
+        }
+    }
+
+    void deregisterActiveThreadForFuture(String threadId, AtomicReference<FutureWaitState> waitState) {
+        synchronized (activeThreads) {
+            removeActiveThread(threadId);
+            if (!waitState.compareAndSet(FutureWaitState.DEREGISTERING, FutureWaitState.WAITING)) {
+                if (waitState.get() == FutureWaitState.COMPLETED) {
+                    registerActiveThreadIfRunning(threadId);
+                }
+                return;
+            }
+            if (activeThreads.isEmpty()
+                    && waitState.compareAndSet(FutureWaitState.WAITING, FutureWaitState.SUSPENDED)) {
+                suspendForNoActiveThreads();
+            }
+        }
+    }
+
+    private void registerActiveThreadIfRunning(String threadId) {
+        synchronized (activeThreads) {
+            if (!isExecutionCompletedExceptionally()) {
+                registerActiveThread(threadId);
+            }
         }
     }
 
@@ -298,19 +336,25 @@ public class ExecutionManager implements SafeCloseable {
         // Add synchronized block to avoid remove then check race condition and make sure that
         // the suspendExecution is called only once
         synchronized (activeThreads) {
-            boolean removed = activeThreads.remove(threadId);
-            if (removed) {
-                logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
-            } else {
-                logger.warn("Thread '{}' not active, cannot deregister", threadId);
-            }
-
+            removeActiveThread(threadId);
             if (activeThreads.isEmpty()) {
-                logger.info("No active threads remaining - suspending execution");
-                preSuspendCheck();
-                suspendExecution();
+                suspendForNoActiveThreads();
             }
         }
+    }
+
+    private void removeActiveThread(String threadId) {
+        if (activeThreads.remove(threadId)) {
+            logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
+        } else {
+            logger.warn("Thread '{}' not active, cannot deregister", threadId);
+        }
+    }
+
+    private void suspendForNoActiveThreads() {
+        logger.info("No active threads remaining - suspending execution");
+        preSuspendCheck();
+        suspendExecution();
     }
 
     private void preSuspendCheck() {
@@ -367,7 +411,7 @@ public class ExecutionManager implements SafeCloseable {
 
     private void validateRunningThreads() {
         // This will detect stuck user thread and thread leaks in the thread pool
-        for (BasePrimitive op : registeredOperations.values()) {
+        for (BaseDurableOperation op : registeredOperations.values()) {
             var userHandlerFuture = op.getRunningUserHandler();
             if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
                 // Some user threads can still be running because

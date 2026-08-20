@@ -135,6 +135,21 @@ class ExtensionOperationImplTest {
     }
 
     @Test
+    void invalidPrimitiveArgumentsDoNotClaimReservation() {
+        var context = context();
+        replay(context, "1", "wait", OperationType.WAIT, "Wait");
+        var operation = new ExtensionOperationImpl(context, "1", "wait", null);
+        var stepConfig = ExtensionStepConfig.<String>builder().build();
+
+        assertThrows(
+                NullPointerException.class,
+                () -> operation.stepAsync("Step", null, state -> ExtensionStepResult.succeed("result"), stepConfig));
+        assertThrows(IllegalArgumentException.class, () -> operation.waitAsync("Wait", null));
+        assertThrows(IllegalArgumentException.class, () -> operation.waitAsync("Wait", Duration.ofMillis(999)));
+        assertOperation(operation.waitAsync("Wait", Duration.ofSeconds(1)), WaitPrimitive.class, "1", "wait", "Wait");
+    }
+
+    @Test
     void reservationCanOnlyExecuteOnceAcrossPrimitiveSelectors() {
         var context = context();
         replay(context, "1", "only-once", OperationType.WAIT, "Wait");

@@ -17,7 +17,6 @@ import software.amazon.lambda.durable.retry.RetryDecision;
  * {@code attempt-start n=<n>} / {@code attempt-end n=<n> outcome=<SUCCEEDED|FAILED>} from the user-function hooks,
  * which run on the same thread as the step body so their order is deterministic.
  */
-@SuppressWarnings("deprecation")
 public class PluginAttemptHooksRetry extends DurableHandler<Object, String> {
 
     @Override

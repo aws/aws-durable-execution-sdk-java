@@ -4,6 +4,7 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -18,6 +19,7 @@ class DurableExecutionCheckpointTest {
     private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
             + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+    private static final Instant EXECUTION_START_TIME = Instant.parse("2026-08-15T00:00:00Z");
 
     private DurableConfig configWithMockClient(LocalMemoryExecutionClient client) {
         return DurableConfig.builder().withDurableExecutionClient(client).build();
@@ -30,6 +32,7 @@ class DurableExecutionCheckpointTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -70,6 +73,7 @@ class DurableExecutionCheckpointTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())

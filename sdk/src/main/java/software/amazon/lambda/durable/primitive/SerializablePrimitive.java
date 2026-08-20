@@ -9,7 +9,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -48,25 +48,15 @@ abstract class SerializablePrimitive<T> extends BasePrimitive implements Durable
      * @param durableContext the parent context this operation belongs to
      */
     protected SerializablePrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContextImpl durableContext) {
         this(operationIdentifier, resultTypeToken, resultSerDes, durableContext, null, false);
     }
 
-    /**
-     * Constructs a new durable operation.
-     *
-     * @param operationIdentifier the unique identifier for this operation
-     * @param resultTypeToken the type token for deserializing the result
-     * @param resultSerDes the serializer/deserializer for the result
-     * @param durableContext the parent context this operation belongs to
-     * @param isVirtual whether this is a virtual operation that should not be persisted
-     * @param parentOperation the operation that owns late-checkpoint suppression, if any
-     */
     protected SerializablePrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContextImpl durableContext,

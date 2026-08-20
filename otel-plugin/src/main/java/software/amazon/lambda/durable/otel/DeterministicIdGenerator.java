@@ -2,45 +2,62 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import static java.util.Objects.requireNonNull;
+
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.sdk.trace.IdGenerator;
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.concurrent.atomic.AtomicReference;
+import java.time.Instant;
 
 /**
  * Generates deterministic trace and span IDs for durable execution observability.
  *
- * <p>Trace ID resolution order:
+ * <p>The durable plugins use short-lived ID overrides around their own {@link SpanBuilder#startSpan()} calls. Outside
+ * those scopes, generation delegates to the fallback generator so unrelated instrumentation keeps normal root trace ID
+ * generation. Scoped values are also bridged through thread-keyed system properties because the application plugin and
+ * Java-agent extension may load this class in different class loaders.
  *
- * <ol>
- *   <li>If an extracted trace ID is set (from {@code _X_AMZN_TRACE_ID}), use it. The durable execution backend
- *       propagates the same Root to all invocations, so this naturally unifies the trace.
- *   <li>If no extracted trace ID is available (local tests, non-Lambda environments), derive a deterministic trace ID
- *       from the execution ARN using SHA-256.
- *   <li>If neither is set, fall back to random generation.
- * </ol>
- *
- * <p>Span IDs for operations are deterministic (derived from execution ARN + operation ID), ensuring the same operation
- * produces the same span across invocations. When no pending operation ID is set, falls back to random generation.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+ * <p>The existing setter methods remain available for callers that use this class directly. Plugin code does not use
+ * that persistent mode.
  */
-@Deprecated
 public class DeterministicIdGenerator implements IdGenerator {
 
-    private static final IdGenerator RANDOM = IdGenerator.random();
     private static final String PROPERTY_PREFIX = "software.amazon.lambda.durable.otel.";
-    private static final String EXTRACTED_TRACE_ID_PROPERTY = PROPERTY_PREFIX + "extractedTraceId";
-    private static final String DURABLE_EXECUTION_ARN_PROPERTY = PROPERTY_PREFIX + "durableExecutionArn";
-    private static final String PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX = PROPERTY_PREFIX + "pendingSpanOperationId.";
-    private static final String PENDING_RAW_SPAN_ID_PROPERTY_PREFIX = PROPERTY_PREFIX + "pendingRawSpanId.";
+    private static final String SCOPED_TRACE_ID_PROPERTY_PREFIX = PROPERTY_PREFIX + "scopedTraceId.";
+    private static final String SCOPED_SPAN_ID_PROPERTY_PREFIX = PROPERTY_PREFIX + "scopedSpanId.";
 
-    private final AtomicReference<String> extractedTraceId = new AtomicReference<>(null);
-    private final AtomicReference<String> arnDerivedTraceId = new AtomicReference<>(null);
+    private final IdGenerator fallbackIdGenerator;
+    private final ThreadLocal<String> extractedTraceId = new ThreadLocal<>();
+    private final ThreadLocal<String> arnDerivedTraceId = new ThreadLocal<>();
     private final ThreadLocal<String> pendingSpanOperationId = new ThreadLocal<>();
     private final ThreadLocal<String> pendingRawSpanId = new ThreadLocal<>();
-    private final AtomicReference<String> durableExecutionArn = new AtomicReference<>(null);
+    private final ThreadLocal<IdOverride> scopedIds = new ThreadLocal<>();
+    private final ThreadLocal<String> durableExecutionArn = new ThreadLocal<>();
+
+    /** Creates a generator that delegates non-overridden IDs to OpenTelemetry's random generator. */
+    public DeterministicIdGenerator() {
+        this(IdGenerator.random());
+    }
+
+    DeterministicIdGenerator(IdGenerator fallbackIdGenerator) {
+        this.fallbackIdGenerator = fallbackIdGenerator;
+    }
+
+    // The SDK builder exposes only a setter. Read its configured generator so unrelated spans retain the caller's
+    // existing ID policy while durable spans use short-lived overrides.
+    static DeterministicIdGenerator installOn(SdkTracerProviderBuilder builder) {
+        var currentGenerator = configuredIdGenerator(builder);
+        if (currentGenerator instanceof DeterministicIdGenerator deterministicIdGenerator) {
+            return deterministicIdGenerator;
+        }
+        var deterministicIdGenerator = new DeterministicIdGenerator(currentGenerator);
+        builder.setIdGenerator(deterministicIdGenerator);
+        return deterministicIdGenerator;
+    }
 
     /**
      * Sets an externally extracted trace ID (e.g., from the X-Ray trace header). This takes highest priority for trace
@@ -49,8 +66,7 @@ public class DeterministicIdGenerator implements IdGenerator {
      * @param traceId 32-char lowercase hex trace ID
      */
     public void setExtractedTraceId(String traceId) {
-        this.extractedTraceId.set(traceId);
-        setOrClearProperty(EXTRACTED_TRACE_ID_PROPERTY, traceId);
+        setOrRemove(extractedTraceId, traceId);
     }
 
     /**
@@ -60,9 +76,8 @@ public class DeterministicIdGenerator implements IdGenerator {
      * @param arn the durable execution ARN
      */
     public void setDurableExecutionArn(String arn) {
-        this.durableExecutionArn.set(arn);
-        this.arnDerivedTraceId.set(arn != null ? generateTraceIdFromArn(arn) : null);
-        setOrClearProperty(DURABLE_EXECUTION_ARN_PROPERTY, arn);
+        setOrRemove(durableExecutionArn, arn);
+        setOrRemove(arnDerivedTraceId, arn != null ? generateTraceIdFromArn(arn) : null);
     }
 
     /**
@@ -71,8 +86,7 @@ public class DeterministicIdGenerator implements IdGenerator {
      * @param operationId the operation ID to derive the span ID from
      */
     public void setNextSpanOperationId(String operationId) {
-        this.pendingSpanOperationId.set(operationId);
-        setOrClearProperty(pendingSpanOperationIdProperty(), operationId);
+        setOrRemove(pendingSpanOperationId, operationId);
     }
 
     /**
@@ -83,8 +97,7 @@ public class DeterministicIdGenerator implements IdGenerator {
      * @param spanId a 16-char lowercase hex span ID
      */
     public void setNextSpanId(String spanId) {
-        this.pendingRawSpanId.set(spanId);
-        setOrClearProperty(pendingRawSpanIdProperty(), spanId);
+        setOrRemove(pendingRawSpanId, spanId);
     }
 
     /**
@@ -106,7 +119,16 @@ public class DeterministicIdGenerator implements IdGenerator {
      * @return a deterministic 16-char hex span ID
      */
     public String generateWorkflowSpanId() {
-        var arn = durableExecutionArn.get();
+        return generateWorkflowSpanId(durableExecutionArn.get());
+    }
+
+    String generateTraceIdForExecution(String arn, Instant executionStartTime) {
+        var timestamp = requireNonNull(executionStartTime, "executionStartTime");
+        var timestampHex = String.format("%08x", timestamp.getEpochSecond() & 0xffffffffL);
+        return timestampHex + sha256(arn != null ? arn : "").substring(0, 24);
+    }
+
+    String generateWorkflowSpanId(String arn) {
         var seed = "workflow:" + (arn != null ? arn : "");
         var spanId = sha256(seed).substring(0, 16);
         if (spanId.equals("0000000000000000")) {
@@ -115,50 +137,100 @@ public class DeterministicIdGenerator implements IdGenerator {
         return spanId;
     }
 
+    String generateSpanIdForOperation(String arn, String operationId) {
+        return generateSpanIdFromOperation(arn, operationId);
+    }
+
+    Span startSpan(SpanBuilder spanBuilder, String traceId, String spanId) {
+        try (var ignored = useIds(traceId, spanId)) {
+            return spanBuilder.startSpan();
+        }
+    }
+
+    IdScope useIds(String traceId, String spanId) {
+        var previousOverride = scopedIds.get();
+        var previousTraceId = System.getProperty(scopedTraceIdProperty());
+        var previousSpanId = System.getProperty(scopedSpanIdProperty());
+
+        scopedIds.set(new IdOverride(traceId, spanId));
+        setOrClearProperty(scopedTraceIdProperty(), traceId);
+        setOrClearProperty(scopedSpanIdProperty(), spanId);
+
+        return new IdScope() {
+            private boolean closed;
+
+            @Override
+            public void close() {
+                if (closed) {
+                    return;
+                }
+                closed = true;
+                if (previousOverride == null) {
+                    scopedIds.remove();
+                } else {
+                    scopedIds.set(previousOverride);
+                }
+                setOrClearProperty(scopedTraceIdProperty(), previousTraceId);
+                setOrClearProperty(scopedSpanIdProperty(), previousSpanId);
+            }
+        };
+    }
+
     @Override
     public String generateTraceId() {
+        var override = currentOverride();
+        if (override != null && override.traceId() != null) {
+            return override.traceId();
+        }
+
         // Priority 1: extracted from X-Ray header (backend propagates same Root across invocations)
         var extracted = extractedTraceId.get();
-        if (extracted == null) {
-            extracted = System.getProperty(EXTRACTED_TRACE_ID_PROPERTY);
-        }
         if (extracted != null) {
             return extracted;
         }
         // Priority 2: deterministic from execution ARN (local tests, non-Lambda)
         var arnDerived = arnDerivedTraceId.get();
-        if (arnDerived == null) {
-            var arn = System.getProperty(DURABLE_EXECUTION_ARN_PROPERTY);
-            arnDerived = arn != null ? generateTraceIdFromArn(arn) : null;
-        }
         if (arnDerived != null) {
             return arnDerived;
         }
         // Priority 3: random fallback
-        return RANDOM.generateTraceId();
+        return fallbackIdGenerator.generateTraceId();
     }
 
     @Override
     public String generateSpanId() {
-        var raw = pendingRawSpanId.get();
-        if (raw == null) {
-            raw = System.getProperty(pendingRawSpanIdProperty());
+        var override = currentOverride();
+        if (override != null && override.spanId() != null) {
+            consumeScopedSpanId(override);
+            return override.spanId();
         }
+
+        var raw = pendingRawSpanId.get();
         if (raw != null) {
             pendingRawSpanId.remove();
-            System.clearProperty(pendingRawSpanIdProperty());
             return raw;
         }
         var operationId = pendingSpanOperationId.get();
-        if (operationId == null) {
-            operationId = System.getProperty(pendingSpanOperationIdProperty());
-        }
         if (operationId != null) {
             pendingSpanOperationId.remove();
-            System.clearProperty(pendingSpanOperationIdProperty());
             return generateSpanIdFromOperation(operationId);
         }
-        return RANDOM.generateSpanId();
+        return fallbackIdGenerator.generateSpanId();
+    }
+
+    @Override
+    public boolean generatesRandomTraceIds() {
+        var override = currentOverride();
+        if (override != null && override.traceId() != null) {
+            // SdkSpanBuilder calls this immediately after generateTraceId() and before invoking samplers or span
+            // processors. Consume the override here so synchronous instrumentation cannot reuse the durable trace ID.
+            consumeScopedTraceId(override);
+            return false;
+        }
+        if (extractedTraceId.get() != null || arnDerivedTraceId.get() != null) {
+            return false;
+        }
+        return fallbackIdGenerator.generatesRandomTraceIds();
     }
 
     /** Generates a deterministic trace ID from an execution ARN using SHA-256 truncated to 32 hex chars. */
@@ -172,12 +244,54 @@ public class DeterministicIdGenerator implements IdGenerator {
      */
     private String generateSpanIdFromOperation(String operationId) {
         var arn = durableExecutionArn.get();
-        if (arn == null) {
-            arn = System.getProperty(DURABLE_EXECUTION_ARN_PROPERTY);
-        }
+        return generateSpanIdFromOperation(arn, operationId);
+    }
+
+    private String generateSpanIdFromOperation(String arn, String operationId) {
         var input = arn != null ? arn + ":" + operationId : operationId;
         var hash = sha256(input);
         return hash.substring(0, 16);
+    }
+
+    private IdOverride currentOverride() {
+        var override = scopedIds.get();
+        if (override != null) {
+            return override;
+        }
+        var traceId = System.getProperty(scopedTraceIdProperty());
+        var spanId = System.getProperty(scopedSpanIdProperty());
+        return traceId != null || spanId != null ? new IdOverride(traceId, spanId) : null;
+    }
+
+    private static IdGenerator configuredIdGenerator(SdkTracerProviderBuilder builder) {
+        for (var field : builder.getClass().getDeclaredFields()) {
+            if (!IdGenerator.class.isAssignableFrom(field.getType())) {
+                continue;
+            }
+            try {
+                if (!field.trySetAccessible()) {
+                    break;
+                }
+                return (IdGenerator) field.get(builder);
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException("Unable to read the configured OpenTelemetry ID generator", e);
+            }
+        }
+        throw new IllegalStateException("Unable to locate the configured OpenTelemetry ID generator");
+    }
+
+    private void consumeScopedTraceId(IdOverride override) {
+        if (scopedIds.get() != null) {
+            scopedIds.set(new IdOverride(null, override.spanId()));
+        }
+        System.clearProperty(scopedTraceIdProperty());
+    }
+
+    private void consumeScopedSpanId(IdOverride override) {
+        if (scopedIds.get() != null) {
+            scopedIds.set(new IdOverride(override.traceId(), null));
+        }
+        System.clearProperty(scopedSpanIdProperty());
     }
 
     private static String sha256(String input) {
@@ -195,22 +309,19 @@ public class DeterministicIdGenerator implements IdGenerator {
     }
 
     static void clearSharedStateForTest() {
-        System.clearProperty(EXTRACTED_TRACE_ID_PROPERTY);
-        System.clearProperty(DURABLE_EXECUTION_ARN_PROPERTY);
         System.getProperties().stringPropertyNames().stream()
-                .filter(name -> name.startsWith(PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX)
-                        || name.startsWith(PENDING_RAW_SPAN_ID_PROPERTY_PREFIX))
+                .filter(name -> name.startsWith(SCOPED_TRACE_ID_PROPERTY_PREFIX)
+                        || name.startsWith(SCOPED_SPAN_ID_PROPERTY_PREFIX))
                 .toList()
                 .forEach(System::clearProperty);
     }
 
-    private static String pendingSpanOperationIdProperty() {
-        return PENDING_SPAN_OPERATION_ID_PROPERTY_PREFIX
-                + Thread.currentThread().getId();
+    private static String scopedTraceIdProperty() {
+        return SCOPED_TRACE_ID_PROPERTY_PREFIX + Thread.currentThread().getId();
     }
 
-    private static String pendingRawSpanIdProperty() {
-        return PENDING_RAW_SPAN_ID_PROPERTY_PREFIX + Thread.currentThread().getId();
+    private static String scopedSpanIdProperty() {
+        return SCOPED_SPAN_ID_PROPERTY_PREFIX + Thread.currentThread().getId();
     }
 
     private static void setOrClearProperty(String key, String value) {
@@ -219,5 +330,20 @@ public class DeterministicIdGenerator implements IdGenerator {
         } else {
             System.setProperty(key, value);
         }
+    }
+
+    private static void setOrRemove(ThreadLocal<String> target, String value) {
+        if (value == null) {
+            target.remove();
+        } else {
+            target.set(value);
+        }
+    }
+
+    private record IdOverride(String traceId, String spanId) {}
+
+    interface IdScope extends AutoCloseable {
+        @Override
+        void close();
     }
 }

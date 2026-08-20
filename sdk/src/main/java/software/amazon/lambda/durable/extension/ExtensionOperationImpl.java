@@ -11,7 +11,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.internal.InternalApi;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.primitive.BasePrimitive;
 import software.amazon.lambda.durable.primitive.CallbackPrimitive;
 import software.amazon.lambda.durable.primitive.ChildContextPrimitive;
@@ -45,6 +45,7 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
     public <T> DurableFuture<T> stepAsync(
             String subType, TypeToken<T> resultType, ExtensionStepFunction<T> function, ExtensionStepConfig<T> config) {
         validateSubType(subType);
+        Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(function, "function cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         claim();
@@ -54,7 +55,7 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                     .build();
         }
         var operation = new StepPrimitive<>(
-                new OperationIdentifier(operationId, name, OperationType.STEP, subType),
+                new PrimitiveOperationIdentifier(operationId, name, OperationType.STEP, subType),
                 function,
                 resultType,
                 config,
@@ -66,10 +67,10 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
     @Override
     public DurableFuture<Void> waitAsync(String subType, Duration duration) {
         validateSubType(subType);
-        claim();
         ParameterValidator.validateDuration(duration, "Wait duration");
+        claim();
         var operation = new WaitPrimitive(
-                new OperationIdentifier(operationId, name, OperationType.WAIT, subType), duration, context);
+                new PrimitiveOperationIdentifier(operationId, name, OperationType.WAIT, subType), duration, context);
         operation.execute();
         return operation;
     }
@@ -92,7 +93,7 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                     .build();
         }
         var operation = new InvokePrimitive<>(
-                new OperationIdentifier(operationId, name, OperationType.CHAINED_INVOKE, subType),
+                new PrimitiveOperationIdentifier(operationId, name, OperationType.CHAINED_INVOKE, subType),
                 functionName,
                 payload,
                 resultType,
@@ -115,7 +116,7 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                     .build();
         }
         var operation = new CallbackPrimitive<>(
-                new OperationIdentifier(operationId, name, OperationType.CALLBACK, subType),
+                new PrimitiveOperationIdentifier(operationId, name, OperationType.CALLBACK, subType),
                 resultType,
                 config,
                 context);
@@ -140,7 +141,7 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                     .build();
         }
         var operation = new ChildContextPrimitive<>(
-                new OperationIdentifier(operationId, name, OperationType.CONTEXT, subType),
+                new PrimitiveOperationIdentifier(operationId, name, OperationType.CONTEXT, subType),
                 function,
                 resultType,
                 config,

@@ -13,7 +13,7 @@ import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.extension.ExtensionInvokeConfig;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -29,7 +29,7 @@ public class InvokePrimitive<T, I> extends SerializablePrimitive<T> {
     private final SerDes payloadSerDes;
 
     public InvokePrimitive(
-            OperationIdentifier operationIdentifier,
+            PrimitiveOperationIdentifier operationIdentifier,
             String functionName,
             I payload,
             TypeToken<T> resultTypeToken,

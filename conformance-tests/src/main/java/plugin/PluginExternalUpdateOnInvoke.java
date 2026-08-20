@@ -19,7 +19,6 @@ import software.amazon.lambda.durable.plugin.OperationEndInfo;
  * invocation-start hook and emits the "updated-on-invoke" record only for wait-type operations observed with
  * {@code isReplay() == true}; on the first invocation the wait has only started (never ends), so nothing is emitted.
  */
-@SuppressWarnings("deprecation")
 public class PluginExternalUpdateOnInvoke extends DurableHandler<Object, String> {
 
     @Override

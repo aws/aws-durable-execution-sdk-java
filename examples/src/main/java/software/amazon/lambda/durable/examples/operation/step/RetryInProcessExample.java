@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.examples.operation.step;
 
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 import static software.amazon.lambda.durable.operation.DurableStepOperation.stepAsync;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.operation.DurableStepOperation.StepConfig;
@@ -28,13 +27,11 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  */
 public class RetryInProcessExample extends DurableHandler<Object, String> {
 
-    private static final Logger logger = LoggerFactory.getLogger(RetryInProcessExample.class);
-
     private final AtomicInteger attemptCount = new AtomicInteger(0);
 
     @Override
     public String handleRequest(Object input) {
-        logger.info("Starting retry in-process example");
+        getLogger().info("Starting retry in-process example");
 
         // Start async step that will fail and retry
         DurableFuture<String> asyncStep = stepAsync(
@@ -42,19 +39,20 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
                 String.class,
                 () -> {
                     int attempt = attemptCount.incrementAndGet();
-                    logger.info(
-                            "Async operation attempt #{} in thread: {}",
-                            attempt,
-                            Thread.currentThread().getName());
+                    getLogger()
+                            .info(
+                                    "Async operation attempt #{} in thread: {}",
+                                    attempt,
+                                    Thread.currentThread().getName());
 
                     // Fail first 2 attempts, succeed on 3rd
                     if (attempt < 3) {
                         var message = "Async operation failing on attempt " + attempt;
-                        logger.warn(message);
+                        getLogger().warn(message);
                         throw new RuntimeException(message);
                     } else {
                         var message = "Async operation succeeded on attempt " + attempt;
-                        logger.info(message);
+                        getLogger().info(message);
                         return message;
                     }
                 },
@@ -66,12 +64,13 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
         // Long-running synchronous step that keeps process busy
         // This prevents suspension during async step retries
         String syncResult = step("long-running-operation", String.class, () -> {
-            logger.info(
-                    "Starting long-running operation (10 seconds) in thread: {}",
-                    Thread.currentThread().getName());
+            getLogger()
+                    .info(
+                            "Starting long-running operation (10 seconds) in thread: {}",
+                            Thread.currentThread().getName());
             try {
                 Thread.sleep(10000); // 10 seconds
-                logger.info("Long-running operation completed");
+                getLogger().info("Long-running operation completed");
                 return "Long operation completed";
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -81,11 +80,11 @@ public class RetryInProcessExample extends DurableHandler<Object, String> {
 
         // Get async step result (should be ready by now due to retries during sync
         // step)
-        logger.info("Getting async step result");
+        getLogger().info("Getting async step result");
         String asyncResult = asyncStep.get();
 
-        logger.info("Sync result: {}", syncResult);
-        logger.info("Async result: {}", asyncResult);
+        getLogger().info("Sync result: {}", syncResult);
+        getLogger().info("Async result: {}", asyncResult);
 
         return "Retry in-process completed - Sync: " + syncResult + ", Async: " + asyncResult;
     }

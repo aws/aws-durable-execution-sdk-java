@@ -13,7 +13,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.WaitOptions;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 
 /**
  * Durable operation that suspends execution for a specified duration without consuming compute.
@@ -28,7 +28,7 @@ public class WaitPrimitive extends BasePrimitive implements DurableFuture<Void> 
     private final Duration duration;
 
     public WaitPrimitive(
-            OperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
+            PrimitiveOperationIdentifier operationIdentifier, Duration duration, DurableContextImpl durableContext) {
         super(operationIdentifier, durableContext, null);
         this.duration = duration;
     }

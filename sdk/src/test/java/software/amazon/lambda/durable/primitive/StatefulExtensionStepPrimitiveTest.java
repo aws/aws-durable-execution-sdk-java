@@ -47,7 +47,7 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -258,7 +258,7 @@ class StatefulExtensionStepPrimitiveTest {
         });
         var strategyState = new AtomicReference<String>();
         var operation = new StepPrimitive<>(
-                new OperationIdentifier(
+                new PrimitiveOperationIdentifier(
                         OPERATION_ID,
                         OPERATION_NAME,
                         OperationType.STEP,
@@ -370,7 +370,7 @@ class StatefulExtensionStepPrimitiveTest {
     private StepPrimitive<Integer> createOperationWithConfig(
             ExtensionStepFunction<Integer> function, ExtensionStepConfig<Integer> config) {
         return new StepPrimitive<>(
-                new OperationIdentifier(
+                new PrimitiveOperationIdentifier(
                         OPERATION_ID,
                         OPERATION_NAME,
                         OperationType.STEP,

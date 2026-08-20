@@ -12,10 +12,7 @@ package software.amazon.lambda.durable.plugin;
  *
  * <p>Plugin errors are isolated — exceptions thrown by plugin methods are caught and logged but never disrupt SDK
  * execution.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public interface DurableExecutionPlugin {
 
     // ─── Invocation-level hooks ──────────────────────────────────────────

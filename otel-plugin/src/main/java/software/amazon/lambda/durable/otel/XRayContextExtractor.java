@@ -9,18 +9,15 @@ import org.slf4j.LoggerFactory;
 /**
  * Extracts OTel trace context from the AWS X-Ray {@code _X_AMZN_TRACE_ID} environment variable.
  *
- * <p>The durable execution backend propagates the same Root trace ID to every invocation of the same execution, so all
- * invocations share one trace. This extractor parses that header and returns the trace ID in OTel format (32 hex chars)
- * along with the parent span ID (16 hex chars).
+ * <p>This extractor parses the Lambda/X-Ray header and returns the trace ID in OTel format (32 hex chars) along with
+ * the parent span ID (16 hex chars). Plugins use it as a fallback parent for Invocation spans; the deterministic
+ * Workflow trace is derived separately from the durable execution ARN.
  *
  * <p>X-Ray header format: {@code Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1}
  *
  * <p>The Root field is converted to OTel format by stripping "1-" and removing dashes:
  * {@code 5759e988bd862e3fe1be46a994272793}
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
 public class XRayContextExtractor implements ContextExtractor {
 
     private static final Logger logger = LoggerFactory.getLogger(XRayContextExtractor.class);
