@@ -211,7 +211,7 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 | `durable.operation.type` | Parent operation type |
 | `durable.operation.name` | Parent operation name |
 | `durable.attempt.number` | 1-based attempt number |
-| `durable.attempt.outcome` | SUCCEEDED or FAILED |
+| `durable.attempt.outcome` | SUCCEEDED (span status `OK`), FAILED (`ERROR`), or INCOMPLETE (`UNSET`) |
 
 ## Log Correlation (MDC)
 
