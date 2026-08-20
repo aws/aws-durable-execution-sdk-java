@@ -305,6 +305,17 @@ Resources:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.otel.Otel19ExecutionFailure
       Role: !Ref LambdaExecutionRoleArn
+
+  Otel20VirtualContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-20
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel20VirtualContext
+      Role: !Ref LambdaExecutionRoleArn
+
   OtelExecution1Success:
     Type: AWS::Serverless::Function
     TestingMetadata:
@@ -572,6 +583,19 @@ Resources:
     Properties:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.otel.Otel19ExecutionFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution20VirtualContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-20
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel20VirtualContext
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
