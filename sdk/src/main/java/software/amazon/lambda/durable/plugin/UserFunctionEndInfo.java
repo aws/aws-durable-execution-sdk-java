@@ -19,8 +19,8 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param endTimestamp when the user function ended
  * @param isReplayingChildren true if child operations within this context are being replayed from checkpoints
  * @param attempt 1-based attempt number for steps/waitForCondition, null for context operations
- * @param succeeded true if the user function completed without error
- * @param error non-null if the user function failed; this component is experimental
+ * @param outcome the user function outcome
+ * @param error non-null if the user function failed or exited incompletely; this component is experimental
  */
 public record UserFunctionEndInfo(
         String id,
@@ -32,5 +32,49 @@ public record UserFunctionEndInfo(
         Instant endTimestamp,
         boolean isReplayingChildren,
         Integer attempt,
-        boolean succeeded,
-        @Experimental Throwable error) {}
+        UserFunctionOutcome outcome,
+        @Experimental Throwable error) {
+
+    /**
+     * Creates user-function-end information from the former boolean outcome.
+     *
+     * @deprecated Use {@link #UserFunctionEndInfo(String, String, String, String, String, Instant, Instant, boolean,
+     *     Integer, UserFunctionOutcome, Throwable)} so incomplete executions are distinguishable from failures.
+     */
+    @Deprecated(forRemoval = false)
+    public UserFunctionEndInfo(
+            String id,
+            String name,
+            String type,
+            String subType,
+            String parentId,
+            Instant startTimestamp,
+            Instant endTimestamp,
+            boolean isReplayingChildren,
+            Integer attempt,
+            boolean succeeded,
+            Throwable error) {
+        this(
+                id,
+                name,
+                type,
+                subType,
+                parentId,
+                startTimestamp,
+                endTimestamp,
+                isReplayingChildren,
+                attempt,
+                succeeded ? UserFunctionOutcome.SUCCEEDED : UserFunctionOutcome.FAILED,
+                error);
+    }
+
+    /**
+     * Returns whether the user function completed successfully.
+     *
+     * @deprecated Use {@link #outcome()} to distinguish failures from incomplete executions.
+     */
+    @Deprecated(forRemoval = false)
+    public boolean succeeded() {
+        return outcome == UserFunctionOutcome.SUCCEEDED;
+    }
+}

@@ -672,6 +672,36 @@ class InvocationOtelPluginTest {
     }
 
     @Test
+    void userFunctionEnd_withIncomplete_leavesAttemptSpanUnset() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "waiting", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1",
+                "waiting",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.INCOMPLETE,
+                new SuspendExecutionException()));
+
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().equals("waiting attempt 1"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(StatusCode.UNSET, attemptSpan.getStatus().getStatusCode());
+        assertEquals("INCOMPLETE", attemptSpan.getAttributes().get(AttributeKey.stringKey("durable.attempt.outcome")));
+        assertTrue(attemptSpan.getEvents().isEmpty());
+    }
+
+    @Test
     void operationEnd_withSuccess_setsOkOnOperationSpan() {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
@@ -1350,7 +1380,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 false,
                 null,
-                false,
+                UserFunctionOutcome.INCOMPLETE,
                 new SuspendExecutionException()));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));

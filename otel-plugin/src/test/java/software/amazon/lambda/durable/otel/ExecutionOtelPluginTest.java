@@ -23,6 +23,7 @@ import java.util.ServiceLoader;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
 class ExecutionOtelPluginTest {
@@ -599,6 +600,31 @@ class ExecutionOtelPluginTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(StatusCode.OK, attemptSpan.getStatus().getStatusCode());
+    }
+
+    @Test
+    void userFunctionIncomplete_leavesAttemptSpanUnset() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "waiting", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1",
+                "waiting",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.INCOMPLETE,
+                new SuspendExecutionException()));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+
+        var attemptSpan = spanByName(spanExporter.getFinishedSpanItems(), "waiting attempt 1");
+        assertEquals(StatusCode.UNSET, attemptSpan.getStatus().getStatusCode());
+        assertEquals("INCOMPLETE", attemptSpan.getAttributes().get(AttributeKey.stringKey("durable.attempt.outcome")));
+        assertTrue(attemptSpan.getEvents().isEmpty());
     }
 
     @Test

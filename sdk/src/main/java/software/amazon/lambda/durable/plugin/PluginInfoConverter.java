@@ -125,12 +125,12 @@ public final class PluginInfoConverter {
      * Creates a {@link UserFunctionEndInfo} from a start info and outcome.
      *
      * @param startInfo the start info from when the function began
-     * @param succeeded true if the function completed without error
-     * @param error the error if the function failed (may be null)
+     * @param outcome the user function outcome
+     * @param error the error if the function failed or exited incompletely (may be null)
      * @return a UserFunctionEndInfo record
      */
     public static UserFunctionEndInfo toUserFunctionEndInfo(
-            UserFunctionStartInfo startInfo, boolean succeeded, Throwable error) {
+            UserFunctionStartInfo startInfo, UserFunctionOutcome outcome, Throwable error) {
         return new UserFunctionEndInfo(
                 startInfo.id(),
                 startInfo.name(),
@@ -141,8 +141,20 @@ public final class PluginInfoConverter {
                 Instant.now(),
                 startInfo.isReplayingChildren(),
                 startInfo.attempt(),
-                succeeded,
+                outcome,
                 error);
+    }
+
+    /**
+     * Creates user-function-end information from the former boolean outcome.
+     *
+     * @deprecated Use {@link #toUserFunctionEndInfo(UserFunctionStartInfo, UserFunctionOutcome, Throwable)}.
+     */
+    @Deprecated(forRemoval = false)
+    public static UserFunctionEndInfo toUserFunctionEndInfo(
+            UserFunctionStartInfo startInfo, boolean succeeded, Throwable error) {
+        return toUserFunctionEndInfo(
+                startInfo, succeeded ? UserFunctionOutcome.SUCCEEDED : UserFunctionOutcome.FAILED, error);
     }
 
     /**

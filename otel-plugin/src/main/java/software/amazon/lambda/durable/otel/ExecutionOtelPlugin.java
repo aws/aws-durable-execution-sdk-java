@@ -495,14 +495,19 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         var span = attemptSpans.remove(key);
         if (span == null) return;
 
-        var outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
-        span.setAttribute(DURABLE_ATTEMPT_OUTCOME, outcome);
+        span.setAttribute(DURABLE_ATTEMPT_OUTCOME, info.outcome().name());
 
-        if (!info.succeeded() && info.error() != null) {
-            span.setStatus(StatusCode.ERROR, info.error().getMessage());
-            span.recordException(info.error());
-        } else if (info.succeeded()) {
-            span.setStatus(StatusCode.OK);
+        switch (info.outcome()) {
+            case SUCCEEDED -> span.setStatus(StatusCode.OK);
+            case FAILED -> {
+                if (info.error() != null) {
+                    span.setStatus(StatusCode.ERROR, info.error().getMessage());
+                    span.recordException(info.error());
+                }
+            }
+            case INCOMPLETE -> {
+                // An incomplete user function is expected when the durable execution suspends.
+            }
         }
 
         endSpan(span, info.endTimestamp());

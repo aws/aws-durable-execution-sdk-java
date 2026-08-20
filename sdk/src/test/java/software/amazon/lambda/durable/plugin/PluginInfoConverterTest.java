@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 
@@ -259,7 +260,7 @@ class PluginInfoConverterTest {
     void toUserFunctionEndInfo_succeeded() {
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, false, 1);
 
-        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, true, null);
+        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null);
 
         assertEquals(OPERATION_ID, endInfo.id());
         assertEquals(OPERATION_NAME, endInfo.name());
@@ -267,7 +268,7 @@ class PluginInfoConverterTest {
         assertNotNull(endInfo.endTimestamp());
         assertFalse(endInfo.isReplayingChildren());
         assertEquals(1, endInfo.attempt());
-        assertTrue(endInfo.succeeded());
+        assertEquals(UserFunctionOutcome.SUCCEEDED, endInfo.outcome());
         assertNull(endInfo.error());
     }
 
@@ -276,10 +277,21 @@ class PluginInfoConverterTest {
         var error = new RuntimeException("step failed");
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, null, false, 2);
 
-        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, error);
+        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.FAILED, error);
 
-        assertFalse(endInfo.succeeded());
+        assertEquals(UserFunctionOutcome.FAILED, endInfo.outcome());
         assertEquals(error, endInfo.error());
         assertEquals(2, endInfo.attempt());
+    }
+
+    @Test
+    void toUserFunctionEndInfo_incomplete() {
+        var error = new SuspendExecutionException();
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, null, false, null);
+
+        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.INCOMPLETE, error);
+
+        assertEquals(UserFunctionOutcome.INCOMPLETE, endInfo.outcome());
+        assertSame(error, endInfo.error());
     }
 }

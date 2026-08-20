@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
+import software.amazon.lambda.durable.plugin.UserFunctionOutcome;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -354,10 +355,14 @@ public abstract class BaseDurableOperation {
         pluginRunner.onUserFunctionStart(startInfo);
         try {
             T result = userFunction.get();
-            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, true, null));
+            pluginRunner.onUserFunctionEnd(
+                    PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
             return result;
         } catch (Throwable e) {
-            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, e));
+            var outcome = e instanceof SuspendExecutionException
+                    ? UserFunctionOutcome.INCOMPLETE
+                    : UserFunctionOutcome.FAILED;
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, outcome, e));
             ExceptionHelper.sneakyThrow(e);
             return null; // unreachable — sneakyThrow always throws
         }

@@ -83,7 +83,7 @@ public class ConformanceLoggingPlugin implements DurableExecutionPlugin {
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
         if (isStep(info.type()) && info.attempt() != null) {
-            String outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
+            String outcome = info.outcome().name();
             System.out.println(String.format(
                     "{\"plugin\": \"%s\", \"hook\": \"attempt-end\", \"n\": %d, \"outcome\": \"%s\", \"op\": \"%s\"%s}",
                     prefix, info.attempt(), outcome, info.id(), arnField()));
