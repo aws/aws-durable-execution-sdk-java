@@ -12,8 +12,4 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 public @interface ExampleTemplate {
     String condition() default "";
-
-    boolean tracing() default false;
-
-    boolean javaAgent() default false;
 }

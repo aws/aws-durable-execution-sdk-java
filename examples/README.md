@@ -111,14 +111,6 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [SimpleMapExample](src/main/java/software/amazon/lambda/durable/examples/map/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
 | [CustomShouldCompleteMapExample](src/main/java/software/amazon/lambda/durable/examples/map/CustomShouldCompleteMapExample.java) | Custom map completion with `shouldComplete` decisions |
 | [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
-| [OtelExample](src/main/java/software/amazon/lambda/durable/examples/general/OtelExample.java) | OpenTelemetry instrumentation with logging span export |
-| [OtelXRayStepExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayStepExample.java) | Export step spans to X-Ray through the ADOT Lambda Layer |
-| [OtelXRayExecutionStepExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayExecutionStepExample.java) | Export spans to X-Ray with `new ExecutionOtelPlugin()` using workflow-rooted trace structure |
-| [OtelXRayExecutionWaitExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayExecutionWaitExample.java) | Trace a step-wait-step workflow with ExecutionOtelPlugin across Lambda invocations |
-| [OtelXRayWaitExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayWaitExample.java) | Trace a step-wait-step workflow across Lambda invocations |
-| [OtelXRayMapExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayMapExample.java) | Trace concurrent map operations and item steps in X-Ray |
-| [OtelXRayParallelExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayParallelExample.java) | Trace parallel branches and branch steps in X-Ray |
-| [OtelXRayNestedContextExample](src/main/java/software/amazon/lambda/durable/examples/otel/OtelXRayNestedContextExample.java) | Trace nested child contexts and inner steps in X-Ray |
 
 ## Cleanup
 

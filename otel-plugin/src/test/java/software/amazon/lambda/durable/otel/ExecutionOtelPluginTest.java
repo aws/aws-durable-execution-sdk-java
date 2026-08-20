@@ -82,69 +82,75 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void configOnlyConstructor_defaultsToGlobalProvider() {
+    void defaultConstructor_retriesGlobalProviderBindingOnNextInvocation() {
+        GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
-        OpenTelemetrySdk.builder()
-                .setTracerProvider(SdkTracerProvider.builder().build())
-                .buildAndRegisterGlobal();
 
-        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
-    }
+        var defaultPlugin = new ExecutionOtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-disabled", "arn:disabled", true, Instant.now()));
+        defaultPlugin.onOperationStart(new OperationInfo(
+                "op-disabled", "disabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-disabled",
+                "disabled-step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-disabled", "arn:disabled", true, InvocationStatus.SUCCEEDED, null));
 
-    @Test
-    void configWithAutoOtlp_buildsPluginOwnedProvider() {
-        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.builder()
-                .providerSource(ProviderSource.AUTO_OTLP)
-                .build());
-        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
-    }
+        assertFalse(GlobalOpenTelemetry.isSet(), "An unavailable provider must not install the no-op global");
 
-    @Test
-    void builderConstructor_isExplicitSource() {
-        var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
-    }
-
-    @Test
-    void configProviderSource_defaultsToGlobalAndHonorsAutoOtlp() {
-        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
-        assertEquals(
-                ProviderSource.AUTO_OTLP,
-                OtelPluginConfig.builder()
-                        .providerSource(ProviderSource.AUTO_OTLP)
-                        .build()
-                        .providerSource());
-    }
-
-    @Test
-    void configOnlyConstructor_rejectsExplicitProviderSource() {
-        var config = OtelPluginConfig.builder()
-                .providerSource(ProviderSource.EXPLICIT)
-                .build();
-        var error = assertThrows(IllegalArgumentException.class, () -> new ExecutionOtelPlugin(config));
-        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
-    }
-
-    @Test
-    void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
-        GlobalOpenTelemetry.resetForTest();
-        var error = assertThrows(IllegalStateException.class, ExecutionOtelPlugin::new);
-        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
-    }
-
-    @Test
-    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
-        OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var globalTracerProvider = SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-enabled", "arn:enabled", true, Instant.now()));
+        defaultPlugin.onOperationStart(new OperationInfo(
+                "op-enabled", "enabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-enabled",
+                "enabled-step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-enabled", "arn:enabled", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertEquals(3, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("enabled-step")));
+        assertFalse(spans.stream().anyMatch(span -> span.getName().equals("disabled-step")));
+    }
+
+    @Test
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
         var defaultPlugin = new ExecutionOtelPlugin();
+        assertFalse(GlobalOpenTelemetry.isSet());
+
+        OtelPluginAutoConfigurationState.markInstalled();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
         defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         defaultPlugin.onOperationStart(
                 new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, null, false));
@@ -250,7 +256,8 @@ class ExecutionOtelPluginTest {
 
         assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must be a root");
         assertFalse(invocationSpan.getParentSpanContext().isValid(), "Invocation span must be a root");
-        assertEquals(workflowSpan.getTraceId(), invocationSpan.getTraceId());
+        assertNotEquals(
+                workflowSpan.getTraceId(), invocationSpan.getTraceId(), "Independent roots must not share a trace ID");
         assertEquals(SpanKind.INTERNAL, invocationSpan.getKind());
     }
 
@@ -756,8 +763,9 @@ class ExecutionOtelPluginTest {
     // ─── Cross-invocation stitching ──────────────────────────────────────
 
     @Test
-    void allSpansShareTraceId_acrossInvocations() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+    void workflowTraceIsStableAndInvocationRootsAreFresh_acrossInvocations() {
+        var executionStartTime = Instant.parse("2026-08-15T00:00:00Z");
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, executionStartTime));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -774,16 +782,21 @@ class ExecutionOtelPluginTest {
                 null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
-        var firstTraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
+        var firstSpans = spanExporter.getFinishedSpanItems();
+        var workflowTraceId = spanByName(firstSpans, "step-1").getTraceId();
+        var firstInvocationTraceId = spanByName(firstSpans, "Invocation").getTraceId();
         spanExporter.reset();
 
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, executionStartTime));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
         var secondSpans = spanExporter.getFinishedSpanItems();
+        var workflowSpan = spanByName(secondSpans, "Workflow");
+        var secondInvocationSpan = spanByName(secondSpans, "Invocation");
 
-        assertTrue(
-                secondSpans.stream().allMatch(s -> s.getTraceId().equals(firstTraceId)),
-                "All spans of one execution must share the same trace ID");
+        assertEquals(workflowTraceId, workflowSpan.getTraceId());
+        assertNotEquals(workflowTraceId, firstInvocationTraceId);
+        assertNotEquals(workflowTraceId, secondInvocationSpan.getTraceId());
+        assertNotEquals(firstInvocationTraceId, secondInvocationSpan.getTraceId());
     }
 
     @Test
@@ -865,13 +878,14 @@ class ExecutionOtelPluginTest {
     // ─── X-Ray trace ID ──────────────────────────────────────────────────
 
     @Test
-    void xrayExtraction_allSpansShareExtractedTraceId() {
+    void xrayExtraction_keepsWorkflowTraceIndependent() {
         var xrayTraceId = "aabbccddee112233445566778899aabb";
+        var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
         var xrayPlugin = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
-                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, null))
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
@@ -895,9 +909,13 @@ class ExecutionOtelPluginTest {
 
         var spans = exporter.getFinishedSpanItems();
         assertTrue(spans.size() >= 3, "Workflow + invocation + operation spans expected");
-        assertTrue(
-                spans.stream().allMatch(s -> s.getTraceId().equals(xrayTraceId)),
-                "All spans must share the extracted X-Ray trace ID");
+        var workflowSpan = spanByName(spans, "Workflow");
+        var invocationSpan = spanByName(spans, "Invocation");
+        var operationSpan = spanByName(spans, "step-a");
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
+        assertNotEquals(xrayTraceId, workflowSpan.getTraceId());
+        assertEquals(workflowSpan.getTraceId(), operationSpan.getTraceId());
     }
 
     @Test

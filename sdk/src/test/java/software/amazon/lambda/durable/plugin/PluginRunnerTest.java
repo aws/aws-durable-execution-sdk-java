@@ -152,6 +152,14 @@ class PluginRunnerTest {
     }
 
     @Test
+    void invocationInfo_rejectsNullExecutionStartTime() {
+        var exception =
+                assertThrows(NullPointerException.class, () -> new InvocationInfo("req-123", "arn:test", true, null));
+
+        assertEquals("executionStartTime", exception.getMessage());
+    }
+
+    @Test
     void invocationEndInfo_compatibilityConstructor_leavesExecutionInputAndResultNull() {
         var info = new InvocationEndInfo("req-123", "arn:test", false, InvocationStatus.SUCCEEDED, null);
 

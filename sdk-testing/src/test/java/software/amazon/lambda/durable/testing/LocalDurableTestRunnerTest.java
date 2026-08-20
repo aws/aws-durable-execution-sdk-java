@@ -5,12 +5,17 @@ package software.amazon.lambda.durable.testing;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 class LocalDurableTestRunnerTest {
 
@@ -79,5 +84,34 @@ class LocalDurableTestRunnerTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, testResult.getStatus());
         assertEquals(List.of("item2", "item1"), testResult.getResult(resultType));
+    }
+
+    @Test
+    void executionStartTimeIsStableAcrossInvocations() {
+        var executionStartTimes = new ArrayList<Instant>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                executionStartTimes.add(info.executionStartTime());
+            }
+        };
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.wait(null, Duration.ofMinutes(1));
+                    return input;
+                },
+                config);
+
+        var firstResult = runner.run("test");
+        runner.advanceTime();
+        var secondResult = runner.run("test");
+
+        assertEquals(ExecutionStatus.PENDING, firstResult.getStatus());
+        assertEquals(ExecutionStatus.SUCCEEDED, secondResult.getStatus());
+        assertEquals(2, executionStartTimes.size());
+        assertNotNull(executionStartTimes.get(0));
+        assertEquals(executionStartTimes.get(0), executionStartTimes.get(1));
     }
 }
