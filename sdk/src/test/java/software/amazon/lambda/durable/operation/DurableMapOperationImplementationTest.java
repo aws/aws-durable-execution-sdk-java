@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -20,6 +21,7 @@ import static software.amazon.lambda.durable.model.OperationSubType.MAP_ITERATIO
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -30,6 +32,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextFailure;
@@ -181,6 +184,49 @@ class DurableMapOperationImplementationTest {
                         any(TypeToken.class),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class));
+    }
+
+    @Test
+    void replayingCompletedCustomNamedMapRejectsRemovedItem() {
+        assertCompletedReplayCardinalityMismatch(List.of("first"), 2);
+    }
+
+    @Test
+    void replayingCompletedCustomNamedMapRejectsAddedItem() {
+        assertCompletedReplayCardinalityMismatch(List.of("first", "second", "third"), 2);
+    }
+
+    private void assertCompletedReplayCardinalityMismatch(List<String> items, int replayItemCount) {
+        var context = mock(ExtensionContext.class);
+        var parent = mock(ExtensionOperation.class);
+        var config = DurableMapOperation.MapConfig.builder()
+                .serDes(new JacksonSerDes())
+                .itemNamer(String.class, (item, index) -> item)
+                .build();
+        when(context.reserve("map")).thenReturn(parent);
+        when(parent.runInChildContextAsync(
+                        eq(MAP.getValue()),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(mockMapFuture());
+
+        DurableMapOperation.mapAsync(
+                context, "map", items, TypeToken.get(String.class), (item, index, child) -> item, config);
+
+        var function = extensionFunction();
+        verify(parent).runInChildContextAsync(eq(MAP.getValue()), any(TypeToken.class), function.capture(), any());
+        var replayItems = IntStream.range(0, replayItemCount)
+                .mapToObj(index -> MapResult.MapResultItem.succeeded("item-" + index))
+                .toList();
+        var replayState = new MapResult<>(replayItems, MIN_SUCCESSFUL_REACHED);
+
+        try (var ignoredContext = BaseContextImpl.attachCurrentContext(mock(CurrentContext.class));
+                var ignoredReplay = ExtensionContextReplayContext.attach(true, replayState)) {
+            var exception = assertThrows(NonDeterministicExecutionException.class, () -> function.getValue()
+                    .apply());
+            assertTrue(exception.getMessage().contains("Expected " + replayItemCount + ", got " + items.size()));
+        }
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

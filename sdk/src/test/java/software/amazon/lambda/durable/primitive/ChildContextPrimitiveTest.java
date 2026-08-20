@@ -39,7 +39,7 @@ import software.amazon.lambda.durable.extension.ExtensionContextFailure;
 import software.amazon.lambda.durable.extension.ExtensionContextFunction;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -97,8 +97,8 @@ class ChildContextPrimitiveTest {
                 .build();
     }
 
-    private static final OperationIdentifier OPERATION_IDENTIFIER =
-            OperationIdentifier.of("1", "test-context", OperationSubType.RUN_IN_CHILD_CONTEXT);
+    private static final PrimitiveOperationIdentifier OPERATION_IDENTIFIER =
+            PrimitiveOperationIdentifier.of("1", "test-context", OperationSubType.RUN_IN_CHILD_CONTEXT);
 
     private ChildContextPrimitive<String> createOperation(Function<DurableContext, String> func) {
         return createOperation(func, SERDES);
@@ -148,7 +148,7 @@ class ChildContextPrimitiveTest {
     private ChildContextPrimitive<String> createExtensionOperation(
             String subType, ExtensionContextFunction<String> function, ExtensionContextConfig config) {
         return new ChildContextPrimitive<>(
-                new OperationIdentifier("1", "test-context", OperationType.CONTEXT, subType),
+                new PrimitiveOperationIdentifier("1", "test-context", OperationType.CONTEXT, subType),
                 function,
                 TypeToken.get(String.class),
                 config,
@@ -428,6 +428,33 @@ class ChildContextPrimitiveTest {
     }
 
     @Test
+    void firstExecutionErrorHandlerReceivesLiveExceptionWhenReconstructionFails() {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        var original = new IllegalStateException("live failure");
+        var translated = new IllegalArgumentException("translated");
+        var capturedFailure = new AtomicReference<ExtensionContextFailure>();
+        var config = ExtensionContextConfig.builder()
+                .serDes(new SerializationOnlySerDes())
+                .isVirtual(true)
+                .errorHandler(failure -> {
+                    capturedFailure.set(failure);
+                    return translated;
+                })
+                .build();
+        var operation = createExtensionOperation(
+                "AcmeContext",
+                () -> {
+                    throw original;
+                },
+                config);
+
+        operation.execute();
+
+        assertSame(translated, assertThrows(IllegalArgumentException.class, operation::get));
+        assertSame(original, capturedFailure.get().originalException());
+    }
+
+    @Test
     void suppressingExtensionContextPropagatesCompletionOwnerToChildContext() {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
         when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
@@ -673,7 +700,7 @@ class ChildContextPrimitiveTest {
     private static final class CompletedParentOperation extends BasePrimitive {
         private CompletedParentOperation(DurableContextImpl durableContext) {
             super(
-                    OperationIdentifier.of("parent", "parent", OperationSubType.RUN_IN_CHILD_CONTEXT),
+                    PrimitiveOperationIdentifier.of("parent", "parent", OperationSubType.RUN_IN_CHILD_CONTEXT),
                     durableContext,
                     null);
         }

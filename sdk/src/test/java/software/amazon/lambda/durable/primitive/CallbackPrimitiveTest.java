@@ -24,8 +24,8 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
-import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -34,8 +34,8 @@ class CallbackPrimitiveTest {
 
     private static final String OPERATION_ID = TestUtils.hashOperationId("1");
     private static final String OPERATION_NAME = "approval";
-    private static final OperationIdentifier OPERATION_IDENTIFIER =
-            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.CALLBACK);
+    private static final PrimitiveOperationIdentifier OPERATION_IDENTIFIER =
+            PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.CALLBACK);
     private static final String EXECUTION_NAME = "exec-name";
     private static final String EXECUTION_OP_ID = "123";
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"

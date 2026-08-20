@@ -23,7 +23,7 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
-import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -33,8 +33,8 @@ class StepPrimitiveTest {
     private static final String OPERATION_ID = "1";
     private static final String OPERATION_NAME = "test-step";
     private static final String RESULT = "result";
-    private static final OperationIdentifier OPERATION_IDENTIFIER =
-            OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.STEP);
+    private static final PrimitiveOperationIdentifier OPERATION_IDENTIFIER =
+            PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.STEP);
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
 

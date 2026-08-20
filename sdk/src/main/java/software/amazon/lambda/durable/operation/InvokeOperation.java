@@ -1,19 +1,19 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.primitive;
+package software.amazon.lambda.durable.operation;
 
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
-import software.amazon.lambda.durable.extension.ExtensionInvokeConfig;
-import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -22,18 +22,18 @@ import software.amazon.lambda.durable.serde.SerDes;
  * @param <T> the result type from the invoked function
  * @param <I> the payload type sent to the invoked function
  */
-public class InvokePrimitive<T, I> extends SerializablePrimitive<T> {
+public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
     private final String functionName;
     private final I payload;
-    private final ExtensionInvokeConfig invokeConfig;
+    private final InvokeConfig invokeConfig;
     private final SerDes payloadSerDes;
 
-    public InvokePrimitive(
-            PrimitiveOperationIdentifier operationIdentifier,
+    public InvokeOperation(
+            OperationIdentifier operationIdentifier,
             String functionName,
             I payload,
             TypeToken<T> resultTypeToken,
-            ExtensionInvokeConfig config,
+            InvokeConfig config,
             DurableContextImpl durableContext) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
 

@@ -148,6 +148,9 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         if (replayingCompletedMap && replayState == null) {
             throw new IllegalStateException("Missing result in completed Map operation");
         }
+        if (replayState != null) {
+            validateReplayCardinality(name, items, replayState);
+        }
         if (replay.isValidatingReplay()) {
             return validateCompletedReplay(name, items, iterationNames, resultType, function, config, replayState);
         }
@@ -174,14 +177,17 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             DurableContext.MapFunction<I, O> function,
             MapConfig config,
             MapResult<O> replayState) {
-        if (items.size() != replayState.size()) {
-            throw new NonDeterministicExecutionException(String.format(
-                    "Map item count mismatch for \"%s\". Expected %d, got %d", name, replayState.size(), items.size()));
-        }
         if (config.nestingType() == NestingType.NESTED) {
             validateNestedIterations(items, iterationNames, resultType, function, config, replayState);
         }
         return ExtensionContextResult.completed(replayState);
+    }
+
+    private static void validateReplayCardinality(String name, List<?> items, MapResult<?> replayState) {
+        if (items.size() != replayState.size()) {
+            throw new NonDeterministicExecutionException(String.format(
+                    "Map item count mismatch for \"%s\". Expected %d, got %d", name, replayState.size(), items.size()));
+        }
     }
 
     private static <I, O> void validateNestedIterations(

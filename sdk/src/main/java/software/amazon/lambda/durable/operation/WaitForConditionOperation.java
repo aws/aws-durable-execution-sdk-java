@@ -1,0 +1,189 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.operation;
+
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BiFunction;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.awssdk.services.lambda.model.StepOptions;
+import software.amazon.lambda.durable.StepContext;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.logging.DurableLogger;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.util.ExceptionHelper;
+
+/**
+ * Durable operation that periodically checks a user-supplied condition function, using a configurable wait strategy to
+ * determine polling intervals and termination.
+ *
+ * <p>Uses {@link OperationType#STEP} with {@link OperationSubType#WAIT_FOR_CONDITION} subtype. Each polling iteration
+ * is checkpointed as a RETRY on the same STEP operation.
+ *
+ * @param <T> the type of state being polled
+ */
+public class WaitForConditionOperation<T> extends SerializableDurableOperation<T> {
+    private static final Integer FIRST_ATTEMPT = 1;
+
+    private final BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc;
+    private final WaitForConditionConfig<T> config;
+
+    public WaitForConditionOperation(
+            OperationIdentifier operationIdentifier,
+            BiFunction<T, StepContext, WaitForConditionResult<T>> checkFunc,
+            TypeToken<T> resultTypeToken,
+            WaitForConditionConfig<T> config,
+            DurableContextImpl durableContext) {
+        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
+
+        this.checkFunc = checkFunc;
+        this.config = config;
+    }
+
+    @Override
+    protected void start() {
+        executeCheckLogic(config.initialState(), FIRST_ATTEMPT);
+    }
+
+    @Override
+    protected void replay(Operation existing) {
+        switch (existing.status()) {
+            case SUCCEEDED, FAILED -> markAlreadyCompleted(); // Check if already completed / failed
+            case PENDING -> pollReadyAndResumeCheckLoop(existing); // Check if pending retry
+            case STARTED, READY -> resumeCheckLoop(existing);
+            default ->
+                throw terminateExecutionWithIllegalDurableOperationException(
+                        "Unexpected waitForCondition status: " + existing.status());
+        }
+    }
+
+    @Override
+    public T get() {
+        var op = waitForOperationCompletion();
+
+        if (op.status() == OperationStatus.SUCCEEDED) {
+            var stepDetails = op.stepDetails();
+            var result = (stepDetails != null) ? stepDetails.result() : null;
+            return deserializeResult(result);
+        } else {
+            var errorObject = op.stepDetails().error();
+
+            // Attempt to reconstruct and throw the original exception
+            Throwable original = deserializeException(errorObject);
+            if (original != null) {
+                ExceptionHelper.sneakyThrow(original);
+            }
+            // Fallback: wrap in WaitForConditionFailedException
+            throw new WaitForConditionFailedException(op);
+        }
+    }
+
+    private void resumeCheckLoop(Operation existing) {
+        var stepDetails = existing.stepDetails();
+        int attempt =
+                (stepDetails != null && stepDetails.attempt() != null) ? stepDetails.attempt() + 1 : FIRST_ATTEMPT;
+        var checkpointData = stepDetails != null ? stepDetails.result() : null;
+        T currentState; // Get current state
+        if (checkpointData != null) {
+            currentState = deserializeResult(checkpointData);
+        } else {
+            currentState = config.initialState();
+        }
+        executeCheckLogic(currentState, attempt);
+    }
+
+    private CompletableFuture<Void> pollReadyAndResumeCheckLoop(Operation existing) {
+        return pollForOperationUpdates()
+                .thenCompose(op -> op.status() == OperationStatus.READY
+                        ? CompletableFuture.completedFuture(op)
+                        : pollForOperationUpdates())
+                .thenAccept(this::resumeCheckLoop);
+    }
+
+    private void executeCheckLogic(T currentState, int attempt) {
+        Runnable userHandler = () -> {
+            var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
+            BaseContextImpl.setCurrentContext(stepContext);
+            try (var ignored = DurableLogger.attachContext()) {
+                try {
+                    // Checkpoint START if not already started
+                    var existing = getOperation();
+                    if (existing == null || existing.status() != OperationStatus.STARTED) {
+                        var startUpdate = OperationUpdate.builder().action(OperationAction.START);
+                        sendOperationUpdateAsync(startUpdate);
+                    }
+
+                    // Execute check function inside the plugin hook boundary so a failure is reported
+                    // through onUserFunctionEnd; checkpoint/poll handling stays outside the boundary.
+                    WaitForConditionResult<T> result =
+                            runUserFunction(attempt, () -> checkFunc.apply(currentState, stepContext));
+
+                    // Normalize the value through SerDes so first execution matches replay.
+                    var serializedState = serializeAndDeserializeResult(result.value());
+                    T deserializedValue = serializedState.deserialized();
+
+                    if (result.isDone()) {
+                        // Condition met — checkpoint SUCCEED
+                        var successUpdate = OperationUpdate.builder()
+                                .action(OperationAction.SUCCEED)
+                                .payload(serializedState.serialized());
+                        sendOperationUpdate(successUpdate);
+                    } else {
+                        // Compute delay from strategy
+                        Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);
+
+                        // Checkpoint RETRY with delay
+                        var retryUpdate = OperationUpdate.builder()
+                                .action(OperationAction.RETRY)
+                                .payload(serializedState.serialized())
+                                .stepOptions(StepOptions.builder()
+                                        .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
+                                        .build());
+                        sendOperationUpdate(retryUpdate);
+
+                        // Poll for READY, then continue the loop
+                        pollForOperationUpdates()
+                                .thenCompose(op -> op.status() == OperationStatus.READY
+                                        ? CompletableFuture.completedFuture(op)
+                                        : pollForOperationUpdates())
+                                .thenRun(() -> executeCheckLogic(deserializedValue, attempt + 1));
+                    }
+                } catch (Throwable e) {
+                    handleCheckFailure(e);
+                }
+            }
+        };
+
+        runUserHandler(userHandler, ThreadType.STEP);
+    }
+
+    private void handleCheckFailure(Throwable exception) {
+        exception = ExceptionHelper.unwrapCompletableFuture(exception);
+        if (exception instanceof SuspendExecutionException suspendExecutionException) {
+            throw suspendExecutionException;
+        }
+        if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {
+            throw terminateExecution(unrecoverable);
+        }
+
+        final var errorObject = (exception instanceof DurableOperationException durableOpEx)
+                ? durableOpEx.getErrorObject()
+                : serializeException(exception);
+
+        // Checkpoint FAIL
+        var failUpdate = OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);
+        sendOperationUpdate(failUpdate);
+    }
+}

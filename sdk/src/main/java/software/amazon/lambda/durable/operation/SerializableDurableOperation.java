@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.primitive;
+package software.amazon.lambda.durable.operation;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +10,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -31,8 +32,8 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  *   <li>Proper thread coordination via future
  * </ul>
  */
-abstract class SerializablePrimitive<T> extends BasePrimitive implements DurableFuture<T> {
-    private static final Logger logger = LoggerFactory.getLogger(SerializablePrimitive.class);
+public abstract class SerializableDurableOperation<T> extends BaseDurableOperation implements DurableFuture<T> {
+    private static final Logger logger = LoggerFactory.getLogger(SerializableDurableOperation.class);
 
     protected record SerializedResult<T>(String serialized, T deserialized) {}
 
@@ -47,7 +48,37 @@ abstract class SerializablePrimitive<T> extends BasePrimitive implements Durable
      * @param resultSerDes the serializer/deserializer for the result
      * @param durableContext the parent context this operation belongs to
      */
-    protected SerializablePrimitive(
+    protected SerializableDurableOperation(
+            OperationIdentifier operationIdentifier,
+            TypeToken<T> resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext) {
+        this(operationIdentifier, resultTypeToken, resultSerDes, durableContext, null, false);
+    }
+
+    /**
+     * Constructs a new durable operation.
+     *
+     * @param operationIdentifier the unique identifier for this operation
+     * @param resultTypeToken the type token for deserializing the result
+     * @param resultSerDes the serializer/deserializer for the result
+     * @param durableContext the parent context this operation belongs to
+     * @param isVirtual whether this is a virtual operation that should not be persisted
+     * @param parentOperation the operation that owns late-checkpoint suppression, if any
+     */
+    protected SerializableDurableOperation(
+            OperationIdentifier operationIdentifier,
+            TypeToken<T> resultTypeToken,
+            SerDes resultSerDes,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation,
+            boolean isVirtual) {
+        super(operationIdentifier, durableContext, parentOperation, isVirtual);
+        this.resultTypeToken = resultTypeToken;
+        this.resultSerDes = resultSerDes;
+    }
+
+    protected SerializableDurableOperation(
             PrimitiveOperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
@@ -55,12 +86,12 @@ abstract class SerializablePrimitive<T> extends BasePrimitive implements Durable
         this(operationIdentifier, resultTypeToken, resultSerDes, durableContext, null, false);
     }
 
-    protected SerializablePrimitive(
+    protected SerializableDurableOperation(
             PrimitiveOperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
             SerDes resultSerDes,
             DurableContextImpl durableContext,
-            BasePrimitive parentOperation,
+            BaseDurableOperation parentOperation,
             boolean isVirtual) {
         super(operationIdentifier, durableContext, parentOperation, isVirtual);
         this.resultTypeToken = resultTypeToken;

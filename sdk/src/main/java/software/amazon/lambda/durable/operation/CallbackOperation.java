@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.primitive;
+package software.amazon.lambda.durable.operation;
 
 import software.amazon.awssdk.services.lambda.model.CallbackOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -8,23 +8,23 @@ import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
-import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
-import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 
 /** Durable operation for creating and waiting on external callbacks. */
-public class CallbackPrimitive<T> extends SerializablePrimitive<T> implements DurableCallbackFuture<T> {
+public class CallbackOperation<T> extends SerializableDurableOperation<T> implements DurableCallbackFuture<T> {
 
-    private final ExtensionCallbackConfig config;
+    private final CallbackConfig config;
 
     private String callbackId;
 
-    public CallbackPrimitive(
-            PrimitiveOperationIdentifier operationIdentifier,
+    public CallbackOperation(
+            OperationIdentifier operationIdentifier,
             TypeToken<T> resultTypeToken,
-            ExtensionCallbackConfig config,
+            CallbackConfig config,
             DurableContextImpl durableContext) {
         super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
         this.config = config;
