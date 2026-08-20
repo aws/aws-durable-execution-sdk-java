@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator;
 
@@ -161,6 +162,18 @@ class OperationConcurrencyCoordinatorTest {
                 assertThrows(IllegalStateException.class, () -> coordinator.register(() -> new TestFuture<>("late")));
 
         assertEquals("Cannot register items after registration is closed", exception.getMessage());
+    }
+
+    @Test
+    void throwingCompletionCallbackBecomesUnrecoverable() {
+        var coordinator = new OperationConcurrencyCoordinator(1, CompletionConfig.shouldComplete(status -> {
+            throw new IllegalStateException("completion failed");
+        }));
+        coordinator.closeRegistration();
+
+        var exception = assertThrows(IllegalDurableOperationException.class, coordinator::awaitCompletion);
+
+        assertTrue(exception.getMessage().contains("completion failed"));
     }
 
     private static <T> DurableFuture<T> launch(

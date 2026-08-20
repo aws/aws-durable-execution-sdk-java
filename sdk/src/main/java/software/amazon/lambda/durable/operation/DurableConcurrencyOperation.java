@@ -16,12 +16,14 @@ import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.context.BaseContext;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextErrorHandler;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /** Shared implementation and configuration types for durable concurrent operations. */
 public abstract class DurableConcurrencyOperation {
@@ -313,6 +315,21 @@ public abstract class DurableConcurrencyOperation {
         }
 
         Completion awaitCompletion(ExpectedCompletionStatus expectedCompletionStatus) {
+            try {
+                return awaitCompletionLoop(expectedCompletionStatus);
+            } catch (Throwable exception) {
+                var cause = ExceptionHelper.unwrapCompletableFuture(exception);
+                if (cause instanceof SuspendExecutionException suspendExecutionException) {
+                    throw suspendExecutionException;
+                }
+                if (cause instanceof UnrecoverableDurableExecutionException unrecoverableException) {
+                    throw unrecoverableException;
+                }
+                throw new IllegalDurableOperationException("Unexpected exception in concurrency operation: " + cause);
+            }
+        }
+
+        private Completion awaitCompletionLoop(ExpectedCompletionStatus expectedCompletionStatus) {
             while (true) {
                 DurableFuture<?>[] waiters;
                 synchronized (lock) {

@@ -17,6 +17,7 @@ import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -103,6 +104,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
 
         var mapConfig = config;
         var virtualEmptyMap = itemList.isEmpty() && !context.getDurableConfig().shouldCheckpointEmptyMap();
+        transitionEmptyMapToExecution(context, virtualEmptyMap);
         var parentConfig = parentContextConfig(mapConfig.serDes(), virtualEmptyMap).toBuilder()
                 .validateCompletedReplay(true)
                 .build();
@@ -112,6 +114,12 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
                 () -> executeInChildContext(
                         name, itemList, iterationNames, resultType, function, mapConfig, virtualEmptyMap),
                 parentConfig);
+    }
+
+    private static void transitionEmptyMapToExecution(ExtensionContext context, boolean virtualEmptyMap) {
+        if (virtualEmptyMap && context.isReplaying() && context instanceof DurableContextImpl durableContext) {
+            durableContext.setExecutionMode();
+        }
     }
 
     private static <I, O> DurableContext.MapFunction<I, O> adapt(Function<I, O> function) {

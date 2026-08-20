@@ -47,8 +47,8 @@ public class OperationIdGenerator {
      */
     public String nextOperationId() {
         var localOperationId = String.valueOf(operationCounter.incrementAndGet());
-        if (!allocatedLocalIds.add(localOperationId)) {
-            throw new IllegalArgumentException("Local operation ID is already in use: " + localOperationId);
+        while (!allocatedLocalIds.add(localOperationId)) {
+            localOperationId = String.valueOf(operationCounter.incrementAndGet());
         }
         return hashOperationId(operationIdPrefix + localOperationId);
     }
