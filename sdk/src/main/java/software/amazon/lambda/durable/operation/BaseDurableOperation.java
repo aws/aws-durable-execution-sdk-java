@@ -359,7 +359,10 @@ public abstract class BaseDurableOperation {
                     PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
             return result;
         } catch (Throwable e) {
-            var error = ExceptionHelper.unwrapCompletableFuture(e);
+var error = ExceptionHelper.unwrapCompletableFuture(e);
+            if (error == null) {
+                error = e;
+            }
             var outcome = error instanceof SuspendExecutionException
                     ? UserFunctionOutcome.INCOMPLETE
                     : UserFunctionOutcome.FAILED;
