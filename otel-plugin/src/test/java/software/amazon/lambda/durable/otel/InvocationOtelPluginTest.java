@@ -452,7 +452,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "process-order",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
@@ -502,7 +512,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "process-order",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
@@ -609,7 +629,17 @@ class InvocationOtelPluginTest {
                 new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
 
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "compute",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -641,7 +671,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 false,
                 1,
-                false,
+                UserFunctionOutcome.FAILED,
                 new RuntimeException("step failed")));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.FAILED, null));
@@ -660,7 +690,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "compute",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
 
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -835,7 +875,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
                 "step-a",
@@ -856,7 +906,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-2", "step-b", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-2", "step-b", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-2",
+                "step-b",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-2",
                 "step-b",
@@ -993,7 +1053,17 @@ class InvocationOtelPluginTest {
         sampledPlugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1));
         sampledPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         sampledPlugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
                 "step",
@@ -1061,7 +1131,17 @@ class InvocationOtelPluginTest {
         xrayPlugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
         xrayPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
                 "step-a",
@@ -1486,7 +1566,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "step-A", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "step-A",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
                 "step-A",
@@ -1540,7 +1630,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-3", "step-B", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-3", "step-B", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-3",
+                "step-B",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-3",
                 "step-B",
@@ -1607,7 +1707,7 @@ class InvocationOtelPluginTest {
                 Instant.now(),
                 false,
                 1,
-                false,
+                UserFunctionOutcome.FAILED,
                 new RuntimeException("payment failed")));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
 
@@ -1641,7 +1741,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), false, 2));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "process-payment", "STEP", "Step", null, Instant.now(), Instant.now(), false, 2, true, null));
+                "op-1",
+                "process-payment",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                2,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
                 "process-payment",
@@ -1743,7 +1853,17 @@ class InvocationOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
                 "step-a",

@@ -33,47 +33,4 @@ public record UserFunctionEndInfo(
         boolean isReplayingChildren,
         Integer attempt,
         UserFunctionOutcome outcome,
-        @Experimental Throwable error) {
-
-    /**
-     * Creates user-function-end information from the former boolean outcome.
-     *
-     * @deprecated Use {@link #UserFunctionEndInfo(String, String, String, String, String, Instant, Instant, boolean,
-     *     Integer, UserFunctionOutcome, Throwable)} so incomplete executions are distinguishable from failures.
-     */
-    public UserFunctionEndInfo(
-            String id,
-            String name,
-            String type,
-            String subType,
-            String parentId,
-            Instant startTimestamp,
-            Instant endTimestamp,
-            boolean isReplayingChildren,
-            Integer attempt,
-            boolean succeeded,
-            Throwable error) {
-        this(
-                id,
-                name,
-                type,
-                subType,
-                parentId,
-                startTimestamp,
-                endTimestamp,
-                isReplayingChildren,
-                attempt,
-                succeeded ? UserFunctionOutcome.SUCCEEDED : UserFunctionOutcome.FAILED,
-                error);
-    }
-
-    /**
-     * Returns whether the user function completed successfully.
-     *
-     * @deprecated Use {@link #outcome()} to distinguish failures from incomplete executions.
-     */
-    @Deprecated(forRemoval = false)
-    public boolean succeeded() {
-        return outcome == UserFunctionOutcome.SUCCEEDED;
-    }
-}
+        @Experimental Throwable error) {}

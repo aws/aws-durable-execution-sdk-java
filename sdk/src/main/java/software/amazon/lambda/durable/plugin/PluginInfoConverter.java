@@ -146,17 +146,6 @@ public final class PluginInfoConverter {
     }
 
     /**
-     * Creates user-function-end information from the former boolean outcome.
-     *
-     * @deprecated Use {@link #toUserFunctionEndInfo(UserFunctionStartInfo, UserFunctionOutcome, Throwable)}.
-     */
-    public static UserFunctionEndInfo toUserFunctionEndInfo(
-            UserFunctionStartInfo startInfo, boolean succeeded, Throwable error) {
-        return toUserFunctionEndInfo(
-                startInfo, succeeded ? UserFunctionOutcome.SUCCEEDED : UserFunctionOutcome.FAILED, error);
-    }
-
-    /**
      * Creates an {@link OperationChangeInfo} from the durable operations whose status changed in a checkpoint response
      * and a snapshot of all operations tracked for the execution.
      *
