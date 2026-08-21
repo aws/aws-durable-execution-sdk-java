@@ -231,7 +231,7 @@ class ExecutionOtelPluginTest {
         assertEquals(
                 start.toEpochMilli(),
                 workflowSpan.getStartEpochNanos() / 1_000_000,
-                "Workflow span should start at the execution start time from InvocationInfo");
+                "Workflow span should start at the execution start time captured from InvocationInfo");
     }
 
     @Test
@@ -284,7 +284,8 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported; the Workflow span is not ended on non-terminal status.
+        // Only the invocation span is exported. On a non-terminal status the Workflow span is never materialized (no
+        // recording span is created until the terminal invocation), so there is nothing to export or abandon.
         assertEquals(1, spans.size());
         assertEquals("Invocation", spans.get(0).getName());
         assertEquals(StatusCode.OK, spans.get(0).getStatus().getStatusCode(), "PENDING invocation span maps to OK");
@@ -414,6 +415,32 @@ class ExecutionOtelPluginTest {
                 opStart.toEpochMilli(),
                 operationSpan.getStartEpochNanos() / 1_000_000,
                 "Operation span should start at OperationInfo.startTimestamp()");
+    }
+
+    @Test
+    void virtualOperation_spanStartsAtOnOperationStartTimestamp() {
+        // FLAT map/parallel child contexts fire onOperationStart with a real start time, but onOperationEnd with null
+        // start/end timestamps (the SDK converter maps a null Operation to null end timestamps). Because the span is
+        // materialized at onOperationEnd, it must fall back to the start captured at onOperationStart — otherwise it
+        // would start at materialization time (after the child code ran), giving a near-zero or inverted duration.
+        var opStart = Instant.parse("2026-03-01T12:00:00Z");
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(
+                new OperationInfo("op-flat", "my-map", "CONTEXT", "Map", null, opStart, null, null, false));
+        // Virtual end: null start, null end, null status (operation == null in PluginInfoConverter).
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-flat", "my-map", "CONTEXT", "Map", null, null, null, null, null, false, null, null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var span = spanByName(spanExporter.getFinishedSpanItems(), "my-map");
+        assertEquals(
+                opStart.toEpochMilli(),
+                span.getStartEpochNanos() / 1_000_000,
+                "Virtual operation span must start at the timestamp captured in onOperationStart, not at "
+                        + "span materialization time");
+        assertTrue(
+                span.getEndEpochNanos() >= span.getStartEpochNanos(),
+                "Virtual operation span must not end before it starts");
     }
 
     @Test
@@ -703,20 +730,22 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void operationNotCompleted_notEndedAtInvocationEnd() {
+    void operationNotCompleted_notMaterializedAtInvocationEnd() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, null, false));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported. The still-open operation span is NOT force-ended (no PENDING
-        // span here), and the Workflow span is not exported on a non-terminal invocation.
+        // Only the invocation span is exported. An operation that suspends before completing is never materialized as
+        // a recording span (onOperationStart retains only its deterministic context); it is created and ended once,
+        // later, in onOperationEnd. So there is no open operation span to abandon here, and the Workflow span is not
+        // materialized on a non-terminal invocation either.
         assertEquals(1, spans.size());
         assertEquals("Invocation", spans.get(0).getName());
         assertTrue(
                 spans.stream().noneMatch(s -> s.getName().equals("my-wait")),
-                "An operation still open at invocation end must not be ended/exported in onInvocationEnd");
+                "An operation still open at invocation end must not be materialized/exported in onInvocationEnd");
     }
 
     @Test
@@ -875,6 +904,114 @@ class ExecutionOtelPluginTest {
         assertTrue(exporter.getFinishedSpanItems().isEmpty(), "No spans should be exported with 0% sampling");
     }
 
+    @Test
+    void operationSampling_followsWorkflowRoot_notTheInvocationSpan() {
+        // Operations and attempts belong to the Workflow trace, so their sampling follows the Workflow root rather than
+        // the per-invocation ambient decision. Here the ambient parent is dropped by a parent-based sampler (so the
+        // Invocation span is not recorded), yet the operation still belongs to the Workflow trace and is exported.
+        // The operation's link to that unsampled invocation is left unresolved, which is the accepted trade-off.
+        var xrayTraceId = "aabbccddee112233445566778899aabb";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var exporter = InMemorySpanExporter.create();
+        var plugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder()
+                        .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.parentBased(
+                                io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOn()))
+                        // An unsampled ambient parent: parentBased copies the parent's decision, so the Invocation span
+                        // (and only it) is dropped.
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        plugin.onOperationEnd(new OperationEndInfo(
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                1,
+                false,
+                null,
+                null));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        var operationSpan = spanByName(spans, "step-a");
+        var workflowSpan = spanByName(spans, "Workflow");
+        assertEquals(
+                workflowSpan.getTraceId(),
+                operationSpan.getTraceId(),
+                "The operation must live in the Workflow trace, independent of the invocation's ambient trace");
+        assertEquals(
+                workflowSpan.getSpanId(),
+                operationSpan.getParentSpanId(),
+                "The operation must be parented to the Workflow root, so it shares the Workflow root's fate");
+    }
+
+    @Test
+    void rootRejectingSampler_dropsWorkflowTreeWithoutOrphans() {
+        // The Workflow root is created with no parent, so a parent-based sampler applies its root rule to it. With a
+        // rejecting root rule the Workflow span is dropped, and the operation/attempt spans parented to the Workflow
+        // context must be dropped with it — otherwise they would export as orphans referencing a Workflow span that
+        // never shipped. The ambient parent is sampled here, so this also proves the decision is taken from the
+        // Workflow root rather than the invocation span.
+        var xrayTraceId = "aabbccddee112233445566778899aabb";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var exporter = InMemorySpanExporter.create();
+        var rejectingPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder()
+                        .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.parentBased(
+                                io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff()))
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        rejectingPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        rejectingPlugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        rejectingPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        rejectingPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        rejectingPlugin.onOperationEnd(new OperationEndInfo(
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                1,
+                false,
+                null,
+                null));
+        rejectingPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var workflowTreeSpans = exporter.getFinishedSpanItems().stream()
+                .filter(s -> !s.getName().equals("Invocation"))
+                .toList();
+        assertTrue(
+                workflowTreeSpans.isEmpty(),
+                "A rejecting root sampler must drop the Workflow span and every operation/attempt parented to it, "
+                        + "leaving no orphans; got "
+                        + workflowTreeSpans.stream()
+                                .map(io.opentelemetry.sdk.trace.data.SpanData::getName)
+                                .toList());
+    }
+
     // ─── X-Ray trace ID ──────────────────────────────────────────────────
 
     @Test
@@ -940,6 +1077,115 @@ class ExecutionOtelPluginTest {
         assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must remain an independent root");
         assertEquals(xrayTraceId, invocationSpan.getTraceId());
         assertEquals(parentSpanId, invocationSpan.getParentSpanId());
+    }
+
+    // ─── Span lifecycle: every recording span is ended exactly once ──────
+
+    @Test
+    void terminalSuccess_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.SUCCEEDED, null);
+    }
+
+    @Test
+    void terminalFailure_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.FAILED, new RuntimeException("boom"));
+    }
+
+    @Test
+    void pendingInvocation_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.PENDING, null);
+    }
+
+    @Test
+    void retryingInvocation_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.RETRYING, new RuntimeException("transient"));
+    }
+
+    /**
+     * Runs an invocation with a step operation and attempt, ending with the given status, and asserts every started
+     * span was ended exactly once and none is left recording. Non-terminal statuses leave the operation open at
+     * suspend.
+     */
+    private void assertEveryRecordingSpanEndedOnce(InvocationStatus status, Throwable error) {
+        var counting = new CountingSpanProcessor();
+        var lifecyclePlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(counting),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        var terminal = status == InvocationStatus.SUCCEEDED || status == InvocationStatus.FAILED;
+
+        lifecyclePlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        lifecyclePlugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        lifecyclePlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        lifecyclePlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        if (terminal) {
+            // On a terminal invocation the operation completes; on a non-terminal one it stays open (suspends).
+            lifecyclePlugin.onOperationEnd(new OperationEndInfo(
+                    "op-1",
+                    "step-a",
+                    "STEP",
+                    "Step",
+                    null,
+                    Instant.now(),
+                    Instant.now(),
+                    "SUCCEEDED",
+                    1,
+                    false,
+                    null,
+                    null));
+        }
+        lifecyclePlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, status, error));
+
+        counting.assertBalancedAndNotRecording();
+    }
+
+    /**
+     * A {@link io.opentelemetry.sdk.trace.SpanProcessor} that records every started span and counts ends, so a test can
+     * prove that every recording span is ended exactly once and none is left recording.
+     */
+    private static final class CountingSpanProcessor implements io.opentelemetry.sdk.trace.SpanProcessor {
+        private final java.util.List<io.opentelemetry.sdk.trace.ReadWriteSpan> started =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        private final java.util.concurrent.atomic.AtomicInteger ended = new java.util.concurrent.atomic.AtomicInteger();
+
+        @Override
+        public void onStart(
+                io.opentelemetry.context.Context parentContext, io.opentelemetry.sdk.trace.ReadWriteSpan span) {
+            started.add(span);
+        }
+
+        @Override
+        public boolean isStartRequired() {
+            return true;
+        }
+
+        @Override
+        public void onEnd(io.opentelemetry.sdk.trace.ReadableSpan span) {
+            ended.incrementAndGet();
+        }
+
+        @Override
+        public boolean isEndRequired() {
+            return true;
+        }
+
+        void assertBalancedAndNotRecording() {
+            assertFalse(started.isEmpty(), "Expected the plugin to start at least one span");
+            assertEquals(
+                    started.size(), ended.get(), "Every recording span the plugin started must be ended exactly once");
+            for (var span : started) {
+                assertFalse(
+                        span.isRecording(),
+                        "No span may still be recording after onInvocationEnd (span '" + span.getName() + "')");
+            }
+        }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────

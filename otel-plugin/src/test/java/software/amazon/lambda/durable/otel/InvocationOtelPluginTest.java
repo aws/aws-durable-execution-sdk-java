@@ -983,6 +983,47 @@ class InvocationOtelPluginTest {
         assertTrue(spanExporter.getFinishedSpanItems().isEmpty(), "No spans should be exported with 0% sampling");
     }
 
+    @Test
+    void parentBasedRejectingSampler_producesNoOrphanContinuationSpan() {
+        // An operation whose parent completed in a prior invocation parents onto a synthetic (non-recording)
+        // placeholder. With a parent-based rejecting sampler, that placeholder must carry the trace's "drop" decision
+        // so the continuation span is not forced to record and export as an orphan.
+        spanExporter = InMemorySpanExporter.create();
+        var rejectingPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder()
+                        .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.parentBased(
+                                io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff()))
+                        .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
+
+        rejectingPlugin.onInvocationStart(new InvocationInfo("req-2", "arn:exec1", false, Instant.now()));
+        // No matching onOperationStart this invocation, and parentId refers to an operation from a prior invocation →
+        // the continuation span parents onto the deterministic placeholder context.
+        rejectingPlugin.onOperationEnd(new OperationEndInfo(
+                "op-child",
+                "inner",
+                "STEP",
+                "Step",
+                "op-parent",
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                1,
+                false,
+                null,
+                null));
+        rejectingPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-2", "arn:exec1", false, InvocationStatus.SUCCEEDED, null));
+
+        assertTrue(
+                spanExporter.getFinishedSpanItems().isEmpty(),
+                "A parent-based rejecting sampler must drop the continuation span parented to the deterministic "
+                        + "placeholder context");
+    }
+
     // ─── X-Ray trace ID extraction integration tests ─────────────────────
 
     @Test
@@ -1699,6 +1740,8 @@ class InvocationOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
 
+        // On a non-terminal status the Workflow span is never materialized (no recording span is created until the
+        // terminal invocation), so it is neither exported nor abandoned.
         assertTrue(
                 spanExporter.getFinishedSpanItems().stream()
                         .noneMatch(s -> s.getName().equals("Workflow")),
@@ -1828,6 +1871,114 @@ class InvocationOtelPluginTest {
         assertTrue(
                 workflowSpan.getEvents().stream().anyMatch(e -> e.getName().equals("exception")),
                 "Workflow span should record the execution exception on FAILED");
+    }
+
+    // ─── Span lifecycle: every recording span is ended exactly once ──────
+
+    @Test
+    void terminalSuccess_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.SUCCEEDED, null);
+    }
+
+    @Test
+    void terminalFailure_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.FAILED, new RuntimeException("boom"));
+    }
+
+    @Test
+    void pendingInvocation_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.PENDING, null);
+    }
+
+    @Test
+    void retryingInvocation_endsEveryRecordingSpanExactlyOnce() {
+        assertEveryRecordingSpanEndedOnce(InvocationStatus.RETRYING, new RuntimeException("transient"));
+    }
+
+    /**
+     * Runs an invocation with a step operation and attempt, ending with the given status, and asserts every started
+     * span was ended exactly once and none is left recording. Non-terminal statuses leave the operation open at
+     * suspend.
+     */
+    private void assertEveryRecordingSpanEndedOnce(InvocationStatus status, Throwable error) {
+        var counting = new CountingSpanProcessor();
+        var lifecyclePlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(counting),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
+
+        var terminal = status == InvocationStatus.SUCCEEDED || status == InvocationStatus.FAILED;
+
+        lifecyclePlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        lifecyclePlugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        lifecyclePlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        lifecyclePlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        if (terminal) {
+            // On a terminal invocation the operation completes; on a non-terminal one it stays open (suspends).
+            lifecyclePlugin.onOperationEnd(new OperationEndInfo(
+                    "op-1",
+                    "step-a",
+                    "STEP",
+                    "Step",
+                    null,
+                    Instant.now(),
+                    Instant.now(),
+                    "SUCCEEDED",
+                    1,
+                    false,
+                    null,
+                    null));
+        }
+        lifecyclePlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, status, error));
+
+        counting.assertBalancedAndNotRecording();
+    }
+
+    /**
+     * A {@link io.opentelemetry.sdk.trace.SpanProcessor} that records every started span and counts ends, so a test can
+     * prove that every recording span is ended exactly once and none is left recording.
+     */
+    private static final class CountingSpanProcessor implements io.opentelemetry.sdk.trace.SpanProcessor {
+        private final java.util.List<io.opentelemetry.sdk.trace.ReadWriteSpan> started =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        private final java.util.concurrent.atomic.AtomicInteger ended = new java.util.concurrent.atomic.AtomicInteger();
+
+        @Override
+        public void onStart(
+                io.opentelemetry.context.Context parentContext, io.opentelemetry.sdk.trace.ReadWriteSpan span) {
+            started.add(span);
+        }
+
+        @Override
+        public boolean isStartRequired() {
+            return true;
+        }
+
+        @Override
+        public void onEnd(io.opentelemetry.sdk.trace.ReadableSpan span) {
+            ended.incrementAndGet();
+        }
+
+        @Override
+        public boolean isEndRequired() {
+            return true;
+        }
+
+        void assertBalancedAndNotRecording() {
+            assertFalse(started.isEmpty(), "Expected the plugin to start at least one span");
+            assertEquals(
+                    started.size(), ended.get(), "Every recording span the plugin started must be ended exactly once");
+            for (var span : started) {
+                assertFalse(
+                        span.isRecording(),
+                        "No span may still be recording after onInvocationEnd (span '" + span.getName() + "')");
+            }
+        }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
