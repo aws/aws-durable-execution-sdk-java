@@ -9,7 +9,6 @@ import software.amazon.lambda.durable.model.SafeCloseable;
 
 /** User-facing context for managing parallel branch execution within a durable function. */
 public interface ParallelDurableFuture extends SafeCloseable, DurableFuture<ParallelResult> {
-
     /**
      * Registers and immediately starts a branch (respects maxConcurrency).
      *

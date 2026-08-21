@@ -77,11 +77,27 @@ class DurableHandlerTest {
         assertEquals("indirect: test-input", result);
     }
 
+    @Test
+    void testHandlerCanOverrideContextFreeMethod() {
+        var handler = new ContextFreeHandler();
+
+        var result = handler.handleRequest("test-input", null);
+
+        assertEquals("context-free: test-input", result);
+    }
+
     // Test handler implementation
     private static class TestDurableHandler extends DurableHandler<String, String> {
         @Override
         public String handleRequest(String input, DurableContext context) {
             return "processed: " + input;
+        }
+    }
+
+    private static class ContextFreeHandler extends DurableHandler<String, String> {
+        @Override
+        public String handleRequest(String input) {
+            return "context-free: " + input;
         }
     }
 

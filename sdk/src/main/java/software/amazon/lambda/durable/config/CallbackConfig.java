@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.config;
 
 import java.time.Duration;
+import software.amazon.lambda.durable.operation.DurableCallbackOperation;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ParameterValidator;
 
@@ -49,6 +50,15 @@ public class CallbackConfig {
     /** Creates a new builder pre-populated with this config's values. */
     public Builder toBuilder() {
         return new Builder(timeout, heartbeatTimeout, serDes);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableCallbackOperation.CallbackConfig toOperationConfig() {
+        return DurableCallbackOperation.CallbackConfig.builder()
+                .timeout(timeout())
+                .heartbeatTimeout(heartbeatTimeout())
+                .serDes(serDes())
+                .build();
     }
 
     /** Builder for {@link CallbackConfig}. */

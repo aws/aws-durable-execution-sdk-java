@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.config;
 
 import java.util.Objects;
+import software.amazon.lambda.durable.operation.DurableContextOperation;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -34,6 +35,14 @@ public class RunInChildContextConfig {
 
     public Builder toBuilder() {
         return new Builder().serDes(serDes).isVirtual(isVirtual);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableContextOperation.RunInChildContextConfig toOperationConfig() {
+        return DurableContextOperation.RunInChildContextConfig.builder()
+                .serDes(serDes())
+                .isVirtual(isVirtual())
+                .build();
     }
 
     /**

@@ -19,8 +19,13 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
+import software.amazon.lambda.durable.extension.ExtensionContext;
+import software.amazon.lambda.durable.extension.ExtensionStepConfig;
+import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.operation.DurableMapOperation;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -337,6 +342,32 @@ class PluginIntegrationTest {
     }
 
     @Test
+    void plugin_receivesPrimitiveLifecycleForCustomExtension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> customExtension(), config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var operationNames =
+                plugin.operationStarts.stream().map(OperationInfo::name).toList();
+        assertTrue(operationNames.contains("inner-step"));
+        assertFalse(operationNames.contains("custom-extension"));
+    }
+
+    private static String customExtension() {
+        return ExtensionContext.getCurrentContext()
+                .reserve("inner-step")
+                .stepAsync(
+                        OperationSubType.STEP.getValue(),
+                        TypeToken.get(String.class),
+                        state -> ExtensionStepResult.succeed("done"),
+                        ExtensionStepConfig.<String>builder().build())
+                .get();
+    }
+
+    @Test
     void plugin_operationEnd_notFiredOnReplay() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
@@ -573,6 +604,34 @@ class PluginIntegrationTest {
                 .count();
         assertEquals(1, startCount, "empty map should fire onOperationStart exactly once");
         assertEquals(1, endCount, "empty map should fire onOperationEnd exactly once");
+    }
+
+    @Test
+    void plugin_preservesMapAndIterationHookBoundaries() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> DurableMapOperation.map(
+                                "items", List.of("a", "b"), String.class, String::toUpperCase)
+                        .results()
+                        .toString(),
+                config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var operationNames =
+                plugin.operationStarts.stream().map(OperationInfo::name).toList();
+        assertTrue(operationNames.contains("items"));
+        assertTrue(operationNames.contains("items-iteration-0"));
+        assertTrue(operationNames.contains("items-iteration-1"));
+        var userFunctionNames = plugin.userFunctionStarts.stream()
+                .map(UserFunctionStartInfo::name)
+                .toList();
+        assertFalse(userFunctionNames.contains("items"));
+        assertTrue(userFunctionNames.contains("items-iteration-0"));
+        assertTrue(userFunctionNames.contains("items-iteration-1"));
     }
 
     // ─── Operation change hook ───────────────────────────────────────────
@@ -853,7 +912,7 @@ class PluginIntegrationTest {
                 .toList();
         assertEquals(2, flakyEnds.size(), "Expected two attempts: one failed, one succeeded");
 
-        // First attempt failed — its exception is handled internally by StepOperation, but the
+        // First attempt failed — its exception is handled internally by StepPrimitive, but the
         // onUserFunctionEnd hook must still report it as failed. Look up by attempt number since the
         // retry may run nested within the failed attempt, making end-hook ordering non-deterministic.
         var firstAttempt = flakyEnds.stream()

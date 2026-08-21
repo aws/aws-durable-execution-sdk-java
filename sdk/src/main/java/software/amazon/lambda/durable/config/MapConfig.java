@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.config;
 
 import java.util.Objects;
 import java.util.function.BiFunction;
+import software.amazon.lambda.durable.operation.DurableMapOperation;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -72,6 +73,17 @@ public class MapConfig {
                 .serDes(serDes)
                 .nestingType(nestingType)
                 .itemNamer(itemNamer);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableMapOperation.MapConfig toOperationConfig() {
+        return DurableMapOperation.MapConfig.builder()
+                .maxConcurrency(maxConcurrency())
+                .completionConfig(completionConfig().toOperationConfig())
+                .serDes(serDes())
+                .nestingType(nestingType().toOperationType())
+                .itemNamer(itemNamer())
+                .build();
     }
 
     /** Builder for creating MapConfig instances. */

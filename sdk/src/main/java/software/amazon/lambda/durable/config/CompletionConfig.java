@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.config;
 import java.util.Objects;
 import java.util.function.Function;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
+import software.amazon.lambda.durable.operation.DurableConcurrencyOperation;
 
 /**
  * Controls when a concurrent operation (map or parallel) completes.
@@ -153,6 +154,27 @@ public record CompletionConfig(
     /** @return true when a custom completion function is configured. */
     public boolean hasCustomShouldComplete() {
         return shouldComplete != null;
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableConcurrencyOperation.CompletionConfig toOperationConfig() {
+        if (shouldComplete == null) {
+            return new DurableConcurrencyOperation.CompletionConfig(
+                    minSuccessful, toleratedFailureCount, toleratedFailurePercentage);
+        }
+        return DurableConcurrencyOperation.CompletionConfig.shouldComplete(status -> {
+            var decision = shouldComplete.apply(new CompletionStatus(
+                    status.successCount(),
+                    status.failureCount(),
+                    status.completedCount(),
+                    status.totalCount(),
+                    status.allItemsRegistered()));
+            if (decision == null) {
+                return null;
+            }
+            return new DurableConcurrencyOperation.CompletionConfig.CompletionDecision(
+                    decision.shouldComplete(), decision.completionStatus());
+        });
     }
 
     private Function<CompletionStatus, CompletionDecision> thresholdBasedShouldComplete() {

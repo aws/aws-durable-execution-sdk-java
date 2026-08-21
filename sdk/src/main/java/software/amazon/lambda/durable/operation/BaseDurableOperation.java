@@ -25,6 +25,7 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
@@ -52,7 +53,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 public abstract class BaseDurableOperation {
     private static final Logger logger = LoggerFactory.getLogger(BaseDurableOperation.class);
 
-    private final OperationIdentifier operationIdentifier;
+    private final PrimitiveOperationIdentifier operationIdentifier;
     protected final ExecutionManager executionManager;
     protected final CompletableFuture<BaseDurableOperation> completionFuture;
     protected final BaseDurableOperation parentOperation;
@@ -65,6 +66,13 @@ public abstract class BaseDurableOperation {
             OperationIdentifier operationIdentifier,
             DurableContextImpl durableContext,
             BaseDurableOperation parentOperation) {
+        this(PrimitiveOperationIdentifier.from(operationIdentifier), durableContext, parentOperation);
+    }
+
+    protected BaseDurableOperation(
+            PrimitiveOperationIdentifier operationIdentifier,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation) {
         this(operationIdentifier, durableContext, parentOperation, false);
     }
 
@@ -73,11 +81,19 @@ public abstract class BaseDurableOperation {
      *
      * @param operationIdentifier the unique identifier for this operation
      * @param durableContext the parent context this operation belongs to
-     * @param parentOperation the parent operation if this is a branch/iteration of a ConcurrencyOperation
+     * @param parentOperation the operation that owns late-checkpoint suppression, if any
      * @param isVirtual whether this is a virtual operation that should not be persisted
      */
     protected BaseDurableOperation(
             OperationIdentifier operationIdentifier,
+            DurableContextImpl durableContext,
+            BaseDurableOperation parentOperation,
+            boolean isVirtual) {
+        this(PrimitiveOperationIdentifier.from(operationIdentifier), durableContext, parentOperation, isVirtual);
+    }
+
+    protected BaseDurableOperation(
+            PrimitiveOperationIdentifier operationIdentifier,
             DurableContextImpl durableContext,
             BaseDurableOperation parentOperation,
             boolean isVirtual) {
@@ -97,8 +113,22 @@ public abstract class BaseDurableOperation {
         return completionFuture;
     }
 
+    /**
+     * Returns a non-mutating completion signal for public {@code DurableFuture} combinators.
+     *
+     * @return a future that completes with this operation
+     */
+    public CompletableFuture<Void> completionFuture() {
+        return completionFuture.thenApply(ignored -> null);
+    }
+
     /** Gets the operation sub-type (e.g. RUN_IN_CHILD_CONTEXT, WAIT_FOR_CALLBACK). */
     public OperationSubType getSubType() {
+        return operationIdentifier.standardSubType();
+    }
+
+    /** Gets the exact operation subtype string. */
+    public String getSubTypeValue() {
         return operationIdentifier.subType();
     }
 
@@ -231,8 +261,7 @@ public abstract class BaseDurableOperation {
         // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
         // completionFuture is completed by a user thread (a step or child context thread) when the execution here
         // is between `isOperationCompleted` and `thenRun`.
-        // If this operation is a branch/iteration of a ConcurrencyOperation (map or parallel), the branches/iterations
-        // must be completed sequentially to avoid race conditions.
+        // Operations sharing a late-checkpoint owner must complete sequentially to avoid races with parent completion.
         synchronized (parentOperation == null ? completionFuture : parentOperation.completionFuture) {
             if (!isOperationCompleted()) {
                 // Add a completion stage to completionFuture so that when the completionFuture is completed,
@@ -483,7 +512,7 @@ public abstract class BaseDurableOperation {
         var updateBuilder = builder.id(getOperationId())
                 .name(getName())
                 .type(getType())
-                .subType(getSubType().getValue())
+                .subType(getSubTypeValue())
                 .parentId(durableContext.getParentId());
         var update = updateBuilder.build();
         if (replayCompletedOperation.get()) {
@@ -514,10 +543,10 @@ public abstract class BaseDurableOperation {
                     getOperationId(), checkpointed.name(), getName())));
         }
 
-        if (!Objects.equals(checkpointed.subType(), getSubType().getValue())) {
+        if (!Objects.equals(checkpointed.subType(), getSubTypeValue())) {
             throw terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation subType mismatch for \"%s\". Expected \"%s\", got \"%s\"",
-                    getOperationId(), checkpointed.subType(), getSubType())));
+                    getOperationId(), checkpointed.subType(), getSubTypeValue())));
         }
     }
 

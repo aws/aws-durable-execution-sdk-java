@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.config.CallbackConfig;
+import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
 
 class DurationValidationIntegrationTest {
 
@@ -42,5 +43,23 @@ class DurationValidationIntegrationTest {
     void callbackConfig_withNullTimeouts_shouldPass() {
         assertDoesNotThrow(() ->
                 CallbackConfig.builder().timeout(null).heartbeatTimeout(null).build());
+    }
+
+    @Test
+    void extensionCallbackConfig_withInvalidTimeout_shouldThrow() {
+        var exception = assertThrows(IllegalArgumentException.class, () -> ExtensionCallbackConfig.builder()
+                .timeout(Duration.ofMillis(500))
+                .build());
+
+        assertTrue(exception.getMessage().contains("Callback timeout"));
+        assertTrue(exception.getMessage().contains("at least 1 second"));
+    }
+
+    @Test
+    void extensionCallbackConfig_withValidTimeouts_shouldPass() {
+        assertDoesNotThrow(() -> ExtensionCallbackConfig.builder()
+                .timeout(Duration.ofSeconds(30))
+                .heartbeatTimeout(Duration.ofSeconds(10))
+                .build());
     }
 }

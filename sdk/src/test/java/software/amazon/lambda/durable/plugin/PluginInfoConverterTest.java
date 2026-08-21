@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 
@@ -53,6 +54,16 @@ class PluginInfoConverterTest {
         assertEquals(START, info.startTimestamp());
         assertEquals(END, info.endTimestamp());
         assertEquals("STARTED", info.status());
+    }
+
+    @Test
+    void toOperationInfo_withCustomIdentifier_preservesCustomSubtype() {
+        var identifier = new PrimitiveOperationIdentifier(OPERATION_ID, OPERATION_NAME, OperationType.STEP, "AcmeStep");
+
+        var info = PluginInfoConverter.toOperationInfo(null, identifier, PARENT_ID);
+
+        assertEquals("STEP", info.type());
+        assertEquals("AcmeStep", info.subType());
     }
 
     @Test

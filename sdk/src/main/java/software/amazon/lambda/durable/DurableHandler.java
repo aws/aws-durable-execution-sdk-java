@@ -16,9 +16,9 @@ import software.amazon.lambda.durable.serde.DurableInputOutputSerDes;
 /**
  * Abstract base class for Lambda handlers that use durable execution.
  *
- * <p>Extend this class and implement {@link #handleRequest(Object, DurableContext)} to build resilient, multi-step
- * workflows. The handler automatically manages checkpoint-and-replay, input deserialization, and communication with the
- * Lambda Durable Functions backend.
+ * <p>Extend this class and implement either {@link #handleRequest(Object)} or {@link #handleRequest(Object,
+ * DurableContext)} to build resilient, multi-step workflows. The handler automatically manages checkpoint-and-replay,
+ * input deserialization, and communication with the Lambda Durable Functions backend.
  *
  * @param <I> the input type
  * @param <O> the output type
@@ -152,11 +152,29 @@ public abstract class DurableHandler<I, O> implements RequestStreamHandler {
     }
 
     /**
-     * Handle the durable execution.
+     * Handles the durable execution without receiving the durable context directly.
+     *
+     * <p>Override either this method or {@link #handleRequest(Object, DurableContext)}.
+     *
+     * @param input User input
+     * @return Result
+     */
+    public O handleRequest(I input) {
+        throw new UnsupportedOperationException(
+                "DurableHandler must override handleRequest(input) or handleRequest(input, context)");
+    }
+
+    /**
+     * Handles the durable execution with access to the durable context.
+     *
+     * <p>Override this method when the handler needs direct access to the context. By default, it delegates to
+     * {@link #handleRequest(Object)}.
      *
      * @param input User input
      * @param context Durable context for operations
      * @return Result
      */
-    public abstract O handleRequest(I input, DurableContext context);
+    public O handleRequest(I input, DurableContext context) {
+        return handleRequest(input);
+    }
 }

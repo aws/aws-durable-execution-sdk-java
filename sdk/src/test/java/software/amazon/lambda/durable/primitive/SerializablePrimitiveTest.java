@@ -1,0 +1,604 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.primitive;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+
+class SerializablePrimitiveTest {
+
+    private static final class TrackingSerDes extends JacksonSerDes {
+        private final AtomicInteger deserializeCount = new AtomicInteger(0);
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializeCount.incrementAndGet();
+            return super.deserialize(data, typeToken);
+        }
+
+        int getDeserializeCount() {
+            return deserializeCount.get();
+        }
+    }
+
+    private static final class SerializationOnlySerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return "\"serialized\"";
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            throw new SerDesException("cannot deserialize");
+        }
+    }
+
+    private static final class NormalizingSerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return "\"serialized\"";
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return (T) "deserialized";
+        }
+    }
+
+    private static final String OPERATION_ID = "1";
+    private static final String CONTEXT_ID = "1-step";
+    private static final String OPERATION_NAME = "name";
+    private static final Operation OPERATION = Operation.builder().build();
+    private static final OperationType OPERATION_TYPE = OperationType.STEP;
+    private static final PrimitiveOperationIdentifier OPERATION_IDENTIFIER =
+            PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.STEP);
+    private static final TypeToken<String> RESULT_TYPE = TypeToken.get(String.class);
+    private static final SerDes SER_DES = new JacksonSerDes();
+    private static final String RESULT = "name";
+    private final ExecutorService internalExecutor = Executors.newFixedThreadPool(2);
+
+    private ExecutionManager executionManager;
+    private DurableContextImpl durableContext;
+
+    @BeforeEach
+    void setUp() {
+        executionManager = mock(ExecutionManager.class);
+        durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(OPERATION);
+    }
+
+    @Test
+    void getOperation() {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        assertEquals(OPERATION_ID, op.getOperationId());
+        assertEquals(OPERATION_NAME, op.getName());
+        assertEquals(OPERATION_TYPE, op.getType());
+        assertEquals(RESULT, op.get());
+        assertEquals(OPERATION, op.getOperation());
+    }
+
+    @Test
+    void waitForOperationCompletionThrowsIfOperationMissing() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        markAlreadyCompleted();
+                        assertThrows(IllegalDurableOperationException.class, this::waitForOperationCompletion);
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+        verify(executionManager).terminateExecution(any(IllegalDurableOperationException.class));
+    }
+
+    @Test
+    void waitForOperationCompletionThrowsIllegalStateExceptionWhenCalledFromStepThread() {
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.STEP));
+
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        markAlreadyCompleted();
+                        assertThrows(IllegalStateException.class, this::waitForOperationCompletion);
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+        verify(executionManager, never()).terminateExecution(any(IllegalDurableOperationException.class));
+    }
+
+    @Test
+    void waitForOperationCompletionWhenRunningAndReadyToComplete()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        waitForOperationCompletion();
+                        return RESULT;
+                    }
+                };
+
+        // call get in a separate thread which will be blocked
+        var future = internalExecutor.submit(op::get);
+        // wait for execute to be blocked by the completionFuture and then feed the completion event
+        try {
+            future.get(500, TimeUnit.MILLISECONDS);
+            fail();
+        } catch (TimeoutException e) {
+            op.onCheckpointComplete(
+                    Operation.builder().status(OperationStatus.SUCCEEDED).build());
+            assertEquals(RESULT, future.get());
+            verify(executionManager).deregisterActiveThread(CONTEXT_ID);
+            verify(executionManager).registerActiveThread(CONTEXT_ID);
+        }
+    }
+
+    @Test
+    void waitForOperationCompletionWhenAlreadyCompleted() {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        markAlreadyCompleted();
+                        waitForOperationCompletion();
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+        verify(executionManager, never()).deregisterActiveThread(CONTEXT_ID);
+        verify(executionManager, never()).registerActiveThread(CONTEXT_ID);
+    }
+
+    @Test
+    void markAlreadyCompleted() {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        markAlreadyCompleted();
+                        // completion future should be complete
+                        assertTrue(this.isOperationCompleted());
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+    }
+
+    @Test
+    void validateReplayThrowsWhenTypeMismatch() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(
+                        Operation.builder().type(OperationType.CHAINED_INVOKE).build());
+
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        validateReplay(getOperation());
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        assertThrows(NonDeterministicExecutionException.class, op::execute);
+    }
+
+    @Test
+    void validateReplayThrowsWhenNameMismatch() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .name("another name")
+                        .type(OPERATION_TYPE)
+                        .build());
+
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        validateReplay(getOperation());
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        assertThrows(NonDeterministicExecutionException.class, op::execute);
+    }
+
+    @Test
+    void validateReplayDoesNotThrowWhenNoOperation() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        validateReplay(getOperation());
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+        op.execute();
+    }
+
+    @Test
+    void validateReplayDoesNotThrowWhenNameAndTypeMatch() {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                .thenReturn(Operation.builder()
+                        .name(OPERATION_NAME)
+                        .type(OPERATION_TYPE)
+                        .subType(OperationSubType.STEP.getValue())
+                        .build());
+
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {
+                        validateReplay(getOperation());
+                    }
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+        op.execute();
+    }
+
+    @Test
+    void deserializeResult() {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        assertEquals("abc", deserializeResult(SER_DES.serialize("abc")));
+                        assertEquals("", deserializeResult("\"\""));
+                        assertThrows(SerDesException.class, () -> deserializeResult("x"));
+                        return RESULT;
+                    }
+                };
+        op.get();
+    }
+
+    @Test
+    void serializeAndDeserializeResultDeserializesResult() {
+        var serDes = new TrackingSerDes();
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var result = serializeAndDeserializeResult("abc");
+                        assertEquals("\"abc\"", result.serialized());
+                        assertEquals("abc", result.deserialized());
+                        assertEquals(1, serDes.getDeserializeCount());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeAndDeserializeResultThrowsWhenDeserializeFails() {
+        var serDes = new SerializationOnlySerDes();
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var thrown = assertThrows(SerDesException.class, () -> serializeAndDeserializeResult("abc"));
+                        assertEquals("cannot deserialize", thrown.getMessage());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeAndDeserializeResultReturnsRawResultWhenDeserializationDisabled() {
+        when(durableContext.getDurableConfig()).thenReturn(configWithDeserializeAfterSerialization(false));
+
+        var serDes = new NormalizingSerDes();
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var result = serializeAndDeserializeResult("abc");
+                        assertEquals("\"serialized\"", result.serialized());
+                        assertEquals("abc", result.deserialized());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeAndDeserializeResultReturnsDeserializedValue() {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(
+                        OPERATION_IDENTIFIER, RESULT_TYPE, new NormalizingSerDes(), durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var result = serializeAndDeserializeResult("raw");
+                        assertEquals("\"serialized\"", result.serialized());
+                        assertEquals("deserialized", result.deserialized());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void deserializeException() {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        assertNull(deserializeException(ErrorObject.builder().build()));
+                        assertNull(deserializeException(ErrorObject.builder()
+                                .errorType("UnknownExceptionType")
+                                .build()));
+                        Throwable ex = deserializeException(serializeException(new RuntimeException("test exception")));
+                        assertInstanceOf(RuntimeException.class, ex);
+                        assertEquals("test exception", ex.getMessage());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeExceptionValidatesRoundTrip() {
+        var serDes = new TrackingSerDes();
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var error = serializeException(new RuntimeException("test exception"));
+                        assertEquals(RuntimeException.class.getName(), error.errorType());
+                        assertEquals(1, serDes.getDeserializeCount());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void serializeExceptionSkipsRoundTripValidationWhenDisabled() {
+        when(durableContext.getDurableConfig()).thenReturn(configWithDeserializeAfterSerialization(false));
+
+        var serDes = new SerializationOnlySerDes();
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        var error = serializeException(new RuntimeException("test exception"));
+                        assertEquals(RuntimeException.class.getName(), error.errorType());
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+    }
+
+    @Test
+    void polling() {
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {
+                        pollForOperationUpdates();
+                    }
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+        verify(executionManager).pollForOperationUpdates(OPERATION_ID);
+    }
+
+    @Test
+    void sendOperationUpdate() {
+        var update = OperationUpdate.builder();
+
+        SerializablePrimitive<String> op =
+                new SerializablePrimitive<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {
+                        sendOperationUpdate(update);
+                    }
+
+                    @Override
+                    public String get() {
+                        return RESULT;
+                    }
+                };
+
+        op.execute();
+        verify(executionManager, times(1)).sendOperationUpdate(update.build());
+    }
+
+    private DurableConfig configWithDeserializeAfterSerialization(boolean deserializeAfterSerialization) {
+        return DurableConfig.builder()
+                .withDurableExecutionClient(mock(DurableExecutionClient.class))
+                .withDeserializeAfterSerialization(deserializeAfterSerialization)
+                .build();
+    }
+}

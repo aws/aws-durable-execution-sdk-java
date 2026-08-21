@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.operation.DurableParallelOperation;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -23,6 +24,13 @@ public class ParallelBranchConfig {
 
     public Builder toBuilder() {
         return new Builder(serDes);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableParallelOperation.ParallelBranchConfig toOperationConfig() {
+        return DurableParallelOperation.ParallelBranchConfig.builder()
+                .serDes(serDes())
+                .build();
     }
 
     /**

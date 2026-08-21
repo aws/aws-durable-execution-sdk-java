@@ -1,0 +1,72 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.examples.operation.map;
+
+import static software.amazon.lambda.durable.logging.DurableLogger.getLogger;
+import static software.amazon.lambda.durable.operation.DurableMapOperation.map;
+import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
+
+import java.time.Duration;
+import java.util.List;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.examples.types.GreetingRequest;
+import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapConfig;
+import software.amazon.lambda.durable.operation.DurableMapOperation.MapItemContext;
+import software.amazon.lambda.durable.operation.DurableWaitOperation;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+
+/**
+ * Example demonstrating the map operation with the Durable Execution SDK.
+ *
+ * <p>This handler processes a list of names concurrently using {@code map()}, where each item runs in its own child
+ * context with full checkpoint-and-replay support.
+ *
+ * <ol>
+ *   <li>Create a list of names from the input
+ *   <li>Map over each name concurrently, applying a greeting transformation via a durable step
+ *   <li>Collect and join the results
+ * </ol>
+ */
+public class DeserializationFailedMapExample extends DurableHandler<GreetingRequest, String> {
+
+    @Override
+    public String handleRequest(GreetingRequest input) {
+        var name = input.getName();
+        getLogger().info("Starting map example for {}", name);
+
+        var names = List.of(name, name.toUpperCase(), name.toLowerCase());
+
+        // Map over each name concurrently — each iteration runs in its own child context
+        var result = map(
+                "greet-all",
+                names,
+                String.class,
+                item -> {
+                    var index = MapItemContext.getCurrentContext().getIndex();
+                    return step("greet-" + index, String.class, () -> {
+                        throw new RuntimeException("Failure from " + item + "!");
+                    });
+                },
+                MapConfig.builder().serDes(new FailedSerDes()).build());
+
+        getLogger().info("Map completed: allSucceeded={}, size={}", result.allSucceeded(), result.size());
+
+        DurableWaitOperation.wait("suspend and replay", Duration.ofSeconds(1));
+
+        return result.getError(0).errorMessage();
+    }
+
+    private static class FailedSerDes extends JacksonSerDes {
+
+        @Override
+        public <T> T deserialize(String json, TypeToken<T> typeToken) {
+            T result = super.deserialize(json, typeToken);
+            if (result instanceof RuntimeException ex) {
+                throw new SerDesException("Deserialization failed", ex);
+            }
+            return result;
+        }
+    }
+}

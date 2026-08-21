@@ -11,8 +11,10 @@ from pathlib import Path
 EXAMPLES_DIR = Path(__file__).resolve().parent
 SOURCE_ROOT = EXAMPLES_DIR / "src/main/java"
 EXAMPLE_PACKAGE_ROOT = SOURCE_ROOT / "software/amazon/lambda/durable/examples"
+OPERATION_PACKAGE_ROOT = EXAMPLE_PACKAGE_ROOT / "operation"
 DEFAULT_OUTPUT = EXAMPLES_DIR / "template.yaml"
 TEMPLATE_ANNOTATION = "ExampleTemplate"
+SUITES = ("context", "operation")
 
 
 @dataclass(frozen=True)
@@ -73,9 +75,12 @@ def read_template_condition(source: str, class_name: str) -> str | None:
     return condition_match.group(1) if condition_match else None
 
 
-def discover_examples() -> list[ExampleFunction]:
+def discover_examples(suite: str) -> list[ExampleFunction]:
+    package_root = OPERATION_PACKAGE_ROOT if suite == "operation" else EXAMPLE_PACKAGE_ROOT
     examples = []
-    for path in sorted(EXAMPLE_PACKAGE_ROOT.rglob("*.java")):
+    for path in sorted(package_root.rglob("*.java")):
+        if suite == "context" and OPERATION_PACKAGE_ROOT in path.parents:
+            continue
         source = path.read_text(encoding="utf-8")
         class_name = path.stem
         if not is_top_level_durable_handler(source, class_name):
@@ -208,14 +213,20 @@ def render_template(examples: list[ExampleFunction]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate the examples SAM template from Java example handlers.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Path to write the generated template.")
+    parser.add_argument(
+        "--suite",
+        choices=SUITES,
+        default="context",
+        help="Example suite to deploy: context-based or operation-based.",
+    )
     args = parser.parse_args()
 
-    examples = discover_examples()
+    examples = discover_examples(args.suite)
     if not examples:
-        raise RuntimeError("No DurableHandler examples found")
+        raise RuntimeError(f"No DurableHandler examples found for suite {args.suite}")
 
     args.output.write_text(render_template(examples), encoding="utf-8")
-    print(f"Generated {args.output} with {len(examples)} Lambda functions.")
+    print(f"Generated {args.output} with {len(examples)} {args.suite} Lambda functions.")
 
 
 if __name__ == "__main__":

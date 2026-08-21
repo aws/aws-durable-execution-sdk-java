@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.operation.DurableStepOperation;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -40,6 +41,15 @@ public class StepConfig {
 
     public Builder toBuilder() {
         return new Builder(retryStrategy, semanticsPerRetry, serDes);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableStepOperation.StepConfig toOperationConfig() {
+        return DurableStepOperation.StepConfig.builder()
+                .retryStrategy(retryStrategy())
+                .semanticsPerRetry(semanticsPerRetry())
+                .serDes(serDes())
+                .build();
     }
 
     /**

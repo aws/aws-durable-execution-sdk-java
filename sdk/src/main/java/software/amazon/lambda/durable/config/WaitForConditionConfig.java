@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.operation.DurableWaitForConditionOperation;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -54,6 +55,15 @@ public class WaitForConditionConfig<T> {
         b.serDes = this.serDes;
         b.initialState = this.initialState;
         return b;
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableWaitForConditionOperation.WaitForConditionConfig<T> toOperationConfig() {
+        return DurableWaitForConditionOperation.WaitForConditionConfig.<T>builder()
+                .waitStrategy(waitStrategy())
+                .serDes(serDes())
+                .initialState(initialState())
+                .build();
     }
 
     /**

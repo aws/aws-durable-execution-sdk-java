@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Central manager for durable execution coordination.
@@ -69,6 +70,14 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
+
+    enum FutureWaitState {
+        ACTIVE,
+        DEREGISTERING,
+        WAITING,
+        COMPLETED,
+        SUSPENDED
+    }
 
     // ===== Checkpoint Batching =====
     private final CheckpointManager checkpointManager;
@@ -229,6 +238,76 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     /**
+     * Waits for a future from the current durable context thread.
+     *
+     * <p>The current thread is marked inactive while waiting so the execution can suspend. It is reactivated
+     * synchronously when the future completes.
+     *
+     * @param future the future to wait for
+     * @param <T> the future result type
+     * @return the completed result
+     */
+    public <T> T awaitFuture(CompletableFuture<T> future) {
+        var threadContext = getCurrentThreadContext();
+        CompletableFuture<T> awaitedFuture = future;
+
+        if (threadContext != null && !future.isDone()) {
+            var waitState = new AtomicReference<>(FutureWaitState.ACTIVE);
+            awaitedFuture = future.whenComplete(
+                    (ignored, throwable) -> completeFutureWait(threadContext.threadId(), waitState));
+            if (waitState.compareAndSet(FutureWaitState.ACTIVE, FutureWaitState.DEREGISTERING)) {
+                deregisterActiveThreadForFuture(threadContext.threadId(), waitState);
+            }
+        }
+
+        try {
+            return awaitedFuture.join();
+        } catch (Throwable throwable) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+            return null;
+        }
+    }
+
+    private void completeFutureWait(String threadId, AtomicReference<FutureWaitState> waitState) {
+        while (true) {
+            var current = waitState.get();
+            if (current == FutureWaitState.COMPLETED || current == FutureWaitState.SUSPENDED) {
+                return;
+            }
+            if (waitState.compareAndSet(current, FutureWaitState.COMPLETED)) {
+                if (current == FutureWaitState.WAITING) {
+                    registerActiveThreadIfRunning(threadId);
+                }
+                return;
+            }
+        }
+    }
+
+    void deregisterActiveThreadForFuture(String threadId, AtomicReference<FutureWaitState> waitState) {
+        synchronized (activeThreads) {
+            removeActiveThread(threadId);
+            if (!waitState.compareAndSet(FutureWaitState.DEREGISTERING, FutureWaitState.WAITING)) {
+                if (waitState.get() == FutureWaitState.COMPLETED) {
+                    registerActiveThreadIfRunning(threadId);
+                }
+                return;
+            }
+            if (activeThreads.isEmpty()
+                    && waitState.compareAndSet(FutureWaitState.WAITING, FutureWaitState.SUSPENDED)) {
+                suspendForNoActiveThreads();
+            }
+        }
+    }
+
+    private void registerActiveThreadIfRunning(String threadId) {
+        synchronized (activeThreads) {
+            if (!isExecutionCompletedExceptionally()) {
+                registerActiveThread(threadId);
+            }
+        }
+    }
+
+    /**
      * Registers a thread as active.
      *
      * @see ThreadContext
@@ -257,19 +336,25 @@ public class ExecutionManager implements SafeCloseable {
         // Add synchronized block to avoid remove then check race condition and make sure that
         // the suspendExecution is called only once
         synchronized (activeThreads) {
-            boolean removed = activeThreads.remove(threadId);
-            if (removed) {
-                logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
-            } else {
-                logger.warn("Thread '{}' not active, cannot deregister", threadId);
-            }
-
+            removeActiveThread(threadId);
             if (activeThreads.isEmpty()) {
-                logger.info("No active threads remaining - suspending execution");
-                preSuspendCheck();
-                suspendExecution();
+                suspendForNoActiveThreads();
             }
         }
+    }
+
+    private void removeActiveThread(String threadId) {
+        if (activeThreads.remove(threadId)) {
+            logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
+        } else {
+            logger.warn("Thread '{}' not active, cannot deregister", threadId);
+        }
+    }
+
+    private void suspendForNoActiveThreads() {
+        logger.info("No active threads remaining - suspending execution");
+        preSuspendCheck();
+        suspendExecution();
     }
 
     private void preSuspendCheck() {

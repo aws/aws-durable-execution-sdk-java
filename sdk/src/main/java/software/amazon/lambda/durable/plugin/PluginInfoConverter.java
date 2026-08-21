@@ -7,8 +7,9 @@ import java.util.Collection;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.primitive.BasePrimitive;
 
 /** Utility methods for converting SDK internal types to plugin info records. */
 public final class PluginInfoConverter {
@@ -24,11 +25,16 @@ public final class PluginInfoConverter {
      * @return an OperationInfo record
      */
     public static OperationInfo toOperationInfo(Operation operation, OperationIdentifier identifier, String parentId) {
+        return toOperationInfo(operation, PrimitiveOperationIdentifier.from(identifier), parentId);
+    }
+
+    public static OperationInfo toOperationInfo(
+            Operation operation, PrimitiveOperationIdentifier identifier, String parentId) {
         return new OperationInfo(
                 identifier.operationId(),
                 identifier.name(),
-                identifier.operationType() != null ? identifier.operationType().toString() : null,
-                identifier.subType() != null ? identifier.subType().getValue() : null,
+                identifier.operationType().toString(),
+                identifier.subType(),
                 parentId,
                 operation != null ? operation.startTimestamp() : Instant.now(),
                 operation != null ? operation.endTimestamp() : null,
@@ -50,11 +56,20 @@ public final class PluginInfoConverter {
      */
     public static OperationEndInfo toOperationEndInfo(
             Operation operation, OperationIdentifier identifier, String parentId, boolean isReplay, Throwable error) {
+        return toOperationEndInfo(operation, PrimitiveOperationIdentifier.from(identifier), parentId, isReplay, error);
+    }
+
+    public static OperationEndInfo toOperationEndInfo(
+            Operation operation,
+            PrimitiveOperationIdentifier identifier,
+            String parentId,
+            boolean isReplay,
+            Throwable error) {
         return new OperationEndInfo(
                 identifier.operationId(),
                 identifier.name(),
-                identifier.operationType() != null ? identifier.operationType().toString() : null,
-                identifier.subType() != null ? identifier.subType().getValue() : null,
+                identifier.operationType().toString(),
+                identifier.subType(),
                 parentId,
                 operation != null ? operation.startTimestamp() : null,
                 operation != null ? operation.endTimestamp() : null,
@@ -110,11 +125,17 @@ public final class PluginInfoConverter {
      */
     public static UserFunctionStartInfo toUserFunctionStartInfo(
             OperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
+        return toUserFunctionStartInfo(
+                PrimitiveOperationIdentifier.from(identifier), parentId, isReplayingChildren, attempt);
+    }
+
+    public static UserFunctionStartInfo toUserFunctionStartInfo(
+            PrimitiveOperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
         return new UserFunctionStartInfo(
                 identifier.operationId(),
                 identifier.name(),
-                identifier.operationType() != null ? identifier.operationType().toString() : null,
-                identifier.subType() != null ? identifier.subType().getValue() : null,
+                identifier.operationType().toString(),
+                identifier.subType(),
                 parentId,
                 Instant.now(),
                 isReplayingChildren,
@@ -180,7 +201,7 @@ public final class PluginInfoConverter {
                 operation.parentId(),
                 operation.startTimestamp(),
                 operation.endTimestamp(),
-                BaseDurableOperation.extractErrorFromOperation(operation),
+                BasePrimitive.extractErrorFromOperation(operation),
                 operation.status());
     }
 }

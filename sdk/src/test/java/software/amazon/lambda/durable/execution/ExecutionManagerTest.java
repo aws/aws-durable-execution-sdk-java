@@ -4,10 +4,17 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
@@ -26,15 +33,24 @@ class ExecutionManagerTest {
             + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
 
     private DurableExecutionClient client;
+    private ExecutionManager executionManager;
+
+    @AfterEach
+    void clearCurrentThreadContext() {
+        if (executionManager != null) {
+            executionManager.setCurrentThreadContext(null);
+        }
+    }
 
     private ExecutionManager createManager(List<Operation> operations) {
         client = TestUtils.createMockClient();
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
-        return new ExecutionManager(
+        executionManager = new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build(),
                 null);
+        return executionManager;
     }
 
     private Operation executionOp() {
@@ -198,5 +214,67 @@ class ExecutionManagerTest {
         assertTrue(manager.isOperationUpdatedSinceLastInvocation("2"));
         assertTrue(manager.isOperationUpdatedSinceLastInvocation("3"));
         assertFalse(manager.isOperationUpdatedSinceLastInvocation("4"));
+    }
+
+    @Test
+    void awaitFutureDeregistersAndReregistersCurrentContextThread() {
+        var manager = spy(createManager(List.of(executionOp())));
+        var deregistered = new CountDownLatch(1);
+        manager.registerActiveThread("context");
+        manager.registerActiveThread("other");
+        clearInvocations(manager);
+        doAnswer(invocation -> {
+                    invocation.callRealMethod();
+                    deregistered.countDown();
+                    return null;
+                })
+                .when(manager)
+                .deregisterActiveThreadForFuture(any(), any());
+        var future = new CompletableFuture<String>();
+        manager.setCurrentThreadContext(new ThreadContext("context", ThreadType.CONTEXT));
+        CompletableFuture.runAsync(() -> {
+            try {
+                deregistered.await();
+                future.complete("done");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                future.completeExceptionally(e);
+            }
+        });
+
+        assertEquals("done", manager.awaitFuture(future));
+        verify(manager).deregisterActiveThreadForFuture(any(), any());
+        verify(manager).registerActiveThread("context");
+        assertFalse(manager.isExecutionCompletedExceptionally());
+    }
+
+    @Test
+    void awaitFutureDoesNotSuspendWhenFutureCompletesDuringDeregistration() {
+        var manager = spy(createManager(List.of(executionOp())));
+        var future = new CompletableFuture<String>();
+        manager.registerActiveThread("context");
+        clearInvocations(manager);
+        manager.setCurrentThreadContext(new ThreadContext("context", ThreadType.CONTEXT));
+        doAnswer(invocation -> {
+                    future.complete("done");
+                    invocation.callRealMethod();
+                    return null;
+                })
+                .when(manager)
+                .deregisterActiveThreadForFuture(any(), any());
+
+        assertEquals("done", manager.awaitFuture(future));
+        verify(manager).registerActiveThread("context");
+        assertFalse(manager.isExecutionCompletedExceptionally());
+    }
+
+    @Test
+    void awaitFutureSuspendsWhenFutureRemainsPendingAndNoOtherThreadsAreActive() {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("context");
+        manager.setCurrentThreadContext(new ThreadContext("context", ThreadType.CONTEXT));
+
+        assertThrows(SuspendExecutionException.class, () -> manager.awaitFuture(new CompletableFuture<>()));
+        assertTrue(manager.isExecutionCompletedExceptionally());
     }
 }

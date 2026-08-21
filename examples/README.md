@@ -22,11 +22,19 @@ cd examples
 # Run all tests
 mvn test
 
-# Run specific test
+# Run the operation-based example suite
+mvn test -Dtest='software.amazon.lambda.durable.examples.operation.**.*Test'
+
+# Run a specific test
 mvn test -Dtest=SimpleStepExampleTest
 ```
 
 The local runner executes in-memory and skips wait durations—ideal for fast iteration and CI/CD.
+
+The operation-based suite under
+[`examples/operation`](src/main/java/software/amazon/lambda/durable/examples/operation) mirrors the context-based
+examples one-to-one. Its handlers use the context-free `Durable*Operation` facades and the one-argument
+`DurableHandler.handleRequest(input)` hook.
 
 ## Deploy to AWS
 
@@ -34,6 +42,14 @@ The local runner executes in-memory and skips wait durations—ideal for fast it
 cd examples
 mvn clean package
 python3 generate-template.py
+sam build
+sam deploy --guided
+```
+
+Generate and deploy the operation-based suite instead:
+
+```bash
+python3 generate-template.py --suite operation
 sam build
 sam deploy --guided
 ```

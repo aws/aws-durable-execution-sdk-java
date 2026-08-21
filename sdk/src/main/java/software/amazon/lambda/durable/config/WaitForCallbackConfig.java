@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.operation.DurableWaitForCallbackOperation;
+
 /**
  * Configuration for the {@code waitForCallback} composite operation.
  *
@@ -36,6 +38,14 @@ public class WaitForCallbackConfig {
     /** Creates a builder pre-populated with this instance's values. */
     public Builder toBuilder() {
         return new Builder().stepConfig(this.stepConfig).callbackConfig(this.callbackConfig);
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableWaitForCallbackOperation.WaitForCallbackConfig toOperationConfig() {
+        return DurableWaitForCallbackOperation.WaitForCallbackConfig.builder()
+                .stepConfig(stepConfig().toOperationConfig())
+                .callbackConfig(callbackConfig().toOperationConfig())
+                .build();
     }
 
     /** Builder for {@link WaitForCallbackConfig}. */

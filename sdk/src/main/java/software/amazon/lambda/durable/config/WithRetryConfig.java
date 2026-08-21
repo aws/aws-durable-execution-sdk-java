@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.operation.DurableWithRetryOperation;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
@@ -52,6 +53,14 @@ public class WithRetryConfig {
      */
     public static Builder builder() {
         return new Builder();
+    }
+
+    /** Converts this compatibility config to the operation-owned config. */
+    public DurableWithRetryOperation.WithRetryConfig toOperationConfig() {
+        return DurableWithRetryOperation.WithRetryConfig.builder()
+                .retryStrategy(retryStrategy())
+                .wrapInChildContext(wrapInChildContext())
+                .build();
     }
 
     /** Builder for creating {@link WithRetryConfig} instances. */

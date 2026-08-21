@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.operation.DurableConcurrencyOperation;
+
 public enum NestingType {
     /**
      * Create CONTEXT operations for each branch/iteration with full checkpointing. Operations within each
@@ -17,5 +19,10 @@ public enum NestingType {
      * - **Cost**: ~30% lower - reduces operation consumption by skipping CONTEXT overhead - **Scale**: Higher maximum
      * iterations possible within operation limits
      */
-    FLAT,
+    FLAT;
+
+    /** Converts this compatibility type to the operation-owned type. */
+    public DurableConcurrencyOperation.NestingType toOperationType() {
+        return DurableConcurrencyOperation.NestingType.valueOf(name());
+    }
 }

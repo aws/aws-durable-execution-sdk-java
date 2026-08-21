@@ -49,6 +49,21 @@ class DurableLoggerTest {
     }
 
     @Test
+    void getsSharedLogger() {
+        assertSame(DurableLogger.INSTANCE, DurableLogger.getLogger());
+    }
+
+    @Test
+    void wrapsProvidedLogger() {
+        var recordingLogger = new RecordingLogger();
+
+        DurableLogger.getLogger(recordingLogger.delegate()).info("test message");
+
+        assertEquals(1, recordingLogger.calls().size());
+        assertEquals("test message", recordingLogger.calls().get(0).message());
+    }
+
+    @Test
     void logsWhenNotReplaying() {
         var recordingLogger = new RecordingLogger();
         var logger = new DurableLogger(recordingLogger.delegate());

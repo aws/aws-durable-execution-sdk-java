@@ -1,0 +1,80 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.primitive;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.time.Duration;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.WaitDetails;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
+
+class WaitPrimitiveTest {
+    private static final String OPERATION_ID = "2";
+    private static final String CONTEXT_ID = "handler";
+    private static final String OPERATION_NAME = "test-wait";
+    private static final PrimitiveOperationIdentifier OPERATION_IDENTIFIER =
+            PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT);
+    private ExecutionManager executionManager;
+    private DurableContextImpl durableContext;
+
+    @BeforeEach
+    void setUp() {
+        executionManager = mock(ExecutionManager.class);
+        durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+    }
+
+    @Test
+    void constructor_withValidDuration_shouldPass() {
+        var operation = new WaitPrimitive(OPERATION_IDENTIFIER, Duration.ofSeconds(10), durableContext);
+
+        assertEquals(OPERATION_ID, operation.getOperationId());
+    }
+
+    @Test
+    void getDoesNotThrowWhenCalledFromHandlerContext() {
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .status(OperationStatus.SUCCEEDED)
+                .waitDetails(WaitDetails.builder().build())
+                .build();
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
+
+        var operation = new WaitPrimitive(OPERATION_IDENTIFIER, Duration.ofSeconds(10), durableContext);
+        operation.onCheckpointComplete(op);
+
+        var result = operation.get();
+        assertNull(result);
+    }
+
+    @Test
+    void getSucceededWhenStarted() {
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .status(OperationStatus.SUCCEEDED)
+                .build();
+        when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
+
+        var operation = new WaitPrimitive(OPERATION_IDENTIFIER, Duration.ofSeconds(10), durableContext);
+        operation.onCheckpointComplete(op);
+
+        // we currently don't check the operation status at all, so it's not blocked or failed
+        assertNull(operation.get());
+    }
+}

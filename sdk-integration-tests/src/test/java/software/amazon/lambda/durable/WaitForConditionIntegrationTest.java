@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
@@ -16,9 +17,26 @@ import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class WaitForConditionIntegrationTest {
+    private static final class NormalizingStringSerDes implements SerDes {
+        private final SerDes delegate = new JacksonSerDes();
+
+        @Override
+        public String serialize(Object value) {
+            return delegate.serialize(value);
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            var value = delegate.deserialize(data, typeToken);
+            return "raw".equals(value) ? (T) "normalized" : value;
+        }
+    }
 
     // ---- Basic integration tests ----
 
@@ -87,6 +105,34 @@ class WaitForConditionIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("done", result.getResult(String.class));
+    }
+
+    @Test
+    void testWaitStrategyReceivesSerDesNormalizedState() {
+        var strategyState = new AtomicReference<String>();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            var config = WaitForConditionConfig.<String>builder()
+                    .serDes(new NormalizingStringSerDes())
+                    .waitStrategy((state, attempt) -> {
+                        strategyState.set(state);
+                        return Duration.ofSeconds(1);
+                    })
+                    .build();
+
+            return ctx.waitForCondition(
+                    "normalized-strategy-state",
+                    String.class,
+                    (state, stepCtx) -> state == null
+                            ? WaitForConditionResult.continuePolling("raw")
+                            : WaitForConditionResult.stopPolling("done"),
+                    config);
+        });
+
+        var result = runner.runUntilComplete("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("done", result.getResult(String.class));
+        assertEquals("normalized", strategyState.get());
     }
 
     @Test

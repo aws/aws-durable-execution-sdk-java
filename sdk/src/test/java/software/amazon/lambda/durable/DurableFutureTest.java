@@ -6,10 +6,17 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.operation.SerializableDurableOperation;
+import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 
 class DurableFutureTest {
+    @AfterEach
+    void clearContext() {
+        BaseContextImpl.setCurrentContext(null);
+    }
 
     @Test
     void allOfVarargsReturnsResultsInOrder() {
@@ -63,16 +70,67 @@ class DurableFutureTest {
     void allOfPropagatesException() {
         var op1 = mockOperation("first");
         @SuppressWarnings("unchecked")
-        SerializableDurableOperation<String> op2 = mock(SerializableDurableOperation.class);
+        DurableFuture<String> op2 = mock(DurableFuture.class);
         when(op2.get()).thenThrow(new RuntimeException("Step failed"));
 
         assertThrows(RuntimeException.class, () -> DurableFuture.allOf(op1, op2));
     }
 
+    @Test
+    void anyOfSupportsPublicDurableFutureImplementations() {
+        var pending = new TestFuture<>("pending");
+        var completed = new TestFuture<>("completed");
+        completed.complete();
+
+        var result = DurableFuture.anyOf(pending, completed);
+
+        assertEquals("completed", result);
+    }
+
+    @Test
+    void anyOfUsesExecutionManagerWhenCalledFromDurableContext() {
+        var context = mock(BaseContextImpl.class);
+        var executionManager = mock(ExecutionManager.class);
+        when(context.getExecutionManager()).thenReturn(executionManager);
+        when(executionManager.awaitFuture(any())).thenAnswer(invocation -> {
+            CompletableFuture<?> future = invocation.getArgument(0);
+            return future.join();
+        });
+        BaseContextImpl.setCurrentContext(context);
+        var completed = new TestFuture<>("completed");
+        completed.complete();
+
+        assertEquals("completed", DurableFuture.anyOf(completed));
+        verify(executionManager).awaitFuture(any());
+    }
+
     @SuppressWarnings("unchecked")
-    private <T> SerializableDurableOperation<T> mockOperation(T result) {
-        SerializableDurableOperation<T> op = mock(SerializableDurableOperation.class);
+    private <T> DurableFuture<T> mockOperation(T result) {
+        DurableFuture<T> op = mock(DurableFuture.class);
         when(op.get()).thenReturn(result);
         return op;
+    }
+
+    private static final class TestFuture<T> implements DurableFuture<T> {
+        private final T result;
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
+
+        private TestFuture(T result) {
+            this.result = result;
+        }
+
+        @Override
+        public T get() {
+            return result;
+        }
+
+        @Override
+        public CompletableFuture<Void> completionFuture() {
+            return completion;
+        }
+
+        private void complete() {
+            completion.complete(null);
+        }
     }
 }

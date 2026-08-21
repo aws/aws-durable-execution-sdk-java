@@ -17,6 +17,7 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.MapResult;
@@ -443,6 +444,26 @@ class MapIntegrationTest {
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals(events, result.getHistoryEvents().size());
+    }
+
+    @Test
+    void testMapWithThrowingShouldCompleteTerminatesExecution() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = MapConfig.builder()
+                    .completionConfig(CompletionConfig.shouldComplete(status -> {
+                        throw new IllegalStateException("completion failed");
+                    }))
+                    .build();
+            context.map("throwing-completion", List.of("a"), String.class, (item, index, child) -> item, config);
+            return "unreachable";
+        });
+
+        var result = runner.runUntilComplete("test");
+        var error = result.getError().orElseThrow();
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertEquals(IllegalDurableOperationException.class.getName(), error.errorType());
+        assertTrue(error.errorMessage().contains("completion failed"));
     }
 
     @ParameterizedTest
@@ -1831,6 +1852,31 @@ class MapIntegrationTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"FLAT", "NESTED"})
+    void testNonCheckpointedEmptyMapTransitionsOutOfReplay(NestingType nestingType) {
+        var replayingBeforeMap = new AtomicBoolean();
+        var replayingAfterMap = new AtomicBoolean();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            context.step("before-map", String.class, step -> "done");
+            replayingBeforeMap.set(context.isReplaying());
+            context.map(
+                    "empty-map",
+                    List.<String>of(),
+                    String.class,
+                    (item, index, child) -> item,
+                    MapConfig.builder().nestingType(nestingType).build());
+            replayingAfterMap.set(context.isReplaying());
+            return "done";
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.run("test").getStatus());
+
+        assertTrue(replayingBeforeMap.get());
+        assertFalse(replayingAfterMap.get());
+    }
+
+    @ParameterizedTest
     @CsvSource({"FLAT, 2", "NESTED, 2"})
     void testMapWithEmptyItemsCheckpointed(NestingType nestingType, int events) {
         var config = DurableConfig.builder().withCheckpointEmptyMap(true).build();
@@ -1968,6 +2014,53 @@ class MapIntegrationTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
         suffix.set("second");
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
+    void testAddingItemNamerFailsSmallCachedDefaultNamedMapReplay() {
+        var useItemNamer = new AtomicBoolean();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = MapConfig.builder();
+            if (useItemNamer.get()) {
+                config.itemNamer((item, index) -> "custom-" + item);
+            }
+            var result = context.map(
+                    "default-named-map",
+                    List.of("a", "b"),
+                    String.class,
+                    (item, index, ctx) -> item.toUpperCase(),
+                    config.build());
+            return String.join(",", result.results());
+        });
+
+        var initial = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, initial.getStatus());
+        assertFalse(Boolean.TRUE.equals(
+                initial.getOperation("default-named-map").getContextDetails().replayChildren()));
+        useItemNamer.set(true);
+
+        var replay = runner.run("test");
+
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+    }
+
+    @Test
+    void testChangingItemCountFailsSmallCachedDefaultNamedMapReplay() {
+        var items = new AtomicReference<>(List.of("a", "b"));
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "default-named-map", items.get(), String.class, (item, index, ctx) -> item.toUpperCase());
+            return String.join(",", result.results());
+        });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        items.set(List.of("a", "b", "c"));
 
         var replay = runner.run("test");
 

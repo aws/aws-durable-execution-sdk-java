@@ -1,0 +1,370 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.primitive;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
+import software.amazon.lambda.durable.execution.ThreadContext;
+import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
+import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+
+class CallbackPrimitiveTest {
+
+    private static final String OPERATION_ID = TestUtils.hashOperationId("1");
+    private static final String OPERATION_NAME = "approval";
+    private static final PrimitiveOperationIdentifier OPERATION_IDENTIFIER =
+            PrimitiveOperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.CALLBACK);
+    private static final String EXECUTION_NAME = "exec-name";
+    private static final String EXECUTION_OP_ID = "123";
+    private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
+            + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+
+    private DurableContextImpl durableContext;
+
+    @BeforeEach
+    void setUp() {
+        durableContext = mock(DurableContextImpl.class);
+    }
+
+    /** Custom SerDes that tracks deserialization calls. */
+    static class TrackingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final AtomicInteger deserializeCount = new AtomicInteger(0);
+
+        @Override
+        public String serialize(Object value) {
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializeCount.incrementAndGet();
+            return delegate.deserialize(data, typeToken);
+        }
+
+        public int getDeserializeCount() {
+            return deserializeCount.get();
+        }
+    }
+
+    /** Custom SerDes that always throws SerDesException. */
+    static class FailingSerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            throw new SerDesException("Serialization failed");
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            throw new SerDesException("Invalid base64 encoding");
+        }
+    }
+
+    private ExecutionManager createExecutionManager(List<Operation> initialOperations) {
+        var client = TestUtils.createMockClient();
+        var operations = new ArrayList<Operation>();
+        operations.add(Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .build());
+        operations.addAll(initialOperations);
+        var initialState =
+                CheckpointUpdatedExecutionState.builder().operations(operations).build();
+        var executionManager = new ExecutionManager(
+                new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
+                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                null);
+        executionManager.setCurrentThreadContext(new ThreadContext("Root", ThreadType.CONTEXT));
+        return executionManager;
+    }
+
+    @Test
+    void executeCreatesCheckpointAndGetsCallbackId() {
+        var executionManager = createExecutionManager(List.of());
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        var serDes = new JacksonSerDes();
+
+        var operation = new CallbackPrimitive<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                ExtensionCallbackConfig.builder().serDes(serDes).build(),
+                durableContext);
+        operation.execute();
+
+        assertNotNull(operation.callbackId());
+    }
+
+    @Test
+    void executeWithConfigSetsOptions() {
+        var executionManager = createExecutionManager(List.of());
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        var serDes = new JacksonSerDes();
+        var config = ExtensionCallbackConfig.builder()
+                .timeout(Duration.ofMinutes(5))
+                .heartbeatTimeout(Duration.ofSeconds(30))
+                .serDes(serDes)
+                .build();
+
+        var operation =
+                new CallbackPrimitive<>(OPERATION_IDENTIFIER, TypeToken.get(String.class), config, durableContext);
+        operation.execute();
+
+        assertNotNull(operation.callbackId());
+    }
+
+    @Test
+    void replayReturnsExistingCallbackIdWhenSucceeded() {
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("existing-callback-id")
+                        .result("\"approved\"")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        var serDes = new JacksonSerDes();
+
+        var operation = new CallbackPrimitive<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                ExtensionCallbackConfig.builder().serDes(serDes).build(),
+                durableContext);
+        operation.execute();
+
+        assertEquals("existing-callback-id", operation.callbackId());
+    }
+
+    @Test
+    void getReturnsDeserializedResultWhenSucceeded() {
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .result("\"approved\"")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var serDes = new JacksonSerDes();
+
+        var operation = new CallbackPrimitive<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                ExtensionCallbackConfig.builder().serDes(serDes).build(),
+                durableContext);
+        operation.execute();
+        var result = operation.get();
+
+        assertEquals("approved", result);
+    }
+
+    @Test
+    void getThrowsCallbackExceptionWhenFailed() {
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.FAILED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .error(ErrorObject.builder()
+                                .errorType("ValidationError")
+                                .errorMessage("Invalid input")
+                                .build())
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var serDes = new JacksonSerDes();
+
+        var operation = new CallbackPrimitive<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                ExtensionCallbackConfig.builder().serDes(serDes).build(),
+                durableContext);
+        operation.execute();
+
+        var exception = assertThrows(CallbackFailedException.class, operation::get);
+        assertTrue(exception.getMessage().contains("ValidationError"));
+    }
+
+    @Test
+    void getThrowsCallbackTimeoutExceptionWhenTimedOut() {
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.TIMED_OUT)
+                .callbackDetails(
+                        CallbackDetails.builder().callbackId("callback-id").build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var serDes = new JacksonSerDes();
+
+        var operation = new CallbackPrimitive<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                ExtensionCallbackConfig.builder().serDes(serDes).build(),
+                durableContext);
+        operation.execute();
+
+        var exception = assertThrows(CallbackTimeoutException.class, operation::get);
+        assertTrue(exception.getMessage().contains("callback-id"));
+    }
+
+    @Test
+    void operationUsesCustomSerDesWhenConfigContainsOne() {
+        var customSerDes = new TrackingSerDes();
+
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .result("\"approved\"")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var config = ExtensionCallbackConfig.builder().serDes(customSerDes).build();
+        var operation =
+                new CallbackPrimitive<>(OPERATION_IDENTIFIER, TypeToken.get(String.class), config, durableContext);
+        operation.execute();
+        var result = operation.get();
+
+        assertEquals("approved", result);
+        // Custom SerDes should have been used for deserialization
+        assertEquals(1, customSerDes.getDeserializeCount(), "Custom SerDes should have been used");
+    }
+
+    @Test
+    void operationUsesDefaultSerDesWhenConfigIsNull() {
+        var customSerDes = new TrackingSerDes();
+
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .result("\"approved\"")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var operation = new CallbackPrimitive<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                ExtensionCallbackConfig.builder().serDes(customSerDes).build(),
+                durableContext);
+        operation.execute();
+        var result = operation.get();
+
+        assertEquals("approved", result);
+        // Custom SerDes (passed as default) should have been used
+        assertEquals(1, customSerDes.getDeserializeCount(), "Default SerDes should have been used");
+    }
+
+    @Test
+    void operationUsesDefaultSerDesWhenConfigSerDesIsNull() {
+        var customSerDes = new TrackingSerDes();
+
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .result("\"approved\"")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var config = ExtensionCallbackConfig.builder().serDes(customSerDes).build();
+        var operation =
+                new CallbackPrimitive<>(OPERATION_IDENTIFIER, TypeToken.get(String.class), config, durableContext);
+        operation.execute();
+        var result = operation.get();
+
+        assertEquals("approved", result);
+        // Custom SerDes (passed as default) should have been used
+        assertEquals(1, customSerDes.getDeserializeCount(), "Default SerDes should have been used");
+    }
+
+    @Test
+    void getThrowsSerDesExceptionWithHelpfulMessageWhenDeserializationFails() {
+        var failingSerDes = new FailingSerDes();
+
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("test-callback-123")
+                        .result("data")
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var operation = new CallbackPrimitive<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                ExtensionCallbackConfig.builder().serDes(failingSerDes).build(),
+                durableContext);
+        operation.execute();
+
+        var exception = assertThrows(SerDesException.class, operation::get);
+        assertEquals("Invalid base64 encoding", exception.getMessage());
+    }
+}
