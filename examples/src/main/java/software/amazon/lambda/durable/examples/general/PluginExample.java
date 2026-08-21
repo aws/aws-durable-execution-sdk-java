@@ -20,11 +20,11 @@ import software.amazon.lambda.durable.plugin.*;
  * [PLUGIN] onInvocationStart: requestId=..., durableExecutionArn=..., firstInvocation=true
  * [PLUGIN] onOperationStart: name=create-greeting, type=STEP
  * [PLUGIN] onUserFunctionStart: name=create-greeting, attempt=1
- * [PLUGIN] onUserFunctionEnd: name=create-greeting, succeeded=true
+ * [PLUGIN] onUserFunctionEnd: name=create-greeting, outcome=SUCCEEDED
  * [PLUGIN] onOperationEnd: name=create-greeting
  * [PLUGIN] onOperationStart: name=transform, type=STEP
  * [PLUGIN] onUserFunctionStart: name=transform, attempt=1
- * [PLUGIN] onUserFunctionEnd: name=transform, succeeded=true
+ * [PLUGIN] onUserFunctionEnd: name=transform, outcome=SUCCEEDED
  * [PLUGIN] onOperationEnd: name=transform
  * [PLUGIN] onInvocationEnd: status=SUCCEEDED
  * </pre>
@@ -91,9 +91,9 @@ public class PluginExample extends DurableHandler<GreetingRequest, String> {
         @Override
         public void onUserFunctionEnd(UserFunctionEndInfo info) {
             System.out.printf(
-                    "[PLUGIN] onUserFunctionEnd: name=%s, succeeded=%s, error=%s%n",
+                    "[PLUGIN] onUserFunctionEnd: name=%s, outcome=%s, error=%s%n",
                     info.name(),
-                    info.succeeded(),
+                    info.outcome(),
                     info.error() != null ? info.error().getMessage() : null);
         }
     }

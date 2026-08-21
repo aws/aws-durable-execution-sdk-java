@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -648,17 +649,19 @@ class PluginIntegrationTest {
                 plugin.userFunctionStarts.stream().anyMatch(info -> "compute".equals(info.name())),
                 "Should have onUserFunctionStart for 'compute'");
         assertTrue(
-                plugin.userFunctionEnds.stream().anyMatch(info -> "compute".equals(info.name()) && info.succeeded()),
+                plugin.userFunctionEnds.stream()
+                        .anyMatch(info ->
+                                "compute".equals(info.name()) && info.outcome() == UserFunctionOutcome.SUCCEEDED),
                 "Should have successful onUserFunctionEnd for 'compute'");
     }
 
     @Test
-    void plugin_userFunctionEnd_succeeded_false_whenStepFails() {
+    void plugin_userFunctionEnd_reportsFailed_whenStepFails() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
 
         // When a step's user function throws, the exception propagates through the user-function hook
-        // boundary, so onUserFunctionEnd reports succeeded=false with the error. Retry/checkpoint
+        // boundary, so onUserFunctionEnd reports FAILED with the error. Retry/checkpoint
         // handling happens outside that boundary.
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -688,7 +691,7 @@ class PluginIntegrationTest {
                 .filter(info -> "fail-step".equals(info.name()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Should have user function end for 'fail-step'"));
-        assertFalse(failStepEnd.succeeded(), "Failed step should report succeeded=false");
+        assertEquals(UserFunctionOutcome.FAILED, failStepEnd.outcome());
         assertNotNull(failStepEnd.error());
         assertTrue(failStepEnd.error().getMessage().contains("step failed"));
     }
@@ -860,7 +863,7 @@ class PluginIntegrationTest {
                 .filter(info -> info.attempt() == 1)
                 .findFirst()
                 .orElseThrow();
-        assertFalse(firstAttempt.succeeded());
+        assertEquals(UserFunctionOutcome.FAILED, firstAttempt.outcome());
         assertNotNull(firstAttempt.error());
 
         // Retry attempt succeeded.
@@ -868,7 +871,7 @@ class PluginIntegrationTest {
                 .filter(info -> info.attempt() == 2)
                 .findFirst()
                 .orElseThrow();
-        assertTrue(secondAttempt.succeeded());
+        assertEquals(UserFunctionOutcome.SUCCEEDED, secondAttempt.outcome());
         assertNull(secondAttempt.error());
 
         // The operation end reports the terminal attempt number = total attempts that ran. The step
@@ -881,12 +884,12 @@ class PluginIntegrationTest {
     }
 
     @Test
-    void plugin_userFunctionEnd_reportsSuspension_asNotSucceeded() {
+    void plugin_userFunctionEnd_reportsSuspension_asIncomplete() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
 
         // A child context whose body suspends (on a wait) throws SuspendExecutionException through the
-        // user-function boundary, so onUserFunctionEnd fires with succeeded=false and the suspend exception.
+        // user-function boundary, so onUserFunctionEnd fires with INCOMPLETE and the suspend exception.
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.runInChildContext("child", TypeToken.get(String.class), child -> {
@@ -902,10 +905,34 @@ class PluginIntegrationTest {
                 .filter(info -> "child".equals(info.name()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("onUserFunctionEnd should fire for the suspended child context"));
-        assertFalse(childEnd.succeeded(), "A suspended user function must not report succeeded=true");
+        assertEquals(UserFunctionOutcome.INCOMPLETE, childEnd.outcome());
         assertTrue(
                 childEnd.error() instanceof SuspendExecutionException,
                 "Suspension should surface the SuspendExecutionException, not a user error");
+    }
+
+    @Test
+    void plugin_userFunctionEnd_unwrapsCompletionExceptionForSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var suspension = new SuspendExecutionException();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step("wrapped-suspension", String.class, step -> {
+                    throw new CompletionException(suspension);
+                }),
+                config);
+
+        var result = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        var stepEnd = plugin.userFunctionEnds.stream()
+                .filter(info -> "wrapped-suspension".equals(info.name()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("onUserFunctionEnd should fire for the suspended step"));
+        assertEquals(UserFunctionOutcome.INCOMPLETE, stepEnd.outcome());
+        assertSame(suspension, stepEnd.error(), "The event should expose the unwrapped suspension");
     }
 
     @Test

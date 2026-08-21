@@ -74,7 +74,17 @@ class MdcSpanEnricherTest {
         assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
 
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
 
         // After onUserFunctionEnd: span_id is cleared, but trace_id remains for handler-level logs between steps
         assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID), "trace_id should persist between steps");
