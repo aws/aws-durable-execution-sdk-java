@@ -150,7 +150,6 @@ public final class PluginInfoConverter {
      *
      * @deprecated Use {@link #toUserFunctionEndInfo(UserFunctionStartInfo, UserFunctionOutcome, Throwable)}.
      */
-    @Deprecated(forRemoval = false)
     public static UserFunctionEndInfo toUserFunctionEndInfo(
             UserFunctionStartInfo startInfo, boolean succeeded, Throwable error) {
         return toUserFunctionEndInfo(

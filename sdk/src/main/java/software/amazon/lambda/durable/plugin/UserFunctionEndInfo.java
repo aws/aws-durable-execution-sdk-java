@@ -41,7 +41,6 @@ public record UserFunctionEndInfo(
      * @deprecated Use {@link #UserFunctionEndInfo(String, String, String, String, String, Instant, Instant, boolean,
      *     Integer, UserFunctionOutcome, Throwable)} so incomplete executions are distinguishable from failures.
      */
-    @Deprecated(forRemoval = false)
     public UserFunctionEndInfo(
             String id,
             String name,
