@@ -40,6 +40,7 @@
 
     <modules>
         <module>sdk</module>
+        <module>dag</module>
         <module>sdk-testing</module>
         <module>sdk-integration-tests</module>
         <module>otel-plugin</module>
