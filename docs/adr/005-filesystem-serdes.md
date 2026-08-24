@@ -1,7 +1,8 @@
 # ADR-005: Payload Offloading for Filesystem Storage
 
-**Status:** Accepted — Approach A
+**Status:** Accepted — Approach A with ComposableSerDes pipeline
 **Date:** 2026-07-02
+**Updated:** 2026-08-24 — Added the composable SerDes pipeline design.
 
 ## Context
 
@@ -29,19 +30,35 @@ There are a few Java-specific constraints:
 
 ### Summary
 
-Keep the existing `SerDes` contract unchanged and implement `FileSystemSerDes` as an optional extra package. The implementation uses `SerDesContext.getCurrentContext()` to identify the durable execution and entity being serialized.
+Keep the existing `SerDes` serialization methods source- and binary-compatible, add a default composition method and a
+core `ComposableSerDes` implementation which together chain multiple `SerDes` instances into a processing pipeline,
+and implement `FileSystemSerDes` as an optional extra package. The filesystem stage uses
+`SerDesContext.getCurrentContext()` to identify the durable execution and entity being serialized.
 
 ```java
 public interface SerDes {
     String serialize(Object value);
 
     <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    default ComposableSerDes then(SerDes nextStage) {
+        return ComposableSerDes.of(this, nextStage);
+    }
 }
 ```
 
-`FileSystemSerDes` acts as both serializer and payload offloader. It serializes values through a delegate SerDes, writes payloads to the filesystem when configured to do so, and stores a small envelope in the checkpoint.
+`ComposableSerDes` treats the first stage as the value codec and every later stage as a reversible string
+transformation. This lets customers compose JSON encoding, compression, encryption, filesystem storage, or other
+processing without each implementation needing to know about every other concern.
 
-Because the existing `SerDes` methods do not accept context parameters, this approach needs a thread-local `SerDesContext` so `FileSystemSerDes` can discover the current payload identity without changing the `SerDes` interface.
+`FileSystemSerDes` acts as a payload-storage stage. It writes the string produced by the previous stage to the
+filesystem when configured to do so and returns a small envelope for the next stage or checkpoint. For standalone
+compatibility, it may still be constructed with a value-encoding delegate; pipeline configuration is the preferred
+composition model.
+
+Because the existing `SerDes` methods do not accept context parameters, this approach needs a thread-local
+`SerDesContext` so `FileSystemSerDes` can discover the current payload identity without changing the
+`serialize`/`deserialize` signatures.
 
 ```java
 public record SerDesContext(
@@ -75,26 +92,132 @@ The SDK owns setting and clearing this thread-local value around SDK-managed Ser
 ### Configuration
 
 ```java
+import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.extra.filesystem.FileSystemSerDes;
 
-var serDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemStorageMode.ALWAYS)
         .pathEncoding(FileSystemPathEncoding.URI)
-        .delegate(new JacksonSerDes())
         .previewGenerator(optionalPreviewGenerator)
         .build();
+
+var serDes = new JacksonSerDes().then(fileSystemStage);
 
 return DurableConfig.builder()
         .withSerDes(serDes)
         .build();
 ```
 
+### Composable SerDes pipeline
+
+`ComposableSerDes` is a core implementation of `SerDes`. It owns an immutable, ordered list of stages while preserving
+the existing `serialize` and `deserialize` methods:
+
+```java
+public final class ComposableSerDes implements SerDes {
+    public static ComposableSerDes of(SerDes first, SerDes... remaining);
+
+    public static Builder builder(SerDes valueCodec);
+
+    public ComposableSerDes then(SerDes stage);
+
+    public static final class Builder {
+        public Builder then(SerDes stage);
+
+        public ComposableSerDes build();
+    }
+}
+```
+
+The first stage is the **value codec**. It converts the user value to a string and converts the final decoded string
+back to the requested `TypeToken<T>`. Every later stage is a **string stage**: it must accept a `String` in
+`serialize(Object)` and must return a `String` when `deserialize` is called with `TypeToken.get(String.class)`.
+
+Serialization runs from first to last:
+
+```text
+Object
+  -> value codec
+  -> String stage 1
+  -> String stage 2
+  -> ...
+  -> checkpoint String
+```
+
+Deserialization runs in the opposite direction:
+
+```text
+checkpoint String
+  -> last string stage, deserialized as String
+  -> ...
+  -> first string stage, deserialized as String
+  -> value codec, deserialized as the requested TypeToken<T>
+  -> T
+```
+
+Equivalent pseudocode:
+
+```java
+String serialize(Object value) {
+    String current = stages.get(0).serialize(value);
+    for (int i = 1; i < stages.size(); i++) {
+        current = stages.get(i).serialize(current);
+    }
+    return current;
+}
+
+<T> T deserialize(String data, TypeToken<T> targetType) {
+    String current = data;
+    for (int i = stages.size() - 1; i > 0; i--) {
+        current = stages.get(i).deserialize(current, TypeToken.get(String.class));
+    }
+    return stages.get(0).deserialize(current, targetType);
+}
+```
+
+Pipeline rules:
+
+- A pipeline must contain exactly one value codec in the first position and zero or more string stages.
+- `SerDes.then(...)`, `ComposableSerDes.of(...)`, and the builder flatten nested `ComposableSerDes` instances while
+  preserving stage order.
+- A `null` value at the pipeline boundary short-circuits the entire pipeline: serializing or deserializing `null`
+  returns `null` without invoking any stage. A stage returning `null` for non-null input is an error.
+- All stages execute within the same `SerDesRunner` task and observe the same read-only `SerDesContext`.
+- `ComposableSerDes` is immutable. It is safe for concurrent use only when every contained stage is also safe for
+  concurrent use, matching the existing `SerDes` requirement.
+- A failure must identify the stage index and implementation class in `SerDesException`; `SerDesRunner` adds durable
+  entity and payload-kind metadata around the pipeline failure.
+- A string stage must be reversible. Compression, encryption, signing envelopes, and external payload storage are
+  suitable stages; lossy redaction is not.
+- Stage order is meaningful. For example, `JSON -> compression -> encryption -> filesystem` writes encrypted,
+  compressed data to the filesystem, while `JSON -> filesystem -> encryption` encrypts only the file-reference
+  envelope.
+- The ordered stage list and each stage's configuration are part of the persisted checkpoint format. They must remain
+  replay-compatible for in-flight executions. Reordering, removing, or incompatibly reconfiguring a stage requires a
+  versioned envelope or an explicit migration boundary.
+- `ComposableSerDes` does not add a generic pipeline envelope or persist stage names. Stages that need format
+  evolution must version their own output.
+- Global and operation-level SerDes selection continues to select one `SerDes` instance. A `ComposableSerDes` is
+  treated as that single instance; operation-level selection replaces the whole pipeline rather than merging stages.
+- Invocation-scoped caching wraps the complete pipeline. Cache keys use the final checkpoint string and target type, so
+  cache hits skip every reverse-processing stage, including filesystem reads.
+
+The default `SerDes.then(...)` method and immutable `ComposableSerDes.then(...)` method provide a concise form for
+independently reusable processing chains:
+
+```java
+var securePayloads = new JacksonSerDes()
+        .then(compressionSerDes)
+        .then(encryptionSerDes)
+        .then(fileSystemStage);
+```
+
 Storage modes:
 
 | Mode | Behavior |
 |------|----------|
-| `ALWAYS` | Always write the delegate-serialized value to a file and store a file envelope in the checkpoint. |
-| `OVERFLOW` | Store inline until the checkpoint envelope approaches the service payload limit, then write to a file. |
+| `ALWAYS` | Always write the incoming stage string to a file and return a file envelope. |
+| `OVERFLOW` | Return an inline envelope until it approaches the service payload limit, then write the incoming stage string to a file. |
 
 Path encodings:
 
@@ -106,26 +229,35 @@ Path encodings:
 Envelope format:
 
 ```json
-{"data":"<inline delegate payload>"}
+{"data":"<inline stage input>"}
 {"file":"<absolute path>"}
 {"file":"<absolute path>","preview":{ "...": "..." }}
 ```
 
-`FileSystemSerDes` must reject calls when `SerDesContext.getCurrentContext()` is `null` or does not include `durableExecutionArn` and `entityId`.
+`FileSystemSerDes` must reject calls when `SerDesContext.getCurrentContext()` is `null` or does not include
+`durableExecutionArn` and `entityId`. When used as a pipeline stage, it must also reject non-string input or a
+deserialization target other than `String`.
+
+In stage mode, the preview generator receives the string produced by the preceding stage, not the original domain
+object. A preview that needs domain fields should either parse that representation, be produced by an earlier stage, or
+use standalone compatibility mode where `FileSystemSerDes` receives the original value.
 
 ### Runtime flow
 
 ```java
 SerDesContextHolder.set(context);
 try {
-    var checkpointPayload = fileSystemSerDes.serialize(value);
+    var checkpointPayload = composableSerDes.serialize(value);
     sendCheckpoint(checkpointPayload);
 } finally {
     SerDesContextHolder.clear();
 }
 ```
 
-On deserialization, `FileSystemSerDes` parses its envelope. If the envelope contains `data`, it delegates directly to the inner SerDes. If the envelope contains `file`, it reads file contents and delegates to the inner SerDes.
+On deserialization, `FileSystemSerDes` parses its envelope. If the envelope contains `data`, it returns the inline
+string. If the envelope contains `file`, it reads and returns the file contents. `ComposableSerDes` then passes that
+string to the preceding stage. In standalone compatibility mode, `FileSystemSerDes` instead passes the resolved string
+to its configured value-encoding delegate.
 
 ### Threading
 
@@ -183,22 +315,39 @@ Root user input and output payloads should route through `SerDesRunner` so `File
 
 ### Implementation plan
 
-1. Add `SerDesContext`, `SerDesPayloadKind`, and package-private TLS setter/clearer support. Leave the `SerDes` interface unchanged.
-2. Add `SerDesRunner` and a `SerDesExecutor` default pool. Add `DurableConfig.withSerDesExecutorService(...)` and validation.
-3. Update root input/output handling in `DurableExecutor` to run user payload SerDes through `SerDesRunner` while leaving `DurableInputOutputSerDes` internal.
-4. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`, `CallbackOperation`, `ChildContextOperation`, `MapOperation`, and test helpers to use `SerDesRunner`.
-5. Add invocation-scoped deserialization caching keyed by entity, payload kind, type, and serialized data hash.
-6. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
-7. Add the `extra-filesystem-serdes` Maven module with artifact ID `aws-durable-execution-sdk-java-extra-filesystem-serdes`, depending on the core SDK.
-8. Implement `FileSystemSerDes` in `software.amazon.lambda.durable.extra.filesystem` with `ALWAYS` and `OVERFLOW` modes, `URI` and `HASH` path encodings, envelope parsing, atomic file writes where supported by the filesystem, and clear validation errors for missing context.
-9. Add unit tests for context construction, unchanged `SerDes` compatibility, TLS scoping and clearing, thread-pool isolation, cache hits, cache invalidation when serialized data changes, exception reconstruction, malformed filesystem envelopes, and extra-module packaging.
-10. Add integration tests with `LocalDurableTestRunner` for step results, wait-for-condition state, invoke payload/result, child context results, map results, repeated `get()`, replay from file pointers, and custom exception types.
-11. Update README and advanced configuration docs with FileSystemSerDes dependency coordinates, FileSystemSerDes examples, and warnings about `/tmp`, S3 Files flush behavior, and EFS/S3 Files operational requirements.
+1. Add `SerDesContext`, `SerDesPayloadKind`, and package-private TLS setter/clearer support. Leave the existing
+   `SerDes` methods unchanged.
+2. Add the binary-compatible `SerDes.then(...)` default method and `ComposableSerDes` with immutable stage ordering,
+   forward serialization, reverse deserialization, null short-circuiting, and stage-aware errors.
+3. Add `SerDesRunner` and a `SerDesExecutor` default pool. Add
+   `DurableConfig.withSerDesExecutorService(...)` and validation.
+4. Update root input/output handling in `DurableExecutor` to run user payload SerDes through `SerDesRunner` while
+   leaving `DurableInputOutputSerDes` internal.
+5. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`,
+   `CallbackOperation`, `ChildContextOperation`, `MapOperation`, and test helpers to use `SerDesRunner`.
+6. Add invocation-scoped deserialization caching keyed by entity, payload kind, type, and serialized data hash.
+7. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
+8. Add the `extra-filesystem-serdes` Maven module with artifact ID
+   `aws-durable-execution-sdk-java-extra-filesystem-serdes`, depending on the core SDK.
+9. Implement `FileSystemSerDes` in `software.amazon.lambda.durable.extra.filesystem` with standalone compatibility and
+   string-stage modes, `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file
+   writes where supported by the filesystem, and clear validation errors for missing context or invalid stage input.
+10. Add unit tests for pipeline ordering, reverse processing, nulls, invalid intermediate stage types, stage failures,
+    context construction, TLS scoping and clearing, thread-pool isolation, cache hits, cache invalidation, exception
+    reconstruction, malformed filesystem envelopes, and extra-module packaging.
+11. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
+    state, invoke payload/result, child context results, map results, repeated `get()`, replay from file pointers, and
+    custom exception types.
+12. Update README and advanced configuration docs with pipeline examples, FileSystemSerDes dependency coordinates,
+    filesystem configuration, and warnings about `/tmp`, S3 Files flush behavior, and EFS/S3 Files operational
+    requirements.
 
 ### Pros
 
 - Delivers the requested parity feature with the smallest new public API surface.
 - Uses an extension point customers already understand and can configure per operation.
+- Makes serialization, compression, encryption, and storage independently composable without adding a storage-specific
+  core interface.
 - Keeps the first implementation in an optional `aws-durable-execution-sdk-java-extra-*` module.
 - Avoids committing the core SDK to a generalized offloading envelope before the storage use cases are proven.
 - Closest to the current JavaScript `createFileSystemSerdes` model and issue #463 wording.
@@ -206,10 +355,11 @@ Root user input and output payloads should route through `SerDesRunner` so `File
 ### Cons
 
 - Uses serialization as a storage hook, so the name `SerDes` no longer means only object-to-string conversion.
-- Forces customers who already have a custom SerDes to wrap or compose it with FileSystemSerDes.
+- Requires non-codec stages to obey a string-to-string convention that the current `SerDes` type system cannot enforce.
 - May lead to one-off storage SerDes implementations if S3, DynamoDB, or other backends are added later.
 - Makes it harder for the SDK to reason separately about serialized text size, offloaded payload references, and storage lifecycle.
 - The SDK treats the checkpoint envelope as opaque serialized data, so lifecycle and preview behavior are owned by the SerDes implementation.
+- Makes pipeline order and configuration part of checkpoint compatibility for in-flight executions.
 
 ## Approach B: Create a PayloadOffloader Interface
 
@@ -396,23 +546,25 @@ This approach gives the SDK one consistent policy for root payloads, operation r
 
 | Dimension | Approach A: Reuse SerDes | Approach B: PayloadOffloader |
 |-----------|--------------------------|------------------------------|
-| Responsibility boundary | Combines value serialization and storage-reference creation in one implementation. | Keeps object encoding in `SerDes` and storage movement in a separate offloader. |
-| User configuration | Users replace or wrap their SerDes with `FileSystemSerDes`. Operation-level SerDes selection already exists. | Users configure both a SerDes and an offloader. The SDK must define global, per-operation, and per-payload precedence. |
+| Responsibility boundary | Combines value serialization and storage-reference creation in ordered, composable SerDes stages. | Keeps object encoding in `SerDes` and storage movement in a separate offloader. |
+| User configuration | Users configure one SerDes or a `ComposableSerDes` pipeline. Operation-level SerDes selection replaces the whole pipeline. | Users configure both a SerDes and an offloader. The SDK must define global, per-operation, and per-payload precedence. |
 | Parity with JS issue | Closest to the current JavaScript `createFileSystemSerdes` model and issue #463 wording. | Diverges from JavaScript naming and shape, though it may be architecturally cleaner for Java. |
-| Core SDK changes | Requires `SerDesContext` TLS because the existing SerDes contract has no context parameter. | Requires a new core extension point, envelope type, config surface, payload pipeline, and migration story. |
-| Applicability | Only payloads using the filesystem SerDes are offloaded. Other SerDes implementations must implement their own offload behavior or be wrapped. | Any SerDes output can be offloaded uniformly after serialization. Users can combine Jackson/custom SerDes with any offloader. |
+| Core SDK changes | Adds the compatible `SerDes.then(...)` default method, `ComposableSerDes`, and `SerDesContext` TLS because the existing serialization methods have no context parameter. | Requires a new core extension point, envelope type, config surface, payload pipeline, and migration story. |
+| Applicability | Any compatible SerDes stages can be chained, but storage stages still own their envelope and lifecycle behavior. | Any SerDes output can be offloaded uniformly after serialization. Users can combine Jackson/custom SerDes with any offloader. |
 | Envelope ownership | FileSystemSerDes owns the checkpoint envelope (`data`, `file`, preview), so the SDK treats it as opaque serialized data. | SDK owns the checkpoint/offload envelope and must guarantee it composes with replay, errors, callbacks, and test utilities. |
 | Caching | SDK can cache deserialized values, but FileSystemSerDes may still do file reads internally unless cache hits happen before SerDes. | SDK can cache at both layers: resolved offloaded payload text and final deserialized object. |
 | Exception handling | Works if every exception serialization path is routed through SerDes with `SerDesPayloadKind.EXCEPTION`. | Works uniformly because exception `errorData` is another serialized payload that can be offloaded after SerDes. |
-| Third-party storage | Filesystem-specific; S3/DynamoDB would likely become more SerDes wrappers or extra packages. | Natural home for multiple storage backends: filesystem, S3, DynamoDB, EFS, S3 Files, or custom customer storage. |
+| Third-party storage | S3, DynamoDB, and other backends can be implemented as additional reversible SerDes stages in extra packages. | Natural home for multiple storage backends: filesystem, S3, DynamoDB, EFS, S3 Files, or custom customer storage. |
 | Immediate delivery risk | Lower. Builds on existing customization point. | Higher. Requires new API and more runtime integration. |
 | Long-term design risk | Higher. Blurs SerDes semantics and may accumulate storage behavior in serializers. | Lower if offloading grows into a first-class feature, but higher if this remains a one-off filesystem parity feature. |
 
 ## Decision
 
-Adopt **Approach A: Reuse SerDes for Offload**. It delivers JavaScript parity with the smallest compatible public API
-change, keeps filesystem behavior in an optional artifact, and leaves the existing `SerDes` interface unchanged.
-Approach B remains a possible future direction if payload offloading grows into a general multi-backend capability.
+Adopt **Approach A: Reuse SerDes for Offload**, extended with a core `ComposableSerDes` pipeline. It delivers
+JavaScript parity, keeps filesystem behavior in an optional artifact, leaves the existing `SerDes` methods unchanged,
+and lets customers assemble value encoding, compression, encryption, and storage as independently reusable stages.
+Approach B remains a possible future direction if payload offloading grows into a general multi-backend capability
+that requires SDK-owned storage envelopes and lifecycle policy.
 
 ## Other Alternatives Considered
 
@@ -426,7 +578,10 @@ Rejected. Filesystem-backed storage is optional, storage-specific functionality.
 
 ### Add context-aware SerDes overloads
 
-Rejected for Approach A. Explicit overloads are more discoverable, but they expand the public `SerDes` interface and force context into every custom implementation's method surface. Approach A uses `SerDesContext` TLS only to keep the existing `SerDes` contract unchanged. Approach B does not need SerDes TLS because `PayloadOffloader` receives `PayloadOffloadContext` explicitly.
+Rejected for Approach A. Explicit overloads are more discoverable, but they force context into every custom
+implementation's serialization method surface. Approach A uses `SerDesContext` TLS to keep the existing
+`serialize`/`deserialize` signatures unchanged. Approach B does not need SerDes TLS because `PayloadOffloader` receives
+`PayloadOffloadContext` explicitly.
 
 ### Make SerDes async
 
@@ -452,10 +607,12 @@ Rejected. The backend request/response envelope is protocol data. User payload c
 
 Positive:
 
-- Both approaches enable filesystem-backed payload storage without changing the existing `SerDes` interface.
+- Both approaches enable filesystem-backed payload storage without changing the existing `serialize`/`deserialize`
+  signatures.
 - Filesystem-specific functionality stays out of the core SDK artifact.
 - The repository gets a repeatable `aws-durable-execution-sdk-java-extra-xxx` artifact pattern for optional packages.
 - Custom payload implementations get enough context to use external storage safely.
+- Customers can compose reusable SerDes stages without creating a bespoke wrapper for each combination.
 - Blocking payload work is isolated from user operation and SDK coordination threads.
 - Repeated file reads and repeated object reconstruction can be reduced within an invocation.
 - User exception type reconstruction remains supported.
@@ -465,6 +622,9 @@ Negative:
 - Adds executor, context, and caching machinery that must stay deterministic.
 - Adds at least one Maven module and published artifact to release and document.
 - Approach A requires thread-local SerDes context because the existing `SerDes` methods do not accept context.
+- Approach A relies on a documented string-stage convention that is validated at runtime rather than by Java's type
+  system.
+- Pipeline ordering and stage configuration must remain compatible with persisted checkpoints.
 - Repeated `get()` calls may return the same object instance in one invocation.
 - Filesystem-backed storage introduces operational durability requirements outside the SDK's control.
 - Approach A risks overloading the meaning of SerDes.
@@ -472,8 +632,8 @@ Negative:
 
 Deferred:
 
-- Choosing whether payload offloading is a first-class SDK concept or a parity feature implemented through SerDes.
-- A fully async Java SerDes or payload pipeline contract.
+- A generalized SDK-owned payload-offloading abstraction beyond the SerDes pipeline.
+- A fully async Java SerDes or async pipeline contract.
 - A separate, explicitly dangerous protocol-envelope customization API.
 - File cleanup, retention policies, and lifecycle management for offloaded payloads.
 
