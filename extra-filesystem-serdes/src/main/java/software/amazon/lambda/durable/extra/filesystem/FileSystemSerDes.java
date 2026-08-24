@@ -90,9 +90,11 @@ public final class FileSystemSerDes implements SerDes {
         }
         var context = requireContext();
         var serialized = serializeValue(value);
-        var inlineEnvelope = encodeEnvelope(serialized, null, null, context);
-        if (storageMode == FileSystemStorageMode.OVERFLOW && fitsCheckpoint(inlineEnvelope)) {
-            return inlineEnvelope;
+        if (storageMode == FileSystemStorageMode.OVERFLOW) {
+            var inlineEnvelope = encodeEnvelope(serialized, null, null, context);
+            if (fitsCheckpoint(inlineEnvelope)) {
+                return inlineEnvelope;
+            }
         }
 
         var file = resolvePayloadPath(serialized, context);
@@ -175,12 +177,13 @@ public final class FileSystemSerDes implements SerDes {
         if (hasData) {
             return envelope.get("data").textValue();
         }
-        return readPayload(envelope.get("file").textValue(), context);
+        var owner = payloadOwner(envelope, context);
+        return readPayload(envelope.get("file").textValue(), owner, context);
     }
 
-    private String readPayload(String fileValue, SerDesContext context) {
+    private String readPayload(String fileValue, PayloadOwner owner, SerDesContext context) {
         var file = Path.of(fileValue).toAbsolutePath().normalize();
-        validatePayloadPath(file, context);
+        validatePayloadPath(file, owner);
         try {
             rejectSymbolicLinks(file);
             var realBasePath = basePath.toRealPath();
@@ -192,7 +195,7 @@ public final class FileSystemSerDes implements SerDes {
                 throw new SerDesException("Filesystem SerDes file does not resolve to the expected payload path");
             }
             var serialized = Files.readString(realFile, StandardCharsets.UTF_8);
-            var expectedFileName = payloadFileName(serialized, context);
+            var expectedFileName = payloadFileName(serialized, owner.entityId());
             if (!realFile.getFileName().toString().equals(expectedFileName)) {
                 throw new SerDesException("Filesystem SerDes file content does not match its content-addressed path");
             }
@@ -203,15 +206,46 @@ public final class FileSystemSerDes implements SerDes {
         }
     }
 
-    private void validatePayloadPath(Path file, SerDesContext context) {
-        var expectedDirectory = resolveExecutionDirectory(context.durableExecutionArn());
+    private void validatePayloadPath(Path file, PayloadOwner owner) {
+        var expectedDirectory = resolveExecutionDirectory(owner.durableExecutionArn());
         var fileName = file.getFileName();
         if (fileName == null
                 || file.getParent() == null
                 || !file.getParent().equals(expectedDirectory)
-                || !fileName.toString().matches(Pattern.quote(encode(context.entityId())) + "-[0-9a-f]{64}\\.json")) {
-            throw new SerDesException("Filesystem SerDes file is not valid for the current durable entity");
+                || !fileName.toString().matches(Pattern.quote(encode(owner.entityId())) + "-[0-9a-f]{64}\\.json")) {
+            throw new SerDesException("Filesystem SerDes file is not valid for its declared durable entity");
         }
+    }
+
+    private static PayloadOwner payloadOwner(JsonNode envelope, SerDesContext context) {
+        var hasOwnerArn = envelope.has("ownerDurableExecutionArn")
+                && envelope.get("ownerDurableExecutionArn").isTextual();
+        var hasOwnerEntity =
+                envelope.has("ownerEntityId") && envelope.get("ownerEntityId").isTextual();
+        if (hasOwnerArn != hasOwnerEntity) {
+            throw malformedEnvelope(context, null);
+        }
+
+        var owner = hasOwnerArn
+                ? new PayloadOwner(
+                        envelope.get("ownerDurableExecutionArn").textValue(),
+                        envelope.get("ownerEntityId").textValue())
+                : new PayloadOwner(context.durableExecutionArn(), context.entityId());
+        if (owner.durableExecutionArn().isBlank() || owner.entityId().isBlank()) {
+            throw malformedEnvelope(context, null);
+        }
+
+        var sameOwner = owner.durableExecutionArn().equals(context.durableExecutionArn())
+                && owner.entityId().equals(context.entityId());
+        if (!sameOwner && !acceptsCrossExecutionReference(context)) {
+            throw new SerDesException("Filesystem SerDes file belongs to a different durable entity");
+        }
+        return owner;
+    }
+
+    private static boolean acceptsCrossExecutionReference(SerDesContext context) {
+        return context.payloadKind() == SerDesPayloadKind.INPUT
+                || context.operationType() == OperationType.CHAINED_INVOKE;
     }
 
     private void rejectSymbolicLinks(Path file) throws IOException {
@@ -250,6 +284,8 @@ public final class FileSystemSerDes implements SerDes {
             envelope.put("data", data);
         } else {
             envelope.put("file", file.toString());
+            envelope.put("ownerDurableExecutionArn", context.durableExecutionArn());
+            envelope.put("ownerEntityId", context.entityId());
             if (preview != null) {
                 envelope.put("preview", preview);
             }
@@ -293,7 +329,7 @@ public final class FileSystemSerDes implements SerDes {
 
     private Path resolvePayloadPath(String serialized, SerDesContext context) {
         var directory = resolveExecutionDirectory(context.durableExecutionArn());
-        var fileName = payloadFileName(serialized, context);
+        var fileName = payloadFileName(serialized, context.entityId());
         var file = directory.resolve(fileName).normalize();
         if (!file.startsWith(directory)) {
             throw new SerDesException("Resolved filesystem payload path is outside the execution directory");
@@ -301,8 +337,8 @@ public final class FileSystemSerDes implements SerDes {
         return file;
     }
 
-    private String payloadFileName(String serialized, SerDesContext context) {
-        return encode(context.entityId()) + "-" + sha256(serialized) + ".json";
+    private String payloadFileName(String serialized, String entityId) {
+        return encode(entityId) + "-" + sha256(serialized) + ".json";
     }
 
     private void writePayload(String serialized, Path file) throws IOException {
@@ -420,6 +456,8 @@ public final class FileSystemSerDes implements SerDes {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
+
+    private record PayloadOwner(String durableExecutionArn, String entityId) {}
 
     /** Builder for {@link FileSystemSerDes}. */
     public static final class Builder {

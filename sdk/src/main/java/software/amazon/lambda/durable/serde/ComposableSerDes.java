@@ -139,11 +139,7 @@ public final class ComposableSerDes implements SerDes {
 
     private static <T> T invokeDeserialize(SerDes stage, String data, TypeToken<T> typeToken, int index) {
         try {
-            var result = stage.deserialize(data, typeToken);
-            if (result == null) {
-                throw new SerDesException("Stage returned null for non-null data");
-            }
-            return result;
+            return stage.deserialize(data, typeToken);
         } catch (Throwable failure) {
             throw stageFailure(index, stage, "deserialize", failure);
         }

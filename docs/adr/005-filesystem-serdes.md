@@ -184,7 +184,8 @@ Pipeline rules:
 - `SerDes.then(...)`, `ComposableSerDes.of(...)`, and the builder flatten nested `ComposableSerDes` instances while
   preserving stage order.
 - A `null` value at the pipeline boundary short-circuits the entire pipeline: serializing or deserializing `null`
-  returns `null` without invoking any stage. A stage returning `null` for non-null input is an error.
+  returns `null` without invoking any stage. A string stage returning `null` for non-null input is an error. The value
+  codec may decode a non-null representation such as the JSON literal `null` to a null domain value.
 - All stages execute within the same `SerDesRunner` invocation and observe the same read-only `SerDesContext`, whether
   the runner executes inline or dispatches to a configured executor.
 - `ComposableSerDes` is immutable. It is safe for concurrent use only when every contained stage is also safe for
@@ -271,8 +272,8 @@ Envelope format:
 
 ```json
 {"__durable_execution_filesystem_serdes":1,"data":"<inline stage input>"}
-{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>"}
-{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","preview":{ "...": "..." }}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>","preview":{ "...": "..." }}
 ```
 
 `FileSystemSerDes` must reject calls when `SerDesContext.getCurrentContext()` is `null` or does not include
@@ -287,6 +288,13 @@ standalone delegate. Missing or malformed markers on SDK-checkpointed payloads a
 Offloaded filenames include a content hash and are immutable. Serializing new state for the same entity creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Repeating the same serialization may reuse the
 same content-addressed file.
+
+File envelopes identify the execution ARN and entity that produced the content. Normal checkpoint replay requires
+that owner to match the current context. Initial input and chained-invoke result boundaries may consume a reference
+owned by the other Lambda execution, allowing two functions configured with the same durable filesystem root and path
+encoding to exchange offloaded invoke payloads and results. The declared owner must still match the content-addressed
+path, and the resolved file must remain beneath the configured root. The file envelope is therefore a capability and
+must be protected with the same care as the payload it references.
 
 The final file envelope, including any preview, must remain below the checkpoint threshold. Oversized previews are
 rejected rather than producing a checkpoint that the service cannot accept.

@@ -56,7 +56,7 @@ public class CloudDurableTestRunner<I, O> {
         this.timeout = timeout;
         this.invocationType = invocationType;
         this.serDes = Objects.requireNonNullElseGet(serDes, JacksonSerDes::new);
-        this.inputSerDes = Objects.requireNonNullElse(inputSerDes, this.serDes);
+        this.inputSerDes = inputSerDes;
     }
 
     private static LambdaClient createDefaultLambdaClient() {
@@ -158,22 +158,15 @@ public class CloudDurableTestRunner<I, O> {
     /** Returns a new runner with the specified SerDes for persisted execution payloads. */
     public CloudDurableTestRunner<I, O> withSerDes(SerDes serDes) {
         return new CloudDurableTestRunner<>(
-                functionArn,
-                inputType,
-                outputType,
-                lambdaClient,
-                pollInterval,
-                timeout,
-                invocationType,
-                serDes,
-                serDes);
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, null, serDes);
     }
 
     /**
      * Returns a new runner with a separate SerDes for the initial Lambda invocation payload.
      *
-     * <p>This is useful with a standalone context-dependent SerDes. Composable pipelines automatically use their first
-     * value-codec stage for initial input.
+     * <p>The supplied SerDes is used exactly as configured, including every stage in a composable pipeline. When this
+     * method is not called, composable persisted SerDes pipelines use only their first value-codec stage because a
+     * durable execution context does not exist before the Lambda invocation.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(
@@ -277,7 +270,10 @@ public class CloudDurableTestRunner<I, O> {
     }
 
     private String serializeInput(I input) {
-        var serializer = inputSerDes instanceof ComposableSerDes composable ? composable.getValueCodec() : inputSerDes;
+        var serializer = inputSerDes;
+        if (serializer == null) {
+            serializer = serDes instanceof ComposableSerDes composable ? composable.getValueCodec() : serDes;
+        }
         return serializer.serialize(input);
     }
 }

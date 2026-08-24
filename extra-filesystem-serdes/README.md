@@ -68,12 +68,15 @@ results pass through when they have not yet been wrapped by this SerDes.
 
 Offloaded files are content-addressed and immutable. Updating wait-for-condition state or retry results creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Repeating the same write can safely reuse the
-same file. File references are bound to the current execution and entity, content hashes are verified when reading,
-and symbolic-link paths are rejected.
+same file. File envelopes identify the producing execution and entity. Ordinary checkpoint replay must match that
+owner, while invoke input and result boundaries may consume a file owned by the other Lambda execution when both
+functions use the same shared root and path encoding. Treat file envelopes as capabilities. Content hashes are
+verified when reading, and symbolic-link paths are rejected.
 
 `CloudDurableTestRunner` uses the first value-codec stage for the initial Lambda invocation, before an execution ARN is
 available, and uses the complete pipeline for persisted history. When using standalone `FileSystemSerDes`, configure a
-separate initial-input codec with `withInputSerDes(...)`.
+separate initial-input codec with `withInputSerDes(...)`. An explicitly supplied input SerDes is used exactly as
+configured, including every stage in a composable pipeline.
 
 ## Storage requirements
 

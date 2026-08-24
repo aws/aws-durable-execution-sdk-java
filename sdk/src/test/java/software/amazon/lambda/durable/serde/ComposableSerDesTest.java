@@ -69,6 +69,28 @@ class ComposableSerDesTest {
     }
 
     @Test
+    void valueCodecMayDecodeNonNullRepresentationToNull() {
+        var intermediateCalls = new AtomicInteger();
+        var identityStage = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                intermediateCalls.incrementAndGet();
+                return (T) data;
+            }
+        };
+        var pipeline = new JacksonSerDes().then(identityStage);
+
+        assertNull(pipeline.deserialize("null", TypeToken.get(Object.class)));
+        assertEquals(1, intermediateCalls.get());
+    }
+
+    @Test
     void rejectsNullAndNonStringIntermediateValuesWithStageMetadata() {
         var nullStage = new SerDes() {
             @Override

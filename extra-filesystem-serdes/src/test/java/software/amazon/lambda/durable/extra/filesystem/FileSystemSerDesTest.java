@@ -174,6 +174,51 @@ class FileSystemSerDesTest {
     }
 
     @Test
+    void fileReferencesCrossInvokeInputAndResultBoundaries() {
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var callerArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:caller:1/durable-execution/caller-execution/caller-invocation";
+        var calleeArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:callee:1/durable-execution/callee-execution/callee-invocation";
+        var callerInvokePayload = SerDesContext.forOperation(
+                callerArn,
+                "invoke-1",
+                "call-callee",
+                null,
+                OperationType.CHAINED_INVOKE,
+                OperationSubType.CHAINED_INVOKE,
+                SerDesPayloadKind.INVOKE_PAYLOAD,
+                null);
+        var calleeInput =
+                SerDesContext.forExecution(calleeArn, "callee-invocation", "callee-execution", SerDesPayloadKind.INPUT);
+
+        var invokeEnvelope = runner.serialize(serDes, Map.of("request", "value"), callerInvokePayload);
+        assertEquals(
+                Map.of("request", "value"),
+                runner.deserialize(serDes, invokeEnvelope, new TypeToken<Map<String, String>>() {}, calleeInput));
+
+        var calleeOutput = SerDesContext.forExecution(
+                calleeArn, "callee-invocation", "callee-execution", SerDesPayloadKind.OUTPUT);
+        var callerInvokeResult = SerDesContext.forOperation(
+                callerArn,
+                "invoke-1",
+                "call-callee",
+                null,
+                OperationType.CHAINED_INVOKE,
+                OperationSubType.CHAINED_INVOKE,
+                SerDesPayloadKind.RESULT,
+                null);
+        var resultEnvelope = runner.serialize(serDes, Map.of("response", "value"), calleeOutput);
+
+        assertEquals(
+                Map.of("response", "value"),
+                runner.deserialize(
+                        serDes, resultEnvelope, new TypeToken<Map<String, String>>() {}, callerInvokeResult));
+    }
+
+    @Test
     void rejectsCallsWithoutContextAndMalformedOrUnsafeEnvelopes() throws Exception {
         var serDes = FileSystemSerDes.builder(basePath).build();
         assertThrows(SerDesException.class, () -> serDes.serialize("value"));
