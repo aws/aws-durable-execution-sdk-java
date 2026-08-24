@@ -23,6 +23,9 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
 
@@ -43,6 +46,11 @@ public class LocalDurableTestRunner<I, O> {
     private final SerDes serDes;
     private final DurableConfig customerConfig;
     private final Instant executionStartTime = Instant.now();
+    private final String executionName = UUID.randomUUID().toString();
+    private final String invocationId = UUID.randomUUID().toString();
+    private final String executionArn = String.format(
+            "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
+            executionName, invocationId);
 
     private LocalDurableTestRunner(
             TypeToken<I> inputType,
@@ -61,11 +69,13 @@ public class LocalDurableTestRunner<I, O> {
                     .withDurableExecutionClient(storage)
                     .withSerDes(customerConfig.getSerDes())
                     .withExecutorService(customerConfig.getExecutorService())
+                    .withSerDesExecutorService(customerConfig.getSerDesExecutorService())
                     .withPollingStrategy(customerConfig.getPollingStrategy())
                     .withCheckpointDelay(customerConfig.getCheckpointDelay())
                     .withLoggerConfig(customerConfig.getLoggerConfig())
                     // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
                     .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
+                    .withDeserializeAfterSerialization(customerConfig.shouldDeserializeAfterSerialization())
                     .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]))
                     .build();
         } else {
@@ -238,11 +248,13 @@ public class LocalDurableTestRunner<I, O> {
 
     /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
-        var durableInput = createDurableInput(input);
+        var serDesRunner = new SerDesRunner(customerConfig.getSerDesExecutorService());
+        var durableInput = createDurableInput(input, serDesRunner);
 
         var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
 
-        return storage.toTestResult(output, outputType, serDes);
+        return storage.toTestResult(
+                output, outputType, serDes, serDesRunner, executionArn, invocationId, executionName);
     }
 
     /**
@@ -281,7 +293,14 @@ public class LocalDurableTestRunner<I, O> {
     /** Returns the {@link TestOperation} for the given operation name, or null if not found. */
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
-        return op != null ? new TestOperation(op, serDes) : null;
+        return op != null
+                ? new TestOperation(
+                        op,
+                        List.of(),
+                        serDes,
+                        new SerDesRunner(customerConfig.getSerDesExecutorService()),
+                        executionArn)
+                : null;
     }
 
     /** Get callback ID for a named callback operation. */
@@ -329,13 +348,11 @@ public class LocalDurableTestRunner<I, O> {
         storage.completeChainedInvoke(name, OperationResult.stopped(error));
     }
 
-    private DurableExecutionInput createDurableInput(I input) {
-        var executionName = UUID.randomUUID().toString();
-        var invocationId = UUID.randomUUID().toString();
-        var executionArn = String.format(
-                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
-                executionName, invocationId);
-        var inputJson = serDes.serialize(input);
+    private DurableExecutionInput createDurableInput(I input, SerDesRunner serDesRunner) {
+        var inputJson = serDesRunner.serialize(
+                serDes,
+                input,
+                SerDesContext.forExecution(executionArn, invocationId, executionName, SerDesPayloadKind.INPUT));
         var executionOp = Operation.builder()
                 .id(invocationId)
                 .name(executionName)

@@ -11,6 +11,7 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -85,8 +86,14 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * @throws SerDesException if deserialization fails
      */
     protected T deserializeResult(String result) {
+        return deserializeResult(result, SerDesPayloadKind.RESULT, null);
+    }
+
+    /** Deserializes a result with explicit payload kind and attempt metadata. */
+    protected T deserializeResult(String result, SerDesPayloadKind payloadKind, Integer attempt) {
         try {
-            return resultSerDes.deserialize(result, resultTypeToken);
+            return getSerDesRunner()
+                    .deserialize(resultSerDes, result, resultTypeToken, createSerDesContext(payloadKind, attempt));
         } catch (SerDesException e) {
             logger.warn(
                     "Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.",
@@ -106,8 +113,17 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * @return the serialized string and the deserialized result
      */
     protected SerializedResult<T> serializeAndDeserializeResult(T result) {
-        var serialized = resultSerDes.serialize(result);
-        var deserialized = shouldDeserializeAfterSerialization() ? deserializeResult(serialized) : result;
+        return serializeAndDeserializeResult(result, SerDesPayloadKind.RESULT, null);
+    }
+
+    /** Serializes a result with explicit payload kind and attempt metadata. */
+    protected SerializedResult<T> serializeAndDeserializeResult(
+            T result, SerDesPayloadKind payloadKind, Integer attempt) {
+        var context = createSerDesContext(payloadKind, attempt);
+        var serialized = getSerDesRunner().serialize(resultSerDes, result, context);
+        var deserialized = shouldDeserializeAfterSerialization()
+                ? getSerDesRunner().deserialize(resultSerDes, serialized, resultTypeToken, context)
+                : result;
         return new SerializedResult<>(serialized, deserialized);
     }
 
@@ -119,9 +135,20 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      */
     @SuppressWarnings("ThrowableNotThrown")
     protected ErrorObject serializeException(Throwable throwable) {
-        var error = ExceptionHelper.buildErrorObject(throwable, resultSerDes);
+        return serializeException(throwable, null);
+    }
+
+    /** Serializes a throwable with attempt metadata. */
+    protected ErrorObject serializeException(Throwable throwable, Integer attempt) {
+        var context = createSerDesContext(SerDesPayloadKind.EXCEPTION, attempt);
+        var error = ErrorObject.builder()
+                .errorType(throwable.getClass().getName())
+                .errorMessage(throwable.getMessage())
+                .errorData(getSerDesRunner().serialize(resultSerDes, throwable, context))
+                .stackTrace(ExceptionHelper.serializeStackTrace(throwable.getStackTrace()))
+                .build();
         if (shouldDeserializeAfterSerialization()) {
-            deserializeException(error);
+            deserializeException(error, attempt);
         }
         return error;
     }
@@ -139,6 +166,11 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * @return the reconstructed throwable, or null if reconstruction is not possible
      */
     protected Throwable deserializeException(ErrorObject errorObject) {
+        return deserializeException(errorObject, null);
+    }
+
+    /** Deserializes a throwable with attempt metadata. */
+    protected Throwable deserializeException(ErrorObject errorObject, Integer attempt) {
         Throwable original = null;
         if (errorObject == null) {
             return original;
@@ -153,8 +185,12 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
 
             Class<?> exceptionClass = Class.forName(errorType);
             if (Throwable.class.isAssignableFrom(exceptionClass)) {
-                original =
-                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
+                original = getSerDesRunner()
+                        .deserialize(
+                                resultSerDes,
+                                errorData,
+                                TypeToken.get(exceptionClass.asSubclass(Throwable.class)),
+                                createSerDesContext(SerDesPayloadKind.EXCEPTION, attempt));
 
                 if (original != null) {
                     original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));

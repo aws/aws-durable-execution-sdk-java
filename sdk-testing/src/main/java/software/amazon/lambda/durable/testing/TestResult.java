@@ -15,6 +15,9 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 
 /**
  * Represents the result of a durable execution, providing access to the execution status, output, operations, and
@@ -33,6 +36,8 @@ public class TestResult<O> {
     private final List<Event> allEvents;
     private final SerDes serDes;
     private final TypeToken<O> resultType;
+    private final SerDesRunner serDesRunner;
+    private final SerDesContext outputContext;
 
     public TestResult(
             ExecutionStatus status,
@@ -42,6 +47,21 @@ public class TestResult<O> {
             List<Event> allEvents,
             TypeToken<O> resultType,
             SerDes serDes) {
+        this(status, resultPayload, error, operations, allEvents, resultType, serDes, null, null, null, null);
+    }
+
+    public TestResult(
+            ExecutionStatus status,
+            String resultPayload,
+            ErrorObject error,
+            List<TestOperation> operations,
+            List<Event> allEvents,
+            TypeToken<O> resultType,
+            SerDes serDes,
+            SerDesRunner serDesRunner,
+            String durableExecutionArn,
+            String executionOperationId,
+            String executionOperationName) {
         this.status = status;
         this.resultPayload = resultPayload;
         this.error = error;
@@ -51,6 +71,11 @@ public class TestResult<O> {
         this.allEvents = List.copyOf(allEvents);
         this.serDes = serDes;
         this.resultType = resultType;
+        this.serDesRunner = serDesRunner;
+        this.outputContext = serDesRunner == null
+                ? null
+                : SerDesContext.forExecution(
+                        durableExecutionArn, executionOperationId, executionOperationName, SerDesPayloadKind.OUTPUT);
     }
 
     /** Returns the execution status (SUCCEEDED, FAILED, or PENDING). */
@@ -75,12 +100,18 @@ public class TestResult<O> {
         if (resultPayload == null || resultPayload.isEmpty()) {
             var lastEvent = allEvents.get(allEvents.size() - 1);
             if (lastEvent.eventType() == EventType.EXECUTION_SUCCEEDED) {
-                return serDes.deserialize(
+                return deserialize(
                         lastEvent.executionSucceededDetails().result().payload(), resultType);
             }
             return null;
         }
-        return serDes.deserialize(resultPayload, resultType);
+        return deserialize(resultPayload, resultType);
+    }
+
+    private <T> T deserialize(String payload, TypeToken<T> type) {
+        return serDesRunner == null
+                ? serDes.deserialize(payload, type)
+                : serDesRunner.deserialize(serDes, payload, type, outputContext);
     }
 
     /** Deserializes and returns the execution output if the result type is known. */

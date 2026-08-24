@@ -50,6 +50,18 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
 </dependency>
 ```
 
+For filesystem-backed payload storage, add the optional module:
+
+```xml
+<dependency>
+    <groupId>software.amazon.lambda.durable</groupId>
+    <artifactId>aws-durable-execution-sdk-java-extra-filesystem-serdes</artifactId>
+    <version>VERSION</version>
+</dependency>
+```
+
+See [Filesystem SerDes](extra-filesystem-serdes/README.md) for configuration and durability requirements.
+
 ### Your First Durable Function
 
 ```java

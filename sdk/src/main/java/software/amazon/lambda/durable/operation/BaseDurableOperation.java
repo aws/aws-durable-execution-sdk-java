@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -30,6 +31,9 @@ import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.plugin.UserFunctionOutcome;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -60,6 +64,7 @@ public abstract class BaseDurableOperation {
     protected final boolean isVirtual;
     protected final AtomicBoolean replayCompletedOperation = new AtomicBoolean(false);
     private final DurableContextImpl durableContext;
+    private final SerDesRunner serDesRunner;
     private final AtomicReference<CompletableFuture<Void>> runningUserHandler = new AtomicReference<>(null);
 
     protected BaseDurableOperation(
@@ -86,6 +91,9 @@ public abstract class BaseDurableOperation {
         this.parentOperation = parentOperation;
         this.durableContext = durableContext;
         this.executionManager = durableContext.getExecutionManager();
+        var invocationSerDesRunner = executionManager.getSerDesRunner();
+        this.serDesRunner =
+                invocationSerDesRunner != null ? invocationSerDesRunner : new SerDesRunner(ForkJoinPool.commonPool());
         this.isVirtual = isVirtual;
 
         this.completionFuture = new CompletableFuture<>();
@@ -116,6 +124,24 @@ public abstract class BaseDurableOperation {
     /** Gets the parent context. */
     protected DurableContextImpl getContext() {
         return durableContext;
+    }
+
+    /** Builds the SerDes context for a payload owned by this operation. */
+    protected SerDesContext createSerDesContext(SerDesPayloadKind payloadKind, Integer attempt) {
+        return SerDesContext.forOperation(
+                executionManager.getDurableExecutionArn(),
+                getOperationId(),
+                getName(),
+                durableContext.getParentId(),
+                getType(),
+                getSubType(),
+                payloadKind,
+                attempt);
+    }
+
+    /** Returns the invocation-scoped SerDes runner. */
+    protected SerDesRunner getSerDesRunner() {
+        return serDesRunner;
     }
 
     /** Gets the operation type. */

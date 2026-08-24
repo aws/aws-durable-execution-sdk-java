@@ -365,6 +365,7 @@ class CallbackOperationTest {
         operation.execute();
 
         var exception = assertThrows(SerDesException.class, operation::get);
-        assertEquals("Invalid base64 encoding", exception.getMessage());
+        assertTrue(exception.getMessage().contains("RESULT"));
+        assertEquals("Invalid base64 encoding", exception.getCause().getMessage());
     }
 }

@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.TestOperation;
 import software.amazon.lambda.durable.testing.TestResult;
 
@@ -130,10 +131,18 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     /** Build TestResult from current state. */
-    public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
+    public <O> TestResult<O> toTestResult(
+            DurableExecutionOutput output,
+            TypeToken<O> resultType,
+            SerDes serDes,
+            SerDesRunner serDesRunner,
+            String durableExecutionArn,
+            String executionOperationId,
+            String executionOperationName) {
         var testOperations = existingOperations.values().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
-                .map(op -> new TestOperation(op, eventProcessor.getEventsForOperation(op.id()), serDes))
+                .map(op -> new TestOperation(
+                        op, eventProcessor.getEventsForOperation(op.id()), serDes, serDesRunner, durableExecutionArn))
                 .toList();
         return new TestResult<>(
                 output.status(),
@@ -142,7 +151,11 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 testOperations,
                 eventProcessor.getAllEvents(),
                 resultType,
-                serDes);
+                serDes,
+                serDesRunner,
+                durableExecutionArn,
+                executionOperationId,
+                executionOperationName);
     }
 
     /** Simulate checkpoint failure by forcing an operation into STARTED state */

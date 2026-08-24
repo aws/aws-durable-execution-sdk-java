@@ -1,6 +1,6 @@
 # ADR-005: Payload Offloading for Filesystem Storage
 
-**Status:** Proposed  
+**Status:** Accepted — Approach A
 **Date:** 2026-07-02
 
 ## Context
@@ -156,6 +156,7 @@ Add an invocation-scoped cache for successful deserialization results. The cache
 - Durable execution ARN.
 - `entityId`.
 - Payload kind.
+- Attempt, when applicable.
 - Target `TypeToken` type.
 - A hash of the serialized checkpoint string.
 
@@ -407,19 +408,11 @@ This approach gives the SDK one consistent policy for root payloads, operation r
 | Immediate delivery risk | Lower. Builds on existing customization point. | Higher. Requires new API and more runtime integration. |
 | Long-term design risk | Higher. Blurs SerDes semantics and may accumulate storage behavior in serializers. | Lower if offloading grows into a first-class feature, but higher if this remains a one-off filesystem parity feature. |
 
-## AI Recommendation
+## Decision
 
-**AI recommendation:** Prefer **Approach B: Create a `PayloadOffloader` interface** if the team is willing to treat payload offloading as a first-class Java SDK capability rather than only a JavaScript parity item.
-
-Reasoning:
-
-- The problem being solved is payload storage, not serialization. A dedicated offloader keeps the domain boundary clean.
-- The SDK already needs to touch every payload path for context, caching, threading, exceptions, and root input/output. Once that plumbing exists, composing SerDes plus offloader is a more durable shape than putting storage behavior inside SerDes.
-- Java customers are more likely to have custom Jackson/ObjectMapper SerDes implementations. Approach B lets them keep those and add offloading independently.
-- Both approaches use one optional extra package for filesystem-specific code; that is not a differentiator. The package would be either filesystem SerDes or filesystem offloader depending on the chosen approach. The differentiator is that Approach B gives future storage extras such as S3 or DynamoDB offload the same focused core offloader contract instead of encoding storage behavior as more SerDes implementations.
-- SDK-owned envelopes and two-layer caching make replay behavior easier to test and reason about.
-
-The main reason to choose Approach A is schedule and parity: it is smaller and maps directly to the JavaScript feature request. If the team needs to satisfy #463 quickly with minimal public API design, Approach A is a reasonable incremental step, but it should be documented as payload offloading implemented through SerDes rather than as the long-term ideal boundary.
+Adopt **Approach A: Reuse SerDes for Offload**. It delivers JavaScript parity with the smallest compatible public API
+change, keeps filesystem behavior in an optional artifact, and leaves the existing `SerDes` interface unchanged.
+Approach B remains a possible future direction if payload offloading grows into a general multi-backend capability.
 
 ## Other Alternatives Considered
 

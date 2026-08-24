@@ -170,7 +170,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         if (exception instanceof DurableOperationException durableOperationException) {
             errorObject = durableOperationException.getErrorObject();
         } else {
-            errorObject = serializeException(exception);
+            errorObject = serializeException(exception, attempt);
         }
 
         var retryDecision = config.retryStrategy().makeRetryDecision(exception, attempt);
@@ -216,7 +216,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             }
 
             // Attempt to reconstruct and throw the original exception
-            Throwable original = deserializeException(errorObject);
+            var attempt = op.stepDetails() != null ? op.stepDetails().attempt() : null;
+            Throwable original = deserializeException(errorObject, attempt);
             if (original != null) {
                 ExceptionHelper.sneakyThrow(original);
             }

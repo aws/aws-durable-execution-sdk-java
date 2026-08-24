@@ -18,6 +18,7 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
             .withLambdaClientBuilder(lambdaClientBuilder)
             .withSerDes(new MyCustomSerDes())           // Custom serialization
             .withExecutorService(Executors.newFixedThreadPool(10))  // Custom thread pool
+            .withSerDesExecutorService(Executors.newFixedThreadPool(4)) // SerDes and payload I/O
             .withLoggerConfig(LoggerConfig.withReplayLogging())     // Enable replay logs
             .build();
     }
@@ -34,11 +35,43 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withLambdaClientBuilder()` | Custom AWS Lambda client                | Auto-configured Lambda client |
 | `withSerDes()`              | Serializer for step results             | Jackson with default settings |
 | `withExecutorService()`     | Thread pool for user-defined operations | Cached daemon thread pool     |
+| `withSerDesExecutorService()` | Thread pool for SerDes and payload storage I/O | Cached `durable-sdk-serdes-*` daemon thread pool |
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |
 | `withPollingStrategy()`     | Backend polling strategy                | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max |
 | `withCheckpointDelay()`     | How often the SDK checkpoints updates   | `Duration.ofSeconds(0)` (as soon as possible) |
 
 The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
+
+The `withSerDesExecutorService()` option isolates serialization and blocking payload storage from user operations and
+SDK coordination. The SDK sets `SerDesContext` inside each task, clears it after the call, and caches successful
+deserialization results for the current invocation.
+
+### Filesystem-backed payload storage
+
+The optional `aws-durable-execution-sdk-java-extra-filesystem-serdes` artifact can store delegate-serialized payloads
+on a shared filesystem:
+
+```java
+var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+    .storageMode(FileSystemStorageMode.OVERFLOW)
+    .pathEncoding(FileSystemPathEncoding.HASH)
+    .delegate(new JacksonSerDes())
+    .previewGenerator(value -> Map.of("type", value.getClass().getSimpleName()))
+    .build();
+
+return DurableConfig.builder()
+    .withSerDes(fileSystemSerDes)
+    .build();
+```
+
+`ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
+approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path
+segments.
+
+Do not use Lambda's ephemeral `/tmp` directory: replay can run in a different execution environment. Use a durable,
+shared mount such as EFS. S3 Files can have delayed synchronization, so a runtime crash before the mount flushes may
+lose recent writes; use it only when that tradeoff is acceptable. The SDK does not delete offloaded files, so configure
+storage lifecycle and retention separately.
 
 ### Dynamic plugin loading
 

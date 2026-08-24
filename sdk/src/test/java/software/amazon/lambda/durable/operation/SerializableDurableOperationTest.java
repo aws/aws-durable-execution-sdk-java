@@ -420,7 +420,8 @@ class SerializableDurableOperationTest {
                     @Override
                     public String get() {
                         var thrown = assertThrows(SerDesException.class, () -> serializeAndDeserializeResult("abc"));
-                        assertEquals("cannot deserialize", thrown.getMessage());
+                        assertTrue(thrown.getMessage().contains("RESULT"));
+                        assertEquals("cannot deserialize", thrown.getCause().getMessage());
                         return RESULT;
                     }
                 };
