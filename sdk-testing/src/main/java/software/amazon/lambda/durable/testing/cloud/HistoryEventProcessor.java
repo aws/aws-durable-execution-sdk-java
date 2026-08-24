@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.testing.cloud;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -17,6 +18,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
@@ -285,10 +287,11 @@ public class HistoryEventProcessor {
         var testOperations = new ArrayList<TestOperation>();
         for (var entry : operations.entrySet()) {
             var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());
+            var operation = withEventTimestamps(entry.getValue(), opEvents);
             testOperations.add(
                     serDesRunner == null
-                            ? new TestOperation(entry.getValue(), opEvents, serDes)
-                            : new TestOperation(entry.getValue(), opEvents, serDes, serDesRunner, durableExecutionArn));
+                            ? new TestOperation(operation, opEvents, serDes)
+                            : new TestOperation(operation, opEvents, serDes, serDesRunner, durableExecutionArn));
         }
 
         if (executionOperationId == null && durableExecutionArn != null) {
@@ -309,6 +312,25 @@ public class HistoryEventProcessor {
                         durableExecutionArn,
                         executionOperationId,
                         executionOperationName);
+    }
+
+    private Operation withEventTimestamps(Operation operation, List<Event> events) {
+        var startTimestamp = events.stream()
+                .map(Event::eventTimestamp)
+                .filter(Objects::nonNull)
+                .min(java.time.Instant::compareTo)
+                .orElse(operation.startTimestamp());
+        var endTimestamp = ExecutionManager.isTerminalStatus(operation.status())
+                ? events.stream()
+                        .map(Event::eventTimestamp)
+                        .filter(Objects::nonNull)
+                        .max(java.time.Instant::compareTo)
+                        .orElse(operation.endTimestamp())
+                : operation.endTimestamp();
+        return operation.toBuilder()
+                .startTimestamp(startTimestamp)
+                .endTimestamp(endTimestamp)
+                .build();
     }
 
     private Operation createStepOperation(

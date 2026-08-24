@@ -4,6 +4,8 @@ package software.amazon.lambda.durable.testing.cloud;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,7 @@ import software.amazon.awssdk.services.lambda.model.ExecutionSucceededDetails;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.RetryDetails;
+import software.amazon.awssdk.services.lambda.model.StepStartedDetails;
 import software.amazon.awssdk.services.lambda.model.StepSucceededDetails;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -32,18 +35,30 @@ class HistoryEventProcessorTest {
     void deserializesCloudResultsWithDurablePayloadContext() {
         var observedContexts = new ArrayList<SerDesContext>();
         var serDes = recordingStringSerDes(observedContexts);
+        var startedAt = Instant.parse("2026-08-24T00:00:00Z");
         var events = List.of(
                 Event.builder()
                         .id("invocation-id")
                         .name("execution")
                         .eventType(EventType.EXECUTION_STARTED)
+                        .eventTimestamp(startedAt)
                         .executionStartedDetails(
                                 ExecutionStartedDetails.builder().build())
                         .build(),
                 Event.builder()
                         .id("step-id")
                         .name("step")
+                        .subType("Step")
+                        .eventType(EventType.STEP_STARTED)
+                        .eventTimestamp(startedAt.plusSeconds(1))
+                        .stepStartedDetails(StepStartedDetails.builder().build())
+                        .build(),
+                Event.builder()
+                        .id("step-id")
+                        .name("step")
+                        .subType("Step")
                         .eventType(EventType.STEP_SUCCEEDED)
+                        .eventTimestamp(startedAt.plusSeconds(3))
                         .stepSucceededDetails(StepSucceededDetails.builder()
                                 .result(EventResult.builder()
                                         .payload("step-result")
@@ -56,6 +71,7 @@ class HistoryEventProcessorTest {
                         .id("invoke-id")
                         .name("invoke")
                         .eventType(EventType.CHAINED_INVOKE_STARTED)
+                        .eventTimestamp(startedAt.plusSeconds(4))
                         .chainedInvokeStartedDetails(ChainedInvokeStartedDetails.builder()
                                 .functionName("target")
                                 .build())
@@ -64,6 +80,7 @@ class HistoryEventProcessorTest {
                         .id("invoke-id")
                         .name("invoke")
                         .eventType(EventType.CHAINED_INVOKE_SUCCEEDED)
+                        .eventTimestamp(startedAt.plusSeconds(5))
                         .chainedInvokeSucceededDetails(ChainedInvokeSucceededDetails.builder()
                                 .result(EventResult.builder()
                                         .payload("invoke-result")
@@ -74,6 +91,7 @@ class HistoryEventProcessorTest {
                         .id("invocation-id")
                         .name("execution")
                         .eventType(EventType.EXECUTION_SUCCEEDED)
+                        .eventTimestamp(startedAt.plusSeconds(6))
                         .executionSucceededDetails(ExecutionSucceededDetails.builder()
                                 .result(EventResult.builder()
                                         .payload("execution-result")
@@ -86,6 +104,7 @@ class HistoryEventProcessorTest {
 
         assertEquals("execution-result", result.getResult());
         assertEquals("step-result", result.getOperation("step").getStepResult(String.class));
+        assertEquals(Duration.ofSeconds(2), result.getOperation("step").getDuration());
         assertEquals(OperationStatus.SUCCEEDED, result.getOperation("invoke").getStatus());
         assertEquals(
                 "invoke-result",
