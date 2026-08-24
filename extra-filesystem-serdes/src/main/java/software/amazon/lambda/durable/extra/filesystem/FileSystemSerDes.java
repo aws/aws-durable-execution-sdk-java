@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesStageResult;
 
 /**
  * A SerDes that stores payloads on a durable shared filesystem.
@@ -121,7 +122,7 @@ public final class FileSystemSerDes implements SerDes {
         }
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
         var context = requireContext();
-        var serialized = resolveSerializedPayload(data, context);
+        var serialized = resolveSerializedPayload(data, context).serialized();
         if (stageMode) {
             if (!TypeToken.get(String.class).equals(typeToken)) {
                 throw new SerDesException("FileSystemSerDes stage can only deserialize to String");
@@ -131,6 +132,28 @@ public final class FileSystemSerDes implements SerDes {
             return value;
         }
         return delegate.deserialize(serialized, typeToken);
+    }
+
+    @Override
+    public SerDesStageResult deserializePipelineStage(String data) {
+        if (!stageMode) {
+            return SerDes.super.deserializePipelineStage(data);
+        }
+        var context = requireContext();
+        var resolved = resolveSerializedPayload(data, context);
+        return resolved.external()
+                ? SerDesStageResult.decodeWithValueCodec(resolved.serialized())
+                : SerDesStageResult.continueWith(resolved.serialized());
+    }
+
+    @Override
+    public boolean requiresDurableContext() {
+        return true;
+    }
+
+    @Override
+    public boolean isTerminalPipelineStage() {
+        return true;
     }
 
     private String serializeValue(Object value) {
@@ -147,13 +170,13 @@ public final class FileSystemSerDes implements SerDes {
         return serialized;
     }
 
-    private String resolveSerializedPayload(String data, SerDesContext context) {
+    private ResolvedPayload resolveSerializedPayload(String data, SerDesContext context) {
         final JsonNode envelope;
         try {
             envelope = ENVELOPE_MAPPER.readTree(data);
         } catch (JsonProcessingException e) {
             if (acceptsExternalPayload(context)) {
-                return data;
+                return new ResolvedPayload(data, true);
             }
             throw malformedEnvelope(context, e);
         }
@@ -164,7 +187,7 @@ public final class FileSystemSerDes implements SerDes {
             }
         } else {
             if (acceptsExternalPayload(context)) {
-                return data;
+                return new ResolvedPayload(data, true);
             }
             throw malformedEnvelope(context, null);
         }
@@ -175,10 +198,10 @@ public final class FileSystemSerDes implements SerDes {
             throw malformedEnvelope(context, null);
         }
         if (hasData) {
-            return envelope.get("data").textValue();
+            return new ResolvedPayload(envelope.get("data").textValue(), false);
         }
         var owner = payloadOwner(envelope, context);
-        return readPayload(envelope.get("file").textValue(), owner, context);
+        return new ResolvedPayload(readPayload(envelope.get("file").textValue(), owner, context), false);
     }
 
     private String readPayload(String fileValue, PayloadOwner owner, SerDesContext context) {
@@ -458,6 +481,8 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private record PayloadOwner(String durableExecutionArn, String entityId) {}
+
+    private record ResolvedPayload(String serialized, boolean external) {}
 
     /** Builder for {@link FileSystemSerDes}. */
     public static final class Builder {

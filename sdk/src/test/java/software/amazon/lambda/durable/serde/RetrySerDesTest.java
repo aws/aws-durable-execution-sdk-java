@@ -74,6 +74,50 @@ class RetrySerDesTest {
     }
 
     @Test
+    void retriesPipelineStageDeserializationAndDelegatesCapabilities() {
+        var calls = new AtomicInteger();
+        var delegate = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return null;
+            }
+
+            @Override
+            public SerDesStageResult deserializePipelineStage(String data) {
+                if (calls.incrementAndGet() == 1) {
+                    throw new RetryableSerDesException("transient");
+                }
+                return SerDesStageResult.decodeWithValueCodec(data);
+            }
+
+            @Override
+            public boolean requiresDurableContext() {
+                return true;
+            }
+
+            @Override
+            public boolean isTerminalPipelineStage() {
+                return true;
+            }
+        };
+        var retrySerDes =
+                new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
+
+        var result = retrySerDes.deserializePipelineStage("value");
+
+        assertEquals("value", result.value());
+        assertTrue(result.skipRemainingStages());
+        assertEquals(2, calls.get());
+        assertTrue(retrySerDes.requiresDurableContext());
+        assertTrue(retrySerDes.isTerminalPipelineStage());
+    }
+
+    @Test
     void doesNotRetryPermanentSerDesFailure() {
         var calls = new AtomicInteger();
         var delegate = new SerDes() {

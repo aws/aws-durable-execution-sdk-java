@@ -64,7 +64,8 @@ delays consume time in the current Lambda invocation, so keep attempts and delay
 ## Replay and envelope behavior
 
 Filesystem envelopes include a reserved version marker. Raw root input, callback results, and standard Lambda invoke
-results pass through when they have not yet been wrapped by this SerDes.
+results bypass every string-processing stage and decode directly with the pipeline value codec when they have not yet
+been wrapped by this SerDes.
 
 Offloaded files are content-addressed and immutable. Updating wait-for-condition state or retry results creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Repeating the same write can safely reuse the
@@ -73,10 +74,13 @@ owner, while invoke input and result boundaries may consume a file owned by the 
 functions use the same shared root and path encoding. Treat file envelopes as capabilities. Content hashes are
 verified when reading, and symbolic-link paths are rejected.
 
-`CloudDurableTestRunner` uses the first value-codec stage for the initial Lambda invocation, before an execution ARN is
-available, and uses the complete pipeline for persisted history. When using standalone `FileSystemSerDes`, configure a
-separate initial-input codec with `withInputSerDes(...)`. An explicitly supplied input SerDes is used exactly as
-configured, including every stage in a composable pipeline.
+`FileSystemSerDes` must be the final stage in a pipeline. Its overflow decision is therefore made against the final
+checkpoint representation; a later expanding transform cannot push an inline envelope over the service limit.
+
+`CloudDurableTestRunner` cannot use `FileSystemSerDes` for the initial Lambda invocation because an execution ARN is
+not available yet. Configure a separate context-free initial-input codec with `withInputSerDes(...)`. An explicitly
+supplied input SerDes is used exactly as configured, including every stage in a composable pipeline. Context-free
+persisted pipelines use their complete pipeline for the initial invocation.
 
 ## Storage requirements
 

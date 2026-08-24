@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.serde;
 
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.SerDesException;
 
 /**
  * Interface for serialization and deserialization of objects.
@@ -36,6 +37,47 @@ public interface SerDes {
      * @return the deserialized object, or null if data is null
      */
     <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    /**
+     * Deserializes this SerDes when it is used as a string-processing pipeline stage.
+     *
+     * <p>Most stages should use the default result, which continues reverse processing through earlier string stages.
+     * Boundary stages may return {@link SerDesStageResult#decodeWithValueCodec(String)} when the input originated
+     * outside the configured pipeline and must be decoded directly by the value codec.
+     *
+     * @param data the non-null string supplied to this stage
+     * @return the stage result
+     */
+    default SerDesStageResult deserializePipelineStage(String data) {
+        Object result = deserialize(data, TypeToken.get(String.class));
+        if (result == null) {
+            throw new SerDesException("Stage returned null for non-null data");
+        }
+        if (!(result instanceof String stringResult)) {
+            throw new SerDesException("String stage returned a non-string value");
+        }
+        return SerDesStageResult.continueWith(stringResult);
+    }
+
+    /**
+     * Returns whether this SerDes requires an SDK-managed durable execution context.
+     *
+     * <p>Context-dependent SerDes implementations cannot process an initial external invocation payload unless a
+     * separate context-free input SerDes is configured.
+     */
+    default boolean requiresDurableContext() {
+        return false;
+    }
+
+    /**
+     * Returns whether this SerDes must be the final stage in a composable pipeline.
+     *
+     * <p>Stages that make size-based storage decisions should normally be terminal so later transformations cannot
+     * expand their output beyond checkpoint limits.
+     */
+    default boolean isTerminalPipelineStage() {
+        return false;
+    }
 
     /**
      * Returns an immutable processing pipeline that invokes this SerDes followed by {@code nextStage} when serializing

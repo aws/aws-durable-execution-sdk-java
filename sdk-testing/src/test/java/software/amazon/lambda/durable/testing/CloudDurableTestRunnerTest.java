@@ -58,7 +58,7 @@ class CloudDurableTestRunnerTest {
     }
 
     @Test
-    void persistedComposableSerDesUsesOnlyValueCodecForDefaultInput() {
+    void persistedComposableSerDesUsesCompletePipelineForDefaultInput() {
         var mockClient = mock(LambdaClient.class);
         when(mockClient.invoke(any(InvokeRequest.class)))
                 .thenReturn(InvokeResponse.builder()
@@ -72,7 +72,57 @@ class CloudDurableTestRunnerTest {
 
         var request = ArgumentCaptor.forClass(InvokeRequest.class);
         verify(mockClient).invoke(request.capture());
-        assertEquals("\"value\"", request.getValue().payload().asUtf8String());
+        assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
+    }
+
+    @Test
+    void contextDependentPersistedSerDesRequiresExplicitInputSerDes() {
+        var mockClient = mock(LambdaClient.class);
+        var contextStage = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data;
+            }
+
+            @Override
+            public boolean requiresDurableContext() {
+                return true;
+            }
+        };
+        var runner = CloudDurableTestRunner.create(
+                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
+                .withSerDes(new JacksonSerDes().then(contextStage));
+
+        var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
+
+        assertInstanceOf(IllegalStateException.class, failure.getCause());
+        assertTrue(failure.getCause().getMessage().contains("withInputSerDes"));
+        verifyNoInteractions(mockClient);
+    }
+
+    @Test
+    void replacingPersistedSerDesPreservesExplicitInputSerDes() {
+        var mockClient = mock(LambdaClient.class);
+        when(mockClient.invoke(any(InvokeRequest.class)))
+                .thenReturn(InvokeResponse.builder()
+                        .durableExecutionArn("arn:aws:lambda:us-east-2:123:function:test:1/durable-execution/e/i")
+                        .build());
+        var runner = CloudDurableTestRunner.create(
+                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
+                .withInputSerDes(new JacksonSerDes().then(wrappingStage()))
+                .withSerDes(new JacksonSerDes());
+
+        runner.startAsync("value");
+
+        var request = ArgumentCaptor.forClass(InvokeRequest.class);
+        verify(mockClient).invoke(request.capture());
+        assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
     }
 
     private static SerDes wrappingStage() {

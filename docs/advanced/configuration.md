@@ -91,9 +91,11 @@ shared mount such as EFS. S3 Files can have delayed synchronization, so a runtim
 lose recent writes; use it only when that tradeoff is acceptable. The SDK does not delete offloaded files, so configure
 storage lifecycle and retention separately.
 
-When cloud tests use a `ComposableSerDes`, `CloudDurableTestRunner` applies only its first value-codec stage to the
-initial Lambda invocation because the durable execution ARN does not exist yet. Persisted history is decoded with the
-complete pipeline. For a standalone context-dependent SerDes, call `withInputSerDes(...)` with a separate input codec.
+For a context-free `ComposableSerDes`, `CloudDurableTestRunner` applies the complete pipeline to the initial Lambda
+invocation. If the persisted SerDes requires durable context, such as `FileSystemSerDes`, call
+`withInputSerDes(...)` with a separate context-free input codec because the durable execution ARN does not exist yet.
+`FileSystemSerDes` must also be the final pipeline stage so its checkpoint-size decision cannot be invalidated by a
+later expanding transformation.
 
 ### Dynamic plugin loading
 

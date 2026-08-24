@@ -17,13 +17,18 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * runs from first to last; deserialization runs from last to first.
  */
 public final class ComposableSerDes implements SerDes {
-    private static final TypeToken<String> STRING_TYPE = TypeToken.get(String.class);
-
     private final List<SerDes> stages;
 
     private ComposableSerDes(List<SerDes> stages) {
         if (stages.isEmpty()) {
             throw new IllegalArgumentException("ComposableSerDes requires at least one stage");
+        }
+        for (int index = 0; index < stages.size() - 1; index++) {
+            if (stages.get(index).isTerminalPipelineStage()) {
+                throw new IllegalArgumentException(String.format(
+                        "SerDes pipeline stage %d (%s) must be the final stage",
+                        index, stages.get(index).getClass().getName()));
+            }
         }
         this.stages = List.copyOf(stages);
     }
@@ -58,13 +63,20 @@ public final class ComposableSerDes implements SerDes {
     /**
      * Returns the value codec at the start of this pipeline.
      *
-     * <p>This is useful at external input boundaries where a durable execution context does not exist yet and only the
-     * domain value encoding can be applied.
-     *
      * @return the first pipeline stage
      */
     public SerDes getValueCodec() {
         return stages.get(0);
+    }
+
+    @Override
+    public boolean requiresDurableContext() {
+        return stages.stream().anyMatch(SerDes::requiresDurableContext);
+    }
+
+    @Override
+    public boolean isTerminalPipelineStage() {
+        return stages.get(stages.size() - 1).isTerminalPipelineStage();
     }
 
     /**
@@ -101,23 +113,19 @@ public final class ComposableSerDes implements SerDes {
         String current = data;
         for (int index = stages.size() - 1; index > 0; index--) {
             var decoded = invokeStringStageDeserialize(stages.get(index), current, index);
-            if (!(decoded instanceof String stringValue)) {
-                throw stageFailure(
-                        index,
-                        stages.get(index),
-                        "deserialize",
-                        new SerDesException("String stage returned a non-string value"));
+            current = decoded.value();
+            if (decoded.skipRemainingStages()) {
+                break;
             }
-            current = stringValue;
         }
         return invokeDeserialize(stages.get(0), current, typeToken, 0);
     }
 
-    private static Object invokeStringStageDeserialize(SerDes stage, String data, int index) {
+    private static SerDesStageResult invokeStringStageDeserialize(SerDes stage, String data, int index) {
         try {
-            Object result = stage.deserialize(data, STRING_TYPE);
+            var result = stage.deserializePipelineStage(data);
             if (result == null) {
-                throw new SerDesException("Stage returned null for non-null data");
+                throw new SerDesException("Stage returned a null pipeline result");
             }
             return result;
         } catch (Throwable failure) {

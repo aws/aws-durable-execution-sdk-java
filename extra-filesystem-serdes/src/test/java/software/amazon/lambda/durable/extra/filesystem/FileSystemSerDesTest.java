@@ -21,6 +21,7 @@ import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
@@ -70,6 +71,7 @@ class FileSystemSerDesTest {
                 () -> runner.deserialize(stage, envelope, TypeToken.get(Integer.class), context()));
         assertThrows(IllegalStateException.class, () -> FileSystemSerDes.stageBuilder(basePath)
                 .delegate(new JacksonSerDes()));
+        assertThrows(IllegalArgumentException.class, () -> pipeline.then(wrappingStage()));
     }
 
     @Test
@@ -144,6 +146,7 @@ class FileSystemSerDesTest {
     void acceptsExternallyOriginatedRawPayloadsOnlyForSupportedSources() {
         var standalone = FileSystemSerDes.builder(basePath).build();
         var stage = FileSystemSerDes.stageBuilder(basePath).build();
+        var pipeline = new JacksonSerDes().then(wrappingStage()).then(stage);
         var runner = new SerDesRunner(null);
 
         assertEquals(
@@ -154,16 +157,16 @@ class FileSystemSerDesTest {
                         new TypeToken<Map<String, Integer>>() {},
                         executionContext(SerDesPayloadKind.INPUT)));
         assertEquals(
-                "{\"id\":42}",
+                Map.of("id", 42),
                 runner.deserialize(
-                        stage,
+                        pipeline,
                         "{\"id\":42}",
-                        TypeToken.get(String.class),
+                        new TypeToken<Map<String, Integer>>() {},
                         operationContext(OperationType.CALLBACK, OperationSubType.CALLBACK)));
         assertEquals(
-                "\"invoke-result\"",
+                "invoke-result",
                 runner.deserialize(
-                        stage,
+                        pipeline,
                         "\"invoke-result\"",
                         TypeToken.get(String.class),
                         operationContext(OperationType.CHAINED_INVOKE, OperationSubType.CHAINED_INVOKE)));
@@ -171,6 +174,19 @@ class FileSystemSerDesTest {
         assertThrows(
                 SerDesException.class,
                 () -> runner.deserialize(stage, "\"raw-step\"", TypeToken.get(String.class), context()));
+    }
+
+    @Test
+    void overflowFilesystemStageMustRemainTerminal() {
+        var filesystem = FileSystemSerDes.stageBuilder(basePath)
+                .storageMode(FileSystemStorageMode.OVERFLOW)
+                .build();
+
+        var failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new JacksonSerDes().then(filesystem).then(wrappingStage()));
+
+        assertTrue(failure.getMessage().contains("final stage"));
     }
 
     @Test
@@ -320,5 +336,20 @@ class FileSystemSerDesTest {
     private static SerDesContext operationContext(OperationType operationType, OperationSubType operationSubType) {
         return SerDesContext.forOperation(
                 ARN, "1", "operation", null, operationType, operationSubType, SerDesPayloadKind.RESULT, null);
+    }
+
+    private static SerDes wrappingStage() {
+        return new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "<" + value + ">";
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data.substring(1, data.length() - 1);
+            }
+        };
     }
 }

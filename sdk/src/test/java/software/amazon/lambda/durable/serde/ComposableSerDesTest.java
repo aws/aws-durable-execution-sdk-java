@@ -91,6 +91,73 @@ class ComposableSerDesTest {
     }
 
     @Test
+    void stageMayDecodeExternalDataDirectlyWithValueCodec() {
+        var transformDeserializations = new AtomicInteger();
+        var transform = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "<" + value + ">";
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                transformDeserializations.incrementAndGet();
+                return (T) data.substring(1, data.length() - 1);
+            }
+        };
+        var externalBoundary = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data;
+            }
+
+            @Override
+            public SerDesStageResult deserializePipelineStage(String data) {
+                return SerDesStageResult.decodeWithValueCodec(data);
+            }
+        };
+        var pipeline = new JacksonSerDes().then(transform).then(externalBoundary);
+
+        assertEquals("value", pipeline.deserialize("\"value\"", TypeToken.get(String.class)));
+        assertEquals(0, transformDeserializations.get());
+    }
+
+    @Test
+    void rejectsStagesAfterTerminalStage() {
+        var terminal = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data;
+            }
+
+            @Override
+            public boolean isTerminalPipelineStage() {
+                return true;
+            }
+        };
+
+        var failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> new JacksonSerDes().then(terminal).then(stringStage("late", "", "", new ArrayList<>())));
+
+        assertTrue(failure.getMessage().contains("stage 1"));
+        assertTrue(failure.getMessage().contains("final stage"));
+    }
+
+    @Test
     void rejectsNullAndNonStringIntermediateValuesWithStageMetadata() {
         var nullStage = new SerDes() {
             @Override

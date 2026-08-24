@@ -10,7 +10,6 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
@@ -158,15 +157,23 @@ public class CloudDurableTestRunner<I, O> {
     /** Returns a new runner with the specified SerDes for persisted execution payloads. */
     public CloudDurableTestRunner<I, O> withSerDes(SerDes serDes) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, null, serDes);
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+                pollInterval,
+                timeout,
+                invocationType,
+                inputSerDes,
+                serDes);
     }
 
     /**
      * Returns a new runner with a separate SerDes for the initial Lambda invocation payload.
      *
-     * <p>The supplied SerDes is used exactly as configured, including every stage in a composable pipeline. When this
-     * method is not called, composable persisted SerDes pipelines use only their first value-codec stage because a
-     * durable execution context does not exist before the Lambda invocation.
+     * <p>The supplied SerDes is used exactly as configured, including every stage in a composable pipeline. Configure a
+     * separate context-free input SerDes when the persisted SerDes requires a durable execution context, because that
+     * context does not exist before the initial Lambda invocation.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(
@@ -270,9 +277,11 @@ public class CloudDurableTestRunner<I, O> {
     }
 
     private String serializeInput(I input) {
-        var serializer = inputSerDes;
-        if (serializer == null) {
-            serializer = serDes instanceof ComposableSerDes composable ? composable.getValueCodec() : serDes;
+        var serializer = inputSerDes != null ? inputSerDes : serDes;
+        if (inputSerDes == null && serializer.requiresDurableContext()) {
+            throw new IllegalStateException(
+                    "Configured persisted SerDes requires a durable execution context; configure a separate "
+                            + "context-free input SerDes with withInputSerDes(...)");
         }
         return serializer.serialize(input);
     }
