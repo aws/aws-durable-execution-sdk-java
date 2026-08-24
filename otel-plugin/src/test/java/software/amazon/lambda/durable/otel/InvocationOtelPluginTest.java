@@ -47,6 +47,7 @@ class InvocationOtelPluginTest {
     @BeforeEach
     void setUp() {
         DeterministicIdGenerator.clearSharedStateForTest();
+        DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
@@ -62,6 +63,7 @@ class InvocationOtelPluginTest {
     void tearDown() {
         GlobalOpenTelemetry.resetForTest();
         DeterministicIdGenerator.clearSharedStateForTest();
+        DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
 
@@ -293,23 +295,26 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
-        var traceId = "5759e988bd862e3fe1be46a994272793";
-        var parentSpanId = "53995c3f42cd8ad8";
-        var parentSpanContext =
-                SpanContext.create(traceId, parentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+    void invocationStart_staysOnExecutionTrace_withoutLinkingAmbientSpan() {
+        // The extractor returns null (no backend execution context), but a valid ambient span is active on a different
+        // trace (for example a per-invocation Lambda/agent span or a custom-propagated parent). The durable spans must
+        // stay on the stable ARN-derived execution trace and must NOT link the ambient span: the conformance contract
+        // requires the Invocation span to have no links, and the ambient span on a foreign trace is not a link.
+        var ambientTraceId = "5759e988bd862e3fe1be46a994272793";
+        var ambientSpanId = "53995c3f42cd8ad8";
+        var ambientSpanContext =
+                SpanContext.create(ambientTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
 
-        try (var ignored = Span.wrap(parentSpanContext).makeCurrent()) {
+        try (var ignored = Span.wrap(ambientSpanContext).makeCurrent()) {
             plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         }
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
-        var invocationSpan = spanExporter.getFinishedSpanItems().stream()
-                .filter(span -> span.getName().equals("Invocation"))
-                .findFirst()
-                .orElseThrow();
-        assertEquals(traceId, invocationSpan.getTraceId());
-        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
+        var invocationSpan = spanByName("Invocation");
+        var workflowSpan = spanByName("Workflow");
+        assertNotEquals(ambientTraceId, invocationSpan.getTraceId(), "Invocation stays on the execution trace");
+        assertEquals(workflowSpan.getTraceId(), invocationSpan.getTraceId(), "Both share the execution trace");
+        assertTrue(invocationSpan.getLinks().isEmpty(), "Invocation span carries no ambient link");
     }
 
     @Test
@@ -939,32 +944,34 @@ class InvocationOtelPluginTest {
 
         var workflowTraceId = spanByName("Workflow").getTraceId();
         var invocationTraceId = spanByName("Invocation").getTraceId();
-        assertNotEquals(workflowTraceId, invocationTraceId);
-        assertTrue(spans.stream()
-                .filter(span -> !span.getName().equals("Workflow"))
-                .allMatch(span -> span.getTraceId().equals(invocationTraceId)));
+        // Workflow and Invocation share the single execution trace.
+        assertEquals(workflowTraceId, invocationTraceId);
+        assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(invocationTraceId)));
     }
 
     @Test
-    void invocationRoots_sameExecutionReceiveFreshTraceIds() {
+    void invocationRoots_sameExecutionShareExecutionTrace() {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
+        // Same execution start time across invocations so the ARN-derived canonical trace ID is reproducible.
+        var startTime = Instant.now();
 
-        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, startTime));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
 
         var firstTraceId = spanByName("Invocation").getTraceId();
         spanExporter.reset();
 
         // Second invocation of same execution
-        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, startTime));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
 
         var secondTraceId = spanByName("Invocation").getTraceId();
         var workflowTraceId = spanByName("Workflow").getTraceId();
 
-        assertNotEquals(firstTraceId, secondTraceId);
-        assertNotEquals(firstTraceId, workflowTraceId);
-        assertNotEquals(secondTraceId, workflowTraceId);
+        // Every durable execution shares ONE trace: both invocations and the Workflow span are on it.
+        assertEquals(firstTraceId, secondTraceId);
+        assertEquals(firstTraceId, workflowTraceId);
+        assertEquals(secondTraceId, workflowTraceId);
     }
 
     @Test
@@ -1105,14 +1112,19 @@ class InvocationOtelPluginTest {
         assertEquals(2, spans.size()); // invocation + Workflow
         var invocationSpan = spanByName("Invocation");
         var workflowSpan = spanByName("Workflow");
-        assertFalse(invocationSpan.getParentSpanContext().isValid());
-        assertNotEquals(xrayTraceId, invocationSpan.getTraceId());
-        assertNotEquals(xrayTraceId, workflowSpan.getTraceId());
-        assertNotEquals(invocationSpan.getTraceId(), workflowSpan.getTraceId());
+        // Remote trace but no parent → a synthetic execution root on the remote trace ID anchors the execution. Both
+        // the Invocation and Workflow spans parent onto that synthetic root and share the extracted trace ID.
+        var executionRootSpanId = new DeterministicIdGenerator().generateExecutionRootSpanId("arn:exec1");
+        assertTrue(invocationSpan.getParentSpanContext().isValid());
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(executionRootSpanId, invocationSpan.getParentSpanId());
+        assertEquals(xrayTraceId, workflowSpan.getTraceId());
+        assertEquals(executionRootSpanId, workflowSpan.getParentSpanId());
+        assertEquals(invocationSpan.getTraceId(), workflowSpan.getTraceId());
     }
 
     @Test
-    void xrayExtraction_invocationTreeUsesExtractedTraceId_workflowRemainsIndependent() {
+    void xrayExtraction_invocationTreeUsesExtractedTraceId_workflowJoinsExecutionTrace() {
         var xrayTraceId = "aabbccddee112233445566778899aabb";
         var parentSpanId = "53995c3f42cd8ad8";
         var extractedContext = new ExtractedContext(xrayTraceId, parentSpanId);
@@ -1158,20 +1170,18 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        var workflowTraceId = spanByName("Workflow").getTraceId();
-        assertNotEquals(xrayTraceId, workflowTraceId);
+        // The remote trace ID is the canonical execution trace, so the Workflow span joins it too.
         assertTrue(
-                spans.stream()
-                        .filter(span -> !span.getName().equals("Workflow"))
-                        .allMatch(span -> span.getTraceId().equals(xrayTraceId)),
-                "The invocation tree should inherit the extracted X-Ray trace ID");
+                spans.stream().allMatch(span -> span.getTraceId().equals(xrayTraceId)),
+                "The whole execution shares the extracted X-Ray trace ID");
     }
 
     @Test
     void xrayExtraction_withParentSpanId_invocationSpanHasCorrectParent() {
         var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
         var parentSpanId = "53995c3f42cd8ad8";
-        var extractedContext = new ExtractedContext(xrayTraceId, parentSpanId);
+        // Explicit SAMPLED so the complete remote parent is the sampled ancestor and the spans export.
+        var extractedContext = new ExtractedContext(xrayTraceId, parentSpanId, ExtractedContext.Sampling.SAMPLED);
 
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
@@ -1194,11 +1204,16 @@ class InvocationOtelPluginTest {
                 parentSpanId,
                 invocationSpan.getParentSpanId(),
                 "Invocation span should be parented to X-Ray Parent span");
-        assertNotEquals(xrayTraceId, workflowSpan.getTraceId());
+        // The Workflow span joins the same execution trace and parents onto the same remote ancestor.
+        assertEquals(xrayTraceId, workflowSpan.getTraceId());
+        assertEquals(
+                parentSpanId,
+                workflowSpan.getParentSpanId(),
+                "Workflow span should be parented to the same X-Ray Parent span");
     }
 
     @Test
-    void xrayExtraction_withoutParentSpanId_invocationSpanIsRoot() {
+    void xrayExtraction_withoutParentSpanId_invocationSpanParentsOntoSyntheticRoot() {
         var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
         var extractedContext = new ExtractedContext(xrayTraceId, null);
 
@@ -1216,15 +1231,20 @@ class InvocationOtelPluginTest {
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(2, spans.size()); // invocation + Workflow
 
+        // Remote trace, no parent → a synthetic execution root on the remote trace ID anchors the execution. The
+        // Invocation span has a valid parent (that synthetic root) and joins the remote trace.
+        var executionRootSpanId = new DeterministicIdGenerator().generateExecutionRootSpanId("arn:exec1");
         var invocationSpan = spanByName("Invocation");
-        assertFalse(invocationSpan.getParentSpanContext().isValid());
-        assertNotEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertTrue(invocationSpan.getParentSpanContext().isValid());
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(executionRootSpanId, invocationSpan.getParentSpanId());
     }
 
     @Test
     void xrayExtraction_multipleInvocations_sameTraceId_unifiedTrace() {
         var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
-        var extractedContext = new ExtractedContext(xrayTraceId, "53995c3f42cd8ad8");
+        // Explicit SAMPLED so the complete remote parent is the sampled ancestor and spans export across invocations.
+        var extractedContext = new ExtractedContext(xrayTraceId, "53995c3f42cd8ad8", ExtractedContext.Sampling.SAMPLED);
 
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
@@ -1276,17 +1296,14 @@ class InvocationOtelPluginTest {
         var spans = spanExporter.getFinishedSpanItems();
         assertTrue(spans.size() >= 4, "Should have spans from both invocations");
 
-        var workflowTraceId = spanByName("Workflow").getTraceId();
-        assertNotEquals(xrayTraceId, workflowTraceId);
+        // Same X-Ray Root across invocations → one unified execution trace, Workflow span included.
         assertTrue(
-                spans.stream()
-                        .filter(span -> !span.getName().equals("Workflow"))
-                        .allMatch(span -> span.getTraceId().equals(xrayTraceId)),
-                "Both invocation trees should inherit the X-Ray trace ID");
+                spans.stream().allMatch(span -> span.getTraceId().equals(xrayTraceId)),
+                "Both invocation trees and the Workflow span share the X-Ray trace ID");
     }
 
     @Test
-    void xrayExtraction_nullExtractor_usesIndependentValidRootIds() {
+    void xrayExtraction_nullExtractor_sharesArnDerivedExecutionTrace() {
         spanExporter = InMemorySpanExporter.create();
         var noXrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
@@ -1306,7 +1323,12 @@ class InvocationOtelPluginTest {
         var workflowTraceId = spanByName("Workflow").getTraceId();
         assertTrue(invocationTraceId.matches("[0-9a-f]{32}"));
         assertTrue(workflowTraceId.matches("[0-9a-f]{32}"));
-        assertNotEquals(invocationTraceId, workflowTraceId);
+        // With a null extractor the whole execution shares the ARN-derived synthetic execution trace.
+        assertEquals(invocationTraceId, workflowTraceId);
+        // The Workflow span keeps its deterministic ARN-derived span ID.
+        assertEquals(
+                new DeterministicIdGenerator().generateWorkflowSpanId(arn),
+                spanByName("Workflow").getSpanId());
     }
 
     @Test
@@ -1319,8 +1341,9 @@ class InvocationOtelPluginTest {
         var convertedId = XRayContextExtractor.xrayRootToOtelTraceId(xrayRoot);
         assertEquals(expectedOtelTraceId, convertedId);
 
-        // Now feed it through the plugin
-        var extractedContext = new ExtractedContext(convertedId, "53995c3f42cd8ad8");
+        // Now feed it through the plugin. Explicit SAMPLED so the complete remote parent is the sampled ancestor and
+        // the spans export.
+        var extractedContext = new ExtractedContext(convertedId, "53995c3f42cd8ad8", ExtractedContext.Sampling.SAMPLED);
         spanExporter = InMemorySpanExporter.create();
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
@@ -1333,7 +1356,8 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         assertEquals(expectedOtelTraceId, spanByName("Invocation").getTraceId());
-        assertNotEquals(expectedOtelTraceId, spanByName("Workflow").getTraceId());
+        // The Workflow span joins the same execution trace.
+        assertEquals(expectedOtelTraceId, spanByName("Workflow").getTraceId());
     }
 
     // ─── Cross-invocation continuation span tests ────────────────────────
@@ -1559,8 +1583,11 @@ class InvocationOtelPluginTest {
     void multiInvocation_stepWaitStep_producesCorrectSpans() {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
 
+        // Same execution start time across invocations so the ARN-derived canonical trace ID is reproducible.
+        var startTime = Instant.now();
+
         // Invocation 1: step completes, wait starts
-        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, startTime));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-A", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onUserFunctionStart(
@@ -1611,7 +1638,7 @@ class InvocationOtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: wait completed between invocations, new step runs
-        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, startTime));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-2",
                 "pause",
@@ -1669,9 +1696,10 @@ class InvocationOtelPluginTest {
                 .filter(span -> span.getName().equals("Workflow"))
                 .findFirst()
                 .orElseThrow();
-        assertNotEquals(inv1TraceId, inv2TraceId);
-        assertNotEquals(inv1TraceId, workflowSpan.getTraceId());
-        assertNotEquals(inv2TraceId, workflowSpan.getTraceId());
+        // Every durable execution shares ONE trace: both invocations and the Workflow span are on it.
+        assertEquals(inv1TraceId, inv2TraceId);
+        assertEquals(inv2TraceId, workflowSpan.getTraceId());
+        assertTrue(inv2Spans.stream().allMatch(span -> span.getTraceId().equals(inv2TraceId)));
 
         var waitContinuation = inv2Spans.stream()
                 .filter(s -> s.getName().contains("pause"))
@@ -1679,10 +1707,27 @@ class InvocationOtelPluginTest {
                 .orElseThrow();
         assertTrue(waitContinuation.getLinks().stream()
                 .anyMatch(link -> link.getSpanContext().getSpanId().equals(workflowSpan.getSpanId())));
+        // The continuation segment also links to the initial logical operation span on the execution trace. Because the
+        // initial span ID is deterministic on (arn, operationId), it matches the original wait operation span's ID.
+        assertEquals(
+                originalWaitSpanId,
+                new DeterministicIdGenerator().generateSpanIdForOperation(arn, "op-2"),
+                "Initial logical operation span ID is deterministic on (arn, operationId)");
         assertTrue(
                 waitContinuation.getLinks().stream()
-                        .noneMatch(link -> link.getSpanContext().getSpanId().equals(originalWaitSpanId)),
-                "Continuation spans must not fabricate a link to an uncheckpointed prior span context");
+                        .anyMatch(link -> link.getSpanContext().getSpanId().equals(originalWaitSpanId)
+                                && link.getSpanContext().getTraceId().equals(workflowSpan.getTraceId())),
+                "Continuation span should link to the initial logical operation span on the execution trace");
+        // Link ORDER matters for conformance: the initial operation link comes first, then the Workflow link.
+        assertEquals(2, waitContinuation.getLinks().size(), "Continuation span has exactly [operation, Workflow]");
+        assertEquals(
+                originalWaitSpanId,
+                waitContinuation.getLinks().get(0).getSpanContext().getSpanId(),
+                "First link is the initial operation span");
+        assertEquals(
+                workflowSpan.getSpanId(),
+                waitContinuation.getLinks().get(1).getSpanContext().getSpanId(),
+                "Second link is the Workflow span");
     }
 
     // ─── Cross-invocation step retry scenario ────────────────────────────
@@ -1691,8 +1736,11 @@ class InvocationOtelPluginTest {
     void crossInvocation_stepRetry_attemptsParentedToRespectiveInvocations() {
         var arn = "arn:aws:lambda:us-east-1:123:function:test:$LATEST/durable/exec1";
 
+        // Same execution start time across invocations so the ARN-derived canonical trace ID is reproducible.
+        var startTime = Instant.now();
+
         // Invocation 1: step starts, attempt 1 fails, invocation suspended during retry poll
-        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-1", arn, true, startTime));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onUserFunctionStart(
@@ -1734,7 +1782,7 @@ class InvocationOtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: step is replayed (continuation), attempt 2 executes and succeeds
-        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", arn, false, startTime));
         // isReplay=true: this operation already exists in the execution state
         plugin.onOperationStart(
                 new OperationInfo("op-1", "process-payment", "STEP", "Step", null, Instant.now(), null, null, true));
@@ -1808,17 +1856,24 @@ class InvocationOtelPluginTest {
                 .findFirst()
                 .orElseThrow();
 
-        assertNotEquals(inv1InvocationTraceId, inv2InvocationTraceId);
+        // Every durable execution shares ONE trace: both invocations and the Workflow span are on it.
+        assertEquals(inv1InvocationTraceId, inv2InvocationTraceId);
+        assertEquals(inv2InvocationTraceId, workflowSpan.getTraceId());
         assertTrue(inv1Spans.stream().allMatch(span -> span.getTraceId().equals(inv1InvocationTraceId)));
-        assertTrue(inv2Spans.stream()
-                .filter(span -> !span.getName().equals("Workflow"))
-                .allMatch(span -> span.getTraceId().equals(inv2InvocationTraceId)));
+        assertTrue(inv2Spans.stream().allMatch(span -> span.getTraceId().equals(inv2InvocationTraceId)));
         assertTrue(inv2OperationSpan.getLinks().stream()
                 .anyMatch(link -> link.getSpanContext().getSpanId().equals(workflowSpan.getSpanId())));
+        // The replay segment also links to the initial logical operation span on the execution trace. Its span ID is
+        // deterministic on (arn, operationId), so it matches invocation 1's operation span ID.
+        assertEquals(
+                inv1OperationSpan.getSpanId(),
+                new DeterministicIdGenerator().generateSpanIdForOperation(arn, "op-1"),
+                "Initial logical operation span ID is deterministic on (arn, operationId)");
         assertTrue(
                 inv2OperationSpan.getLinks().stream()
-                        .noneMatch(link -> link.getSpanContext().getSpanId().equals(inv1OperationSpan.getSpanId())),
-                "Replay spans must not fabricate a link to an uncheckpointed prior span context");
+                        .anyMatch(link -> link.getSpanContext().getSpanId().equals(inv1OperationSpan.getSpanId())
+                                && link.getSpanContext().getTraceId().equals(workflowSpan.getTraceId())),
+                "Replay span should link to the initial logical operation span on the execution trace");
     }
 
     // ─── Workflow span + links ───────────────────────────────────────────
@@ -1897,8 +1952,10 @@ class InvocationOtelPluginTest {
         var xrayPlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
-                        .contextExtractor(
-                                () -> new ExtractedContext("5759e988bd862e3fe1be46a994272793", "53995c3f42cd8ad8"))
+                        .contextExtractor(() -> new ExtractedContext(
+                                "5759e988bd862e3fe1be46a994272793",
+                                "53995c3f42cd8ad8",
+                                ExtractedContext.Sampling.SAMPLED))
                         .enableMdc(false)
                         .build());
         xrayPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));

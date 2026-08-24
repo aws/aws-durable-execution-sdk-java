@@ -129,7 +129,22 @@ public class DeterministicIdGenerator implements IdGenerator {
     }
 
     String generateWorkflowSpanId(String arn) {
-        var seed = "workflow:" + (arn != null ? arn : "");
+        return deterministicSpanId("workflow:" + (arn != null ? arn : ""));
+    }
+
+    /**
+     * Generates the deterministic span ID for the synthetic execution root from the execution ARN, using a seed
+     * namespace distinct from the Workflow and operation span IDs. Stable across reinvocations so the synthetic root is
+     * the same common ancestor every invocation.
+     *
+     * @param arn the durable execution ARN
+     * @return a deterministic 16-char hex span ID
+     */
+    String generateExecutionRootSpanId(String arn) {
+        return deterministicSpanId("execution-root:" + (arn != null ? arn : ""));
+    }
+
+    private static String deterministicSpanId(String seed) {
         var spanId = sha256(seed).substring(0, 16);
         if (spanId.equals("0000000000000000")) {
             spanId = "0000000000000001";
