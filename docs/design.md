@@ -349,6 +349,7 @@ software.amazon.lambda.durable
 ├── serde/
 │   ├── SerDes              # Interface
 │   ├── JacksonSerDes       # Jackson impl
+│   ├── RetrySerDes         # Retry decorator for transient SerDes failures
 │   └── AwsSdkV2Module      # SDK type support
 │
 └── exception/
@@ -372,7 +373,8 @@ software.amazon.lambda.durable
     ├── ChildContextFailedException
     ├── MapIterationFailedException
     ├── ParallelBranchFailedException
-    └── SerDesException
+    ├── SerDesException
+    └── RetryableSerDesException
 ```
 
 ---
@@ -463,6 +465,7 @@ sequenceDiagram
 ```
 DurableExecutionException (base)
 ├── SerDesException                        # Serialization error
+│   └── RetryableSerDesException           # Transient SerDes error
 ├── UnrecoverableDurableExecutionException # Execution cannot be recovered
 │   ├── NonDeterministicExecutionException # Replay mismatch
 │   └── IllegalDurableOperationException   # Illegal operation detected
@@ -503,6 +506,7 @@ SuspendExecutionException                  # Internal: triggers suspension (not 
 | `NonDeterministicExecutionException` | Replay finds different operation than expected | Bug in handler (non-deterministic code) |
 | `IllegalDurableOperationException` | Illegal operation detected | Bug in handler |
 | `SerDesException` | Jackson fails to serialize/deserialize | Fix data model or custom SerDes |
+| `RetryableSerDesException` | Transient SerDes or payload storage failure | Wrap the SerDes with `RetrySerDes` and a bounded retry strategy |
 
 ---
 

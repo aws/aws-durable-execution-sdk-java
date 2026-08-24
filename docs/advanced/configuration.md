@@ -59,14 +59,22 @@ var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloa
     .previewGenerator(value -> Map.of("type", value.getClass().getSimpleName()))
     .build();
 
+var retryingSerDes = new RetrySerDes(
+    fileSystemSerDes,
+    RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
+
 return DurableConfig.builder()
-    .withSerDes(fileSystemSerDes)
+    .withSerDes(retryingSerDes)
     .build();
 ```
 
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
 approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path
 segments.
+
+`RetrySerDes` retries only failures marked with `RetryableSerDesException`. Filesystem read and write I/O use this
+marker; malformed envelopes and delegate encoding failures fail immediately. Backoff occurs on the dedicated SerDes
+executor within the current Lambda invocation, so use short, bounded retry strategies.
 
 Do not use Lambda's ephemeral `/tmp` directory: replay can run in a different execution environment. Use a durable,
 shared mount such as EFS. S3 Files can have delayed synchronization, so a runtime crash before the mount flushes may

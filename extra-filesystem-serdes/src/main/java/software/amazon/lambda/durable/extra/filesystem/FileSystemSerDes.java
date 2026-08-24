@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.extra.filesystem;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -74,8 +76,12 @@ public final class FileSystemSerDes implements SerDes {
             return preview == null
                     ? ENVELOPE_MAPPER.writeValueAsString(Map.of("file", file.toString()))
                     : ENVELOPE_MAPPER.writeValueAsString(Map.of("file", file.toString(), "preview", preview));
+        } catch (JsonProcessingException e) {
+            throw new SerDesException(
+                    "Failed to encode filesystem payload envelope for entity '" + context.entityId() + "'", e);
         } catch (IOException e) {
-            throw new SerDesException("Failed to store filesystem payload for entity '" + context.entityId() + "'", e);
+            throw new RetryableSerDesException(
+                    "Failed to store filesystem payload for entity '" + context.entityId() + "'", e);
         }
     }
 
@@ -105,6 +111,12 @@ public final class FileSystemSerDes implements SerDes {
                 serialized = Files.readString(file, StandardCharsets.UTF_8);
             }
             return delegate.deserialize(serialized, typeToken);
+        } catch (JsonProcessingException e) {
+            throw new SerDesException(
+                    "Failed to decode filesystem payload envelope for entity '" + context.entityId() + "'", e);
+        } catch (IOException e) {
+            throw new RetryableSerDesException(
+                    "Failed to load filesystem payload for entity '" + context.entityId() + "'", e);
         } catch (SerDesException e) {
             throw e;
         } catch (Exception e) {

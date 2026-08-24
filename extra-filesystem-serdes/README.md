@@ -38,6 +38,23 @@ An optional preview can remain visible in the checkpoint envelope:
 .previewGenerator(value -> Map.of("summary", "order payload"))
 ```
 
+## Retries
+
+Filesystem read and write I/O failures are reported as `RetryableSerDesException`. Wrap the filesystem SerDes with
+`RetrySerDes` to apply any SDK `RetryStrategy`:
+
+```java
+var serDes = new RetrySerDes(
+    FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+        .storageMode(FileSystemStorageMode.ALWAYS)
+        .build(),
+    RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
+```
+
+Only `RetryableSerDesException` is retried. Malformed envelopes, invalid paths, and delegate encoding failures are
+treated as permanent. Retry delays run on the dedicated SerDes executor and consume time in the current Lambda
+invocation, so keep attempts and delays bounded.
+
 ## Storage requirements
 
 Do not use Lambda's ephemeral `/tmp` directory. Durable replay may run in another execution environment where that file

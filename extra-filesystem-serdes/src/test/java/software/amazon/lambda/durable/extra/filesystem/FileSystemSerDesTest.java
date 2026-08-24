@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.extra.filesystem;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDesContext;
@@ -108,6 +110,13 @@ class FileSystemSerDesTest {
                 SerDesException.class,
                 () -> runner.deserialize(
                         serDes, "{\"file\":\"/outside/payload.json\"}", TypeToken.get(String.class), context()));
+
+        var missingFile = basePath.resolve("missing.json").toAbsolutePath();
+        var missingFileFailure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(
+                        serDes, "{\"file\":\"" + missingFile + "\"}", TypeToken.get(String.class), context()));
+        assertInstanceOf(RetryableSerDesException.class, missingFileFailure.getCause());
     }
 
     @Test

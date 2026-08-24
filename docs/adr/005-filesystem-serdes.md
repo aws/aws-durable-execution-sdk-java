@@ -212,6 +212,43 @@ var securePayloads = new JacksonSerDes()
         .then(fileSystemStage);
 ```
 
+### Retryable SerDes stages
+
+Transient failures are explicit. `RetryableSerDesException` extends `SerDesException` and marks a failure that may
+succeed when attempted again. `RetrySerDes` decorates another SerDes instance and applies an existing `RetryStrategy`:
+
+```java
+var resilientFileSystemStage = new RetrySerDes(
+        fileSystemStage,
+        RetryStrategies.exponentialBackoff(
+                3,
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(5),
+                2.0,
+                JitterStrategy.FULL));
+
+var serDes = new JacksonSerDes().then(resilientFileSystemStage);
+```
+
+Retry rules:
+
+- Only `RetryableSerDesException` is retried. Ordinary `SerDesException` and other failures propagate immediately.
+- `RetryStrategy.makeRetryDecision(error, attempt)` receives the transient failure and a 1-based attempt number.
+- When the strategy returns `fail`, `RetrySerDes` rethrows the last `RetryableSerDesException`.
+- The same read-only `SerDesContext` remains installed for every attempt because retrying happens inside the original
+  `SerDesRunner` task.
+- A retry delay blocks only the dedicated SerDes executor thread. It is an in-invocation infrastructure retry, not a
+  durable wait or checkpoint. Strategies must therefore use short, bounded delays that fit within the Lambda
+  invocation timeout.
+- If the invocation is interrupted or times out, replay may execute the SerDes pipeline again. Any stage with side
+  effects must use stable addressing and idempotent writes.
+- `RetrySerDes` can wrap an individual stage or the complete pipeline. Wrapping the smallest transient stage avoids
+  repeating deterministic encoding, compression, or encryption work.
+- Pipeline error decoration must preserve retryability: a stage-level `RetryableSerDesException` must remain that type,
+  with stage metadata added to its message or cause, so an enclosing `RetrySerDes` can recognize it.
+- Filesystem read and write `IOException`s are retryable. Malformed envelopes, invalid paths, unsupported types, and
+  delegate encoding errors are permanent.
+
 Storage modes:
 
 | Mode | Behavior |
@@ -319,26 +356,29 @@ Root user input and output payloads should route through `SerDesRunner` so `File
    `SerDes` methods unchanged.
 2. Add the binary-compatible `SerDes.then(...)` default method and `ComposableSerDes` with immutable stage ordering,
    forward serialization, reverse deserialization, null short-circuiting, and stage-aware errors.
-3. Add `SerDesRunner` and a `SerDesExecutor` default pool. Add
+3. Add `RetryableSerDesException` and `RetrySerDes`, reusing `RetryStrategy` for bounded in-invocation retries.
+4. Add `SerDesRunner` and a `SerDesExecutor` default pool. Add
    `DurableConfig.withSerDesExecutorService(...)` and validation.
-4. Update root input/output handling in `DurableExecutor` to run user payload SerDes through `SerDesRunner` while
+5. Update root input/output handling in `DurableExecutor` to run user payload SerDes through `SerDesRunner` while
    leaving `DurableInputOutputSerDes` internal.
-5. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`,
+6. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`,
    `CallbackOperation`, `ChildContextOperation`, `MapOperation`, and test helpers to use `SerDesRunner`.
-6. Add invocation-scoped deserialization caching keyed by entity, payload kind, type, and serialized data hash.
-7. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
-8. Add the `extra-filesystem-serdes` Maven module with artifact ID
+7. Add invocation-scoped deserialization caching keyed by entity, payload kind, type, and serialized data hash.
+8. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
+9. Add the `extra-filesystem-serdes` Maven module with artifact ID
    `aws-durable-execution-sdk-java-extra-filesystem-serdes`, depending on the core SDK.
-9. Implement `FileSystemSerDes` in `software.amazon.lambda.durable.extra.filesystem` with standalone compatibility and
+10. Implement `FileSystemSerDes` in `software.amazon.lambda.durable.extra.filesystem` with standalone compatibility and
    string-stage modes, `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file
-   writes where supported by the filesystem, and clear validation errors for missing context or invalid stage input.
-10. Add unit tests for pipeline ordering, reverse processing, nulls, invalid intermediate stage types, stage failures,
-    context construction, TLS scoping and clearing, thread-pool isolation, cache hits, cache invalidation, exception
-    reconstruction, malformed filesystem envelopes, and extra-module packaging.
-11. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
+   writes where supported by the filesystem, retryable I/O failures, and clear validation errors for missing context or
+   invalid stage input.
+11. Add unit tests for pipeline ordering, reverse processing, nulls, invalid intermediate stage types, stage failures,
+    retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and clearing,
+    thread-pool isolation, cache hits, cache invalidation, exception reconstruction, malformed filesystem envelopes,
+    and extra-module packaging.
+12. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
     state, invoke payload/result, child context results, map results, repeated `get()`, replay from file pointers, and
     custom exception types.
-12. Update README and advanced configuration docs with pipeline examples, FileSystemSerDes dependency coordinates,
+13. Update README and advanced configuration docs with pipeline and retry examples, FileSystemSerDes dependency coordinates,
     filesystem configuration, and warnings about `/tmp`, S3 Files flush behavior, and EFS/S3 Files operational
     requirements.
 
