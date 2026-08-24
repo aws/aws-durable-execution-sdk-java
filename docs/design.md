@@ -11,6 +11,7 @@ This document explains the internal architecture, threading model, and extension
 ```
 aws-durable-execution-sdk-java/
 ├── sdk/                      # Core SDK - DurableHandler, DurableContext, operations
+├── extra-filesystem-serdes/  # Optional filesystem-backed SerDes pipeline stage
 ├── sdk-testing/              # Test utilities for local and cloud testing
 ├── sdk-integration-tests/    # Integration tests using LocalDurableTestRunner
 └── examples/                 # Real-world usage patterns as customers would implement them
@@ -19,6 +20,7 @@ aws-durable-execution-sdk-java/
 | Module | Purpose | Key Classes |
 |--------|---------|-------------|
 | `sdk` | Core runtime - extend `DurableHandler`, use `DurableContext` for durable operations | `DurableHandler`, `DurableContext`, `DurableExecutor`, `ExecutionManager` |
+| `extra-filesystem-serdes` | Optional filesystem-backed payload storage for SerDes pipelines | `FileSystemSerDes`, `FileSystemStorageMode`, `FileSystemPathEncoding` |
 | `sdk-testing` | Test utilities: `LocalDurableTestRunner` (in-memory, simulates re-invocations and time-skipping) and `CloudDurableTestRunner` (executes against deployed Lambda) | `LocalDurableTestRunner`, `CloudDurableTestRunner`, `LocalMemoryExecutionClient`, `TestResult` |
 | `sdk-integration-tests` | Dogfooding tests - validates the SDK using its own test utilities. Separate module keeps dependencies acyclic: `sdk` → `sdk-testing` → `sdk-integration-tests`. | Test classes only |
 | `examples` | Real-world usage patterns as customers would implement them, with local and cloud tests | Example handlers, `CloudBasedIntegrationTest` |
@@ -145,13 +147,14 @@ public class MyHandler extends DurableHandler<Input, Output> {
 | `lambdaClientBuilder` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/software/amazon/lambda/durable/DurableConfig.java))       |
 | `serDes`              | `JacksonSerDes`                                                                                                                                                                   |
 | `executorService`     | `Executors.newCachedThreadPool()` (for user-defined operations only)                                                                                                              |
+| `serDesExecutorService` | `null`; SerDes executes inline unless a dedicated executor is configured                                                                                                        |
 | `loggerConfig`        | `LoggerConfig.defaults()` (suppress replay logs)                                                                                                                                  |
 | `pollingStrategy`     | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max                                                                                                                      |
 | `checkpointDelay`     | `Duration.ofSeconds(0)` (checkpoint as soon as possible)                                                                                                                          |
 
 ### Thread Pool Architecture
 
-The SDK uses two separate thread pools with distinct responsibilities:
+The SDK uses two always-present executors and supports one optional executor with distinct responsibilities:
 
 **User Executor (`DurableConfig.executorService`):**
 - Runs user-defined operations (the code passed to `ctx.step()` and `ctx.stepAsync()`)
@@ -163,11 +166,17 @@ The SDK uses two separate thread pools with distinct responsibilities:
 - Dedicated cached thread pool with daemon threads named `durable-sdk-internal-*`
 - Not configurable by users
 
+**Optional SerDes Executor (`DurableConfig.serDesExecutorService`):**
+- Runs the complete configured SerDes pipeline, including blocking payload storage and retry backoff
+- Configurable via `DurableConfig.builder().withSerDesExecutorService()`
+- Default: absent; SerDes executes inline on the calling thread
+- Must not be the same instance as the user executor
+
 **Benefits of this separation:**
 
 | Benefit | Description |
 |---------|-------------|
-| **Isolation** | User operations can't starve SDK internals, and vice versa |
+| **Isolation** | User operations can't starve SDK internals, and blocking SerDes work can be isolated explicitly |
 | **No shutdown management** | Internal pool uses daemon threads; SDK coordination continues even if the user's executor is shut down |
 | **Efficient resource usage** | Cached thread pool creates threads on demand and reuses idle threads (60s timeout) |
 | **Daemon threads** | Internal threads won't prevent JVM shutdown |
@@ -347,9 +356,13 @@ software.amazon.lambda.durable
 │   └── WaitForConditionResult<T>    # Check function return type (value + isDone)
 │
 ├── serde/
-│   ├── SerDes              # Interface
+│   ├── SerDes              # Interface and pipeline composition entry point
+│   ├── ComposableSerDes    # Immutable ordered value-codec/string-stage pipeline
 │   ├── JacksonSerDes       # Jackson impl
 │   ├── RetrySerDes         # Retry decorator for transient SerDes failures
+│   ├── SerDesRunner        # Context, optional executor dispatch, and invocation cache
+│   ├── SerDesContext       # Read-only durable payload identity
+│   ├── SerDesPayloadKind   # Input/result/state/exception/invoke payload kind
 │   └── AwsSdkV2Module      # SDK type support
 │
 └── exception/

@@ -16,7 +16,7 @@ import software.amazon.lambda.durable.retry.RetryStrategy;
  * A SerDes decorator that retries transient failures from another {@link SerDes}.
  *
  * <p>Only {@link RetryableSerDesException} is retried. Other failures are propagated immediately. Retry delays block
- * the calling thread, which is the dedicated SerDes executor thread for SDK-managed calls.
+ * the thread executing the SerDes call: the caller by default or the configured SerDes executor thread.
  */
 public final class RetrySerDes implements SerDes {
     private static final Sleeper DEFAULT_SLEEPER = delay -> {

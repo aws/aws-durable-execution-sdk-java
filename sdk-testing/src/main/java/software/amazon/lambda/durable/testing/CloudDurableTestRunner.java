@@ -10,8 +10,10 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 import software.amazon.lambda.durable.testing.cloud.HistoryPoller;
 
@@ -30,6 +32,7 @@ public class CloudDurableTestRunner<I, O> {
     private final Duration pollInterval;
     private final Duration timeout;
     private final InvocationType invocationType;
+    private final SerDes inputSerDes;
     private final SerDes serDes;
     // Store last execution result for operation inspection
     private TestResult<O> lastResult;
@@ -42,6 +45,7 @@ public class CloudDurableTestRunner<I, O> {
             Duration pollInterval,
             Duration timeout,
             InvocationType invocationType,
+            SerDes inputSerDes,
             SerDes serDes) {
         this.functionArn = functionArn;
         this.inputType = inputType;
@@ -52,6 +56,7 @@ public class CloudDurableTestRunner<I, O> {
         this.timeout = timeout;
         this.invocationType = invocationType;
         this.serDes = Objects.requireNonNullElseGet(serDes, JacksonSerDes::new);
+        this.inputSerDes = Objects.requireNonNullElse(inputSerDes, this.serDes);
     }
 
     private static LambdaClient createDefaultLambdaClient() {
@@ -77,6 +82,7 @@ public class CloudDurableTestRunner<I, O> {
                 Duration.ofSeconds(2),
                 Duration.ofSeconds(300),
                 InvocationType.REQUEST_RESPONSE,
+                null,
                 null);
     }
 
@@ -97,36 +103,89 @@ public class CloudDurableTestRunner<I, O> {
                 Duration.ofSeconds(2),
                 Duration.ofSeconds(300),
                 InvocationType.REQUEST_RESPONSE,
+                null,
                 null);
     }
 
     /** Returns a new runner with the specified lambda client. */
     public CloudDurableTestRunner<I, O> withLambdaClient(LambdaClient lambdaClient) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, serDes);
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+                pollInterval,
+                timeout,
+                invocationType,
+                inputSerDes,
+                serDes);
     }
 
     /** Returns a new runner with the specified poll interval between history checks. */
     public CloudDurableTestRunner<I, O> withPollInterval(Duration interval) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, interval, timeout, invocationType, serDes);
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+                interval,
+                timeout,
+                invocationType,
+                inputSerDes,
+                serDes);
     }
 
     /** Returns a new runner with the specified maximum wait time for execution completion. */
     public CloudDurableTestRunner<I, O> withTimeout(Duration timeout) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, serDes);
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+                pollInterval,
+                timeout,
+                invocationType,
+                inputSerDes,
+                serDes);
     }
 
     /** Returns a new runner with the specified Lambda invocation type. */
     public CloudDurableTestRunner<I, O> withInvocationType(InvocationType type) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type, serDes);
+                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type, inputSerDes, serDes);
     }
 
+    /** Returns a new runner with the specified SerDes for persisted execution payloads. */
     public CloudDurableTestRunner<I, O> withSerDes(SerDes serDes) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, invocationType, serDes);
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+                pollInterval,
+                timeout,
+                invocationType,
+                serDes,
+                serDes);
+    }
+
+    /**
+     * Returns a new runner with a separate SerDes for the initial Lambda invocation payload.
+     *
+     * <p>This is useful with a standalone context-dependent SerDes. Composable pipelines automatically use their first
+     * value-codec stage for initial input.
+     */
+    public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
+        return new CloudDurableTestRunner<>(
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+                pollInterval,
+                timeout,
+                invocationType,
+                Objects.requireNonNull(inputSerDes, "inputSerDes cannot be null"),
+                serDes);
     }
 
     /** Invokes the Lambda function, polls execution history until completion, and returns the result. */
@@ -138,7 +197,7 @@ public class CloudDurableTestRunner<I, O> {
     public TestResult<O> run(I input) {
         try {
             // Serialize input
-            var inputJson = serDes.serialize(input);
+            var inputJson = serializeInput(input);
 
             // Invoke function
             var invokeRequest = InvokeRequest.builder()
@@ -161,7 +220,7 @@ public class CloudDurableTestRunner<I, O> {
 
             // Process events into TestResult
             var processor = new HistoryEventProcessor();
-            var result = processor.processEvents(events, outputType, serDes);
+            var result = processor.processEvents(events, outputType, serDes, new SerDesRunner(null), executionArn);
             this.lastResult = result;
             return result;
         } catch (Exception e) {
@@ -179,7 +238,7 @@ public class CloudDurableTestRunner<I, O> {
     public AsyncExecution<O> startAsync(I input) {
         try {
             // Serialize input
-            var inputJson = serDes.serialize(input);
+            var inputJson = serializeInput(input);
 
             // Invoke function with EVENT type (async)
             var invokeRequest = InvokeRequest.builder()
@@ -215,5 +274,10 @@ public class CloudDurableTestRunner<I, O> {
             throw new IllegalStateException("No execution has been run yet");
         }
         return lastResult.getOperation(name);
+    }
+
+    private String serializeInput(I input) {
+        var serializer = inputSerDes instanceof ComposableSerDes composable ? composable.getValueCodec() : inputSerDes;
+        return serializer.serialize(input);
     }
 }

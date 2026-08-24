@@ -72,7 +72,7 @@ public record SerDesContext(
         OperationSubType operationSubType,
         Integer attempt) {
     public static SerDesContext getCurrentContext() {
-        return SerDesContextHolder.getCurrentContext();
+        return SerDesContextHolder.get();
     }
 }
 ```
@@ -119,6 +119,8 @@ public final class ComposableSerDes implements SerDes {
     public static ComposableSerDes of(SerDes first, SerDes... remaining);
 
     public static Builder builder(SerDes valueCodec);
+
+    public SerDes getValueCodec();
 
     public ComposableSerDes then(SerDes stage);
 
@@ -268,14 +270,26 @@ Path encodings:
 Envelope format:
 
 ```json
-{"data":"<inline stage input>"}
-{"file":"<absolute path>"}
-{"file":"<absolute path>","preview":{ "...": "..." }}
+{"__durable_execution_filesystem_serdes":1,"data":"<inline stage input>"}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>"}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","preview":{ "...": "..." }}
 ```
 
 `FileSystemSerDes` must reject calls when `SerDesContext.getCurrentContext()` is `null` or does not include
 `durableExecutionArn` and `entityId`. When used as a pipeline stage, it must also reject non-string input or a
 deserialization target other than `String`.
+
+The marker and version distinguish filesystem envelopes from raw service-originated JSON. Initial root input, callback
+results, and standard Lambda invoke results may arrive before this SerDes has processed them. For those external
+payload sources only, an input without the filesystem marker passes through to the preceding pipeline stage or
+standalone delegate. Missing or malformed markers on SDK-checkpointed payloads are permanent errors.
+
+Offloaded filenames include a content hash and are immutable. Serializing new state for the same entity creates a new
+path instead of replacing a file referenced by an earlier checkpoint. Repeating the same serialization may reuse the
+same content-addressed file.
+
+The final file envelope, including any preview, must remain below the checkpoint threshold. Oversized previews are
+rejected rather than producing a checkpoint that the service cannot accept.
 
 In stage mode, the preview generator receives the string produced by the preceding stage, not the original domain
 object. A preview that needs domain fields should either parse that representation, be produced by an earlier stage, or
@@ -284,19 +298,25 @@ use standalone compatibility mode where `FileSystemSerDes` receives the original
 ### Runtime flow
 
 ```java
+var previousContext = SerDesContextHolder.get();
 SerDesContextHolder.set(context);
 try {
     var checkpointPayload = composableSerDes.serialize(value);
     sendCheckpoint(checkpointPayload);
 } finally {
-    SerDesContextHolder.clear();
+    if (previousContext == null) {
+        SerDesContextHolder.clear();
+    } else {
+        SerDesContextHolder.set(previousContext);
+    }
 }
 ```
 
 On deserialization, `FileSystemSerDes` parses its envelope. If the envelope contains `data`, it returns the inline
 string. If the envelope contains `file`, it reads and returns the file contents. `ComposableSerDes` then passes that
 string to the preceding stage. In standalone compatibility mode, `FileSystemSerDes` instead passes the resolved string
-to its configured value-encoding delegate.
+to its configured value-encoding delegate. Raw external input, callback results, and standard invoke results pass
+through when no versioned filesystem marker is present.
 
 ### Threading
 
@@ -315,7 +335,8 @@ DurableConfig.builder()
 If `withSerDesExecutorService(...)` is not called, the configured executor is absent and `SerDesRunner` invokes the
 pipeline synchronously on the current thread. The builder method accepts only a non-null executor; not calling it is
 how customers select inline execution. If an executor is configured, `SerDesRunner` dispatches the complete pipeline
-to that executor and waits for its result.
+to that executor and waits for its result. Configuration rejects using the same executor instance for user operations
+and SerDes because synchronous dispatch to a saturated shared pool can deadlock.
 
 The core SDK should route user payload SerDes calls through a helper, tentatively `SerDesRunner`, that:
 
@@ -380,6 +401,11 @@ When serializing `errorData`, set `SerDesPayloadKind.EXCEPTION` and use an entit
 ### Input and output
 
 Root user input and output payloads should route through `SerDesRunner` so `FileSystemSerDes` can see `SerDesContext`. The internal `DurableExecutionInput` and `DurableExecutionOutput` envelope stays with `DurableInputOutputSerDes`.
+
+The cloud test runner must send initial Lambda input before it receives a durable execution ARN. When configured with a
+`ComposableSerDes`, it therefore serializes the invocation payload with `getValueCodec()` and applies the complete
+pipeline only when reading persisted history. Standalone context-dependent SerDes implementations can configure a
+separate input codec with `CloudDurableTestRunner.withInputSerDes(...)`.
 
 ### Implementation plan
 
@@ -737,14 +763,14 @@ Both approaches need a stable payload identity that can be used to address exter
 | Root input | `execution/<execution-operation-id>/input` |
 | Root output | `execution/<execution-operation-id>/output` |
 | Root exception | `execution/<execution-operation-id>/exception` |
-| Step result | `operation/<operation-id>/result` |
-| Step exception | `operation/<operation-id>/exception` |
+| Step result | `operation/<operation-id>/result/attempt-<attempt>` |
+| Step exception | `operation/<operation-id>/exception/attempt-<attempt>` |
 | Invoke payload | `operation/<operation-id>/invoke-payload` |
 | Invoke result | `operation/<operation-id>/result` |
 | Callback result | `operation/<operation-id>/result` |
 | Child context result | `operation/<operation-id>/result` |
 | Map result | `operation/<operation-id>/result` |
-| WaitForCondition state | `operation/<operation-id>/state` |
+| WaitForCondition state | `operation/<operation-id>/state/attempt-<attempt>` |
 
 Do not include the checkpoint token or raw user payload in the context.
 

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 
 class StepOperationTest {
 
@@ -92,6 +94,39 @@ class StepOperationTest {
 
         var result = operation.get();
         assertEquals("cached-result", result);
+    }
+
+    @Test
+    void successfulReplayUsesCheckpointedAttemptInSerDesContext() {
+        var observedContext = new AtomicReference<SerDesContext>();
+        var serDes = new JacksonSerDes() {
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                observedContext.set(SerDesContext.getCurrentContext());
+                return super.deserialize(data, typeToken);
+            }
+        };
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
+                        .result("\"cached-result\"")
+                        .attempt(3)
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
+
+        var operation = new StepOperation<>(
+                OPERATION_IDENTIFIER,
+                (ctx) -> RESULT,
+                TypeToken.get(String.class),
+                StepConfig.builder().serDes(serDes).build(),
+                durableContext);
+        operation.onCheckpointComplete(op);
+
+        assertEquals("cached-result", operation.get());
+        assertEquals(3, observedContext.get().attempt());
     }
 
     @Test

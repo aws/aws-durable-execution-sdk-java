@@ -25,6 +25,7 @@ import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -117,7 +118,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
                     // through onUserFunctionEnd; retry/checkpoint handling stays outside the boundary.
                     T result = runUserFunction(attempt, () -> function.apply(stepContext));
 
-                    handleStepSucceeded(result);
+                    handleStepSucceeded(result, attempt);
                 } catch (Throwable e) {
                     handleStepFailure(e, attempt);
                 }
@@ -144,8 +145,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
-    private void handleStepSucceeded(T result) {
-        var serializedResult = serializeAndDeserializeResult(result);
+    private void handleStepSucceeded(T result, int attempt) {
+        var serializedResult = serializeAndDeserializeResult(result, SerDesPayloadKind.RESULT, attempt);
 
         // Send SUCCEED
         var successUpdate =
@@ -205,8 +206,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();
             var result = (stepDetails != null) ? stepDetails.result() : null;
+            var attempt = stepDetails != null ? stepDetails.attempt() : null;
 
-            return deserializeResult(result);
+            return deserializeResult(result, SerDesPayloadKind.RESULT, attempt);
         } else {
             var errorObject = op.stepDetails().error();
 

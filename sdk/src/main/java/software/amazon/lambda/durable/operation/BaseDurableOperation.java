@@ -6,7 +6,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -92,8 +91,7 @@ public abstract class BaseDurableOperation {
         this.durableContext = durableContext;
         this.executionManager = durableContext.getExecutionManager();
         var invocationSerDesRunner = executionManager.getSerDesRunner();
-        this.serDesRunner =
-                invocationSerDesRunner != null ? invocationSerDesRunner : new SerDesRunner(ForkJoinPool.commonPool());
+        this.serDesRunner = invocationSerDesRunner != null ? invocationSerDesRunner : new SerDesRunner(null);
         this.isVirtual = isVirtual;
 
         this.completionFuture = new CompletableFuture<>();

@@ -131,6 +131,11 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     /** Build TestResult from current state. */
+    public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
+        return toTestResult(output, resultType, serDes, null, null, null, null);
+    }
+
+    /** Build a context-aware TestResult from current state. */
     public <O> TestResult<O> toTestResult(
             DurableExecutionOutput output,
             TypeToken<O> resultType,

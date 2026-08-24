@@ -3,22 +3,44 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.extra.filesystem.FileSystemSerDes;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.JitterStrategy;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.WaitStrategies;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 class FileSystemSerDesIntegrationTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -27,12 +49,11 @@ class FileSystemSerDesIntegrationTest {
     Path basePath;
 
     @Test
-    void replaysStepAndWaitForConditionStateFromFilesystem() throws Exception {
+    void pipelineReplaysStepWaitChildAndMapPayloadsFromFilesystem() throws Exception {
         var stepExecutions = new AtomicInteger();
         var pollExecutions = new AtomicInteger();
-        var config = DurableConfig.builder()
-                .withSerDes(FileSystemSerDes.builder(basePath).build())
-                .build();
+        var serDes = filesystemPipeline();
+        var config = DurableConfig.builder().withSerDes(serDes).build();
 
         var runner = LocalDurableTestRunner.create(
                         String.class,
@@ -58,7 +79,9 @@ class FileSystemSerDesIntegrationTest {
                                     waitConfig);
                             var childResult = context.runInChildContext(
                                     "format-order", String.class, child -> stepResult + "-child");
-                            return childResult + "-" + pollResult;
+                            var mapResult = context.map(
+                                    "map-order", List.of(1, 2), Integer.class, (item, index, child) -> item * 2);
+                            return childResult + "-" + pollResult + "-" + mapResult.results();
                         },
                         config)
                 .withOutputType(String.class);
@@ -66,14 +89,247 @@ class FileSystemSerDesIntegrationTest {
         var result = runner.runUntilComplete("order");
 
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals("order-loaded-child-2", result.getResult());
+        assertEquals("order-loaded-child-2-[2, 4]", result.getResult());
         assertEquals(1, stepExecutions.get());
         assertEquals(2, pollExecutions.get());
         assertEquals("order-loaded", result.getOperation("load-order").getStepResult(String.class));
+        assertEnvelopePointsToFile(
+                result.getOperation("load-order").getStepDetails().result());
+        assertEnvelopePointsToFile(
+                result.getOperation("map-order").getContextDetails().result());
+    }
 
-        var stepEnvelope = result.getOperation("load-order").getStepDetails().result();
-        var stepFile = Path.of(MAPPER.readTree(stepEnvelope).get("file").textValue());
-        assertTrue(Files.exists(stepFile));
-        assertTrue(stepFile.startsWith(basePath));
+    @Test
+    void durableExecutorAcceptsRawServiceInputBeforeFilesystemEnvelopeExists() {
+        var executionArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/execution/raw-input";
+        var invocationId = "raw-input";
+        var executionName = "execution";
+        var executionOperation = Operation.builder()
+                .id(invocationId)
+                .name(executionName)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(Instant.now())
+                .executionDetails(ExecutionDetails.builder()
+                        .inputPayload("\"service-input\"")
+                        .build())
+                .build();
+        var input = new DurableExecutionInput(
+                executionArn,
+                "checkpoint-token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOperation)
+                        .build(),
+                List.of());
+        var client = new LocalMemoryExecutionClient();
+        var serDes = filesystemPipeline();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withSerDes(serDes)
+                .build();
+
+        var output = DurableExecutor.execute(
+                input, null, TypeToken.get(String.class), (value, context) -> value + "-output", config);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        var result = new SerDesRunner(null)
+                .deserialize(
+                        serDes,
+                        output.result(),
+                        TypeToken.get(String.class),
+                        SerDesContext.forExecution(
+                                executionArn, invocationId, executionName, SerDesPayloadKind.OUTPUT));
+        assertEquals("service-input-output", result);
+    }
+
+    @Test
+    void acceptsRawCallbackAndInvokeResultsAndOffloadsInvokePayload() throws Exception {
+        var invokePayload = new AtomicReference<String>();
+        var recordingStage = identityStage((action, value) -> {
+            var context = SerDesContext.getCurrentContext();
+            if ("serialize".equals(action) && context.payloadKind() == SerDesPayloadKind.INVOKE_PAYLOAD) {
+                invokePayload.set(value);
+            }
+        });
+        var serDes = new JacksonSerDes()
+                .then(recordingStage)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> {
+                            var callback = context.createCallback("approval", String.class);
+                            var approval = callback.get();
+                            return context.invoke(
+                                    "notify", "target-function", Map.of("approval", approval), String.class);
+                        },
+                        config)
+                .withOutputType(String.class);
+
+        var waitingForCallback = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, waitingForCallback.getStatus());
+        var callbackId = runner.getCallbackId("approval");
+        assertNotNull(callbackId);
+
+        runner.completeCallback(callbackId, "\"approved\"");
+        var waitingForInvoke = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, waitingForInvoke.getStatus());
+        assertEquals(
+                "approved", MAPPER.readTree(invokePayload.get()).get("approval").textValue());
+
+        runner.completeChainedInvoke("notify", "\"notified\"");
+        var completed = runner.run("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, completed.getStatus());
+        assertEquals("notified", completed.getResult());
+    }
+
+    @Test
+    void repeatedGetUsesInvocationCacheForTheCompletePipeline() {
+        var resultDeserializations = new AtomicInteger();
+        var countingStage = identityStage((action, value) -> {
+            var context = SerDesContext.getCurrentContext();
+            if ("deserialize".equals(action)
+                    && context.payloadKind() == SerDesPayloadKind.RESULT
+                    && "cached-step".equals(context.operationName())) {
+                resultDeserializations.incrementAndGet();
+            }
+        });
+        var serDes = new JacksonSerDes()
+                .then(countingStage)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> {
+                            var future =
+                                    context.stepAsync("cached-step", Payload.class, stepContext -> new Payload(input));
+                            var first = future.get();
+                            var second = future.get();
+                            assertSame(first, second);
+                            return first.value();
+                        },
+                        config)
+                .withOutputType(String.class);
+
+        var result = runner.runUntilComplete("cached");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("cached", result.getResult());
+        assertEquals(1, resultDeserializations.get());
+    }
+
+    @Test
+    void successfulRetryUsesTheProducingAttemptForResultSerialization() {
+        var executions = new AtomicInteger();
+        var resultAttempts = new ArrayList<Integer>();
+        var attemptStage = identityStage((action, value) -> {
+            var context = SerDesContext.getCurrentContext();
+            if ("serialize".equals(action)
+                    && context.payloadKind() == SerDesPayloadKind.RESULT
+                    && "retry-step".equals(context.operationName())) {
+                resultAttempts.add(context.attempt());
+            }
+        });
+        var serDes = new JacksonSerDes()
+                .then(attemptStage)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var stepConfig = StepConfig.builder()
+                .retryStrategy(RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)))
+                .build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> context.step(
+                                "retry-step",
+                                String.class,
+                                stepContext -> {
+                                    if (executions.incrementAndGet() == 1) {
+                                        throw new IllegalStateException("retry");
+                                    }
+                                    return input + "-attempt-" + stepContext.getAttempt();
+                                },
+                                stepConfig),
+                        config)
+                .withOutputType(String.class);
+
+        var result = runner.runUntilComplete("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value-attempt-2", result.getResult());
+        assertEquals(List.of(2), resultAttempts);
+    }
+
+    @Test
+    void customExceptionPayloadsRoundTripThroughFilesystem() throws Exception {
+        var serDes = filesystemPipeline();
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var stepConfig = StepConfig.builder()
+                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                .build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> context.step(
+                                "fail-step",
+                                String.class,
+                                stepContext -> {
+                                    throw new CustomFailure("boom");
+                                },
+                                stepConfig),
+                        config)
+                .withOutputType(String.class);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertEquals(
+                CustomFailure.class.getName(), result.getError().orElseThrow().errorType());
+        var operationError = result.getOperation("fail-step").getError();
+        assertEquals(CustomFailure.class.getName(), operationError.errorType());
+        assertEnvelopePointsToFile(operationError.errorData());
+    }
+
+    private SerDes filesystemPipeline() {
+        return new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
+    }
+
+    private static SerDes identityStage(RecordingFunction recorder) {
+        return new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                var stringValue = (String) value;
+                recorder.record("serialize", stringValue);
+                return stringValue;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                recorder.record("deserialize", data);
+                return (T) data;
+            }
+        };
+    }
+
+    private void assertEnvelopePointsToFile(String envelope) throws Exception {
+        var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
+        assertTrue(Files.exists(file));
+        assertTrue(file.startsWith(basePath));
+    }
+
+    @FunctionalInterface
+    private interface RecordingFunction {
+        void record(String action, String value);
+    }
+
+    record Payload(String value) {}
+
+    public static class CustomFailure extends RuntimeException {
+        public CustomFailure() {}
+
+        public CustomFailure(String message) {
+            super(message);
+        }
     }
 }

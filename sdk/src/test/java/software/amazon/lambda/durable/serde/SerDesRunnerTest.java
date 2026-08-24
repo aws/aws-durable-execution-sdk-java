@@ -3,11 +3,15 @@
 package software.amazon.lambda.durable.serde;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -15,6 +19,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationSubType;
 
@@ -50,6 +55,59 @@ class SerDesRunnerTest {
         assertEquals("test-serdes", observedThread.get());
         assertNull(executor.submit(SerDesContext::getCurrentContext).get());
         assertNull(SerDesContext.getCurrentContext());
+    }
+
+    @Test
+    void executesInlineWhenNoExecutorIsConfigured() {
+        var observedThread = new AtomicReference<Thread>();
+        var serDes = new JacksonSerDes() {
+            @Override
+            public String serialize(Object value) {
+                observedThread.set(Thread.currentThread());
+                return super.serialize(value);
+            }
+        };
+
+        new SerDesRunner(null).serialize(serDes, "value", context("operation/1/result"));
+
+        assertSame(Thread.currentThread(), observedThread.get());
+    }
+
+    @Test
+    void restoresPreviousContextAcrossNestedInlineCalls() {
+        var runner = new SerDesRunner(null);
+        var previous = context("previous");
+        var outer = context("outer");
+        var inner = context("inner");
+        var duringOuter = new AtomicReference<SerDesContext>();
+        var afterInner = new AtomicReference<SerDesContext>();
+        var innerSerDes = new JacksonSerDes() {
+            @Override
+            public String serialize(Object value) {
+                assertSame(inner, SerDesContext.getCurrentContext());
+                return super.serialize(value);
+            }
+        };
+        var outerSerDes = new JacksonSerDes() {
+            @Override
+            public String serialize(Object value) {
+                duringOuter.set(SerDesContext.getCurrentContext());
+                runner.serialize(innerSerDes, value, inner);
+                afterInner.set(SerDesContext.getCurrentContext());
+                return super.serialize(value);
+            }
+        };
+
+        SerDesContextHolder.set(previous);
+        try {
+            runner.serialize(outerSerDes, "value", outer);
+            assertSame(previous, SerDesContext.getCurrentContext());
+        } finally {
+            SerDesContextHolder.clear();
+        }
+
+        assertSame(outer, duringOuter.get());
+        assertSame(outer, afterInner.get());
     }
 
     @Test
@@ -90,6 +148,77 @@ class SerDesRunnerTest {
     }
 
     @Test
+    void concurrentCacheMissesDeserializeOnlyOnce() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var count = new AtomicInteger();
+        var sharedValue = new Object();
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                count.incrementAndGet();
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SerDesException("interrupted", e);
+                }
+                return (T) sharedValue;
+            }
+        };
+        var runner = new SerDesRunner(null);
+        var callers = Executors.newFixedThreadPool(8);
+        try {
+            var futures = new ArrayList<CompletableFuture<Object>>();
+            for (int index = 0; index < 8; index++) {
+                futures.add(CompletableFuture.supplyAsync(
+                        () -> runner.deserialize(
+                                serDes, "data", TypeToken.get(Object.class), context("operation/1/result")),
+                        callers));
+            }
+            entered.await();
+            release.countDown();
+
+            for (var future : futures) {
+                assertSame(sharedValue, future.join());
+            }
+            assertEquals(1, count.get());
+        } finally {
+            release.countDown();
+            callers.shutdownNow();
+        }
+    }
+
+    @Test
+    void failedDeserializationIsRemovedFromCache() {
+        var calls = new AtomicInteger();
+        var serDes = new JacksonSerDes() {
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                if (calls.incrementAndGet() == 1) {
+                    throw new SerDesException("first");
+                }
+                return super.deserialize(data, typeToken);
+            }
+        };
+        var runner = new SerDesRunner(null);
+        var context = context("operation/1/result");
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, "\"value\"", TypeToken.get(String.class), context));
+        assertEquals("value", runner.deserialize(serDes, "\"value\"", TypeToken.get(String.class), context));
+        assertEquals(2, calls.get());
+    }
+
+    @Test
     void wrapsFailuresWithPayloadMetadata() {
         var runner = new SerDesRunner(executor);
         var serDes = new SerDes() {
@@ -109,6 +238,27 @@ class SerDesRunnerTest {
         assertTrue(exception.getMessage().contains("RESULT"));
         assertTrue(exception.getMessage().contains("entity"));
         assertEquals("boom", exception.getCause().getMessage());
+    }
+
+    @Test
+    void preservesRetryableFailureType() {
+        var runner = new SerDesRunner(null);
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                throw new RetryableSerDesException("transient");
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return null;
+            }
+        };
+
+        var exception = assertThrows(
+                RetryableSerDesException.class, () -> runner.serialize(serDes, "value", context("entity")));
+
+        assertInstanceOf(RetryableSerDesException.class, exception.getCause());
     }
 
     private static SerDesContext context(String entityId) {

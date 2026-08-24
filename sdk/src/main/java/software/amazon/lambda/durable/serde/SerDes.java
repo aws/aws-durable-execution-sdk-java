@@ -36,4 +36,17 @@ public interface SerDes {
      * @return the deserialized object, or null if data is null
      */
     <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    /**
+     * Returns an immutable processing pipeline that invokes this SerDes followed by {@code nextStage} when serializing
+     * and in reverse order when deserializing.
+     *
+     * <p>This SerDes is the value codec. The next stage must accept and return strings.
+     *
+     * @param nextStage the reversible string-processing stage to append
+     * @return a composable SerDes pipeline
+     */
+    default ComposableSerDes then(SerDes nextStage) {
+        return ComposableSerDes.of(this, nextStage);
+    }
 }

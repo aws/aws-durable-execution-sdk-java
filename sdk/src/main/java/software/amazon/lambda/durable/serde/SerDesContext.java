@@ -55,9 +55,13 @@ public record SerDesContext(
             OperationSubType operationSubType,
             SerDesPayloadKind payloadKind,
             Integer attempt) {
+        var entityId = "operation/" + operationId + "/" + payloadKind.getEntitySuffix();
+        if (attempt != null) {
+            entityId += "/attempt-" + attempt;
+        }
         return new SerDesContext(
                 durableExecutionArn,
-                "operation/" + operationId + "/" + payloadKind.getEntitySuffix(),
+                entityId,
                 payloadKind,
                 operationId,
                 operationName,

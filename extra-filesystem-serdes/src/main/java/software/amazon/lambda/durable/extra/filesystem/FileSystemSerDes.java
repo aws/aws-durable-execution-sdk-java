@@ -8,31 +8,41 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 
 /**
- * A SerDes that stores delegate-serialized payloads on a durable shared filesystem.
+ * A SerDes that stores payloads on a durable shared filesystem.
+ *
+ * <p>Use {@link #stageBuilder(Path)} when composing this implementation after a value codec. The compatibility
+ * {@link #builder(Path)} form includes its own value codec and can be used as a standalone SerDes.
  *
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. Use a durable shared mount such as EFS, or S3 Files only when
  * its synchronization and crash-durability tradeoffs are acceptable for the workload.
  */
 public final class FileSystemSerDes implements SerDes {
-    private static final int OVERFLOW_THRESHOLD_BYTES = 256 * 1024 - 1024;
+    private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
+    private static final int ENVELOPE_VERSION = 1;
+    private static final int CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
     private static final ObjectMapper ENVELOPE_MAPPER = new ObjectMapper();
     private static final Pattern DURABLE_EXECUTION_ARN_PATTERN = Pattern.compile(
             "^arn:[^:]*:lambda:[^:]*:[^:]*:function:([^:/]+):[^:/]+/durable-execution/([^/]+)/([^/]+)$");
@@ -42,6 +52,7 @@ public final class FileSystemSerDes implements SerDes {
     private final FileSystemPathEncoding pathEncoding;
     private final SerDes delegate;
     private final Function<Object, Map<String, Object>> previewGenerator;
+    private final boolean stageMode;
 
     private FileSystemSerDes(Builder builder) {
         basePath = builder.basePath.toAbsolutePath().normalize();
@@ -49,10 +60,27 @@ public final class FileSystemSerDes implements SerDes {
         pathEncoding = builder.pathEncoding;
         delegate = builder.delegate;
         previewGenerator = builder.previewGenerator;
+        stageMode = builder.stageMode;
     }
 
+    /**
+     * Creates a standalone filesystem SerDes builder with {@link JacksonSerDes} as its default value codec.
+     *
+     * @param basePath durable shared filesystem root
+     * @return a standalone builder
+     */
     public static Builder builder(Path basePath) {
-        return new Builder(basePath);
+        return new Builder(basePath, false);
+    }
+
+    /**
+     * Creates a filesystem string-stage builder for use in a composable SerDes pipeline.
+     *
+     * @param basePath durable shared filesystem root
+     * @return a string-stage builder
+     */
+    public static Builder stageBuilder(Path basePath) {
+        return new Builder(basePath, true);
     }
 
     @Override
@@ -61,24 +89,23 @@ public final class FileSystemSerDes implements SerDes {
             return null;
         }
         var context = requireContext();
-        var serialized = delegate.serialize(value);
-        if (serialized == null) {
-            throw new SerDesException("Delegate SerDes returned null for a non-null value");
+        var serialized = serializeValue(value);
+        var inlineEnvelope = encodeEnvelope(serialized, null, null, context);
+        if (storageMode == FileSystemStorageMode.OVERFLOW && fitsCheckpoint(inlineEnvelope)) {
+            return inlineEnvelope;
+        }
+
+        var file = resolvePayloadPath(serialized, context);
+        var preview = generatePreview(value, context);
+        var fileEnvelope = encodeEnvelope(null, file, preview, context);
+        if (!fitsCheckpoint(fileEnvelope)) {
+            throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
+                    + context.entityId()
+                    + "'");
         }
         try {
-            var inlineEnvelope = ENVELOPE_MAPPER.writeValueAsString(Map.of("data", serialized));
-            if (storageMode == FileSystemStorageMode.OVERFLOW
-                    && inlineEnvelope.getBytes(StandardCharsets.UTF_8).length <= OVERFLOW_THRESHOLD_BYTES) {
-                return inlineEnvelope;
-            }
-            var file = writePayload(serialized, context);
-            var preview = previewGenerator != null ? previewGenerator.apply(value) : null;
-            return preview == null
-                    ? ENVELOPE_MAPPER.writeValueAsString(Map.of("file", file.toString()))
-                    : ENVELOPE_MAPPER.writeValueAsString(Map.of("file", file.toString(), "preview", preview));
-        } catch (JsonProcessingException e) {
-            throw new SerDesException(
-                    "Failed to encode filesystem payload envelope for entity '" + context.entityId() + "'", e);
+            writePayload(serialized, file);
+            return fileEnvelope;
         } catch (IOException e) {
             throw new RetryableSerDesException(
                     "Failed to store filesystem payload for entity '" + context.entityId() + "'", e);
@@ -90,38 +117,165 @@ public final class FileSystemSerDes implements SerDes {
         if (data == null) {
             return null;
         }
+        Objects.requireNonNull(typeToken, "typeToken cannot be null");
         var context = requireContext();
+        var serialized = resolveSerializedPayload(data, context);
+        if (stageMode) {
+            if (!TypeToken.get(String.class).equals(typeToken)) {
+                throw new SerDesException("FileSystemSerDes stage can only deserialize to String");
+            }
+            @SuppressWarnings("unchecked")
+            var value = (T) serialized;
+            return value;
+        }
+        return delegate.deserialize(serialized, typeToken);
+    }
+
+    private String serializeValue(Object value) {
+        if (stageMode) {
+            if (!(value instanceof String stringValue)) {
+                throw new SerDesException("FileSystemSerDes stage can only serialize String values");
+            }
+            return stringValue;
+        }
+        var serialized = delegate.serialize(value);
+        if (serialized == null) {
+            throw new SerDesException("Delegate SerDes returned null for a non-null value");
+        }
+        return serialized;
+    }
+
+    private String resolveSerializedPayload(String data, SerDesContext context) {
+        final JsonNode envelope;
         try {
-            JsonNode envelope = ENVELOPE_MAPPER.readTree(data);
-            var hasData = envelope.has("data") && envelope.get("data").isTextual();
-            var hasFile = envelope.has("file") && envelope.get("file").isTextual();
-            if (hasData == hasFile) {
-                throw new SerDesException("Filesystem SerDes envelope must contain exactly one of 'data' or 'file'");
-            }
-            String serialized;
-            if (hasData) {
-                serialized = envelope.get("data").textValue();
-            } else {
-                var file = Path.of(envelope.get("file").textValue())
-                        .toAbsolutePath()
-                        .normalize();
-                if (!file.startsWith(basePath)) {
-                    throw new SerDesException("Filesystem SerDes file is outside the configured base path");
-                }
-                serialized = Files.readString(file, StandardCharsets.UTF_8);
-            }
-            return delegate.deserialize(serialized, typeToken);
+            envelope = ENVELOPE_MAPPER.readTree(data);
         } catch (JsonProcessingException e) {
-            throw new SerDesException(
-                    "Failed to decode filesystem payload envelope for entity '" + context.entityId() + "'", e);
+            if (acceptsExternalPayload(context)) {
+                return data;
+            }
+            throw malformedEnvelope(context, e);
+        }
+
+        if (envelope != null && envelope.isObject() && envelope.has(ENVELOPE_MARKER)) {
+            if (!isFilesystemEnvelope(envelope)) {
+                throw malformedEnvelope(context, null);
+            }
+        } else {
+            if (acceptsExternalPayload(context)) {
+                return data;
+            }
+            throw malformedEnvelope(context, null);
+        }
+
+        var hasData = envelope.has("data") && envelope.get("data").isTextual();
+        var hasFile = envelope.has("file") && envelope.get("file").isTextual();
+        if (hasData == hasFile) {
+            throw malformedEnvelope(context, null);
+        }
+        if (hasData) {
+            return envelope.get("data").textValue();
+        }
+        return readPayload(envelope.get("file").textValue(), context);
+    }
+
+    private String readPayload(String fileValue, SerDesContext context) {
+        var file = Path.of(fileValue).toAbsolutePath().normalize();
+        validatePayloadPath(file, context);
+        try {
+            rejectSymbolicLinks(file);
+            var realBasePath = basePath.toRealPath();
+            var realDirectory = file.getParent().toRealPath();
+            var realFile = file.toRealPath();
+            if (!realDirectory.startsWith(realBasePath)
+                    || !realFile.getParent().equals(realDirectory)
+                    || !realFile.equals(file.toRealPath(LinkOption.NOFOLLOW_LINKS))) {
+                throw new SerDesException("Filesystem SerDes file does not resolve to the expected payload path");
+            }
+            var serialized = Files.readString(realFile, StandardCharsets.UTF_8);
+            var expectedFileName = payloadFileName(serialized, context);
+            if (!realFile.getFileName().toString().equals(expectedFileName)) {
+                throw new SerDesException("Filesystem SerDes file content does not match its content-addressed path");
+            }
+            return serialized;
         } catch (IOException e) {
             throw new RetryableSerDesException(
                     "Failed to load filesystem payload for entity '" + context.entityId() + "'", e);
-        } catch (SerDesException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new SerDesException("Failed to load filesystem payload for entity '" + context.entityId() + "'", e);
         }
+    }
+
+    private void validatePayloadPath(Path file, SerDesContext context) {
+        var expectedDirectory = resolveExecutionDirectory(context.durableExecutionArn());
+        var fileName = file.getFileName();
+        if (fileName == null
+                || file.getParent() == null
+                || !file.getParent().equals(expectedDirectory)
+                || !fileName.toString().matches(Pattern.quote(encode(context.entityId())) + "-[0-9a-f]{64}\\.json")) {
+            throw new SerDesException("Filesystem SerDes file is not valid for the current durable entity");
+        }
+    }
+
+    private void rejectSymbolicLinks(Path file) throws IOException {
+        var current = basePath;
+        for (var component : basePath.relativize(file)) {
+            current = current.resolve(component);
+            if (Files.isSymbolicLink(current)) {
+                throw new SerDesException("Filesystem SerDes payload path must not contain symbolic links");
+            }
+        }
+    }
+
+    private static boolean isFilesystemEnvelope(JsonNode envelope) {
+        return envelope != null
+                && envelope.isObject()
+                && envelope.has(ENVELOPE_MARKER)
+                && envelope.get(ENVELOPE_MARKER).isIntegralNumber()
+                && envelope.get(ENVELOPE_MARKER).intValue() == ENVELOPE_VERSION;
+    }
+
+    private static boolean acceptsExternalPayload(SerDesContext context) {
+        return context.payloadKind() == SerDesPayloadKind.INPUT
+                || context.operationType() == OperationType.CALLBACK
+                || context.operationType() == OperationType.CHAINED_INVOKE;
+    }
+
+    private static SerDesException malformedEnvelope(SerDesContext context, Throwable cause) {
+        var message = "Invalid filesystem SerDes envelope for entity '" + context.entityId() + "'";
+        return cause == null ? new SerDesException(message) : new SerDesException(message, cause);
+    }
+
+    private String encodeEnvelope(String data, Path file, Map<String, Object> preview, SerDesContext context) {
+        var envelope = new LinkedHashMap<String, Object>();
+        envelope.put(ENVELOPE_MARKER, ENVELOPE_VERSION);
+        if (data != null) {
+            envelope.put("data", data);
+        } else {
+            envelope.put("file", file.toString());
+            if (preview != null) {
+                envelope.put("preview", preview);
+            }
+        }
+        try {
+            return ENVELOPE_MAPPER.writeValueAsString(envelope);
+        } catch (JsonProcessingException e) {
+            throw new SerDesException(
+                    "Failed to encode filesystem payload envelope for entity '" + context.entityId() + "'", e);
+        }
+    }
+
+    private Map<String, Object> generatePreview(Object value, SerDesContext context) {
+        if (previewGenerator == null) {
+            return null;
+        }
+        try {
+            return previewGenerator.apply(value);
+        } catch (RuntimeException e) {
+            throw new SerDesException(
+                    "Failed to generate filesystem payload preview for entity '" + context.entityId() + "'", e);
+        }
+    }
+
+    private static boolean fitsCheckpoint(String envelope) {
+        return envelope.getBytes(StandardCharsets.UTF_8).length <= CHECKPOINT_ENVELOPE_LIMIT_BYTES;
     }
 
     private SerDesContext requireContext() {
@@ -137,25 +291,79 @@ public final class FileSystemSerDes implements SerDes {
         return context;
     }
 
-    private Path writePayload(String serialized, SerDesContext context) throws IOException {
+    private Path resolvePayloadPath(String serialized, SerDesContext context) {
         var directory = resolveExecutionDirectory(context.durableExecutionArn());
-        Files.createDirectories(directory);
-        var file = directory.resolve(encode(context.entityId()) + ".json").normalize();
+        var fileName = payloadFileName(serialized, context);
+        var file = directory.resolve(fileName).normalize();
         if (!file.startsWith(directory)) {
             throw new SerDesException("Resolved filesystem payload path is outside the execution directory");
         }
+        return file;
+    }
+
+    private String payloadFileName(String serialized, SerDesContext context) {
+        return encode(context.entityId()) + "-" + sha256(serialized) + ".json";
+    }
+
+    private void writePayload(String serialized, Path file) throws IOException {
+        var directory = file.getParent();
+        createDirectoriesWithoutSymbolicLinks(directory);
+        rejectSymbolicLinks(file);
+        var realBasePath = basePath.toRealPath();
+        var realDirectory = directory.toRealPath();
+        if (!realDirectory.startsWith(realBasePath)) {
+            throw new SerDesException("Filesystem SerDes directory resolves outside the configured base path");
+        }
+        if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
+            var existing = Files.readString(file, StandardCharsets.UTF_8);
+            if (!existing.equals(serialized)) {
+                throw new SerDesException("Filesystem SerDes content-addressed file contains unexpected data");
+            }
+            return;
+        }
+
         var temporary = Files.createTempFile(directory, file.getFileName().toString(), ".tmp");
         try {
             Files.writeString(temporary, serialized, StandardCharsets.UTF_8);
-            try {
-                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-            }
+            moveWithoutReplacement(temporary, file);
         } finally {
             Files.deleteIfExists(temporary);
         }
-        return file;
+    }
+
+    private void createDirectoriesWithoutSymbolicLinks(Path directory) throws IOException {
+        Files.createDirectories(basePath);
+        var current = basePath;
+        for (var component : basePath.relativize(directory)) {
+            current = current.resolve(component);
+            if (Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.isSymbolicLink(current) || !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new SerDesException("Filesystem SerDes directory path must contain only real directories");
+                }
+                continue;
+            }
+            try {
+                Files.createDirectory(current);
+            } catch (FileAlreadyExistsException ignored) {
+                if (Files.isSymbolicLink(current) || !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new SerDesException("Filesystem SerDes directory path must contain only real directories");
+                }
+            }
+        }
+    }
+
+    private static void moveWithoutReplacement(Path temporary, Path file) throws IOException {
+        try {
+            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            try {
+                Files.move(temporary, file);
+            } catch (FileAlreadyExistsException ignored) {
+                // Another thread or invocation already persisted the same content-addressed payload.
+            }
+        } catch (FileAlreadyExistsException ignored) {
+            // Another thread or invocation already persisted the same content-addressed payload.
+        }
     }
 
     private Path resolveExecutionDirectory(String durableExecutionArn) {
@@ -163,9 +371,9 @@ public final class FileSystemSerDes implements SerDes {
         if (pathEncoding == FileSystemPathEncoding.URI) {
             var matcher = DURABLE_EXECUTION_ARN_PATTERN.matcher(durableExecutionArn);
             if (matcher.matches()) {
-                directory = basePath.resolve(matcher.group(1))
-                        .resolve(matcher.group(2))
-                        .resolve(matcher.group(3))
+                directory = basePath.resolve(encode(matcher.group(1)))
+                        .resolve(encode(matcher.group(2)))
+                        .resolve(encode(matcher.group(3)))
                         .normalize();
                 if (!directory.startsWith(basePath)) {
                     throw new SerDesException("Resolved filesystem execution path is outside the configured base path");
@@ -216,32 +424,43 @@ public final class FileSystemSerDes implements SerDes {
     /** Builder for {@link FileSystemSerDes}. */
     public static final class Builder {
         private final Path basePath;
+        private final boolean stageMode;
         private FileSystemStorageMode storageMode = FileSystemStorageMode.ALWAYS;
         private FileSystemPathEncoding pathEncoding = FileSystemPathEncoding.URI;
-        private SerDes delegate = new JacksonSerDes();
+        private SerDes delegate;
         private Function<Object, Map<String, Object>> previewGenerator;
 
-        private Builder(Path basePath) {
+        private Builder(Path basePath, boolean stageMode) {
             this.basePath = Objects.requireNonNull(basePath, "basePath cannot be null");
+            this.stageMode = stageMode;
+            this.delegate = stageMode ? null : new JacksonSerDes();
         }
 
         public Builder storageMode(FileSystemStorageMode storageMode) {
-            this.storageMode = Objects.requireNonNull(storageMode);
+            this.storageMode = Objects.requireNonNull(storageMode, "storageMode cannot be null");
             return this;
         }
 
         public Builder pathEncoding(FileSystemPathEncoding pathEncoding) {
-            this.pathEncoding = Objects.requireNonNull(pathEncoding);
+            this.pathEncoding = Objects.requireNonNull(pathEncoding, "pathEncoding cannot be null");
             return this;
         }
 
+        /**
+         * Sets the value codec used by standalone mode.
+         *
+         * @throws IllegalStateException when called on a stage builder
+         */
         public Builder delegate(SerDes delegate) {
-            this.delegate = Objects.requireNonNull(delegate);
+            if (stageMode) {
+                throw new IllegalStateException("FileSystemSerDes stage mode does not use a delegate");
+            }
+            this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
             return this;
         }
 
         public Builder previewGenerator(Function<Object, Map<String, Object>> previewGenerator) {
-            this.previewGenerator = Objects.requireNonNull(previewGenerator);
+            this.previewGenerator = Objects.requireNonNull(previewGenerator, "previewGenerator cannot be null");
             return this;
         }
 

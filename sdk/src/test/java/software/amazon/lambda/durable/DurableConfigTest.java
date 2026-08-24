@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -54,8 +55,7 @@ class DurableConfigTest {
         assertInstanceOf(JacksonSerDes.class, config.getSerDes());
         assertNotNull(config.getExecutorService());
         assertInstanceOf(ExecutorService.class, config.getExecutorService());
-        assertNotNull(config.getSerDesExecutorService());
-        assertInstanceOf(ExecutorService.class, config.getSerDesExecutorService());
+        assertNull(config.getSerDesExecutorService());
     }
 
     @Test
@@ -98,6 +98,16 @@ class DurableConfigTest {
                 .build();
 
         assertSame(mockSerDesExecutor, config.getSerDesExecutorService());
+    }
+
+    @Test
+    void testBuilder_RejectsAliasedOperationAndSerDesExecutors() {
+        var exception = assertThrows(IllegalStateException.class, () -> DurableConfig.builder()
+                .withExecutorService(mockExecutor)
+                .withSerDesExecutorService(mockExecutor)
+                .build());
+
+        assertTrue(exception.getMessage().contains("must be different"));
     }
 
     @Test

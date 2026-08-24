@@ -13,32 +13,40 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
- * Runs customer SerDes calls on the configured SerDes executor with the correct {@link SerDesContext}.
+ * Runs customer SerDes calls with the correct {@link SerDesContext}.
  *
- * <p>Instances are invocation-scoped so successful deserialization results are cached only for one Lambda invocation.
+ * <p>Calls execute inline unless an executor is configured. Instances are invocation-scoped so successful
+ * deserialization results are cached only for one Lambda invocation.
  */
 public final class SerDesRunner {
-    private static final Object NULL_VALUE = new Object();
-
     private final ExecutorService executorService;
-    private final Map<CacheKey, Object> deserializationCache = new ConcurrentHashMap<>();
+    private final Map<CacheKey, CompletableFuture<Object>> deserializationCache = new ConcurrentHashMap<>();
 
+    /**
+     * Creates an invocation-scoped runner.
+     *
+     * @param executorService executor for SerDes calls, or {@code null} to execute inline
+     */
     public SerDesRunner(ExecutorService executorService) {
-        this.executorService = Objects.requireNonNull(executorService, "executorService cannot be null");
+        this.executorService = executorService;
     }
 
     /** Serializes a value with the supplied durable payload context. */
     public String serialize(SerDes serDes, Object value, SerDesContext context) {
+        Objects.requireNonNull(serDes, "serDes cannot be null");
         return run("serialize", context, () -> serDes.serialize(value));
     }
 
     /** Deserializes a value with invocation-scoped caching. */
     @SuppressWarnings("unchecked")
     public <T> T deserialize(SerDes serDes, String data, TypeToken<T> typeToken, SerDesContext context) {
+        Objects.requireNonNull(serDes, "serDes cannot be null");
+        Objects.requireNonNull(typeToken, "typeToken cannot be null");
         Objects.requireNonNull(context, "SerDesContext cannot be null");
         var key = new CacheKey(
                 context.durableExecutionArn(),
@@ -47,37 +55,64 @@ public final class SerDesRunner {
                 context.attempt(),
                 typeToken,
                 hash(data));
-        var cached = deserializationCache.get(key);
-        if (cached != null) {
-            return cached == NULL_VALUE ? null : (T) cached;
+        var pending = new CompletableFuture<Object>();
+        var existing = deserializationCache.putIfAbsent(key, pending);
+        if (existing != null) {
+            return (T) join(existing);
         }
 
-        T value = run("deserialize", context, () -> serDes.deserialize(data, typeToken));
-        deserializationCache.putIfAbsent(key, value == null ? NULL_VALUE : value);
-        return value;
+        try {
+            T value = run("deserialize", context, () -> serDes.deserialize(data, typeToken));
+            pending.complete(value);
+            return value;
+        } catch (Throwable failure) {
+            pending.completeExceptionally(failure);
+            deserializationCache.remove(key, pending);
+            ExceptionHelper.sneakyThrow(failure);
+            return null;
+        }
     }
 
     private <T> T run(String action, SerDesContext context, Supplier<T> supplier) {
+        Objects.requireNonNull(supplier, "supplier cannot be null");
         Objects.requireNonNull(context, "SerDesContext cannot be null");
         try {
-            return CompletableFuture.supplyAsync(
-                            () -> {
-                                SerDesContextHolder.set(context);
-                                try {
-                                    return supplier.get();
-                                } finally {
-                                    SerDesContextHolder.clear();
-                                }
-                            },
-                            executorService)
+            if (executorService == null) {
+                return runWithContext(context, supplier);
+            }
+            return CompletableFuture.supplyAsync(() -> runWithContext(context, supplier), executorService)
                     .join();
         } catch (Throwable throwable) {
             var cause = ExceptionHelper.unwrapCompletableFuture(throwable);
-            throw new SerDesException(
-                    String.format(
-                            "Failed to %s %s payload for entity '%s'",
-                            action, context.payloadKind(), context.entityId()),
-                    cause);
+            var message = String.format(
+                    "Failed to %s %s payload for entity '%s'", action, context.payloadKind(), context.entityId());
+            if (cause instanceof RetryableSerDesException) {
+                throw new RetryableSerDesException(message, cause);
+            }
+            throw new SerDesException(message, cause);
+        }
+    }
+
+    private static <T> T runWithContext(SerDesContext context, Supplier<T> supplier) {
+        var previous = SerDesContextHolder.get();
+        SerDesContextHolder.set(context);
+        try {
+            return supplier.get();
+        } finally {
+            if (previous == null) {
+                SerDesContextHolder.clear();
+            } else {
+                SerDesContextHolder.set(previous);
+            }
+        }
+    }
+
+    private static Object join(CompletableFuture<Object> future) {
+        try {
+            return future.join();
+        } catch (Throwable failure) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(failure));
+            return null;
         }
     }
 

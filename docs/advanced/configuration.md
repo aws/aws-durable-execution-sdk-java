@@ -16,10 +16,10 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 
         return DurableConfig.builder()
             .withLambdaClientBuilder(lambdaClientBuilder)
-            .withSerDes(new MyCustomSerDes())           // Custom serialization
+            .withSerDes(new MyCustomSerDes())                    // Custom serialization
             .withExecutorService(Executors.newFixedThreadPool(10))  // Custom thread pool
-            .withSerDesExecutorService(Executors.newFixedThreadPool(4)) // SerDes and payload I/O
-            .withLoggerConfig(LoggerConfig.withReplayLogging())     // Enable replay logs
+            .withSerDesExecutorService(Executors.newFixedThreadPool(4)) // Optional SerDes/payload I/O pool
+            .withLoggerConfig(LoggerConfig.withReplayLogging())      // Enable replay logs
             .build();
     }
 
@@ -35,51 +35,65 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withLambdaClientBuilder()` | Custom AWS Lambda client                | Auto-configured Lambda client |
 | `withSerDes()`              | Serializer for step results             | Jackson with default settings |
 | `withExecutorService()`     | Thread pool for user-defined operations | Cached daemon thread pool     |
-| `withSerDesExecutorService()` | Thread pool for SerDes and payload storage I/O | Cached `durable-sdk-serdes-*` daemon thread pool |
+| `withSerDesExecutorService()` | Optional thread pool for SerDes and payload storage I/O | Inline on the calling thread |
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |
 | `withPollingStrategy()`     | Backend polling strategy                | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max |
 | `withCheckpointDelay()`     | How often the SDK checkpoints updates   | `Duration.ofSeconds(0)` (as soon as possible) |
 
 The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
 
-The `withSerDesExecutorService()` option isolates serialization and blocking payload storage from user operations and
-SDK coordination. The SDK sets `SerDesContext` inside each task, clears it after the call, and caches successful
-deserialization results for the current invocation.
+By default, SerDes runs synchronously on the calling thread to preserve existing behavior and avoid a queue,
+`CompletableFuture`, and thread-hop cost for in-memory serialization. Configure
+`withSerDesExecutorService()` when a SerDes performs blocking filesystem or network I/O, or uses retry backoff. The
+SerDes executor must be different from the user-operation executor to avoid deadlock when the operation pool is
+saturated.
+
+The SDK installs `SerDesContext` on whichever thread performs the call, restores any previous nested context afterward,
+and caches successful deserialization results for the current invocation.
 
 ### Filesystem-backed payload storage
 
-The optional `aws-durable-execution-sdk-java-extra-filesystem-serdes` artifact can store delegate-serialized payloads
-on a shared filesystem:
+The optional `aws-durable-execution-sdk-java-extra-filesystem-serdes` artifact provides a reversible string stage for
+storing serialized payloads on a shared filesystem:
 
 ```java
-var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.OVERFLOW)
     .pathEncoding(FileSystemPathEncoding.HASH)
-    .delegate(new JacksonSerDes())
-    .previewGenerator(value -> Map.of("type", value.getClass().getSimpleName()))
+    .previewGenerator(json -> Map.of("format", "json"))
     .build();
 
-var retryingSerDes = new RetrySerDes(
-    fileSystemSerDes,
+var resilientFileSystemStage = new RetrySerDes(
+    fileSystemStage,
     RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
 
+var serDes = new JacksonSerDes().then(resilientFileSystemStage);
+var serDesExecutor = Executors.newFixedThreadPool(4);
+
 return DurableConfig.builder()
-    .withSerDes(retryingSerDes)
+    .withSerDes(serDes)
+    .withSerDesExecutorService(serDesExecutor)
     .build();
 ```
 
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
 approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path
-segments.
+segments. Files are content-addressed and never overwrite data referenced by an earlier checkpoint. References are
+validated against the current durable execution and entity, and symbolic-link paths are rejected.
 
 `RetrySerDes` retries only failures marked with `RetryableSerDesException`. Filesystem read and write I/O use this
-marker; malformed envelopes and delegate encoding failures fail immediately. Backoff occurs on the dedicated SerDes
-executor within the current Lambda invocation, so use short, bounded retry strategies.
+marker; malformed envelopes and codec failures fail immediately. Backoff occurs within the current Lambda invocation,
+so use short, bounded retry strategies. Without a configured SerDes executor, filesystem I/O and retry delays block the
+calling thread.
 
 Do not use Lambda's ephemeral `/tmp` directory: replay can run in a different execution environment. Use a durable,
 shared mount such as EFS. S3 Files can have delayed synchronization, so a runtime crash before the mount flushes may
 lose recent writes; use it only when that tradeoff is acceptable. The SDK does not delete offloaded files, so configure
 storage lifecycle and retention separately.
+
+When cloud tests use a `ComposableSerDes`, `CloudDurableTestRunner` applies only its first value-codec stage to the
+initial Lambda invocation because the durable execution ARN does not exist yet. Persisted history is decoded with the
+complete pipeline. For a standalone context-dependent SerDes, call `withInputSerDes(...)` with a separate input codec.
 
 ### Dynamic plugin loading
 
