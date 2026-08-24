@@ -37,4 +37,33 @@ public record UserFunctionEndInfo(
         boolean isReplayingChildren,
         Integer attempt,
         UserFunctionOutcome outcome,
-        @Experimental Throwable error) {}
+        @Experimental Throwable error) {
+
+    /** Creates user-function end information for an operation not marked as replayed. */
+    public UserFunctionEndInfo(
+            String id,
+            String name,
+            String type,
+            String subType,
+            String parentId,
+            Instant startTimestamp,
+            Instant endTimestamp,
+            boolean isReplayingChildren,
+            Integer attempt,
+            UserFunctionOutcome outcome,
+            Throwable error) {
+        this(
+                id,
+                name,
+                type,
+                subType,
+                parentId,
+                startTimestamp,
+                endTimestamp,
+                false,
+                isReplayingChildren,
+                attempt,
+                outcome,
+                error);
+    }
+}

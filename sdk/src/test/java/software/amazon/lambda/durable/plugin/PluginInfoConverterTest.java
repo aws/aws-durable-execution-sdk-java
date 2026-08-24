@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.plugin;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
@@ -228,6 +230,66 @@ class PluginInfoConverterTest {
         assertNull(info.result());
     }
 
+    // ─── toOperationItemMap ──────────────────────────────────────────────
+
+    @Test
+    void toOperationItemMap_extractsResult_fromSucceededStep() {
+        var operation = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
+                        .attempt(2)
+                        .result("{\"value\":42}")
+                        .build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationItemMap(List.of(operation), Set.of())
+                .get(OPERATION_ID);
+
+        assertEquals("{\"value\":42}", info.result());
+        assertEquals(2, info.attempt());
+    }
+
+    @Test
+    void toOperationItemMap_omitsResult_fromFailedStep() {
+        var operation = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .status(OperationStatus.FAILED)
+                .stepDetails(StepDetails.builder()
+                        .attempt(2)
+                        .result("{\"intermediate\":true}")
+                        .build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationItemMap(List.of(operation), Set.of())
+                .get(OPERATION_ID);
+
+        assertNull(info.result());
+    }
+
+    @Test
+    void operationChangeItemInfo_toString_omitsResult() {
+        var info = new OperationChangeItemInfo(
+                OPERATION_ID,
+                OPERATION_NAME,
+                "STEP",
+                "Step",
+                PARENT_ID,
+                START,
+                END,
+                OperationStatus.SUCCEEDED,
+                1,
+                false,
+                null,
+                "s3cret-result");
+
+        assertFalse(info.toString().contains("s3cret-result"), "operation result must not leak into logs");
+    }
+
     // ─── toUserFunctionStartInfo ────────────────────────────────────────
 
     @Test
@@ -290,7 +352,7 @@ class PluginInfoConverterTest {
     @Test
     void toUserFunctionEndInfo_incomplete() {
         var error = new SuspendExecutionException();
-        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, null, false, null);
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, null, false, false, null);
 
         var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.INCOMPLETE, error);
 

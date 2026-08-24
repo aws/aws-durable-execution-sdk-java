@@ -31,4 +31,18 @@ public record UserFunctionStartInfo(
         Instant startTimestamp,
         boolean isReplay,
         boolean isReplayingChildren,
-        Integer attempt) {}
+        Integer attempt) {
+
+    /** Creates user-function start information for an operation not marked as replayed. */
+    public UserFunctionStartInfo(
+            String id,
+            String name,
+            String type,
+            String subType,
+            String parentId,
+            Instant startTimestamp,
+            boolean isReplayingChildren,
+            Integer attempt) {
+        this(id, name, type, subType, parentId, startTimestamp, false, isReplayingChildren, attempt);
+    }
+}

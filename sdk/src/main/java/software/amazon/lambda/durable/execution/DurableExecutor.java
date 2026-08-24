@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
+import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;

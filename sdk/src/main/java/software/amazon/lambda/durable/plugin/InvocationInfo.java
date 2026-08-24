@@ -16,14 +16,9 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param isFirstInvocation true if this is the first invocation of the execution (not a replay invocation)
  * @param executionStartTime the start timestamp of the durable execution, taken from the initial EXECUTION operation in
  *     the first event delivered by the backend. Never null and stable across all invocations of the same execution.
- * @param executionInput the deserialized execution input passed to the user handler, or null when no plugins are
- *     registered or the input could not be deserialized; this component is experimental
- * @param operations a snapshot of the checkpointed operations delivered at the start of this invocation, keyed by
- *     operation ID. Includes the initial EXECUTION operation. Empty-but-never-null.
- * @param updatedOperations the subset of {@code operations} that changed externally between the previous invocation and
- *     this one (a wait timer expired, a callback was received, a chained invoke completed), keyed by operation ID.
- *     Sourced from the {@code UpdatedOperationIds} field of the durable invocation input, so it is empty on the first
- *     invocation. Empty-but-never-null.
+ * @param executionInput the deserialized execution input passed to the user handler, or null when unavailable
+ * @param operations checkpointed operations delivered at invocation start, keyed by operation ID
+ * @param updatedOperations operations changed externally since the previous invocation, keyed by operation ID
  */
 public record InvocationInfo(
         String requestId,
@@ -54,6 +49,24 @@ public record InvocationInfo(
             Instant executionStartTime,
             Object executionInput) {
         this(requestId, durableExecutionArn, isFirstInvocation, executionStartTime, executionInput, Map.of(), Map.of());
+    }
+
+    /** Creates invocation information without an execution input. */
+    public InvocationInfo(
+            String requestId,
+            String durableExecutionArn,
+            boolean isFirstInvocation,
+            Instant executionStartTime,
+            Map<String, OperationChangeItemInfo> operations,
+            Map<String, OperationChangeItemInfo> updatedOperations) {
+        this(
+                requestId,
+                durableExecutionArn,
+                isFirstInvocation,
+                executionStartTime,
+                null,
+                operations,
+                updatedOperations);
     }
 
     /** Returns a representation that omits execution payloads and operation snapshots. */
