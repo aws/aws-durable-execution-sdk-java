@@ -87,18 +87,20 @@ public class DurableExecutor {
                         // onInvocationStart runs on the user thread so plugins can
                         // inject ThreadLocal objects, update MDC, etc.
                         // executionStartTime comes from the initial EXECUTION operation in the first backend event.
-                        pluginRunner.onInvocationStart(new InvocationInfo(
-                                requestId,
-                                executionArn,
-                                isFirstInvocation,
-                                executionManager.getExecutionOperation().startTimestamp(),
-                                userInput,
-                                PluginInfoConverter.toOperationItemMap(
-                                        executionManager.getOperationsSnapshot(),
-                                        executionManager.getInitialOperationIds()),
-                                PluginInfoConverter.toOperationItemMap(
-                                        executionManager.getUpdatedOperationsSnapshot(),
-                                        executionManager.getInitialOperationIds())));
+                        if (!pluginRunner.isEmpty()) {
+                            pluginRunner.onInvocationStart(new InvocationInfo(
+                                    requestId,
+                                    executionArn,
+                                    isFirstInvocation,
+                                    executionManager.getExecutionOperation().startTimestamp(),
+                                    userInput,
+                                    PluginInfoConverter.toOperationItemMap(
+                                            executionManager.getOperationsSnapshot(),
+                                            executionManager.getInitialOperationIds()),
+                                    PluginInfoConverter.toOperationItemMap(
+                                            executionManager.getUpdatedOperationsSnapshot(),
+                                            executionManager.getInitialOperationIds())));
+                        }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);
                         }
@@ -207,6 +209,9 @@ public class DurableExecutor {
             Throwable error,
             Object executionInput,
             Object executionResult) {
+        if (pluginRunner.isEmpty()) {
+            return;
+        }
         pluginRunner.onInvocationEnd(new InvocationEndInfo(
                 requestId,
                 executionArn,
