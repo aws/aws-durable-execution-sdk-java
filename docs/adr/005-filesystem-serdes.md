@@ -2,7 +2,7 @@
 
 **Status:** Accepted — Approach A with ComposableSerDes pipeline
 **Date:** 2026-07-02
-**Updated:** 2026-08-24 — Added the composable SerDes pipeline design.
+**Updated:** 2026-08-24 — Added the composable SerDes pipeline and optional executor design.
 
 ## Context
 
@@ -105,6 +105,7 @@ var serDes = new JacksonSerDes().then(fileSystemStage);
 
 return DurableConfig.builder()
         .withSerDes(serDes)
+        .withSerDesExecutorService(customSerDesExecutor)
         .build();
 ```
 
@@ -182,7 +183,8 @@ Pipeline rules:
   preserving stage order.
 - A `null` value at the pipeline boundary short-circuits the entire pipeline: serializing or deserializing `null`
   returns `null` without invoking any stage. A stage returning `null` for non-null input is an error.
-- All stages execute within the same `SerDesRunner` task and observe the same read-only `SerDesContext`.
+- All stages execute within the same `SerDesRunner` invocation and observe the same read-only `SerDesContext`, whether
+  the runner executes inline or dispatches to a configured executor.
 - `ComposableSerDes` is immutable. It is safe for concurrent use only when every contained stage is also safe for
   concurrent use, matching the existing `SerDes` requirement.
 - A failure must identify the stage index and implementation class in `SerDesException`; `SerDesRunner` adds durable
@@ -237,9 +239,9 @@ Retry rules:
 - When the strategy returns `fail`, `RetrySerDes` rethrows the last `RetryableSerDesException`.
 - The same read-only `SerDesContext` remains installed for every attempt because retrying happens inside the original
   `SerDesRunner` task.
-- A retry delay blocks only the dedicated SerDes executor thread. It is an in-invocation infrastructure retry, not a
-  durable wait or checkpoint. Strategies must therefore use short, bounded delays that fit within the Lambda
-  invocation timeout.
+- A retry delay blocks the thread executing the SerDes call. This is the caller thread by default or a SerDes executor
+  thread when one is explicitly configured. It is an in-invocation infrastructure retry, not a durable wait or
+  checkpoint. Strategies must therefore use short, bounded delays that fit within the Lambda invocation timeout.
 - If the invocation is interrupted or times out, replay may execute the SerDes pipeline again. Any stage with side
   effects must use stable addressing and idempotent writes.
 - `RetrySerDes` can wrap an individual stage or the complete pipeline. Wrapping the smallest transient stage avoids
@@ -298,7 +300,11 @@ to its configured value-encoding delegate.
 
 ### Threading
 
-Add a separate executor to `DurableConfig`:
+Preserve the current SDK behavior by executing SerDes inline on the calling thread by default. Do not create a default
+SerDes thread pool. This avoids a queue operation, `CompletableFuture` allocation, and thread hop for ordinary in-memory
+serialization such as `JacksonSerDes`.
+
+Customers can explicitly configure a separate executor when a SerDes performs blocking I/O or retry backoff:
 
 ```java
 DurableConfig.builder()
@@ -306,17 +312,42 @@ DurableConfig.builder()
         .build();
 ```
 
-The default should be a cached daemon thread pool named `durable-sdk-serdes-*`.
+If `withSerDesExecutorService(...)` is not called, the configured executor is absent and `SerDesRunner` invokes the
+pipeline synchronously on the current thread. The builder method accepts only a non-null executor; not calling it is
+how customers select inline execution. If an executor is configured, `SerDesRunner` dispatches the complete pipeline
+to that executor and waits for its result.
 
 The core SDK should route user payload SerDes calls through a helper, tentatively `SerDesRunner`, that:
 
 - Builds the correct `SerDesContext`.
-- Sets `SerDesContext` in TLS inside the SerDes executor task.
+- Executes inline when no SerDes executor is configured.
+- Dispatches to the configured executor only when one is present.
+- Sets `SerDesContext` in TLS on the thread that actually invokes the SerDes.
 - Invokes the existing `SerDes.serialize` and `SerDes.deserialize` methods.
-- Clears TLS after each SerDes call.
+- Restores the previous TLS value after each SerDes call, or clears it when there was no previous value.
 - Wraps failures in `SerDesException` with operation and payload kind metadata.
 
-Because TLS is bound to a single Java thread, `SerDesRunner` must set `SerDesContext` inside the SerDes executor task before calling the user SerDes. It must not rely on inheritable thread-local propagation from the operation thread because cached pool threads can be reused across operations and invocations.
+Equivalent execution flow:
+
+```java
+T run(SerDesContext context, Supplier<T> operation) {
+    if (serDesExecutorService == null) {
+        return runWithContext(context, operation);
+    }
+    return CompletableFuture
+            .supplyAsync(() -> runWithContext(context, operation), serDesExecutorService)
+            .join();
+}
+```
+
+Because TLS is bound to a single Java thread, `SerDesRunner` must install the context on whichever thread executes the
+operation. It must not rely on inheritable thread-local propagation. Restoring the previous value also makes nested
+SDK-managed SerDes calls safe in inline mode.
+
+Inline execution is the compatibility and low-overhead default, not a recommendation to perform blocking storage work
+on operation threads. Documentation and filesystem examples should configure a SerDes executor whenever
+`FileSystemSerDes`, delayed `RetrySerDes`, or another blocking stage is used. If it is omitted, I/O and retry delays
+block the calling thread.
 
 ### Caching
 
@@ -357,8 +388,8 @@ Root user input and output payloads should route through `SerDesRunner` so `File
 2. Add the binary-compatible `SerDes.then(...)` default method and `ComposableSerDes` with immutable stage ordering,
    forward serialization, reverse deserialization, null short-circuiting, and stage-aware errors.
 3. Add `RetryableSerDesException` and `RetrySerDes`, reusing `RetryStrategy` for bounded in-invocation retries.
-4. Add `SerDesRunner` and a `SerDesExecutor` default pool. Add
-   `DurableConfig.withSerDesExecutorService(...)` and validation.
+4. Add `SerDesRunner` with inline execution by default and optional dispatch through
+   `DurableConfig.withSerDesExecutorService(...)`. Do not create a default SerDes pool.
 5. Update root input/output handling in `DurableExecutor` to run user payload SerDes through `SerDesRunner` while
    leaving `DurableInputOutputSerDes` internal.
 6. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`,
@@ -372,9 +403,9 @@ Root user input and output payloads should route through `SerDesRunner` so `File
    writes where supported by the filesystem, retryable I/O failures, and clear validation errors for missing context or
    invalid stage input.
 11. Add unit tests for pipeline ordering, reverse processing, nulls, invalid intermediate stage types, stage failures,
-    retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and clearing,
-    thread-pool isolation, cache hits, cache invalidation, exception reconstruction, malformed filesystem envelopes,
-    and extra-module packaging.
+    retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and restoration,
+    inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception reconstruction,
+    malformed filesystem envelopes, and extra-module packaging.
 12. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
     state, invoke payload/result, child context results, map results, repeated `get()`, replay from file pointers, and
     custom exception types.
@@ -386,6 +417,7 @@ Root user input and output payloads should route through `SerDesRunner` so `File
 
 - Delivers the requested parity feature with the smallest new public API surface.
 - Uses an extension point customers already understand and can configure per operation.
+- Preserves inline SerDes execution by default, avoiding new thread-hop overhead for existing applications.
 - Makes serialization, compression, encryption, and storage independently composable without adding a storage-specific
   core interface.
 - Keeps the first implementation in an optional `aws-durable-execution-sdk-java-extra-*` module.
@@ -505,7 +537,8 @@ The SDK owns the checkpoint/offload envelope. Storage implementations own only t
 
 ### Threading
 
-Use a separate executor for blocking payload I/O. This can be the same configured executor as SerDes work or a distinct executor if the team wants independent tuning:
+Keep ordinary SerDes work inline by default for compatibility. Blocking payload I/O can use the explicitly configured
+SerDes executor or a distinct offload executor if the team wants independent tuning:
 
 ```java
 DurableConfig.builder()
@@ -514,9 +547,11 @@ DurableConfig.builder()
         .build();
 ```
 
-If a single executor is preferred, name it according to the broader responsibility, for example `durable-sdk-payload-*`.
+No executor should be created by default. If a single explicitly configured executor is preferred, name it according
+to the broader responsibility, for example `durable-sdk-payload-*`.
 
-Because filesystem/S3/DynamoDB offloading can block, offload work should not run on the user operation executor or the SDK internal executor.
+Because filesystem/S3/DynamoDB offloading can block, production configurations should provide an executor rather than
+run that work inline. Offload work must never use the internal SDK executor.
 
 ### Caching
 
@@ -560,7 +595,9 @@ This approach gives the SDK one consistent policy for root payloads, operation r
 8. Add offloaded payload caching and deserialized object caching.
 9. Add the `extra-filesystem-offloader` Maven module with artifact ID `aws-durable-execution-sdk-java-extra-filesystem-offloader`, depending on the core SDK.
 10. Implement `FileSystemPayloadOffloader` in `software.amazon.lambda.durable.extra.filesystem` with `ALWAYS` and `OVERFLOW` modes, `URI` and `HASH` path encodings, atomic file writes where supported by the filesystem, and clear validation errors for missing context.
-11. Add unit tests for offload envelope compatibility, precedence rules, thread-pool isolation, cache hits, cache invalidation, exception reconstruction, malformed references, and extra-module packaging.
+11. Add unit tests for offload envelope compatibility, precedence rules, inline execution, explicitly configured
+    thread-pool isolation, cache hits, cache invalidation, exception reconstruction, malformed references, and
+    extra-module packaging.
 12. Add integration tests with `LocalDurableTestRunner` for step results, wait-for-condition state, invoke payload/result, child context results, map results, repeated `get()`, replay from external references, and custom exception types.
 13. Update README and advanced configuration docs with offloader dependency coordinates, filesystem offloader examples, and warnings about `/tmp`, S3 Files flush behavior, and EFS/S3 Files operational requirements.
 
@@ -625,11 +662,16 @@ implementation's serialization method surface. Approach A uses `SerDesContext` T
 
 ### Make SerDes async
 
-Deferred. The TypeScript SDK uses async SerDes because file and service I/O are naturally async in Node.js. Java can isolate blocking work with dedicated executors while preserving synchronous user-facing interfaces. A future major version can revisit `CompletionStage<String>` and `CompletionStage<T>` if there is a stronger need.
+Deferred. The TypeScript SDK uses async SerDes because file and service I/O are naturally async in Node.js. Java can
+optionally isolate blocking work with an explicitly configured executor while preserving synchronous user-facing
+interfaces and inline defaults. A future major version can revisit `CompletionStage<String>` and `CompletionStage<T>`
+if there is a stronger need.
 
-### Run payload storage on the user executor
+### Always run payload storage inline
 
-Rejected. Filesystem-backed storage can block on mounted storage. Running that work on the user executor can starve user operation threads and make unrelated steps appear stuck.
+Rejected as the only execution mode. Inline execution remains the default for backward compatibility and low overhead,
+but filesystem-backed storage and delayed retries can block the calling thread. Customers should explicitly configure a
+SerDes executor for those stages.
 
 ### Run payload storage on the internal SDK executor
 
@@ -653,18 +695,21 @@ Positive:
 - The repository gets a repeatable `aws-durable-execution-sdk-java-extra-xxx` artifact pattern for optional packages.
 - Custom payload implementations get enough context to use external storage safely.
 - Customers can compose reusable SerDes stages without creating a bespoke wrapper for each combination.
-- Blocking payload work is isolated from user operation and SDK coordination threads.
+- Blocking payload work can be isolated from user operation threads with an explicitly configured SerDes executor and
+  never runs on the SDK coordination executor.
 - Repeated file reads and repeated object reconstruction can be reduced within an invocation.
 - User exception type reconstruction remains supported.
 
 Negative:
 
-- Adds executor, context, and caching machinery that must stay deterministic.
+- Adds optional executor, context, and caching machinery that must stay deterministic.
 - Adds at least one Maven module and published artifact to release and document.
 - Approach A requires thread-local SerDes context because the existing `SerDes` methods do not accept context.
 - Approach A relies on a documented string-stage convention that is validated at runtime rather than by Java's type
   system.
 - Pipeline ordering and stage configuration must remain compatible with persisted checkpoints.
+- The inline default means filesystem I/O and retry delays block the caller when customers do not configure a SerDes
+  executor.
 - Repeated `get()` calls may return the same object instance in one invocation.
 - Filesystem-backed storage introduces operational durability requirements outside the SDK's control.
 - Approach A risks overloading the meaning of SerDes.
