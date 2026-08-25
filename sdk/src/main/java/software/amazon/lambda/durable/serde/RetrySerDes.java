@@ -18,7 +18,7 @@ import software.amazon.lambda.durable.retry.RetryStrategy;
  * <p>Only {@link RetryableSerDesException} is retried. Other failures are propagated immediately. Retry delays block
  * the thread executing the SerDes call: the caller by default or the configured SerDes executor thread.
  */
-public final class RetrySerDes implements SerDes {
+public final class RetrySerDes implements SerDes, SerDesStage<Object, String> {
     private static final Sleeper DEFAULT_SLEEPER = delay -> {
         if (delay.getSeconds() > 0) {
             TimeUnit.SECONDS.sleep(delay.getSeconds());
@@ -56,6 +56,16 @@ public final class RetrySerDes implements SerDes {
     @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
         return execute("deserialization", () -> delegate.deserialize(data, typeToken));
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Object deserialize(String data) {
+        if (delegate instanceof SerDesStage<?, ?> stage) {
+            return execute(
+                    "pipeline stage deserialization", () -> ((SerDesStage<Object, String>) stage).deserialize(data));
+        }
+        return execute("pipeline stage deserialization", () -> delegate.deserialize(data, TypeToken.get(String.class)));
     }
 
     @Override

@@ -15,12 +15,14 @@ import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.awssdk.services.lambda.model.InvokeResponse;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.serde.SerDesStage;
 
 class CloudDurableTestRunnerTest {
 
@@ -54,7 +56,7 @@ class CloudDurableTestRunnerTest {
         var wrappingStage = wrappingStage();
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withInputSerDes(new JacksonSerDes().then(wrappingStage));
+                .withInputSerDes(ComposableSerDes.of(new JacksonSerDes(), wrappingStage));
 
         runner.startAsync("value");
 
@@ -72,7 +74,7 @@ class CloudDurableTestRunnerTest {
                         .build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(new JacksonSerDes().then(wrappingStage()));
+                .withSerDes(ComposableSerDes.of(new JacksonSerDes(), wrappingStage()));
 
         runner.startAsync("value");
 
@@ -86,7 +88,7 @@ class CloudDurableTestRunnerTest {
         var mockClient = mock(LambdaClient.class);
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(new JacksonSerDes().then(contextDependentStage()));
+                .withSerDes(ComposableSerDes.of(new JacksonSerDes(), contextDependentStage()));
 
         var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
 
@@ -100,7 +102,7 @@ class CloudDurableTestRunnerTest {
         var mockClient = mock(LambdaClient.class);
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withInputSerDes(contextDependentStage());
+                .withInputSerDes(contextDependentSerDes());
 
         var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
 
@@ -114,8 +116,8 @@ class CloudDurableTestRunnerTest {
         var mockClient = mock(LambdaClient.class);
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(new JacksonSerDes().then(contextDependentStage()))
-                .withInputSerDes(new JacksonSerDes().then(wrappingStage()));
+                .withSerDes(ComposableSerDes.of(new JacksonSerDes(), contextDependentStage()))
+                .withInputSerDes(ComposableSerDes.of(new JacksonSerDes(), wrappingStage()));
 
         var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
 
@@ -132,8 +134,8 @@ class CloudDurableTestRunnerTest {
                 .thenReturn(InvokeResponse.builder()
                         .durableExecutionArn(executionArn)
                         .build());
-        var persistedSerDes =
-                new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
+        var persistedSerDes = ComposableSerDes.of(
+                new JacksonSerDes(), FileSystemSerDes.stageBuilder(basePath).build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
                 .withSerDes(persistedSerDes)
@@ -162,7 +164,7 @@ class CloudDurableTestRunnerTest {
                         .build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withInputSerDes(new JacksonSerDes().then(wrappingStage()))
+                .withInputSerDes(ComposableSerDes.of(new JacksonSerDes(), wrappingStage()))
                 .withSerDes(new JacksonSerDes());
 
         runner.startAsync("value");
@@ -172,22 +174,40 @@ class CloudDurableTestRunnerTest {
         assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
     }
 
-    private static SerDes wrappingStage() {
-        return new SerDes() {
+    private static SerDesStage<String, String> wrappingStage() {
+        return new SerDesStage<>() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 return "<" + value + ">";
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return (T) data.substring(1, data.length() - 1);
+            public String deserialize(String data) {
+                return data.substring(1, data.length() - 1);
             }
         };
     }
 
-    private static SerDes contextDependentStage() {
+    private static SerDesStage<String, String> contextDependentStage() {
+        return new SerDesStage<>() {
+            @Override
+            public String serialize(String value) {
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data) {
+                return data;
+            }
+
+            @Override
+            public boolean requiresDurableContext() {
+                return true;
+            }
+        };
+    }
+
+    private static SerDes contextDependentSerDes() {
         return new SerDes() {
             @Override
             public String serialize(Object value) {

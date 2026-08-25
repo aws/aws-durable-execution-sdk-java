@@ -22,6 +22,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class FileSystemSerDesTest {
     private static final String ARN =
@@ -53,7 +54,7 @@ class FileSystemSerDesTest {
     @Test
     void stageModeComposesWithValueCodec() throws Exception {
         var stage = FileSystemSerDes.stageBuilder(basePath).build();
-        var pipeline = new JacksonSerDes().then(stage);
+        var pipeline = ComposableSerDes.of(new JacksonSerDes(), stage);
         var runner = new SerDesRunner(null);
 
         var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
@@ -69,7 +70,21 @@ class FileSystemSerDesTest {
                 () -> runner.deserialize(stage, envelope, TypeToken.get(Integer.class), context()));
         assertThrows(IllegalStateException.class, () -> FileSystemSerDes.stageBuilder(basePath)
                 .delegate(new JacksonSerDes()));
-        assertThrows(IllegalArgumentException.class, () -> pipeline.then(wrappingStage()));
+        assertThrows(IllegalArgumentException.class, () -> stage.then(wrappingStage()));
+    }
+
+    @Test
+    void retryDecoratorPreservesFilesystemStageComposition() {
+        var retryStage =
+                new RetrySerDes(FileSystemSerDes.stageBuilder(basePath).build(), RetryStrategies.Presets.NO_RETRY);
+        var pipeline = ComposableSerDes.of(new JacksonSerDes(), retryStage);
+        var runner = new SerDesRunner(null);
+
+        var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
+
+        assertEquals(
+                Map.of("id", 42),
+                runner.deserialize(pipeline, envelope, new TypeToken<Map<String, Integer>>() {}, context()));
     }
 
     @Test
@@ -86,7 +101,7 @@ class FileSystemSerDesTest {
             }
         };
         var stage = FileSystemSerDes.stageBuilder(basePath).build();
-        var pipeline = new JacksonSerDes().then(utf8).then(stage);
+        var pipeline = ComposableSerDes.of(new JacksonSerDes(), utf8.then(stage));
         var runner = new SerDesRunner(null);
 
         var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
@@ -188,7 +203,7 @@ class FileSystemSerDesTest {
     void acceptsExternallyOriginatedRawPayloadsOnlyForSupportedSources() {
         var standalone = FileSystemSerDes.builder(basePath).build();
         var stage = FileSystemSerDes.stageBuilder(basePath).build();
-        var pipeline = new JacksonSerDes().then(wrappingStage()).then(stage);
+        var pipeline = ComposableSerDes.of(new JacksonSerDes(), wrappingStage().then(stage));
         var runner = new SerDesRunner(null);
 
         assertEquals(
@@ -290,17 +305,15 @@ class FileSystemSerDesTest {
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
 
-        var failure = assertThrows(
-                IllegalArgumentException.class,
-                () -> new JacksonSerDes().then(filesystem).then(wrappingStage()));
+        var failure = assertThrows(IllegalArgumentException.class, () -> filesystem.then(wrappingStage()));
 
         assertTrue(failure.getMessage().contains("final stage"));
     }
 
     @Test
     void fileReferencesCrossInvokeInputAndResultBoundaries() {
-        var serDes =
-                new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
+        var serDes = ComposableSerDes.of(
+                new JacksonSerDes(), FileSystemSerDes.stageBuilder(basePath).build());
         var runner = new SerDesRunner(null);
         var callerArn =
                 "arn:aws:lambda:us-east-1:123456789012:function:caller:1/durable-execution/caller-execution/caller-invocation";
@@ -475,17 +488,16 @@ class FileSystemSerDesTest {
                 ARN, "1", "operation", null, operationType, operationSubType, SerDesPayloadKind.RESULT, null);
     }
 
-    private static SerDes wrappingStage() {
-        return new SerDes() {
+    private static SerDesStage<String, String> wrappingStage() {
+        return new SerDesStage<>() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 return "<" + value + ">";
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return (T) data.substring(1, data.length() - 1);
+            public String deserialize(String data) {
+                return data.substring(1, data.length() - 1);
             }
         };
     }
