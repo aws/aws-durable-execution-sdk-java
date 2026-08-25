@@ -38,7 +38,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. Use a durable shared mount such as EFS, or S3 Files only when
  * its synchronization and crash-durability tradeoffs are acceptable for the workload.
  */
-public final class FileSystemSerDes implements SerDes, SerDesStage<Object, String> {
+public final class FileSystemSerDes implements SerDes {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
@@ -138,17 +138,6 @@ public final class FileSystemSerDes implements SerDes, SerDesStage<Object, Strin
             throw new SerDesException("Standalone FileSystemSerDes cannot decode a binary stage payload");
         }
         return delegate.deserialize(serializedString, typeToken);
-    }
-
-    @Override
-    public Object deserialize(String data) {
-        if (data == null) {
-            return null;
-        }
-        if (!stageMode) {
-            throw new SerDesException("Standalone FileSystemSerDes cannot be used as a pipeline stage");
-        }
-        return resolveSerializedPayload(data, requireContext()).value();
     }
 
     @Override

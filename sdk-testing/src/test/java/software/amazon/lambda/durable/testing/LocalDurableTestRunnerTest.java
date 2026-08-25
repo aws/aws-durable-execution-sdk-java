@@ -20,9 +20,9 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesStage;
 
 class LocalDurableTestRunnerTest {
@@ -149,9 +149,8 @@ class LocalDurableTestRunnerTest {
     @Test
     void contextDependentPersistedSerDesRequiresExplicitInputSerDes(@TempDir Path basePath) {
         var config = DurableConfig.builder()
-                .withSerDes(ComposableSerDes.of(
-                        new JacksonSerDes(),
-                        FileSystemSerDes.stageBuilder(basePath).build()))
+                .withSerDes(new JacksonSerDes()
+                        .then(FileSystemSerDes.stageBuilder(basePath).build()))
                 .build();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config);
 
@@ -163,12 +162,11 @@ class LocalDurableTestRunnerTest {
     @Test
     void contextDependentPersistedSerDesRequiresValueCodecInput(@TempDir Path basePath) {
         var config = DurableConfig.builder()
-                .withSerDes(ComposableSerDes.of(
-                        new JacksonSerDes(),
-                        FileSystemSerDes.stageBuilder(basePath).build()))
+                .withSerDes(new JacksonSerDes()
+                        .then(FileSystemSerDes.stageBuilder(basePath).build()))
                 .build();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
-                .withInputSerDes(ComposableSerDes.of(new JacksonSerDes(), wrappingStage(new AtomicInteger())));
+                .withInputSerDes(new JacksonSerDes().then(wrappingStage(new AtomicInteger())));
 
         var failure = assertThrows(IllegalStateException.class, () -> runner.run("value"));
 
@@ -178,10 +176,9 @@ class LocalDurableTestRunnerTest {
     @Test
     void initialInputBypassesStagesBeforeFileSystemSerDes(@TempDir Path basePath) {
         var deserializeCalls = new AtomicInteger();
-        var persistedSerDes = ComposableSerDes.of(
-                new JacksonSerDes(),
-                bytesStage(deserializeCalls)
-                        .then(FileSystemSerDes.stageBuilder(basePath).build()));
+        var persistedSerDes = new JacksonSerDes()
+                .then(bytesStage(deserializeCalls))
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
         var config = DurableConfig.builder().withSerDes(persistedSerDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class, (input, context) -> input + ":" + deserializeCalls.get(), config)
@@ -194,17 +191,18 @@ class LocalDurableTestRunnerTest {
         assertEquals("value:0", result.getResult());
     }
 
-    private static SerDesStage<String, String> wrappingStage(AtomicInteger deserializeCalls) {
-        return new SerDesStage<>() {
+    private static SerDes wrappingStage(AtomicInteger deserializeCalls) {
+        return new SerDes() {
             @Override
-            public String serialize(String value) {
+            public String serialize(Object value) {
                 return "<" + value + ">";
             }
 
             @Override
-            public String deserialize(String data) {
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 deserializeCalls.incrementAndGet();
-                return data.substring(1, data.length() - 1);
+                return (T) data.substring(1, data.length() - 1);
             }
         };
     }

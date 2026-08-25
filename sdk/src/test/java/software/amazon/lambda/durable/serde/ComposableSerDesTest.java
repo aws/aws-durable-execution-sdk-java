@@ -26,7 +26,7 @@ class ComposableSerDesTest {
         var calls = new ArrayList<String>();
         var first = stringStage("first", "<", ">", calls);
         var second = stringStage("second", "[", "]", calls);
-        var pipeline = ComposableSerDes.of(new JacksonSerDes(), first.then(second));
+        var pipeline = new JacksonSerDes().then(first).then(second);
 
         var serialized = pipeline.serialize("value");
         var deserialized = pipeline.deserialize(serialized, TypeToken.get(String.class));
@@ -65,7 +65,7 @@ class ComposableSerDesTest {
                 return Base64.getDecoder().decode(data);
             }
         };
-        var pipeline = ComposableSerDes.of(new JacksonSerDes(), utf8.then(base64));
+        var pipeline = new JacksonSerDes().then(utf8).then(base64);
 
         var serialized = pipeline.serialize("value");
         var deserialized = pipeline.deserialize(serialized, TypeToken.get(String.class));
@@ -76,14 +76,15 @@ class ComposableSerDesTest {
     }
 
     @Test
-    void factoryBuilderAndThenFlattenNestedStageChains() {
+    void factoryBuilderAndThenFlattenNestedPipelines() {
         var calls = new ArrayList<String>();
-        var nested = stringStage("one", "1", "1", calls).then(stringStage("two", "2", "2", calls));
-        var pipeline =
-                ComposableSerDes.builder(new JacksonSerDes()).then(nested).build();
+        var nested = ComposableSerDes.builder(stringStage("codec", "", "", calls))
+                .then(stringStage("one", "1", "1", calls))
+                .build();
+        var pipeline = ComposableSerDes.of(nested).then(stringStage("two", "2", "2", calls));
 
-        assertEquals("21\"value\"12", pipeline.serialize("value"));
-        assertEquals(List.of("one-serialize", "two-serialize"), calls);
+        assertEquals("21value12", pipeline.serialize("value"));
+        assertEquals(List.of("codec-serialize", "one-serialize", "two-serialize"), calls);
     }
 
     @Test
@@ -112,19 +113,20 @@ class ComposableSerDesTest {
     @Test
     void valueCodecMayDecodeNonNullRepresentationToNull() {
         var intermediateCalls = new AtomicInteger();
-        var identityStage = new SerDesStage<String, String>() {
+        var identityStage = new SerDes() {
             @Override
-            public String serialize(String value) {
-                return value;
+            public String serialize(Object value) {
+                return value.toString();
             }
 
             @Override
-            public String deserialize(String data) {
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 intermediateCalls.incrementAndGet();
-                return data;
+                return (T) data;
             }
         };
-        var pipeline = ComposableSerDes.of(new JacksonSerDes(), identityStage);
+        var pipeline = new JacksonSerDes().then(identityStage);
 
         assertNull(pipeline.deserialize("null", TypeToken.get(Object.class)));
         assertEquals(1, intermediateCalls.get());
@@ -133,27 +135,29 @@ class ComposableSerDesTest {
     @Test
     void stageMayDecodeExternalDataDirectlyWithValueCodec() {
         var transformDeserializations = new AtomicInteger();
-        var transform = new SerDesStage<String, String>() {
+        var transform = new SerDes() {
             @Override
-            public String serialize(String value) {
+            public String serialize(Object value) {
                 return "<" + value + ">";
             }
 
             @Override
-            public String deserialize(String data) {
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 transformDeserializations.incrementAndGet();
-                return data.substring(1, data.length() - 1);
+                return (T) data.substring(1, data.length() - 1);
             }
         };
-        var externalBoundary = new SerDesStage<String, String>() {
+        var externalBoundary = new SerDes() {
             @Override
-            public String serialize(String value) {
-                return value;
+            public String serialize(Object value) {
+                return value.toString();
             }
 
             @Override
-            public String deserialize(String data) {
-                return data;
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data;
             }
 
             @Override
@@ -161,7 +165,7 @@ class ComposableSerDesTest {
                 return SerDesStageResult.decodeWithValueCodec(data);
             }
         };
-        var pipeline = ComposableSerDes.of(new JacksonSerDes(), transform.then(externalBoundary));
+        var pipeline = new JacksonSerDes().then(transform).then(externalBoundary);
 
         assertEquals("value", pipeline.deserialize("\"value\"", TypeToken.get(String.class)));
         assertEquals(0, transformDeserializations.get());
@@ -169,15 +173,16 @@ class ComposableSerDesTest {
 
     @Test
     void rejectsStagesAfterTerminalStage() {
-        var terminal = new SerDesStage<String, String>() {
+        var terminal = new SerDes() {
             @Override
-            public String serialize(String value) {
-                return value;
+            public String serialize(Object value) {
+                return value.toString();
             }
 
             @Override
-            public String deserialize(String data) {
-                return data;
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data;
             }
 
             @Override
@@ -187,7 +192,8 @@ class ComposableSerDesTest {
         };
 
         var failure = assertThrows(
-                IllegalArgumentException.class, () -> terminal.then(stringStage("late", "", "", new ArrayList<>())));
+                IllegalArgumentException.class,
+                () -> new JacksonSerDes().then(terminal).then(stringStage("late", "", "", new ArrayList<>())));
 
         assertTrue(failure.getMessage().contains("stage 1"));
         assertTrue(failure.getMessage().contains("final stage"));
@@ -195,19 +201,19 @@ class ComposableSerDesTest {
 
     @Test
     void rejectsNullIntermediateAndNonStringBoundaryValues() {
-        var nullStage = new SerDesStage<String, String>() {
+        var nullStage = new SerDes() {
             @Override
-            public String serialize(String value) {
+            public String serialize(Object value) {
                 return null;
             }
 
             @Override
-            public String deserialize(String data) {
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 return null;
             }
         };
-        var nullFailure = assertThrows(SerDesException.class, () -> ComposableSerDes.of(new JacksonSerDes(), nullStage)
-                .serialize("value"));
+        var nullFailure = assertThrows(
+                SerDesException.class, () -> new JacksonSerDes().then(nullStage).serialize("value"));
         assertTrue(nullFailure.getMessage().contains("stage 1"));
         assertTrue(nullFailure.getMessage().contains(nullStage.getClass().getName()));
 
@@ -222,9 +228,9 @@ class ComposableSerDesTest {
                 return "x".repeat(data);
             }
         };
-        var typeFailure =
-                assertThrows(SerDesException.class, () -> ComposableSerDes.of(new JacksonSerDes(), nonStringFinalStage)
-                        .serialize("value"));
+        var typeFailure = assertThrows(
+                SerDesException.class,
+                () -> new JacksonSerDes().then(nonStringFinalStage).serialize("value"));
         assertTrue(typeFailure.getMessage().contains("final stage"));
         assertTrue(typeFailure.getMessage().contains(Integer.class.getName()));
     }
@@ -243,8 +249,9 @@ class ComposableSerDesTest {
             }
         };
 
-        var failure = assertThrows(SerDesException.class, () -> ComposableSerDes.of(new JacksonSerDes(), integerStage)
-                .serialize("value"));
+        var failure = assertThrows(
+                SerDesException.class,
+                () -> new JacksonSerDes().then(integerStage).serialize("value"));
 
         assertTrue(failure.getMessage().contains("stage 1"));
         assertInstanceOf(ClassCastException.class, failure.getCause());
@@ -252,21 +259,21 @@ class ComposableSerDesTest {
 
     @Test
     void preservesRetryabilityWhenDecoratingStageFailures() {
-        var transientStage = new SerDesStage<String, String>() {
+        var transientStage = new SerDes() {
             @Override
-            public String serialize(String value) {
+            public String serialize(Object value) {
                 throw new RetryableSerDesException("retry");
             }
 
             @Override
-            public String deserialize(String data) {
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 return null;
             }
         };
 
         var failure = assertThrows(
                 RetryableSerDesException.class,
-                () -> ComposableSerDes.of(new JacksonSerDes(), transientStage).serialize("value"));
+                () -> new JacksonSerDes().then(transientStage).serialize("value"));
 
         assertInstanceOf(RetryableSerDesException.class, failure.getCause());
         assertTrue(failure.getMessage().contains("stage 1"));
@@ -275,30 +282,30 @@ class ComposableSerDesTest {
     @Test
     void preservesFatalErrorsFromEveryPipelineCall() {
         var serializeError = new OutOfMemoryError("serialize");
-        var serializeStage = new SerDesStage<String, String>() {
+        var serializeStage = new SerDes() {
             @Override
-            public String serialize(String value) {
+            public String serialize(Object value) {
                 throw serializeError;
             }
 
             @Override
-            public String deserialize(String data) {
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 return null;
             }
         };
-        assertSame(serializeError, assertThrows(OutOfMemoryError.class, () -> ComposableSerDes.of(
-                        new JacksonSerDes(), serializeStage)
+        assertSame(serializeError, assertThrows(OutOfMemoryError.class, () -> new JacksonSerDes()
+                .then(serializeStage)
                 .serialize("value")));
 
         var stringStageError = new StackOverflowError("string-stage-deserialize");
-        var stringStage = new SerDesStage<String, String>() {
+        var stringStage = new SerDes() {
             @Override
-            public String serialize(String value) {
-                return value;
+            public String serialize(Object value) {
+                return value.toString();
             }
 
             @Override
-            public String deserialize(String data) {
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 return null;
             }
 
@@ -307,8 +314,8 @@ class ComposableSerDesTest {
                 throw stringStageError;
             }
         };
-        assertSame(stringStageError, assertThrows(StackOverflowError.class, () -> ComposableSerDes.of(
-                        new JacksonSerDes(), stringStage)
+        assertSame(stringStageError, assertThrows(StackOverflowError.class, () -> new JacksonSerDes()
+                .then(stringStage)
                 .deserialize("value", TypeToken.get(String.class))));
 
         var valueCodecError = new AssertionError("value-codec-deserialize");
@@ -327,19 +334,19 @@ class ComposableSerDesTest {
                 .deserialize("value", TypeToken.get(String.class))));
     }
 
-    private static SerDesStage<String, String> stringStage(
-            String name, String prefix, String suffix, List<String> calls) {
-        return new SerDesStage<>() {
+    private static SerDes stringStage(String name, String prefix, String suffix, List<String> calls) {
+        return new SerDes() {
             @Override
-            public String serialize(String value) {
+            public String serialize(Object value) {
                 calls.add(name + "-serialize");
                 return prefix + value + suffix;
             }
 
             @Override
-            public String deserialize(String data) {
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 calls.add(name + "-deserialize");
-                return data.substring(prefix.length(), data.length() - suffix.length());
+                return (T) data.substring(prefix.length(), data.length() - suffix.length());
             }
         };
     }

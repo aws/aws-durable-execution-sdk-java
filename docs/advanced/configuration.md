@@ -66,7 +66,7 @@ var resilientFileSystemStage = new RetrySerDes(
     fileSystemStage,
     RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
 
-var serDes = ComposableSerDes.of(new JacksonSerDes(), resilientFileSystemStage);
+var serDes = new JacksonSerDes().then(resilientFileSystemStage);
 var serDesExecutor = Executors.newFixedThreadPool(4);
 
 return DurableConfig.builder()

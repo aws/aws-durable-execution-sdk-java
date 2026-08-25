@@ -33,8 +33,9 @@ There are a few Java-specific constraints:
 
 Keep the existing `SerDes` serialization methods source- and binary-compatible, add a typed `SerDesStage<I, O>`
 contract and a core `ComposableSerDes` implementation which together form a processing pipeline, and implement
-`FileSystemSerDes` in the core SDK. `SerDes` remains the persisted value-codec boundary, while intermediate
-`SerDesStage` instances may exchange arbitrary Java types and compose independently. The filesystem stage uses
+`FileSystemSerDes` in the core SDK. Existing `SerDes` implementations continue to participate as string-producing
+stages without changing their binary contract, while dedicated intermediate stages may exchange arbitrary Java types.
+The filesystem stage uses
 `SerDesContext.getCurrentContext()` to identify the durable execution and entity being serialized.
 
 ```java
@@ -42,9 +43,19 @@ public interface SerDesStage<I, O> {
     O serialize(I value);
 
     I deserialize(O data);
+}
 
-    default <N> SerDesStage<I, N> then(SerDesStage<? super O, N> nextStage) {
-        return ChainedSerDesStage.of(this, nextStage);
+public interface SerDes {
+    String serialize(Object value);
+
+    <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    default ComposableSerDes then(SerDes nextStage) {
+        return ComposableSerDes.of(this, nextStage);
+    }
+
+    default ComposableSerDes then(SerDesStage<?, ?> nextStage) {
+        return ComposableSerDes.builder(this).then(nextStage).build();
     }
 }
 ```
@@ -106,7 +117,7 @@ var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-pa
         .previewGenerator(optionalPreviewGenerator)
         .build();
 
-var serDes = ComposableSerDes.of(new JacksonSerDes(), fileSystemStage);
+var serDes = new JacksonSerDes().then(fileSystemStage);
 
 return DurableConfig.builder()
         .withSerDes(serDes)
@@ -121,14 +132,17 @@ the existing `serialize` and `deserialize` methods:
 
 ```java
 public final class ComposableSerDes implements SerDes {
-    public static ComposableSerDes of(SerDes valueCodec);
-    public static ComposableSerDes of(SerDes valueCodec, SerDesStage<?, ?> stage);
+    public static ComposableSerDes of(SerDes first, SerDes... remaining);
 
     public static Builder builder(SerDes valueCodec);
 
     public SerDes getValueCodec();
 
+    public ComposableSerDes then(SerDes stage);
+    public ComposableSerDes then(SerDesStage<?, ?> stage);
+
     public static final class Builder {
+        public Builder then(SerDes stage);
         public Builder then(SerDesStage<?, ?> stage);
 
         public ComposableSerDes build();
@@ -204,8 +218,8 @@ Pipeline rules:
   `String`, and reverse processing must return a `String` to the value codec.
 - A stage may declare that it requires durable context or that it must be terminal. A terminal stage must be the last
   stage so later transformations cannot invalidate its checkpoint-size or storage decision.
-- `SerDesStage.then(...)`, `ComposableSerDes.of(...)`, and the builder flatten nested stage chains while preserving
-  stage order.
+- `SerDes.then(...)`, `ComposableSerDes.of(...)`, and the builder flatten nested `ComposableSerDes` instances while
+  preserving stage order.
 - A `null` value at the pipeline boundary short-circuits the entire pipeline: serializing or deserializing `null`
   returns `null` without invoking any stage. A stage returning `null` for non-null input is an error. The value
   codec may decode a non-null representation such as the JSON literal `null` to a null domain value.
@@ -233,15 +247,14 @@ Pipeline rules:
 - Invocation-scoped caching wraps the complete pipeline. Cache keys use the final checkpoint string and target type, so
   cache hits skip every reverse-processing stage, including filesystem reads.
 
-The default `SerDesStage.then(...)` method provides independently reusable processing chains. `ComposableSerDes`
-connects one chain to the persisted value codec:
+The default `SerDes.then(...)` method and immutable `ComposableSerDes.then(...)` method provide a concise form for
+independently reusable processing chains:
 
 ```java
-var secureStages = compressionStage
+var securePayloads = new JacksonSerDes()
+        .then(compressionSerDes)
         .then(encryptionSerDes)
         .then(fileSystemStage);
-
-var securePayloads = ComposableSerDes.of(new JacksonSerDes(), secureStages);
 ```
 
 ### Retryable SerDes stages
@@ -259,7 +272,7 @@ var resilientFileSystemStage = new RetrySerDes(
                 2.0,
                 JitterStrategy.FULL));
 
-var serDes = ComposableSerDes.of(new JacksonSerDes(), resilientFileSystemStage);
+var serDes = new JacksonSerDes().then(resilientFileSystemStage);
 ```
 
 Retry rules:
@@ -467,8 +480,9 @@ must not synthesize a durable context and serialize initial input through the fu
 
 1. Add `SerDesContext`, `SerDesPayloadKind`, and package-private TLS setter/clearer support. Leave the existing
    `SerDes` methods unchanged.
-2. Add `SerDesStage.then(...)` and `ComposableSerDes` with immutable stage ordering, forward serialization, reverse
-   deserialization, external-boundary bypass, terminal-stage validation, null short-circuiting, and stage-aware errors.
+2. Add the binary-compatible `SerDes.then(...)` default method and `ComposableSerDes` with immutable stage ordering,
+   forward serialization, reverse deserialization, external-boundary bypass, terminal-stage validation, null
+   short-circuiting, and stage-aware errors.
 3. Add `RetryableSerDesException` and `RetrySerDes`, reusing `RetryStrategy` for bounded in-invocation retries.
 4. Add `SerDesRunner` with inline execution by default and optional dispatch through
    `DurableConfig.withSerDesExecutorService(...)`. Do not create a default SerDes pool.
@@ -706,7 +720,7 @@ This approach gives the SDK one consistent policy for root payloads, operation r
 | Responsibility boundary | Combines value serialization and storage-reference creation in ordered, composable SerDes stages. | Keeps object encoding in `SerDes` and storage movement in a separate offloader. |
 | User configuration | Users configure one SerDes or a `ComposableSerDes` pipeline. Operation-level SerDes selection replaces the whole pipeline. | Users configure both a SerDes and an offloader. The SDK must define global, per-operation, and per-payload precedence. |
 | Parity with JS issue | Closest to the current JavaScript `createFileSystemSerdes` model and issue #463 wording. | Diverges from JavaScript naming and shape, though it may be architecturally cleaner for Java. |
-| Core SDK changes | Adds `SerDesStage`, `ComposableSerDes`, and `SerDesContext` TLS while leaving `SerDes.then(...)` absent and the existing serialization methods unchanged. | Requires a new core extension point, envelope type, config surface, payload pipeline, and migration story. |
+| Core SDK changes | Adds the compatible `SerDes.then(...)` default method, `ComposableSerDes`, and `SerDesContext` TLS because the existing serialization methods have no context parameter. | Requires a new core extension point, envelope type, config surface, payload pipeline, and migration story. |
 | Applicability | Any compatible SerDes stages can be chained, but storage stages still own their envelope and lifecycle behavior. | Any SerDes output can be offloaded uniformly after serialization. Users can combine Jackson/custom SerDes with any offloader. |
 | Envelope ownership | FileSystemSerDes owns the checkpoint envelope (`data`, `file`, preview), so the SDK treats it as opaque serialized data. | SDK owns the checkpoint/offload envelope and must guarantee it composes with replay, errors, callbacks, and test utilities. |
 | Caching | SDK can cache deserialized values, but FileSystemSerDes may still do file reads internally unless cache hits happen before SerDes. | SDK can cache at both layers: resolved offloaded payload text and final deserialized object. |

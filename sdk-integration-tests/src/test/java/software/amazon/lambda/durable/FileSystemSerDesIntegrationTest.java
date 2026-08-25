@@ -37,7 +37,6 @@ import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.WaitStrategies;
-import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -161,9 +160,9 @@ class FileSystemSerDesIntegrationTest {
                 invokePayload.set(value);
             }
         });
-        var serDes = ComposableSerDes.of(
-                new JacksonSerDes(),
-                recordingStage.then(FileSystemSerDes.stageBuilder(basePath).build()));
+        var serDes = new JacksonSerDes()
+                .then(recordingStage)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class,
@@ -279,9 +278,9 @@ class FileSystemSerDesIntegrationTest {
                 resultDeserializations.incrementAndGet();
             }
         });
-        var serDes = ComposableSerDes.of(
-                new JacksonSerDes(),
-                countingStage.then(FileSystemSerDes.stageBuilder(basePath).build()));
+        var serDes = new JacksonSerDes()
+                .then(countingStage)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class,
@@ -316,9 +315,9 @@ class FileSystemSerDesIntegrationTest {
                 resultAttempts.add(context.attempt());
             }
         });
-        var serDes = ComposableSerDes.of(
-                new JacksonSerDes(),
-                attemptStage.then(FileSystemSerDes.stageBuilder(basePath).build()));
+        var serDes = new JacksonSerDes()
+                .then(attemptStage)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var stepConfig = StepConfig.builder()
                 .retryStrategy(RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)))
@@ -481,9 +480,9 @@ class FileSystemSerDesIntegrationTest {
                 return new String(data, StandardCharsets.UTF_8);
             }
         };
-        return ComposableSerDes.of(
-                new JacksonSerDes(),
-                utf8.then(FileSystemSerDes.stageBuilder(basePath).build()));
+        return new JacksonSerDes()
+                .then(utf8)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
     }
 
     private static DurableExecutionInput durableInput(
@@ -512,18 +511,20 @@ class FileSystemSerDesIntegrationTest {
                 .build();
     }
 
-    private static SerDesStage<String, String> identityStage(RecordingFunction recorder) {
-        return new SerDesStage<>() {
+    private static SerDes identityStage(RecordingFunction recorder) {
+        return new SerDes() {
             @Override
-            public String serialize(String value) {
-                recorder.record("serialize", value);
-                return value;
+            public String serialize(Object value) {
+                var stringValue = (String) value;
+                recorder.record("serialize", stringValue);
+                return stringValue;
             }
 
             @Override
-            public String deserialize(String data) {
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 recorder.record("deserialize", data);
-                return data;
+                return (T) data;
             }
         };
     }

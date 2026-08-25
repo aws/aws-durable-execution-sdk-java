@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.serde;
 
-import java.util.Objects;
-
 /**
  * A reversible typed stage in a {@link ComposableSerDes} pipeline.
  *
@@ -53,17 +51,5 @@ public interface SerDesStage<I, O> {
     /** Returns whether this stage must be the final stage in a composable pipeline. */
     default boolean isTerminalPipelineStage() {
         return false;
-    }
-
-    /**
-     * Returns an immutable stage chain that applies this stage followed by {@code nextStage} during serialization and
-     * reverses them in the opposite order during deserialization.
-     *
-     * @param nextStage the reversible stage that consumes this stage's output
-     * @param <N> the next stage's output type
-     * @return the composed stage chain
-     */
-    default <N> SerDesStage<I, N> then(SerDesStage<? super O, N> nextStage) {
-        return ChainedSerDesStage.of(this, Objects.requireNonNull(nextStage, "nextStage cannot be null"));
     }
 }

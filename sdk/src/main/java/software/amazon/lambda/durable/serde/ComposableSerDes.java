@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.serde;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import software.amazon.lambda.durable.TypeToken;
@@ -18,15 +19,15 @@ import software.amazon.lambda.durable.exception.SerDesException;
  */
 public final class ComposableSerDes implements SerDes {
     private final SerDes valueCodec;
-    private final List<SerDesStage<?, ?>> stages;
+    private final List<Object> stages;
 
-    private ComposableSerDes(SerDes valueCodec, List<SerDesStage<?, ?>> stages) {
+    private ComposableSerDes(SerDes valueCodec, List<Object> stages) {
         this.valueCodec = Objects.requireNonNull(valueCodec, "valueCodec cannot be null");
         if (!stages.isEmpty() && valueCodec.isTerminalPipelineStage()) {
             throw terminalStageFailure(0, valueCodec);
         }
         for (int index = 0; index < stages.size() - 1; index++) {
-            if (stages.get(index).isTerminalPipelineStage()) {
+            if (isTerminal(stages.get(index))) {
                 throw terminalStageFailure(index + 1, stages.get(index));
             }
         }
@@ -34,24 +35,24 @@ public final class ComposableSerDes implements SerDes {
     }
 
     /**
-     * Creates a pipeline containing only a value codec.
+     * Creates a pipeline with a value codec followed by zero or more typed stages.
      *
-     * @param valueCodec the value codec
+     * @param first the value codec
+     * @param remaining reversible SerDes stages
      * @return an immutable pipeline
      */
-    public static ComposableSerDes of(SerDes valueCodec) {
-        return builder(valueCodec).build();
-    }
-
-    /**
-     * Creates a pipeline with a value codec followed by a typed stage or stage chain.
-     *
-     * @param valueCodec the value codec
-     * @param stage the reversible typed stage or stage chain
-     * @return an immutable pipeline
-     */
-    public static ComposableSerDes of(SerDes valueCodec, SerDesStage<?, ?> stage) {
-        return builder(valueCodec).then(stage).build();
+    public static ComposableSerDes of(SerDes first, SerDes... remaining) {
+        Objects.requireNonNull(remaining, "remaining stages cannot be null");
+        var valueCodec = Objects.requireNonNull(first, "first stage cannot be null");
+        var stages = new ArrayList<Object>();
+        if (valueCodec instanceof ComposableSerDes composable) {
+            valueCodec = composable.valueCodec;
+            stages.addAll(composable.stages);
+        }
+        Arrays.stream(remaining)
+                .map(stage -> Objects.requireNonNull(stage, "pipeline stage cannot be null"))
+                .forEach(stage -> addFlattened(stages, stage));
+        return new ComposableSerDes(valueCodec, stages);
     }
 
     /**
@@ -71,14 +72,28 @@ public final class ComposableSerDes implements SerDes {
 
     @Override
     public boolean requiresDurableContext() {
-        return valueCodec.requiresDurableContext() || stages.stream().anyMatch(SerDesStage::requiresDurableContext);
+        return valueCodec.requiresDurableContext() || stages.stream().anyMatch(ComposableSerDes::requiresContext);
     }
 
     @Override
     public boolean isTerminalPipelineStage() {
-        return stages.isEmpty()
-                ? valueCodec.isTerminalPipelineStage()
-                : stages.get(stages.size() - 1).isTerminalPipelineStage();
+        return stages.isEmpty() ? valueCodec.isTerminalPipelineStage() : isTerminal(stages.get(stages.size() - 1));
+    }
+
+    /** Returns a new pipeline with the supplied stage appended. */
+    @Override
+    public ComposableSerDes then(SerDes stage) {
+        var combined = new ArrayList<>(stages);
+        addFlattened(combined, Objects.requireNonNull(stage, "stage cannot be null"));
+        return new ComposableSerDes(valueCodec, combined);
+    }
+
+    /** Returns a new pipeline with the supplied typed stage appended. */
+    @Override
+    public ComposableSerDes then(SerDesStage<?, ?> stage) {
+        var combined = new ArrayList<>(stages);
+        addFlattened(combined, Objects.requireNonNull(stage, "stage cannot be null"));
+        return new ComposableSerDes(valueCodec, combined);
     }
 
     @Override
@@ -120,9 +135,11 @@ public final class ComposableSerDes implements SerDes {
     }
 
     @SuppressWarnings("unchecked")
-    private static Object invokeStageSerialize(SerDesStage<?, ?> stage, Object value, int index) {
+    private static Object invokeStageSerialize(Object stage, Object value, int index) {
         try {
-            var result = ((SerDesStage<Object, Object>) stage).serialize(value);
+            var result = stage instanceof SerDes serDes
+                    ? serDes.serialize(value)
+                    : ((SerDesStage<Object, Object>) stage).serialize(value);
             if (result == null) {
                 throw new SerDesException("Stage returned null for a non-null value");
             }
@@ -133,9 +150,18 @@ public final class ComposableSerDes implements SerDes {
     }
 
     @SuppressWarnings("unchecked")
-    private static SerDesStageResult invokeStageDeserialize(SerDesStage<?, ?> stage, Object data, int index) {
+    private static SerDesStageResult invokeStageDeserialize(Object stage, Object data, int index) {
         try {
-            var result = ((SerDesStage<Object, Object>) stage).deserializePipelineStage(data);
+            SerDesStageResult result;
+            if (stage instanceof SerDes serDes) {
+                if (!(data instanceof String stringData)) {
+                    throw new SerDesException("SerDes stage requires String input but received "
+                            + data.getClass().getName());
+                }
+                result = serDes.deserializePipelineStage(stringData);
+            } else {
+                result = ((SerDesStage<Object, Object>) stage).deserializePipelineStage(data);
+            }
             if (result == null) {
                 throw new SerDesException("Stage returned a null pipeline result");
             }
@@ -184,18 +210,35 @@ public final class ComposableSerDes implements SerDes {
                 index, stage.getClass().getName()));
     }
 
-    private static void addFlattened(List<SerDesStage<?, ?>> target, SerDesStage<?, ?> stage) {
-        if (stage instanceof ChainedSerDesStage<?, ?> chained) {
-            target.addAll(chained.stages());
+    private static boolean requiresContext(Object stage) {
+        return stage instanceof SerDes serDes
+                ? serDes.requiresDurableContext()
+                : ((SerDesStage<?, ?>) stage).requiresDurableContext();
+    }
+
+    private static boolean isTerminal(Object stage) {
+        return stage instanceof SerDes serDes
+                ? serDes.isTerminalPipelineStage()
+                : ((SerDesStage<?, ?>) stage).isTerminalPipelineStage();
+    }
+
+    private static void addFlattened(List<Object> target, SerDes stage) {
+        if (stage instanceof ComposableSerDes composable) {
+            target.add(composable.valueCodec);
+            target.addAll(composable.stages);
         } else {
             target.add(stage);
         }
     }
 
+    private static void addFlattened(List<Object> target, SerDesStage<?, ?> stage) {
+        target.add(stage);
+    }
+
     /** Builder for an immutable {@link ComposableSerDes}. */
     public static final class Builder {
         private SerDes valueCodec;
-        private final List<SerDesStage<?, ?>> stages = new ArrayList<>();
+        private final List<Object> stages = new ArrayList<>();
 
         private Builder(SerDes valueCodec) {
             this.valueCodec = Objects.requireNonNull(valueCodec, "valueCodec cannot be null");
@@ -203,6 +246,12 @@ public final class ComposableSerDes implements SerDes {
                 this.valueCodec = composable.valueCodec;
                 stages.addAll(composable.stages);
             }
+        }
+
+        /** Appends a reversible typed stage. */
+        public Builder then(SerDes stage) {
+            addFlattened(stages, Objects.requireNonNull(stage, "stage cannot be null"));
+            return this;
         }
 
         /** Appends a reversible typed stage. */

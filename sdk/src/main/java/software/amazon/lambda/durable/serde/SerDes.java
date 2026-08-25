@@ -5,7 +5,12 @@ package software.amazon.lambda.durable.serde;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.SerDesException;
 
-/** Interface for serialization and deserialization of objects at the persisted string boundary. */
+/**
+ * Interface for serialization and deserialization of objects at the persisted string boundary.
+ *
+ * <p>Implementations can also be used as string-producing stages in a {@link ComposableSerDes}. Use {@link SerDesStage}
+ * for typed intermediate transformations that produce or consume non-string values.
+ */
 public interface SerDes {
     /**
      * Serializes an object to a JSON string.
@@ -65,5 +70,29 @@ public interface SerDes {
      */
     default boolean isTerminalPipelineStage() {
         return false;
+    }
+
+    /**
+     * Returns an immutable processing pipeline that invokes this SerDes followed by {@code nextStage} when serializing
+     * and in reverse order when deserializing.
+     *
+     * <p>This SerDes is the value codec. Intermediate stages may transform values into arbitrary Java types, but the
+     * final stage must return a string for persistence.
+     *
+     * @param nextStage the reversible stage to append
+     * @return a composable SerDes pipeline
+     */
+    default ComposableSerDes then(SerDes nextStage) {
+        return ComposableSerDes.of(this, nextStage);
+    }
+
+    /**
+     * Returns an immutable processing pipeline with a typed intermediate stage appended.
+     *
+     * @param nextStage the reversible typed stage to append
+     * @return a composable SerDes pipeline
+     */
+    default ComposableSerDes then(SerDesStage<?, ?> nextStage) {
+        return ComposableSerDes.builder(this).then(nextStage).build();
     }
 }
