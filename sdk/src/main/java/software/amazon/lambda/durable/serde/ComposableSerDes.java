@@ -12,17 +12,15 @@ import software.amazon.lambda.durable.exception.SerDesException;
 /**
  * An immutable SerDes processing pipeline.
  *
- * <p>The value codec may produce any representation type. The {@link SerDesStage} chain starts with that representation
- * and may exchange arbitrary intermediate Java types. Serialization runs from first to last; deserialization runs from
- * last to first. Only the final serialized value must be a string.
- *
- * @param <R> the representation exchanged between the value codec and the first stage
+ * <p>The first stage is the value codec. Later {@link SerDesStage} instances may exchange arbitrary intermediate Java
+ * types. Serialization runs from first to last; deserialization runs from last to first. The final serialized value and
+ * the value returned to the value codec during deserialization must be strings.
  */
-public final class ComposableSerDes<R> implements SerDes {
-    private final ValueSerDes<R> valueCodec;
+public final class ComposableSerDes implements SerDes {
+    private final SerDes valueCodec;
     private final List<SerDesStage<?, ?>> stages;
 
-    private ComposableSerDes(ValueSerDes<R> valueCodec, List<SerDesStage<?, ?>> stages) {
+    private ComposableSerDes(SerDes valueCodec, List<SerDesStage<?, ?>> stages) {
         this.valueCodec = Objects.requireNonNull(valueCodec, "valueCodec cannot be null");
         if (!stages.isEmpty() && valueCodec.isTerminalPipelineStage()) {
             throw terminalStageFailure(0, valueCodec);
@@ -41,27 +39,33 @@ public final class ComposableSerDes<R> implements SerDes {
      * @param valueCodec the value codec
      * @return an immutable pipeline
      */
-    public static ComposableSerDes<String> of(SerDes valueCodec) {
-        return new ComposableSerDes<>(valueCodec, List.of());
+    public static ComposableSerDes of(SerDes valueCodec) {
+        return builder(valueCodec).build();
     }
 
     /**
-     * Creates a pipeline with a typed value codec followed by a stage or stage chain that produces the checkpoint
-     * string.
+     * Creates a pipeline with a value codec followed by a typed stage or stage chain.
      *
      * @param valueCodec the value codec
      * @param stage the reversible typed stage or stage chain
-     * @param <R> the representation exchanged between the value codec and the first stage
      * @return an immutable pipeline
      */
-    public static <R> ComposableSerDes<R> of(ValueSerDes<R> valueCodec, SerDesStage<? super R, String> stage) {
-        var stages = new ArrayList<SerDesStage<?, ?>>();
-        addFlattened(stages, Objects.requireNonNull(stage, "stage cannot be null"));
-        return new ComposableSerDes<>(valueCodec, stages);
+    public static ComposableSerDes of(SerDes valueCodec, SerDesStage<?, ?> stage) {
+        return builder(valueCodec).then(stage).build();
+    }
+
+    /**
+     * Creates a pipeline builder.
+     *
+     * @param valueCodec the first stage which converts values to and from strings
+     * @return a new builder
+     */
+    public static Builder builder(SerDes valueCodec) {
+        return new Builder(valueCodec);
     }
 
     /** Returns the value codec at the start of this pipeline. */
-    public ValueSerDes<R> getValueCodec() {
+    public SerDes getValueCodec() {
         return valueCodec;
     }
 
@@ -100,24 +104,19 @@ public final class ComposableSerDes<R> implements SerDes {
         }
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
         Object current = data;
-        boolean skipToExternalCodec = false;
         for (int index = stages.size() - 1; index >= 0; index--) {
             var decoded = invokeStageDeserialize(stages.get(index), current, index + 1);
             current = decoded.value();
             if (decoded.skipRemainingStages()) {
-                skipToExternalCodec = true;
                 break;
             }
         }
-        if (skipToExternalCodec) {
-            if (!(current instanceof String externalInput)) {
-                throw new SerDesException("SerDes pipeline external boundary produced "
-                        + current.getClass().getName()
-                        + " instead of String");
-            }
-            return invokeExternalValueCodecDeserialize(valueCodec, externalInput, typeToken);
+        if (!(current instanceof String valueCodecInput)) {
+            throw new SerDesException("SerDes pipeline produced "
+                    + current.getClass().getName()
+                    + " instead of String for the value codec");
         }
-        return invokeValueCodecDeserialize(valueCodec, current, typeToken);
+        return invokeValueCodecDeserialize(valueCodec, valueCodecInput, typeToken);
     }
 
     @SuppressWarnings("unchecked")
@@ -146,7 +145,7 @@ public final class ComposableSerDes<R> implements SerDes {
         }
     }
 
-    private static Object invokeValueCodecSerialize(ValueSerDes<?> valueCodec, Object value) {
+    private static String invokeValueCodecSerialize(SerDes valueCodec, Object value) {
         try {
             var result = valueCodec.serialize(value);
             if (result == null) {
@@ -158,22 +157,11 @@ public final class ComposableSerDes<R> implements SerDes {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static <R, T> T invokeValueCodecDeserialize(
-            ValueSerDes<R> valueCodec, Object data, TypeToken<T> typeToken) {
+    private static <T> T invokeValueCodecDeserialize(SerDes valueCodec, String data, TypeToken<T> typeToken) {
         try {
-            return valueCodec.deserialize((R) data, typeToken);
+            return valueCodec.deserialize(data, typeToken);
         } catch (Throwable failure) {
             throw stageFailure(0, valueCodec, "deserialize", failure);
-        }
-    }
-
-    private static <T> T invokeExternalValueCodecDeserialize(
-            ValueSerDes<?> valueCodec, String data, TypeToken<T> typeToken) {
-        try {
-            return valueCodec.deserializeExternal(data, typeToken);
-        } catch (Throwable failure) {
-            throw stageFailure(0, valueCodec, "deserialize external payload", failure);
         }
     }
 
@@ -201,6 +189,31 @@ public final class ComposableSerDes<R> implements SerDes {
             target.addAll(chained.stages());
         } else {
             target.add(stage);
+        }
+    }
+
+    /** Builder for an immutable {@link ComposableSerDes}. */
+    public static final class Builder {
+        private SerDes valueCodec;
+        private final List<SerDesStage<?, ?>> stages = new ArrayList<>();
+
+        private Builder(SerDes valueCodec) {
+            this.valueCodec = Objects.requireNonNull(valueCodec, "valueCodec cannot be null");
+            if (valueCodec instanceof ComposableSerDes composable) {
+                this.valueCodec = composable.valueCodec;
+                stages.addAll(composable.stages);
+            }
+        }
+
+        /** Appends a reversible typed stage. */
+        public Builder then(SerDesStage<?, ?> stage) {
+            addFlattened(stages, Objects.requireNonNull(stage, "stage cannot be null"));
+            return this;
+        }
+
+        /** Returns the immutable pipeline. */
+        public ComposableSerDes build() {
+            return new ComposableSerDes(valueCodec, stages);
         }
     }
 }

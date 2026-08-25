@@ -75,11 +75,10 @@ return DurableConfig.builder()
     .build();
 ```
 
-The value codec and pipeline stages may exchange non-string representations. Existing `SerDes` implementations are
-`ValueSerDes<String>` codecs, but a custom `ValueSerDes<EncodedPayload>` may feed an `EncodedPayload` directly into the
-first stage. For example, a stage chain can transform `EncodedPayload -> byte[] -> String` without an intermediate
-string conversion. Reverse processing restores the same types in the opposite order. Only the complete pipeline must
-return a string checkpoint envelope.
+Pipelines may exchange non-string intermediate values. For example, a custom
+`SerDesStage<String, byte[]>` can compress the JSON string and feed the resulting bytes directly into
+`FileSystemSerDes`; reverse processing restores the bytes to the compression stage. The complete pipeline still
+returns a string checkpoint envelope.
 
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
 approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path

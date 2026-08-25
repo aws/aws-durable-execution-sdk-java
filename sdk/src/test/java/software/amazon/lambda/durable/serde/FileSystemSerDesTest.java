@@ -116,35 +116,6 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void stageModeAcceptsNonStringValueCodecRepresentation() throws Exception {
-        var jackson = new JacksonSerDes();
-        ValueSerDes<byte[]> valueCodec = new ValueSerDes<>() {
-            @Override
-            public byte[] serialize(Object value) {
-                return jackson.serialize(value).getBytes(StandardCharsets.UTF_8);
-            }
-
-            @Override
-            public <T> T deserialize(byte[] data, TypeToken<T> typeToken) {
-                return jackson.deserialize(new String(data, StandardCharsets.UTF_8), typeToken);
-            }
-        };
-        var stage = FileSystemSerDes.stageBuilder(basePath).build();
-        var pipeline = ComposableSerDes.of(valueCodec, stage);
-        var runner = new SerDesRunner(null);
-
-        var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
-        var json = MAPPER.readTree(envelope);
-        var file = Path.of(json.get("file").textValue());
-
-        assertEquals("BYTES", json.get("payloadType").textValue());
-        assertEquals("{\"id\":42}", new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
-        assertEquals(
-                Map.of("id", 42),
-                runner.deserialize(pipeline, envelope, new TypeToken<Map<String, Integer>>() {}, context()));
-    }
-
-    @Test
     void overflowModeKeepsSmallBinaryPayloadsInline() throws Exception {
         var stage = FileSystemSerDes.stageBuilder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
