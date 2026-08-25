@@ -21,6 +21,7 @@ import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -42,6 +43,7 @@ import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.testing.TestResult;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
 
@@ -366,6 +368,97 @@ class FileSystemSerDesIntegrationTest {
         assertEnvelopePointsToFile(operationError.errorData());
     }
 
+    @Test
+    void nestedInvokeFailurePreservesProducerContextAcrossReplay() throws Exception {
+        var childExecutions = new AtomicInteger();
+        var serDes = filesystemPipeline();
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> {
+                            try {
+                                return context.runInChildContext("invoke-child", String.class, child -> {
+                                    childExecutions.incrementAndGet();
+                                    return child.invoke("nested-invoke", "callee", input, String.class);
+                                });
+                            } catch (CustomFailure failure) {
+                                return "caught:" + failure.getMessage();
+                            }
+                        },
+                        config)
+                .withOutputType(String.class);
+
+        assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
+        var calleeArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:callee:1/durable-execution/callee-execution/callee-invocation";
+        var errorData = new SerDesRunner(null)
+                .serialize(
+                        serDes,
+                        new CustomFailure("invoke-boom"),
+                        SerDesContext.forExecution(
+                                calleeArn, "callee-invocation", "callee-execution", SerDesPayloadKind.EXCEPTION));
+        runner.failChainedInvoke(
+                "nested-invoke",
+                ErrorObject.builder()
+                        .errorType(CustomFailure.class.getName())
+                        .errorMessage("invoke-boom")
+                        .errorData(errorData)
+                        .build());
+
+        var completed = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, completed.getStatus());
+        assertEquals("caught:invoke-boom", completed.getResult());
+        assertForwardedErrorOwnedByChild(completed, "invoke-child");
+        var executionsAfterCompletion = childExecutions.get();
+
+        var replay = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals("caught:invoke-boom", replay.getResult());
+        assertEquals(executionsAfterCompletion, childExecutions.get());
+    }
+
+    @Test
+    void nestedCallbackFailurePreservesProducerContextAcrossReplay() throws Exception {
+        var childExecutions = new AtomicInteger();
+        var serDes = filesystemPipeline();
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> {
+                            try {
+                                return context.runInChildContext("callback-child", String.class, child -> {
+                                    childExecutions.incrementAndGet();
+                                    return child.createCallback("nested-callback", String.class)
+                                            .get();
+                                });
+                            } catch (CustomFailure failure) {
+                                return "caught:" + failure.getMessage();
+                            }
+                        },
+                        config)
+                .withOutputType(String.class);
+
+        assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
+        runner.failCallback(
+                runner.getCallbackId("nested-callback"),
+                ErrorObject.builder()
+                        .errorType(CustomFailure.class.getName())
+                        .errorMessage("callback-boom")
+                        .errorData(new JacksonSerDes().serialize(new CustomFailure("callback-boom")))
+                        .build());
+
+        var completed = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, completed.getStatus());
+        assertEquals("caught:callback-boom", completed.getResult());
+        assertForwardedErrorOwnedByChild(completed, "callback-child");
+        var executionsAfterCompletion = childExecutions.get();
+
+        var replay = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals("caught:callback-boom", replay.getResult());
+        assertEquals(executionsAfterCompletion, childExecutions.get());
+    }
+
     private SerDes filesystemPipeline() {
         return new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
     }
@@ -418,6 +511,15 @@ class FileSystemSerDesIntegrationTest {
         var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
         assertTrue(Files.exists(file));
         assertTrue(file.startsWith(basePath));
+    }
+
+    private void assertForwardedErrorOwnedByChild(TestResult<String> result, String childName) throws Exception {
+        var child = result.getOperation(childName);
+        var errorData = child.getContextDetails().error().errorData();
+        assertEnvelopePointsToFile(errorData);
+        assertEquals(
+                "operation/" + child.getId() + "/exception",
+                MAPPER.readTree(errorData).get("ownerEntityId").textValue());
     }
 
     @FunctionalInterface

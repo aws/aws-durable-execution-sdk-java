@@ -5,12 +5,16 @@ package software.amazon.lambda.durable.operation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -153,6 +157,22 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
         return error;
     }
 
+    /**
+     * Re-serializes an exception forwarded from another durable operation under this operation's context.
+     *
+     * <p>Context-dependent SerDes implementations may store the source error data under the producing operation or
+     * invoked execution. Rebinding reconstructable exceptions prevents a parent checkpoint from later trying to read
+     * that data using the parent's unrelated entity identity.
+     */
+    protected ErrorObject rebindForwardedException(DurableOperationException exception) {
+        var error = exception.getErrorObject();
+        if (error == null || exception.getOperation() == null) {
+            return error;
+        }
+        var original = deserializeExceptionWithContext(error, producerExceptionContext(exception.getOperation()));
+        return original != null ? serializeException(original) : error;
+    }
+
     private boolean shouldDeserializeAfterSerialization() {
         var config = getContext().getDurableConfig();
         return config == null || config.shouldDeserializeAfterSerialization();
@@ -171,6 +191,10 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
 
     /** Deserializes a throwable with attempt metadata. */
     protected Throwable deserializeException(ErrorObject errorObject, Integer attempt) {
+        return deserializeExceptionWithContext(errorObject, createSerDesContext(SerDesPayloadKind.EXCEPTION, attempt));
+    }
+
+    private Throwable deserializeExceptionWithContext(ErrorObject errorObject, SerDesContext context) {
         Throwable original = null;
         if (errorObject == null) {
             return original;
@@ -190,7 +214,7 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
                                 resultSerDes,
                                 errorData,
                                 TypeToken.get(exceptionClass.asSubclass(Throwable.class)),
-                                createSerDesContext(SerDesPayloadKind.EXCEPTION, attempt));
+                                context);
 
                 if (original != null) {
                     original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));
@@ -202,6 +226,28 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
             logger.warn("Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
         }
         return original;
+    }
+
+    private SerDesContext producerExceptionContext(Operation operation) {
+        var attempt = operation.stepDetails() != null ? operation.stepDetails().attempt() : null;
+        return SerDesContext.forOperation(
+                getContext().getExecutionManager().getDurableExecutionArn(),
+                operation.id(),
+                operation.name(),
+                operation.parentId(),
+                operation.type(),
+                operationSubType(operation),
+                SerDesPayloadKind.EXCEPTION,
+                attempt);
+    }
+
+    private static OperationSubType operationSubType(Operation operation) {
+        for (var subType : OperationSubType.values()) {
+            if (subType.getValue().equals(operation.subType())) {
+                return subType;
+            }
+        }
+        return null;
     }
 
     public abstract T get();

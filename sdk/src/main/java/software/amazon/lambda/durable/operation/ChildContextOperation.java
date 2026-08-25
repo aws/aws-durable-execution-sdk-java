@@ -199,7 +199,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
         final ErrorObject errorObject;
         if (exception instanceof DurableOperationException opEx) {
-            errorObject = opEx.getErrorObject();
+            errorObject = rebindForwardedException(opEx);
         } else {
             errorObject = serializeException(exception);
         }

@@ -11,6 +11,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
@@ -49,6 +50,7 @@ public final class FileSystemSerDes implements SerDes {
     private final SerDes delegate;
     private final Function<Object, Map<String, Object>> previewGenerator;
     private final boolean stageMode;
+    private volatile Path canonicalBasePath;
 
     private FileSystemSerDes(Builder builder) {
         basePath = builder.basePath.toAbsolutePath().normalize();
@@ -203,8 +205,8 @@ public final class FileSystemSerDes implements SerDes {
         var file = Path.of(fileValue).toAbsolutePath().normalize();
         validatePayloadPath(file, owner);
         try {
+            var realBasePath = validateBasePath(false);
             rejectSymbolicLinks(file);
-            var realBasePath = basePath.toRealPath();
             var realDirectory = file.getParent().toRealPath();
             var realFile = file.toRealPath();
             if (!realDirectory.startsWith(realBasePath)
@@ -267,6 +269,7 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private void rejectSymbolicLinks(Path file) throws IOException {
+        validateBasePath(false);
         var current = basePath;
         for (var component : basePath.relativize(file)) {
             current = current.resolve(component);
@@ -361,9 +364,8 @@ public final class FileSystemSerDes implements SerDes {
 
     private void writePayload(String serialized, Path file) throws IOException {
         var directory = file.getParent();
-        createDirectoriesWithoutSymbolicLinks(directory);
+        var realBasePath = createDirectoriesWithoutSymbolicLinks(directory);
         rejectSymbolicLinks(file);
-        var realBasePath = basePath.toRealPath();
         var realDirectory = directory.toRealPath();
         if (!realDirectory.startsWith(realBasePath)) {
             throw new SerDesException("Filesystem SerDes directory resolves outside the configured base path");
@@ -385,25 +387,52 @@ public final class FileSystemSerDes implements SerDes {
         }
     }
 
-    private void createDirectoriesWithoutSymbolicLinks(Path directory) throws IOException {
-        Files.createDirectories(basePath);
+    private Path createDirectoriesWithoutSymbolicLinks(Path directory) throws IOException {
+        var realBasePath = validateBasePath(true);
         var current = basePath;
         for (var component : basePath.relativize(directory)) {
             current = current.resolve(component);
-            if (Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
-                if (Files.isSymbolicLink(current) || !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new SerDesException("Filesystem SerDes directory path must contain only real directories");
-                }
-                continue;
+            ensureRealDirectory(current, true);
+        }
+        return realBasePath;
+    }
+
+    private Path validateBasePath(boolean createMissing) throws IOException {
+        var current = basePath.getRoot();
+        if (current == null) {
+            throw new SerDesException("Filesystem SerDes base path must be absolute");
+        }
+        ensureRealDirectory(current, false);
+        for (var component : basePath) {
+            current = current.resolve(component);
+            ensureRealDirectory(current, createMissing);
+        }
+        return retainCanonicalBasePath(basePath.toRealPath());
+    }
+
+    private static void ensureRealDirectory(Path directory, boolean createMissing) throws IOException {
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+            if (!createMissing) {
+                throw new NoSuchFileException(directory.toString());
             }
             try {
-                Files.createDirectory(current);
+                Files.createDirectory(directory);
             } catch (FileAlreadyExistsException ignored) {
-                if (Files.isSymbolicLink(current) || !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new SerDesException("Filesystem SerDes directory path must contain only real directories");
-                }
+                // Validate the entry created by another writer below.
             }
         }
+        if (Files.isSymbolicLink(directory) || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            throw new SerDesException("Filesystem SerDes directory path must contain only real directories");
+        }
+    }
+
+    private synchronized Path retainCanonicalBasePath(Path currentBasePath) {
+        if (canonicalBasePath == null) {
+            canonicalBasePath = currentBasePath;
+        } else if (!canonicalBasePath.equals(currentBasePath)) {
+            throw new SerDesException("Filesystem SerDes base path changed after validation");
+        }
+        return canonicalBasePath;
     }
 
     private static void moveWithoutReplacement(Path temporary, Path file) throws IOException {

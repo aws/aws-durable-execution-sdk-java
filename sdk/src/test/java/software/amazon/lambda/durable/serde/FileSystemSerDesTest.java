@@ -284,6 +284,25 @@ class FileSystemSerDesTest {
     }
 
     @Test
+    void rejectsSymbolicLinkConfiguredBasePathAndAncestors() throws Exception {
+        var outsideRoot = Files.createTempDirectory(basePath.getParent(), "outside-root-");
+        var linkedRoot = basePath.resolve("linked-root");
+        Files.createSymbolicLink(linkedRoot, outsideRoot);
+
+        var rootSerDes = FileSystemSerDes.stageBuilder(linkedRoot).build();
+        assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(rootSerDes, "payload", context()));
+
+        var outsideAncestor = Files.createTempDirectory(basePath.getParent(), "outside-ancestor-");
+        var linkedAncestor = basePath.resolve("linked-ancestor");
+        Files.createSymbolicLink(linkedAncestor, outsideAncestor);
+        var nestedSerDes = FileSystemSerDes.stageBuilder(linkedAncestor.resolve("payloads"))
+                .build();
+
+        assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(nestedSerDes, "payload", context()));
+        assertFalse(Files.exists(outsideAncestor.resolve("payloads")));
+    }
+
+    @Test
     void rejectsExecutionPathsOutsideConfiguredBasePath() {
         var serDes = FileSystemSerDes.builder(basePath).build();
         var unsafeContext = SerDesContext.forOperation(
