@@ -77,11 +77,10 @@ mvn test -Dtest=CloudBasedIntegrationTest \
   -Dtest.aws.region=us-east-1
 ```
 
-The filesystem SerDes cloud test is disabled by default because it requires a separate VPC and EFS-backed stack.
-Generate and deploy that stack with `generate-template.py --file-system-only`, then include
-`-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`. In GitHub Actions, set the repository
-variable `FILESYSTEM_SERDES_E2E_ENABLED` to `true` after the test role has permission to manage the required EC2 and
-EFS resources.
+For manually run cloud tests, the filesystem SerDes test is disabled by default because it requires a separate VPC
+and EFS-backed stack. Generate and deploy that stack with `generate-template.py --file-system-only`, then include
+`-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`. GitHub Actions provisions this stack and
+runs the filesystem test in every E2E matrix job.
 
 ## Examples
 
