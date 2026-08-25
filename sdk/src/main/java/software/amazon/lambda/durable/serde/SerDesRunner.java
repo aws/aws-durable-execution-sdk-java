@@ -143,6 +143,9 @@ public final class SerDesRunner {
                     .join();
         } catch (Throwable throwable) {
             var cause = ExceptionHelper.unwrapCompletableFuture(throwable);
+            if (cause instanceof Error error) {
+                throw error;
+            }
             var message = String.format(
                     "Failed to %s %s payload for entity '%s'", action, context.payloadKind(), context.entityId());
             if (cause instanceof RetryableSerDesException) {

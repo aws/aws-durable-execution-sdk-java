@@ -154,6 +154,9 @@ public final class ComposableSerDes implements SerDes {
     }
 
     private static RuntimeException stageFailure(int index, SerDes stage, String action, Throwable failure) {
+        if (failure instanceof Error error) {
+            throw error;
+        }
         var message = String.format(
                 "SerDes pipeline stage %d (%s) failed to %s",
                 index, stage.getClass().getName(), action);

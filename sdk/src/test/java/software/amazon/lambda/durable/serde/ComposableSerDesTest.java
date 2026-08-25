@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.serde;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -214,6 +215,61 @@ class ComposableSerDesTest {
 
         assertInstanceOf(RetryableSerDesException.class, failure.getCause());
         assertTrue(failure.getMessage().contains("stage 1"));
+    }
+
+    @Test
+    void preservesFatalErrorsFromEveryPipelineCall() {
+        var serializeError = new OutOfMemoryError("serialize");
+        var serializeStage = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                throw serializeError;
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return null;
+            }
+        };
+        assertSame(serializeError, assertThrows(OutOfMemoryError.class, () -> new JacksonSerDes()
+                .then(serializeStage)
+                .serialize("value")));
+
+        var stringStageError = new StackOverflowError("string-stage-deserialize");
+        var stringStage = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return null;
+            }
+
+            @Override
+            public SerDesStageResult deserializePipelineStage(String data) {
+                throw stringStageError;
+            }
+        };
+        assertSame(stringStageError, assertThrows(StackOverflowError.class, () -> new JacksonSerDes()
+                .then(stringStage)
+                .deserialize("value", TypeToken.get(String.class))));
+
+        var valueCodecError = new AssertionError("value-codec-deserialize");
+        var valueCodec = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                throw valueCodecError;
+            }
+        };
+        assertSame(valueCodecError, assertThrows(AssertionError.class, () -> ComposableSerDes.of(valueCodec)
+                .deserialize("value", TypeToken.get(String.class))));
     }
 
     private static SerDes stringStage(String name, String prefix, String suffix, List<String> calls) {

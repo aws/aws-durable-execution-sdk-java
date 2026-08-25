@@ -188,7 +188,7 @@ public final class FileSystemSerDes implements SerDes {
         if (!marker.isIntegralNumber()) {
             throw malformedEnvelope(context, null);
         }
-        if (marker.intValue() != ENVELOPE_VERSION) {
+        if (!marker.canConvertToInt() || marker.intValue() != ENVELOPE_VERSION) {
             throw unsupportedEnvelopeVersion(context, marker.asText());
         }
         if (!isFilesystemEnvelope(envelope)) {
@@ -285,6 +285,7 @@ public final class FileSystemSerDes implements SerDes {
                 || !envelope.isObject()
                 || !envelope.has(ENVELOPE_MARKER)
                 || !envelope.get(ENVELOPE_MARKER).isIntegralNumber()
+                || !envelope.get(ENVELOPE_MARKER).canConvertToInt()
                 || envelope.get(ENVELOPE_MARKER).intValue() != ENVELOPE_VERSION
                 || !envelope.has("ownerDurableExecutionArn")
                 || !envelope.get("ownerDurableExecutionArn").isTextual()

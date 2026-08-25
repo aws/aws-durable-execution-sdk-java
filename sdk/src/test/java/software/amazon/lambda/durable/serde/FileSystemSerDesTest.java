@@ -204,6 +204,25 @@ class FileSystemSerDesTest {
     }
 
     @Test
+    void rejectsOutOfRangeEnvelopeVersionsWithoutTruncation() {
+        var serDes = FileSystemSerDes.builder(basePath).build();
+        var oversizedVersion = "{\"__durable_execution_filesystem_serdes\":4294967297,"
+                + "\"ownerDurableExecutionArn\":\""
+                + ARN
+                + "\",\"ownerEntityId\":\"1\",\"data\":\"value\"}";
+
+        var failure = assertThrows(SerDesException.class, () -> new SerDesRunner(null)
+                .deserialize(
+                        serDes,
+                        oversizedVersion,
+                        TypeToken.get(String.class),
+                        executionContext(SerDesPayloadKind.INPUT)));
+
+        assertTrue(
+                failure.getCause().getMessage().contains("Unsupported filesystem SerDes envelope version 4294967297"));
+    }
+
+    @Test
     void overflowFilesystemStageMustRemainTerminal() {
         var filesystem = FileSystemSerDes.stageBuilder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)

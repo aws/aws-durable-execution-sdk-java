@@ -303,6 +303,27 @@ class SerDesRunnerTest {
         assertInstanceOf(RetryableSerDesException.class, exception.getCause());
     }
 
+    @Test
+    void preservesFatalErrorsWithAndWithoutExecutor() {
+        var fatal = new OutOfMemoryError("fatal");
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                throw fatal;
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return null;
+            }
+        };
+
+        assertSame(fatal, assertThrows(OutOfMemoryError.class, () -> new SerDesRunner(null)
+                .serialize(serDes, "value", context("entity"))));
+        assertSame(fatal, assertThrows(OutOfMemoryError.class, () -> new SerDesRunner(executor)
+                .serialize(serDes, "value", context("entity"))));
+    }
+
     private static SerDes fixedValueSerDes(String value) {
         return new SerDes() {
             @Override
