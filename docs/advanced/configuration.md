@@ -59,7 +59,6 @@ The core SDK provides a reversible stage for storing serialized strings on a sha
 var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.OVERFLOW)
     .pathEncoding(FileSystemPathEncoding.HASH)
-    .previewGenerator(json -> Map.of("format", "json"))
     .build();
 
 var resilientFileSystemStage = new RetrySerDes(
@@ -97,8 +96,27 @@ binary chain, and the outer stage adds a reserved versioned frame for reliable f
 
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
 approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path
-segments. Files are content-addressed and never overwrite data referenced by an earlier checkpoint. References are
+segments. Files include a content hash and never overwrite data referenced by an earlier checkpoint. References are
 validated against the current durable execution and entity, and symbolic-link paths are rejected.
+
+For a `JacksonSerDes -> FileSystemSerDes` pipeline, structured preview configuration provides the same field
+selection, masking, exact-path matching, and default 4 KB preview budget as the Python and TypeScript SDKs:
+
+```java
+var previewConfig = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+    .include(PreviewField.anywhere("id"), PreviewField.path("customer.status"))
+    .mask(PreviewField.anywhere("email"))
+    .build();
+
+var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/s3/durable-payloads"))
+    .previewConfig(previewConfig)
+    .build();
+
+var serDes = new JacksonSerDes().then(fileSystemStage);
+```
+
+The built-in preview configuration parses the string produced by the preceding stage as JSON. Use
+`previewGenerator(...)` when the preceding stage produces another format or when fully custom preview logic is needed.
 
 `RetrySerDes` implements `SerDesStage` and retries only failures marked with `RetryableSerDesException`. Filesystem
 read and write I/O use this marker; malformed envelopes and codec failures fail immediately. Backoff occurs within the
@@ -106,9 +124,10 @@ current Lambda invocation, so use short, bounded retry strategies. Without a con
 I/O and retry delays block the calling thread.
 
 Do not use Lambda's ephemeral `/tmp` directory: replay can run in a different execution environment. Use a durable,
-shared mount such as EFS. S3 Files can have delayed synchronization, so a runtime crash before the mount flushes may
-lose recent writes; use it only when that tradeoff is acceptable. The SDK does not delete offloaded files, so configure
-storage lifecycle and retention separately.
+shared mount such as EFS or S3 Files. Payloads are published with one immutable `CREATE_NEW` write, without hard links
+or renames, so the write path is compatible with S3 Files. S3 Files can have delayed synchronization, so a runtime
+crash before the mount flushes may lose recent writes; use it only when that tradeoff is acceptable. The SDK does not
+delete offloaded files, so configure storage lifecycle and retention separately.
 
 The cloud and local test runners always serialize the initial Lambda invocation with a separate context-free value
 codec. By default, this is the configured persisted SerDes when it is a plain value codec, or the root value codec when

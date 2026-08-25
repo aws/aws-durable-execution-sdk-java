@@ -21,7 +21,6 @@ envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-
 var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.ALWAYS)
     .pathEncoding(FileSystemPathEncoding.URI)
-    .previewGenerator(json -> Map.of("format", "json"))
     .build();
 
 var resilientFileSystemStage = new RetrySerDes(
@@ -61,8 +60,33 @@ compression/encryption chain.
 - `URI` uses readable escaped path segments.
 - `HASH` uses fixed-length SHA-256 path segments.
 
-The preview generator receives the incoming stage string. Its output is included only in file envelopes and the final
-envelope must remain below the checkpoint threshold.
+## Structured previews
+
+Java includes the same structured preview controls as the Python and TypeScript SDKs:
+
+```java
+var previewConfig = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+    .include(PreviewField.anywhere("id"), PreviewField.path("customer.status"))
+    .exclude(PreviewField.anywhere("internal"))
+    .mask(PreviewField.anywhere("email"))
+    .maskString("***")
+    .maxPreviewBytes(4096)
+    .build();
+
+var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/s3/durable-payloads"))
+    .previewConfig(previewConfig)
+    .build();
+
+var serDes = new JacksonSerDes().then(fileSystemStage);
+```
+
+`INCLUDE_ALL` starts with every leaf visible and applies exclude and mask rules. `EXCLUDE_ALL` starts with no fields
+visible; include and mask rules make selected fields visible. `ANYWHERE` matches a field name at any depth, while
+`PATH` matches an exact dot-separated path. Exclude rules win over mask rules, and masking implies visibility.
+
+The built-in `previewConfig(...)` parses the incoming stage string as JSON. Use `previewGenerator(...)` for non-JSON
+stage values or fully custom logic. Previews are included only in file envelopes. The structured builder defaults to a
+4 KB preview budget, and the complete file envelope must still remain below the checkpoint threshold.
 
 ## Execution and retries
 
@@ -83,15 +107,14 @@ to the pipeline value codec. Payloads containing the reserved marker must be val
 malformed marked envelopes and unsupported versions fail instead of falling back to pass-through behavior. An
 unrecognized value does not require `SerDesContext`; a recognized filesystem envelope does.
 
-Offloaded files are content-addressed and immutable. Updating wait-for-condition state or retry results creates a new
-path instead of replacing a file referenced by an earlier checkpoint. Publication uses an atomic hard-link
-create-if-absent operation when the provider supports it, allowing repeated identical writes to reuse one file. On
-providers that do not support hard links, it retains the completed, uniquely named content-addressed staging file. The
-fallback path is not exposed in an envelope until its write completes, so a crash can leave only an unreferenced orphan
-rather than a partial checkpoint target. File envelopes identify the producing execution and entity. Ordinary
-checkpoint replay must match that owner, while invoke input and result boundaries may consume a file owned by the
-other Lambda execution when both functions use the same shared root and path encoding. Treat file envelopes as
-capabilities. Content hashes are verified when reading, and symbolic-link paths are rejected.
+Offloaded files are content-hashed and immutable. Every serialization uses a unique filename containing the entity
+identity, content hash, and UUID, and publishes it with one `CREATE_NEW` write. Existing files are never overwritten,
+and publication does not require hard links or renames, making it compatible with both EFS and S3 Files. A failed write
+can leave only an unreferenced orphan rather than replacing data referenced by an earlier checkpoint. File envelopes
+identify the producing execution and entity. Ordinary checkpoint replay must match that owner, while invoke input and
+result boundaries may consume a file owned by the other Lambda execution when both functions use the same shared root
+and path encoding. Treat file envelopes as capabilities. Content hashes are verified when reading, and symbolic-link
+paths are rejected.
 
 Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. The filesystem stage's
 `OVERFLOW` and preview-size checks apply before those later transformations, so account for any expansion when staying
@@ -112,7 +135,8 @@ persisted pipeline's root value codec can decode.
 Do not use Lambda's ephemeral `/tmp` directory. Durable replay may run in another execution environment where that file
 does not exist.
 
-Use a durable shared mount such as EFS. S3 Files can synchronize writes asynchronously, so a runtime crash before a
-flush can lose recent data; use it only when that durability tradeoff is acceptable.
+Use a durable shared mount such as EFS or S3 Files. The SDK does not rely on hard links or renames, which S3 Files does
+not support. S3 Files can synchronize writes asynchronously, so a runtime crash before a flush can lose recent data;
+use it only when that durability tradeoff is acceptable.
 
 The SDK does not delete payload files. Configure an appropriate retention or lifecycle policy for the backing storage.

@@ -147,21 +147,21 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void rejectsUnexpectedContentInExistingContentAddressedFile() throws Exception {
+    void repeatedPayloadsUseDistinctImmutableFiles() throws Exception {
         var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var runner = new SerDesRunner(null);
-        var envelope = runner.serialize(serDes, "expected", context());
-        var file = payloadFile(envelope);
-        Files.writeString(file, "unexpected");
+        var firstEnvelope = runner.serialize(serDes, "expected", context());
+        var secondEnvelope = runner.serialize(serDes, "expected", context());
+        var firstFile = payloadFile(firstEnvelope);
+        var secondFile = payloadFile(secondEnvelope);
 
-        var failure = assertThrows(SerDesException.class, () -> runner.serialize(serDes, "expected", context()));
-
-        assertCauseMessage(failure, "contains unexpected data");
-        assertEquals("unexpected", Files.readString(file));
+        assertNotEquals(firstFile, secondFile);
+        assertEquals("expected", Files.readString(firstFile));
+        assertEquals("expected", Files.readString(secondFile));
     }
 
     @Test
-    void publishesOnFileSystemsWithoutHardLinkSupport() throws Exception {
+    void writesOnFileSystemsWithoutHardLinkSupport() throws Exception {
         var archive = basePath.resolve("payloads.zip");
         try (var fileSystem =
                 FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
@@ -176,14 +176,9 @@ class FileSystemSerDesTest {
                             MessageDigest.getInstance("SHA-256").digest("expected".getBytes(StandardCharsets.UTF_8)));
             var fileName = file.getFileName().toString();
             assertTrue(fileName.contains(hash));
-            var hashEnd = fileName.indexOf(hash) + hash.length();
-            var deterministicFile = file.resolveSibling(fileName.substring(0, hashEnd) + ".payload");
 
             assertEquals("expected", Files.readString(file));
-            assertNotEquals(deterministicFile, file);
-            assertFalse(Files.exists(deterministicFile));
-            assertTrue(fileName.startsWith(
-                    deterministicFile.getFileName().toString().replace(".payload", "-")));
+            assertTrue(fileName.matches(".*-" + hash + "-[0-9a-f-]{36}\\.payload"));
             assertTrue(fileName.endsWith(".payload"));
             assertEquals(
                     "expected",
@@ -200,7 +195,7 @@ class FileSystemSerDesTest {
 
         var envelope = runner.serialize(serDes, "valid", context());
         var malformed = new byte[] {(byte) 0xC3, (byte) 0x28};
-        var malformedFile = contentAddressedPath(payloadFile(envelope), malformed);
+        var malformedFile = contentHashedPath(payloadFile(envelope), malformed);
         Files.write(malformedFile, malformed);
         var malformedEnvelope = (ObjectNode) MAPPER.readTree(envelope);
         malformedEnvelope.put("file", malformedFile.toString());
@@ -221,7 +216,8 @@ class FileSystemSerDesTest {
         var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
 
         assertEquals(64, file.getParent().getFileName().toString().length());
-        assertEquals(137, file.getFileName().toString().length());
+        assertEquals(174, file.getFileName().toString().length());
+        assertTrue(file.getFileName().toString().matches("[0-9a-f]{64}-[0-9a-f]{64}-[0-9a-f-]{36}\\.payload"));
         assertFalse(file.toString().contains("operation"));
     }
 
@@ -247,6 +243,48 @@ class FileSystemSerDesTest {
         var oversizedPreview = stringCodec().then(oversizedPreviewStage);
         var failure = assertThrows(SerDesException.class, () -> runner.serialize(oversizedPreview, "value", context()));
         assertCauseMessage(failure, "checkpoint payload limit");
+    }
+
+    @Test
+    void structuredPreviewConfigSelectsAndMasksJsonFields() throws Exception {
+        var stage = FileSystemSerDes.builder(basePath)
+                .previewConfig(PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+                        .include(PreviewField.anywhere("id"), PreviewField.path("customer.status"))
+                        .mask(PreviewField.anywhere("email"))
+                        .build())
+                .build();
+        var serDes = new JacksonSerDes().then(stage);
+        var runner = new SerDesRunner(null);
+
+        var value = Map.of(
+                "id",
+                "order-1",
+                "email",
+                "root@example.com",
+                "customer",
+                Map.of("status", "ready", "email", "customer@example.com", "secret", "hidden"));
+        var envelope = runner.serialize(serDes, value, context());
+        var preview = MAPPER.readTree(envelope).get("preview");
+
+        assertEquals("order-1", preview.get("id").textValue());
+        assertEquals("***", preview.get("email").textValue());
+        assertEquals("ready", preview.get("customer").get("status").textValue());
+        assertEquals("***", preview.get("customer").get("email").textValue());
+        assertFalse(preview.get("customer").has("secret"));
+        assertEquals(value, runner.deserialize(serDes, envelope, new TypeToken<Map<String, Object>>() {}, context()));
+    }
+
+    @Test
+    void structuredPreviewConfigRequiresJsonStageValue() {
+        var stage = FileSystemSerDes.builder(basePath)
+                .previewConfig(PreviewConfig.builder(PreviewMode.INCLUDE_ALL).build())
+                .build();
+        var runner = new SerDesRunner(null);
+
+        var failure = assertThrows(
+                SerDesException.class, () -> runner.serialize(stringCodec().then(stage), "not-json", context()));
+
+        assertCauseMessage(failure, "requires a JSON stage value");
     }
 
     @Test
@@ -562,12 +600,12 @@ class FileSystemSerDesTest {
         }
     }
 
-    private static Path contentAddressedPath(Path original, byte[] data) throws Exception {
+    private static Path contentHashedPath(Path original, byte[] data) throws Exception {
         var name = original.getFileName().toString();
-        var suffix = ".payload";
-        var hashStart = name.length() - suffix.length() - 64;
+        var existingHash =
+                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(original)));
         var hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
-        return original.resolveSibling(name.substring(0, hashStart) + hash + suffix);
+        return original.resolveSibling(name.replace(existingHash, hash));
     }
 
     private static SerDesContext context() {

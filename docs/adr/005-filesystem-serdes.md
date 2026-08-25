@@ -405,14 +405,14 @@ source. If the marker is present, the value is recognized as filesystem data and
 malformed marked envelopes and unsupported versions fail rather than falling back to pass-through behavior. A
 recognized filesystem envelope also requires an SDK-managed `SerDesContext`, while unrecognized input does not.
 
-Offloaded filenames include a content hash and are immutable. Serializing new state for the same entity creates a new
-path instead of replacing a file referenced by an earlier checkpoint. Repeating the same serialization may reuse the
-same content-addressed file.
+Offloaded filenames include the entity identity, content hash, and a UUID. Each serialization publishes a new immutable
+file with one `CREATE_NEW` write. It does not require hard links or renames, making the write path compatible with S3
+Files as well as EFS. Serializing new state never replaces a file referenced by an earlier checkpoint.
 
 File envelopes identify the execution ARN and entity that produced the content. Normal checkpoint replay requires
 that owner to match the current context. Initial input and chained-invoke result boundaries may consume a reference
 owned by the other Lambda execution, allowing two functions configured with the same durable filesystem root and path
-encoding to exchange offloaded invoke payloads and results. The declared owner must still match the content-addressed
+encoding to exchange offloaded invoke payloads and results. The declared owner must still match the content-hashed
 path, and the resolved file must remain beneath the configured root. The file envelope is therefore a capability and
 must be protected with the same care as the payload it references.
 
@@ -425,8 +425,11 @@ later stages. During deserialization, each stage validates its own reserved form
 through unchanged. Therefore raw external data can traverse stages on either side of `FileSystemSerDes` without being
 decoded as a pipeline value.
 
-The preview generator receives the `String` produced by the preceding stage, not the original domain object. A preview
-that needs domain fields should parse that representation or be produced by an earlier stage.
+For JSON pipelines, `previewConfig(...)` parses the `String` produced by the preceding stage and provides the same
+structured preview controls as the Python and TypeScript SDKs: include-all or exclude-all mode, include/exclude/mask
+selectors, field-name or exact-path matching, a configurable mask string, and a default 4 KB byte budget. The
+standalone `SerDesPreview` utility exposes the same builder for customer-managed values. `previewGenerator(...)`
+remains available for non-JSON stage values and fully custom preview logic.
 
 ### Runtime flow
 
@@ -571,9 +574,9 @@ persisted pipeline.
    serialized data hash.
 9. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
 10. Implement `FileSystemSerDes` in the core `software.amazon.lambda.durable.serde` package as a string stage with
-    `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file writes where
-    supported by the filesystem, retryable I/O failures, unrecognized-input pass-through, and clear validation errors
-    for recognized malformed input.
+    `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, immutable `CREATE_NEW` writes
+    compatible with EFS and S3 Files, retryable I/O failures, unrecognized-input pass-through, structured preview
+    generation, and clear validation errors for recognized malformed input.
 11. Add unit tests for string and binary pipeline ordering, custom boundary codecs, reverse processing, nulls, stage
     failures, retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and
     restoration, inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception

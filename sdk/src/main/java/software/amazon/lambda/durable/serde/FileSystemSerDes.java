@@ -11,13 +11,14 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -29,6 +30,9 @@ import software.amazon.lambda.durable.exception.SerDesException;
  *
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. Use a durable shared mount such as EFS, or S3 Files only when
  * its synchronization and crash-durability tradeoffs are acceptable for the workload.
+ *
+ * <p>Payload files are immutable and created with a single {@code CREATE_NEW} write. Publication does not require hard
+ * links or renames, so the write path is compatible with S3 Files.
  *
  * <p>Deserialization recognizes the reserved filesystem envelope marker. Input without that marker is returned
  * unchanged; input with the marker must be a valid supported envelope.
@@ -91,17 +95,8 @@ public final class FileSystemSerDes implements SerDesStage {
                     + "'");
         }
         try {
-            var publishedFile = writePayload(payload, file);
-            if (publishedFile.equals(file)) {
-                return fileEnvelope;
-            }
-            var fallbackEnvelope = encodeEnvelope(payload.withoutData(), publishedFile, preview, context);
-            if (!fitsCheckpoint(fallbackEnvelope)) {
-                throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
-                        + context.entityId()
-                        + "'");
-            }
-            return fallbackEnvelope;
+            writePayload(payload, file);
+            return fileEnvelope;
         } catch (IOException e) {
             throw new RetryableSerDesException(
                     "Failed to store filesystem payload for entity '" + context.entityId() + "'", e);
@@ -176,7 +171,7 @@ public final class FileSystemSerDes implements SerDesStage {
             var serialized = new SerializedPayload(payloadType, Files.readAllBytes(realFile));
             var expectedFileName = payloadFileName(serialized, owner.entityId());
             if (!matchesPublishedPayloadFileName(realFile.getFileName().toString(), expectedFileName)) {
-                throw new SerDesException("Filesystem SerDes file content does not match its content-addressed path");
+                throw new SerDesException("Filesystem SerDes file content hash does not match its path");
             }
             return serialized;
         } catch (IOException e) {
@@ -362,7 +357,12 @@ public final class FileSystemSerDes implements SerDesStage {
 
     private Path resolvePayloadPath(SerializedPayload payload, SerDesContext context) {
         var directory = resolveExecutionDirectory(context.durableExecutionArn());
-        var fileName = payloadFileName(payload, context.entityId());
+        var deterministicName = payloadFileName(payload, context.entityId());
+        var suffix = ".payload";
+        var fileName = deterministicName.substring(0, deterministicName.length() - suffix.length())
+                + "-"
+                + UUID.randomUUID()
+                + suffix;
         var file = directory.resolve(fileName).normalize();
         if (!file.startsWith(directory)) {
             throw new SerDesException("Resolved filesystem payload path is outside the execution directory");
@@ -374,7 +374,7 @@ public final class FileSystemSerDes implements SerDesStage {
         return encode(entityId) + "-" + sha256(payload.data()) + ".payload";
     }
 
-    private Path writePayload(SerializedPayload payload, Path file) throws IOException {
+    private void writePayload(SerializedPayload payload, Path file) throws IOException {
         var directory = file.getParent();
         var realBasePath = createDirectoriesWithoutSymbolicLinks(directory);
         rejectSymbolicLinks(file);
@@ -382,24 +382,17 @@ public final class FileSystemSerDes implements SerDesStage {
         if (!realDirectory.startsWith(realBasePath)) {
             throw new SerDesException("Filesystem SerDes directory resolves outside the configured base path");
         }
-        if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
-            validateExistingPayload(file, payload.data());
-            return file;
-        }
-
-        var fileName = file.getFileName().toString();
-        var temporary = Files.createTempFile(
-                directory, fileName.substring(0, fileName.length() - ".payload".length()) + "-", ".payload");
-        var retainTemporary = false;
         try {
-            Files.write(temporary, payload.data());
-            var publishedFile = publishWithoutReplacement(temporary, file, payload.data());
-            retainTemporary = publishedFile.equals(temporary);
-            return publishedFile;
-        } finally {
-            if (!retainTemporary) {
-                Files.deleteIfExists(temporary);
+            Files.write(file, payload.data(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        } catch (FileAlreadyExistsException failure) {
+            throw failure;
+        } catch (IOException failure) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
             }
+            throw failure;
         }
     }
 
@@ -451,19 +444,6 @@ public final class FileSystemSerDes implements SerDesStage {
         return canonicalBasePath;
     }
 
-    private Path publishWithoutReplacement(Path temporary, Path file, byte[] expectedData) throws IOException {
-        try {
-            Files.createLink(file, temporary);
-            return file;
-        } catch (FileAlreadyExistsException ignored) {
-            validateExistingPayload(file, expectedData);
-            return file;
-        } catch (UnsupportedOperationException | IOException ignored) {
-            validateExistingPayload(temporary, expectedData);
-            return temporary;
-        }
-    }
-
     private static boolean matchesPublishedPayloadFileName(String actualFileName, String expectedFileName) {
         if (actualFileName.equals(expectedFileName)) {
             return true;
@@ -471,14 +451,6 @@ public final class FileSystemSerDes implements SerDesStage {
         var suffix = ".payload";
         var expectedPrefix = expectedFileName.substring(0, expectedFileName.length() - suffix.length());
         return actualFileName.startsWith(expectedPrefix + "-") && actualFileName.endsWith(suffix);
-    }
-
-    private void validateExistingPayload(Path file, byte[] expectedData) throws IOException {
-        rejectSymbolicLinks(file);
-        var existing = Files.readAllBytes(file);
-        if (!Arrays.equals(existing, expectedData)) {
-            throw new SerDesException("Filesystem SerDes content-addressed file contains unexpected data");
-        }
     }
 
     private Path resolveExecutionDirectory(String durableExecutionArn) {
@@ -609,8 +581,24 @@ public final class FileSystemSerDes implements SerDesStage {
             return this;
         }
 
+        /**
+         * Configures a custom preview generator that receives the string produced by the preceding pipeline stage.
+         *
+         * <p>The returned preview is included only when the payload is stored in a file.
+         */
         public Builder previewGenerator(Function<String, Map<String, Object>> previewGenerator) {
             this.previewGenerator = Objects.requireNonNull(previewGenerator, "previewGenerator cannot be null");
+            return this;
+        }
+
+        /**
+         * Configures structured preview generation for JSON produced by the preceding stage.
+         *
+         * <p>Use {@link #previewGenerator(Function)} for non-JSON stage values or fully custom preview logic.
+         */
+        public Builder previewConfig(PreviewConfig previewConfig) {
+            Objects.requireNonNull(previewConfig, "previewConfig cannot be null");
+            this.previewGenerator = value -> SerDesPreview.buildPreviewFromJson(value, previewConfig);
             return this;
         }
 

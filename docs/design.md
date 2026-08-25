@@ -364,6 +364,11 @@ software.amazon.lambda.durable
 │   ├── ComposableBinarySerDesStage # Ordered binary chain exposed as one string stage
 │   ├── JacksonSerDes       # Jackson impl
 │   ├── RetrySerDes         # Retrying string-stage decorator
+│   ├── SerDesPreview       # Structured preview builder
+│   ├── PreviewConfig       # Preview selection, masking, and size configuration
+│   ├── PreviewField        # Field-name or exact-path preview selector
+│   ├── PreviewMode         # Include-all or exclude-all preview default
+│   ├── FieldMatchMode      # Anywhere or exact-path field matching
 │   ├── SerDesRunner        # Context, optional executor dispatch, and invocation cache
 │   ├── SerDesContext       # Read-only durable payload identity
 │   ├── SerDesPayloadKind   # Input/result/state/exception/invoke payload kind
