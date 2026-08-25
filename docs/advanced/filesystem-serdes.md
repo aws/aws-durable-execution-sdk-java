@@ -93,11 +93,11 @@ within the service checkpoint limit. During deserialization of a raw external pa
 `FileSystemSerDes` can identify the external boundary; those stages must tolerate or explicitly bypass payloads that
 have not passed through the pipeline.
 
-The cloud and local test runners cannot use `FileSystemSerDes` for the initial Lambda invocation because an execution
-ARN is not available yet. Configure a separate context-free initial-input value codec with
-`withInputSerDes(...)`. Do not use a composable pipeline for that input boundary: the unframed external payload does
-not identify which stages ran before the context-dependent filesystem stage. Context-free
-persisted pipelines still use their complete pipeline for the initial invocation.
+The cloud and local test runners always use a separate context-free value codec for the initial Lambda invocation
+because an execution ARN is not available yet. The input codec defaults to `JacksonSerDes` and can be replaced with
+`withInputSerDes(...)`. The runners never reuse the persisted composable pipeline for this boundary. Do not configure a
+`ComposableSerDes` as the input codec: the unframed external payload does not identify which stages ran before the
+filesystem stage. A custom input codec must produce data that the persisted pipeline's root value codec can decode.
 
 ## Storage requirements
 

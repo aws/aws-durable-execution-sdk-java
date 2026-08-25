@@ -51,13 +51,6 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
         return invokeFromBytes(startingCodec, current, "starting codec");
     }
 
-    @Override
-    public boolean requiresDurableContext() {
-        return startingCodec.requiresDurableContext()
-                || endingCodec.requiresDurableContext()
-                || binarySerDes.stream().anyMatch(BinarySerDes::requiresDurableContext);
-    }
-
     private static byte[] invokeToBytes(StringBinaryCodec codec, String value, String name) {
         try {
             return requireResult(codec.toBytes(value), name);

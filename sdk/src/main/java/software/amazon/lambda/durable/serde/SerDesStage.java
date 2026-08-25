@@ -39,9 +39,4 @@ public interface SerDesStage {
     default SerDesStageResult deserializePipelineStage(String data) {
         return SerDesStageResult.continueWith(deserialize(data));
     }
-
-    /** Returns whether this stage requires an SDK-managed durable execution context. */
-    default boolean requiresDurableContext() {
-        return false;
-    }
 }

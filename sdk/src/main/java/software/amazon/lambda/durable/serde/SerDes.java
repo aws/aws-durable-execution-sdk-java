@@ -39,16 +39,6 @@ public interface SerDes {
     <T> T deserialize(String data, TypeToken<T> typeToken);
 
     /**
-     * Returns whether this SerDes requires an SDK-managed durable execution context.
-     *
-     * <p>Context-dependent SerDes implementations cannot process an initial external invocation payload unless a
-     * separate context-free input SerDes is configured.
-     */
-    default boolean requiresDurableContext() {
-        return false;
-    }
-
-    /**
      * Returns an immutable processing pipeline with a string stage appended.
      *
      * @param nextStage the reversible string stage to append

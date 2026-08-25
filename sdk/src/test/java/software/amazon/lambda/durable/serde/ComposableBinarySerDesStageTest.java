@@ -91,33 +91,6 @@ class ComposableBinarySerDesStageTest {
     }
 
     @Test
-    void delegatesDurableContextRequirement() {
-        var contextCodec = new StringBinaryCodec() {
-            @Override
-            public byte[] toBytes(String value) {
-                return value.getBytes(StandardCharsets.UTF_8);
-            }
-
-            @Override
-            public String fromBytes(byte[] data) {
-                return new String(data, StandardCharsets.UTF_8);
-            }
-
-            @Override
-            public boolean requiresDurableContext() {
-                return true;
-            }
-        };
-
-        var stage = ComposableBinarySerDesStage.builder()
-                .startWith(contextCodec)
-                .endWith(Base64StringBinaryCodec.INSTANCE)
-                .build();
-
-        assertTrue(stage.requiresDurableContext());
-    }
-
-    @Test
     void validatesConfigurationAndComponentResults() {
         assertThrows(NullPointerException.class, () -> ComposableBinarySerDesStage.builder()
                 .startWith(null));

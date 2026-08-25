@@ -223,11 +223,11 @@ Pipeline rules:
 
 - A pipeline must contain exactly one value codec in the first position and zero or more string stages.
 - Every top-level stage consumes and produces a non-null `String`. This makes all stage orderings type-compatible.
-- `SerDes.requiresDurableContext()` remains a root capability because the SDK and test runners must validate the
-  configured SerDes before an initial durable context exists. `ComposableSerDes` aggregates this capability from its
-  value codec and stages.
-- The test runners identify a configured input pipeline directly as `ComposableSerDes`; no generic value-codec-only
-  capability is needed because stage decorators cannot wrap the root SerDes.
+- Context requirements are stage behavior rather than a capability on `SerDes`, `SerDesStage`, binary transformations,
+  or codecs. A context-dependent stage accesses `SerDesContext` when it runs and reports a normal SerDes failure when
+  the required context is unavailable.
+- The test runners identify a configured input pipeline directly as `ComposableSerDes` and reject it because initial
+  input accepts one value codec, not a pipeline.
 - `SerDes.then(...)`, `ComposableSerDes.then(...)`, and the builder accept only `SerDesStage` after the value codec.
   This makes the root `SerDes` versus subsequent string-stage roles explicit in the Java type system.
 - If the value-codec argument to `ComposableSerDes.of(...)` or the builder is already a `ComposableSerDes`, its root
@@ -534,16 +534,15 @@ When serializing `errorData`, set `SerDesPayloadKind.EXCEPTION` and use an entit
 
 Root user input and output payloads should route through `SerDesRunner` so `FileSystemSerDes` can see `SerDesContext`. The internal `DurableExecutionInput` and `DurableExecutionOutput` envelope stays with `DurableInputOutputSerDes`.
 
-The cloud test runner must send initial Lambda input before it receives a durable execution ARN. When configured with a
-context-free `ComposableSerDes`, it serializes the invocation payload with the complete configured pipeline so
-compression, encryption, and other ordinary transformations remain compatible with the deployed function. When the
-persisted SerDes reports that it requires durable context, the cloud and local runners require a separate context-free
-input value codec via `withInputSerDes(...)`. That codec must not be a composable pipeline:
-an unframed external payload does not identify which input stages ran, while a context-dependent filesystem stage must
-also accept raw service payloads such as callbacks and invoke results. Fluent configuration preserves that explicit
-input codec when other runner configuration is replaced. `LocalDurableTestRunner` must create the execution operation
-with this raw external payload and let `DurableExecutor` apply the persisted pipeline's external-boundary behavior; it
-must not synthesize a durable context and serialize initial input through the full persisted pipeline.
+The cloud test runner must send initial Lambda input before it receives a durable execution ARN. The cloud and local
+runners therefore always serialize that input with a separate context-free value codec, defaulting to
+`JacksonSerDes`. `withInputSerDes(...)` replaces this codec, but rejects `ComposableSerDes`: the runners must never
+reuse the persisted composable pipeline for the initial invocation, and an unframed external payload does not identify
+which stages ran. A custom input codec must produce data that the persisted pipeline's root value codec can decode at
+the external-input boundary. Fluent configuration preserves the input codec when other runner configuration is
+replaced. `LocalDurableTestRunner` creates the execution operation with this raw external payload and lets
+`DurableExecutor` apply the persisted pipeline's external-boundary behavior; it does not synthesize a durable context
+or serialize initial input through the persisted pipeline.
 
 ### Implementation plan
 

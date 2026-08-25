@@ -56,7 +56,7 @@ public class CloudDurableTestRunner<I, O> {
         this.timeout = timeout;
         this.invocationType = invocationType;
         this.serDes = Objects.requireNonNullElseGet(serDes, JacksonSerDes::new);
-        this.inputSerDes = inputSerDes;
+        this.inputSerDes = inputValueCodec(inputSerDes);
     }
 
     private static LambdaClient createDefaultLambdaClient() {
@@ -170,13 +170,10 @@ public class CloudDurableTestRunner<I, O> {
     }
 
     /**
-     * Returns a new runner with a separate SerDes for the initial Lambda invocation payload.
+     * Returns a new runner with a separate value codec for the initial Lambda invocation payload.
      *
-     * <p>The supplied SerDes is used exactly as configured, including every stage in a composable pipeline. Configure a
-     * separate context-free input SerDes when the persisted SerDes requires a durable execution context, because that
-     * context does not exist before the initial Lambda invocation. In that case the input SerDes must be a value codec,
-     * not a composable pipeline, because context-dependent persisted stages cannot distinguish which input stages
-     * produced an unframed external payload.
+     * <p>The input codec is independent of the SerDes used for persisted execution payloads and must not be a
+     * {@link ComposableSerDes}. The default is {@link JacksonSerDes}.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(
@@ -280,17 +277,14 @@ public class CloudDurableTestRunner<I, O> {
     }
 
     private String serializeInput(I input) {
-        var serializer = inputSerDes != null ? inputSerDes : serDes;
-        if (serializer.requiresDurableContext()) {
-            throw new IllegalStateException(
-                    "Initial input SerDes requires a durable execution context; configure a context-free "
-                            + "input SerDes with withInputSerDes(...)");
+        return inputSerDes.serialize(input);
+    }
+
+    private static SerDes inputValueCodec(SerDes inputSerDes) {
+        var codec = Objects.requireNonNullElseGet(inputSerDes, JacksonSerDes::new);
+        if (codec instanceof ComposableSerDes) {
+            throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
         }
-        if (serializer instanceof ComposableSerDes && serDes.requiresDurableContext()) {
-            throw new IllegalStateException(
-                    "Initial input for a context-dependent persisted SerDes must use a value codec, not a composable "
-                            + "pipeline");
-        }
-        return serializer.serialize(input);
+        return codec;
     }
 }

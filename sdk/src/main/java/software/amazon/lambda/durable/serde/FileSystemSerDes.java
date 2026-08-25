@@ -113,11 +113,6 @@ public final class FileSystemSerDes implements SerDesStage {
                 : SerDesStageResult.continueWith(resolved.value());
     }
 
-    @Override
-    public boolean requiresDurableContext() {
-        return true;
-    }
-
     private ResolvedPayload resolveSerializedPayload(String data, SerDesContext context) {
         final JsonNode envelope;
         try {

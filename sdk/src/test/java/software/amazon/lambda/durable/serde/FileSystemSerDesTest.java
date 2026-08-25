@@ -57,13 +57,12 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void isAContextDependentStageThatCanBeFollowedByOtherStages() {
+    void isAStageThatCanBeFollowedByOtherStages() {
         var stage = FileSystemSerDes.builder(basePath).build();
         var pipeline = new JacksonSerDes().then(stage).then(wrappingStage());
         var runner = new SerDesRunner(null);
 
         assertFalse(SerDes.class.isAssignableFrom(FileSystemSerDes.class));
-        assertTrue(stage.requiresDurableContext());
         var checkpoint = runner.serialize(pipeline, Map.of("id", 42), context());
         assertTrue(checkpoint.startsWith("<"));
         assertEquals(

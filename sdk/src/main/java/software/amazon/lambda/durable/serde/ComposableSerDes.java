@@ -60,11 +60,6 @@ public final class ComposableSerDes implements SerDes {
         return valueCodec;
     }
 
-    @Override
-    public boolean requiresDurableContext() {
-        return valueCodec.requiresDurableContext() || stages.stream().anyMatch(ComposableSerDes::requiresContext);
-    }
-
     /** Returns a new pipeline with the supplied string stage appended. */
     @Override
     public ComposableSerDes then(SerDesStage stage) {
@@ -157,10 +152,6 @@ public final class ComposableSerDes implements SerDes {
             return new RetryableSerDesException(message, failure);
         }
         return new SerDesException(message, failure);
-    }
-
-    private static boolean requiresContext(SerDesStage stage) {
-        return stage.requiresDurableContext();
     }
 
     /** Builder for an immutable {@link ComposableSerDes}. */

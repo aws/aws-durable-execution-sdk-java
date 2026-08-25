@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.ComposableSerDes;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
@@ -62,7 +63,7 @@ public class LocalDurableTestRunner<I, O> {
         this.inputType = inputType;
         this.outputType = outputType;
         this.handler = handlerFn;
-        this.inputSerDes = inputSerDes;
+        this.inputSerDes = inputValueCodec(inputSerDes);
         this.storage = new LocalMemoryExecutionClient();
 
         // Create config that uses customer's configuration but overrides the client with in-memory storage
@@ -216,11 +217,10 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     /**
-     * Returns a new runner with a separate SerDes for the initial Lambda invocation payload.
+     * Returns a new runner with a separate value codec for the initial Lambda invocation payload.
      *
-     * <p>Configure a context-free input value codec when the persisted SerDes requires durable context. This preserves
-     * production behavior: the initial external payload is decoded directly by the value codec, while the persisted
-     * pipeline processes payloads after the durable execution context exists.
+     * <p>The input codec is independent of the SerDes used for persisted execution payloads and must not be a
+     * {@link ComposableSerDes}. The default is {@link JacksonSerDes}.
      */
     public LocalDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new LocalDurableTestRunner<>(
@@ -400,18 +400,15 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     private String serializeInput(I input) {
-        var serializer = inputSerDes != null ? inputSerDes : serDes;
-        if (serializer.requiresDurableContext()) {
-            throw new IllegalStateException(
-                    "Initial input SerDes requires a durable execution context; configure a context-free "
-                            + "input SerDes with withInputSerDes(...)");
+        return inputSerDes.serialize(input);
+    }
+
+    private static SerDes inputValueCodec(SerDes inputSerDes) {
+        var codec = Objects.requireNonNullElseGet(inputSerDes, JacksonSerDes::new);
+        if (codec instanceof ComposableSerDes) {
+            throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
         }
-        if (serializer instanceof ComposableSerDes && serDes.requiresDurableContext()) {
-            throw new IllegalStateException(
-                    "Initial input for a context-dependent persisted SerDes must use a value codec, not a composable "
-                            + "pipeline");
-        }
-        return serializer.serialize(input);
+        return codec;
     }
 
     private Context mockLambdaContext() {

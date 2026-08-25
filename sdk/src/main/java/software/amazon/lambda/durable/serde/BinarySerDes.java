@@ -24,9 +24,4 @@ public interface BinarySerDes {
      * @return the non-null bytes expected by the preceding transformation
      */
     byte[] deserialize(byte[] data);
-
-    /** Returns whether this transformation requires an SDK-managed durable execution context. */
-    default boolean requiresDurableContext() {
-        return false;
-    }
 }

@@ -46,26 +46,20 @@ class CloudDurableTestRunnerTest {
     }
 
     @Test
-    void explicitComposableInputSerDesUsesTheCompletePipeline() {
+    void rejectsComposableInputSerDes() {
         var mockClient = mock(LambdaClient.class);
-        when(mockClient.invoke(any(InvokeRequest.class)))
-                .thenReturn(InvokeResponse.builder()
-                        .durableExecutionArn("arn:aws:lambda:us-east-2:123:function:test:1/durable-execution/e/i")
-                        .build());
-        var wrappingStage = wrappingStage();
         var runner = CloudDurableTestRunner.create(
-                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withInputSerDes(new JacksonSerDes().then(wrappingStage));
+                "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient);
 
-        runner.startAsync("value");
+        var failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> runner.withInputSerDes(new JacksonSerDes().then(wrappingStage())));
 
-        var request = ArgumentCaptor.forClass(InvokeRequest.class);
-        verify(mockClient).invoke(request.capture());
-        assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
+        assertTrue(failure.getMessage().contains("value codec"));
     }
 
     @Test
-    void persistedComposableSerDesUsesCompletePipelineForDefaultInput() {
+    void persistedComposableSerDesUsesDefaultJacksonInputCodec() {
         var mockClient = mock(LambdaClient.class);
         when(mockClient.invoke(any(InvokeRequest.class)))
                 .thenReturn(InvokeResponse.builder()
@@ -79,50 +73,25 @@ class CloudDurableTestRunnerTest {
 
         var request = ArgumentCaptor.forClass(InvokeRequest.class);
         verify(mockClient).invoke(request.capture());
+        assertEquals("\"value\"", request.getValue().payload().asUtf8String());
+    }
+
+    @Test
+    void explicitInputValueCodecIsUsed() {
+        var mockClient = mock(LambdaClient.class);
+        when(mockClient.invoke(any(InvokeRequest.class)))
+                .thenReturn(InvokeResponse.builder()
+                        .durableExecutionArn("arn:aws:lambda:us-east-2:123:function:test:1/durable-execution/e/i")
+                        .build());
+        var runner = CloudDurableTestRunner.create(
+                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
+                .withInputSerDes(wrappingValueCodec());
+
+        runner.startAsync("value");
+
+        var request = ArgumentCaptor.forClass(InvokeRequest.class);
+        verify(mockClient).invoke(request.capture());
         assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
-    }
-
-    @Test
-    void contextDependentPersistedSerDesRequiresExplicitInputSerDes() {
-        var mockClient = mock(LambdaClient.class);
-        var runner = CloudDurableTestRunner.create(
-                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(new JacksonSerDes().then(contextDependentStage()));
-
-        var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
-
-        assertInstanceOf(IllegalStateException.class, failure.getCause());
-        assertTrue(failure.getCause().getMessage().contains("withInputSerDes"));
-        verifyNoInteractions(mockClient);
-    }
-
-    @Test
-    void explicitInputSerDesMustBeContextFree() {
-        var mockClient = mock(LambdaClient.class);
-        var runner = CloudDurableTestRunner.create(
-                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withInputSerDes(contextDependentStage());
-
-        var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
-
-        assertInstanceOf(IllegalStateException.class, failure.getCause());
-        assertTrue(failure.getCause().getMessage().contains("Initial input SerDes"));
-        verifyNoInteractions(mockClient);
-    }
-
-    @Test
-    void contextDependentPersistedSerDesRequiresValueCodecInput() {
-        var mockClient = mock(LambdaClient.class);
-        var runner = CloudDurableTestRunner.create(
-                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(new JacksonSerDes().then(contextDependentStage()))
-                .withInputSerDes(new JacksonSerDes().then(wrappingStage()));
-
-        var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
-
-        assertInstanceOf(IllegalStateException.class, failure.getCause());
-        assertTrue(failure.getCause().getMessage().contains("must use a value codec"));
-        verifyNoInteractions(mockClient);
     }
 
     @Test
@@ -137,8 +106,7 @@ class CloudDurableTestRunnerTest {
                 new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(persistedSerDes)
-                .withInputSerDes(new JacksonSerDes());
+                .withSerDes(persistedSerDes);
 
         runner.startAsync("value");
 
@@ -163,7 +131,7 @@ class CloudDurableTestRunnerTest {
                         .build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withInputSerDes(new JacksonSerDes().then(wrappingStage()))
+                .withInputSerDes(wrappingValueCodec())
                 .withSerDes(new JacksonSerDes());
 
         runner.startAsync("value");
@@ -187,35 +155,18 @@ class CloudDurableTestRunnerTest {
         };
     }
 
-    private static ContextDependentSerDesStage contextDependentStage() {
-        return new ContextDependentSerDesStage();
-    }
+    private static SerDes wrappingValueCodec() {
+        var delegate = new JacksonSerDes();
+        return new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "<" + delegate.serialize(value) + ">";
+            }
 
-    private static final class ContextDependentSerDesStage implements SerDes, SerDesStage {
-        @Override
-        public String serialize(Object value) {
-            return value.toString();
-        }
-
-        @Override
-        public String serialize(String value) {
-            return value;
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public <T> T deserialize(String data, TypeToken<T> typeToken) {
-            return (T) data;
-        }
-
-        @Override
-        public String deserialize(String data) {
-            return data;
-        }
-
-        @Override
-        public boolean requiresDurableContext() {
-            return true;
-        }
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return delegate.deserialize(data.substring(1, data.length() - 1), typeToken);
+            }
+        };
     }
 }

@@ -106,11 +106,11 @@ shared mount such as EFS. S3 Files can have delayed synchronization, so a runtim
 lose recent writes; use it only when that tradeoff is acceptable. The SDK does not delete offloaded files, so configure
 storage lifecycle and retention separately.
 
-For a context-free `ComposableSerDes`, the test runners apply the complete pipeline to the initial Lambda invocation.
-If the persisted SerDes requires durable context, such as `FileSystemSerDes`, call
-`withInputSerDes(...)` with a separate context-free input value codec because the durable execution ARN does not exist
-yet. In that case, the input SerDes must be a value codec rather than a composable pipeline because the external
-payload does not carry framing that identifies which stages ran.
+The cloud and local test runners always serialize the initial Lambda invocation with a separate context-free value
+codec. This codec defaults to `JacksonSerDes` and can be replaced with `withInputSerDes(...)`. It is independent of the
+SerDes used for persisted execution payloads: the runners never apply that persisted composable pipeline to the initial
+invocation. The input SerDes must therefore be a value codec rather than a `ComposableSerDes`. A custom input codec must
+produce data that the persisted pipeline's root value codec can decode at the external-input boundary.
 
 Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. `OVERFLOW` and preview-size
 checks apply to the filesystem stage's output; account for any expansion introduced by later stages when staying

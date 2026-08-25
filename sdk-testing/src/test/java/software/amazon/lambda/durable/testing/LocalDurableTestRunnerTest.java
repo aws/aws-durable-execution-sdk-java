@@ -149,34 +149,37 @@ class LocalDurableTestRunnerTest {
     }
 
     @Test
-    void contextDependentPersistedSerDesRequiresExplicitInputSerDes(@TempDir Path basePath) {
+    void filesystemPersistedSerDesUsesDefaultJacksonInputCodec(@TempDir Path basePath) {
+        var config = DurableConfig.builder()
+                .withSerDes(new JacksonSerDes()
+                        .then(FileSystemSerDes.builder(basePath).build()))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value", result.getResult());
+    }
+
+    @Test
+    void rejectsComposableInputSerDes(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()
                         .then(FileSystemSerDes.builder(basePath).build()))
                 .build();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config);
 
-        var failure = assertThrows(IllegalStateException.class, () -> runner.run("value"));
+        var failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> runner.withInputSerDes(new JacksonSerDes().then(wrappingStage(new AtomicInteger()))));
 
-        assertTrue(failure.getMessage().contains("withInputSerDes"));
+        assertTrue(failure.getMessage().contains("value codec"));
     }
 
     @Test
-    void contextDependentPersistedSerDesRequiresValueCodecInput(@TempDir Path basePath) {
-        var config = DurableConfig.builder()
-                .withSerDes(new JacksonSerDes()
-                        .then(FileSystemSerDes.builder(basePath).build()))
-                .build();
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
-                .withInputSerDes(new JacksonSerDes().then(wrappingStage(new AtomicInteger())));
-
-        var failure = assertThrows(IllegalStateException.class, () -> runner.run("value"));
-
-        assertTrue(failure.getMessage().contains("must use a value codec"));
-    }
-
-    @Test
-    void initialInputBypassesStagesBeforeFileSystemSerDes(@TempDir Path basePath) {
+    void defaultInputCodecBypassesPersistedStagesBeforeFileSystemSerDes(@TempDir Path basePath) {
         var deserializeCalls = new AtomicInteger();
         var persistedSerDes = new JacksonSerDes()
                 .then(bytesStage(deserializeCalls))
@@ -184,7 +187,6 @@ class LocalDurableTestRunnerTest {
         var config = DurableConfig.builder().withSerDes(persistedSerDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class, (input, context) -> input + ":" + deserializeCalls.get(), config)
-                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         var result = runner.run("value");

@@ -24,9 +24,4 @@ public interface StringBinaryCodec {
      * @return the non-null string value
      */
     String fromBytes(byte[] data);
-
-    /** Returns whether this codec requires an SDK-managed durable execution context. */
-    default boolean requiresDurableContext() {
-        return false;
-    }
 }
