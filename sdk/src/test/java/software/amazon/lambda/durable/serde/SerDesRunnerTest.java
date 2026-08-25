@@ -148,6 +148,48 @@ class SerDesRunnerTest {
     }
 
     @Test
+    void cacheKeyIncludesSerDesIdentity() {
+        var runner = new SerDesRunner(null);
+        var context = context("operation/1/result");
+        var first = fixedValueSerDes("first");
+        var second = fixedValueSerDes("second");
+
+        assertEquals("first", runner.deserialize(first, "\"value\"", TypeToken.get(String.class), context));
+        assertEquals("second", runner.deserialize(second, "\"value\"", TypeToken.get(String.class), context));
+    }
+
+    @Test
+    void completedCacheEvictsOldestEntries() {
+        var calls = new AtomicInteger();
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                calls.incrementAndGet();
+                return (T) data;
+            }
+        };
+        var runner = new SerDesRunner(null);
+        var retainedValues = new ArrayList<String>();
+
+        for (int index = 0; index <= SerDesRunner.MAX_COMPLETED_DESERIALIZATIONS; index++) {
+            retainedValues.add(runner.deserialize(
+                    serDes, "value-" + index, TypeToken.get(String.class), context("operation/" + index + "/result")));
+        }
+        assertEquals(SerDesRunner.MAX_COMPLETED_DESERIALIZATIONS + 1, calls.get());
+
+        assertEquals(
+                retainedValues.get(0),
+                runner.deserialize(serDes, "value-0", TypeToken.get(String.class), context("operation/0/result")));
+        assertEquals(SerDesRunner.MAX_COMPLETED_DESERIALIZATIONS + 2, calls.get());
+    }
+
+    @Test
     void concurrentCacheMissesDeserializeOnlyOnce() throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
@@ -259,6 +301,21 @@ class SerDesRunnerTest {
                 RetryableSerDesException.class, () -> runner.serialize(serDes, "value", context("entity")));
 
         assertInstanceOf(RetryableSerDesException.class, exception.getCause());
+    }
+
+    private static SerDes fixedValueSerDes(String value) {
+        return new SerDes() {
+            @Override
+            public String serialize(Object input) {
+                return input.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) value;
+            }
+        };
     }
 
     private static SerDesContext context(String entityId) {

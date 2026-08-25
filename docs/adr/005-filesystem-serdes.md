@@ -406,6 +406,7 @@ block the calling thread.
 
 Add an invocation-scoped cache for successful deserialization results. The cache key should include:
 
+- The identity of the SerDes instance.
 - Durable execution ARN.
 - `entityId`.
 - Payload kind.
@@ -413,7 +414,12 @@ Add an invocation-scoped cache for successful deserialization results. The cache
 - Target `TypeToken` type.
 - A hash of the serialized checkpoint string.
 
-The serialized string hash prevents stale results when a `WAIT_FOR_CONDITION` or retried step updates the same operation payload across attempts. Cache entries live only for the current Lambda invocation and are discarded when `ExecutionManager` closes.
+The SerDes identity prevents two configured pipelines from sharing a call-order-dependent result. The serialized string
+hash prevents stale results when a `WAIT_FOR_CONDITION` or retried step updates the same operation payload across
+attempts. Concurrent misses share one in-flight deserialization. Completed values use a bounded weak-reference cache
+so a large replay does not retain every materialized object. Cache entries live only for the current Lambda invocation
+and are discarded when `ExecutionManager` closes. Cloud test polling creates a fresh cache for each history snapshot
+and retains that cache only with the corresponding `TestResult`.
 
 With this approach, SDK caching can avoid repeated calls to `FileSystemSerDes.deserialize`. If a cache miss occurs, `FileSystemSerDes` may perform a file read internally.
 
@@ -437,9 +443,11 @@ Root user input and output payloads should route through `SerDesRunner` so `File
 The cloud test runner must send initial Lambda input before it receives a durable execution ARN. When configured with a
 context-free `ComposableSerDes`, it serializes the invocation payload with the complete configured pipeline so
 compression, encryption, and other ordinary transformations remain compatible with the deployed function. When the
-persisted SerDes reports that it requires durable context, the runner requires a separate context-free input codec via
-`CloudDurableTestRunner.withInputSerDes(...)`. Fluent configuration preserves that explicit input codec regardless of
-whether `withInputSerDes(...)` or `withSerDes(...)` is called first.
+persisted SerDes reports that it requires durable context, the runner requires a separate context-free input value
+codec via `CloudDurableTestRunner.withInputSerDes(...)`. That codec must not be a composable string-processing pipeline:
+an unframed external payload does not identify which input stages ran, while a context-dependent terminal stage must
+also accept raw service payloads such as callbacks and invoke results. Fluent configuration preserves that explicit
+input codec regardless of whether `withInputSerDes(...)` or `withSerDes(...)` is called first.
 
 ### Implementation plan
 
@@ -455,7 +463,8 @@ whether `withInputSerDes(...)` or `withSerDes(...)` is called first.
    leaving `DurableInputOutputSerDes` internal.
 6. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`,
    `CallbackOperation`, `ChildContextOperation`, `MapOperation`, and test helpers to use `SerDesRunner`.
-7. Add invocation-scoped deserialization caching keyed by entity, payload kind, type, and serialized data hash.
+7. Add bounded, invocation-scoped deserialization caching keyed by SerDes identity, entity, payload kind, type, and
+   serialized data hash.
 8. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
 9. Implement `FileSystemSerDes` in the core `software.amazon.lambda.durable.serde` package with standalone compatibility and
    string-stage modes, `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file

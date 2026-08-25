@@ -49,7 +49,7 @@ SerDes executor must be different from the user-operation executor to avoid dead
 saturated.
 
 The SDK installs `SerDesContext` on whichever thread performs the call, restores any previous nested context afterward,
-and caches successful deserialization results for the current invocation.
+and uses a bounded weak-reference cache for successful deserialization results during the current invocation.
 
 ### Filesystem-backed payload storage
 
@@ -92,7 +92,9 @@ storage lifecycle and retention separately.
 
 For a context-free `ComposableSerDes`, `CloudDurableTestRunner` applies the complete pipeline to the initial Lambda
 invocation. If the persisted SerDes requires durable context, such as `FileSystemSerDes`, call
-`withInputSerDes(...)` with a separate context-free input codec because the durable execution ARN does not exist yet.
+`withInputSerDes(...)` with a separate context-free input value codec because the durable execution ARN does not exist
+yet. In that case, the input SerDes must not include composable string-processing stages because the external payload
+does not carry framing that identifies which stages ran.
 `FileSystemSerDes` must also be the final pipeline stage so its checkpoint-size decision cannot be invalidated by a
 later expanding transformation.
 

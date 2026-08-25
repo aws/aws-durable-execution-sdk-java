@@ -31,7 +31,6 @@ public class AsyncExecution<O> {
     private final Duration pollInterval;
     private final Duration timeout;
     private final HistoryEventProcessor processor;
-    private final SerDesRunner serDesRunner;
     private List<Event> currentHistory;
     private TestResult<O> currentResult;
 
@@ -49,7 +48,6 @@ public class AsyncExecution<O> {
         this.timeout = timeout;
         this.serDes = serDes;
         this.processor = new HistoryEventProcessor();
-        this.serDesRunner = new SerDesRunner(null);
     }
 
     /**
@@ -198,8 +196,9 @@ public class AsyncExecution<O> {
                     .build();
             var response = lambdaClient.getDurableExecutionHistory(request);
             this.currentHistory = response.events();
+            var snapshotSerDesRunner = new SerDesRunner(null);
             this.currentResult =
-                    processor.processEvents(currentHistory, outputType, serDes, serDesRunner, executionArn);
+                    processor.processEvents(currentHistory, outputType, serDes, snapshotSerDesRunner, executionArn);
         } catch (ResourceNotFoundException e) {
             // Execution doesn't exist yet - this can happen immediately after async invoke
             // Leave currentHistory as null, pollUntil will retry

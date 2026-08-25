@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
@@ -173,7 +174,9 @@ public class CloudDurableTestRunner<I, O> {
      *
      * <p>The supplied SerDes is used exactly as configured, including every stage in a composable pipeline. Configure a
      * separate context-free input SerDes when the persisted SerDes requires a durable execution context, because that
-     * context does not exist before the initial Lambda invocation.
+     * context does not exist before the initial Lambda invocation. In that case the input SerDes must be a value codec,
+     * not a composable string-processing pipeline, because context-dependent persisted stages cannot distinguish which
+     * input stages produced an unframed external payload.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(
@@ -278,10 +281,15 @@ public class CloudDurableTestRunner<I, O> {
 
     private String serializeInput(I input) {
         var serializer = inputSerDes != null ? inputSerDes : serDes;
-        if (inputSerDes == null && serializer.requiresDurableContext()) {
+        if (serializer.requiresDurableContext()) {
             throw new IllegalStateException(
-                    "Configured persisted SerDes requires a durable execution context; configure a separate "
-                            + "context-free input SerDes with withInputSerDes(...)");
+                    "Initial input SerDes requires a durable execution context; configure a context-free "
+                            + "input SerDes with withInputSerDes(...)");
+        }
+        if (inputSerDes instanceof ComposableSerDes && serDes.requiresDurableContext()) {
+            throw new IllegalStateException(
+                    "Initial input for a context-dependent persisted SerDes must use a value codec, not a composable "
+                            + "string-processing pipeline");
         }
         return serializer.serialize(input);
     }

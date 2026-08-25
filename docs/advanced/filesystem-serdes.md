@@ -78,9 +78,10 @@ verified when reading, and symbolic-link paths are rejected.
 checkpoint representation; a later expanding transform cannot push an inline envelope over the service limit.
 
 `CloudDurableTestRunner` cannot use `FileSystemSerDes` for the initial Lambda invocation because an execution ARN is
-not available yet. Configure a separate context-free initial-input codec with `withInputSerDes(...)`. An explicitly
-supplied input SerDes is used exactly as configured, including every stage in a composable pipeline. Context-free
-persisted pipelines use their complete pipeline for the initial invocation.
+not available yet. Configure a separate context-free initial-input value codec with `withInputSerDes(...)`. Do not use
+a composable string-processing pipeline for that input boundary: the unframed external payload does not identify which
+stages ran before the context-dependent filesystem stage. Context-free persisted pipelines still use their complete
+pipeline for the initial invocation.
 
 ## Storage requirements
 
