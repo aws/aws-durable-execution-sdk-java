@@ -198,6 +198,14 @@ class ComposableBinarySerDesStageTest {
                 bytes, Base64StringBinaryCodec.INSTANCE.toBytes(Base64StringBinaryCodec.INSTANCE.fromBytes(bytes)));
     }
 
+    @Test
+    void utf8CodecRejectsLossyConversions() {
+        assertThrows(SerDesException.class, () -> Utf8StringBinaryCodec.INSTANCE.toBytes("lone surrogate \uD800"));
+        assertThrows(
+                SerDesException.class,
+                () -> Utf8StringBinaryCodec.INSTANCE.fromBytes(new byte[] {(byte) 0xC3, (byte) 0x28}));
+    }
+
     private static StringBinaryCodec recordingCodec(String name, List<String> calls) {
         return new StringBinaryCodec() {
             @Override

@@ -7,13 +7,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
@@ -450,17 +448,14 @@ public final class FileSystemSerDes implements SerDes {
             throw new SerDesException("Filesystem SerDes directory resolves outside the configured base path");
         }
         if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
-            var existing = Files.readAllBytes(file);
-            if (!Arrays.equals(existing, payload.data())) {
-                throw new SerDesException("Filesystem SerDes content-addressed file contains unexpected data");
-            }
+            validateExistingPayload(file, payload.data());
             return;
         }
 
         var temporary = Files.createTempFile(directory, file.getFileName().toString(), ".tmp");
         try {
             Files.write(temporary, payload.data());
-            moveWithoutReplacement(temporary, file);
+            publishWithoutReplacement(temporary, file, payload.data());
         } finally {
             Files.deleteIfExists(temporary);
         }
@@ -514,17 +509,19 @@ public final class FileSystemSerDes implements SerDes {
         return canonicalBasePath;
     }
 
-    private static void moveWithoutReplacement(Path temporary, Path file) throws IOException {
+    private void publishWithoutReplacement(Path temporary, Path file, byte[] expectedData) throws IOException {
         try {
-            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            try {
-                Files.move(temporary, file);
-            } catch (FileAlreadyExistsException ignored) {
-                // Another thread or invocation already persisted the same content-addressed payload.
-            }
+            Files.createLink(file, temporary);
         } catch (FileAlreadyExistsException ignored) {
-            // Another thread or invocation already persisted the same content-addressed payload.
+            validateExistingPayload(file, expectedData);
+        }
+    }
+
+    private void validateExistingPayload(Path file, byte[] expectedData) throws IOException {
+        rejectSymbolicLinks(file);
+        var existing = Files.readAllBytes(file);
+        if (!Arrays.equals(existing, expectedData)) {
+            throw new SerDesException("Filesystem SerDes content-addressed file contains unexpected data");
         }
     }
 

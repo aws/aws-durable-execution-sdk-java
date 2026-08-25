@@ -140,6 +140,20 @@ class FileSystemSerDesTest {
     }
 
     @Test
+    void rejectsUnexpectedContentInExistingContentAddressedFile() throws Exception {
+        var serDes = FileSystemSerDes.stageBuilder(basePath).build();
+        var runner = new SerDesRunner(null);
+        var envelope = runner.serialize(serDes, "expected", context());
+        var file = payloadFile(envelope);
+        Files.writeString(file, "unexpected");
+
+        var failure = assertThrows(SerDesException.class, () -> runner.serialize(serDes, "expected", context()));
+
+        assertTrue(failure.getCause().getMessage().contains("contains unexpected data"));
+        assertEquals("unexpected", Files.readString(file));
+    }
+
+    @Test
     void hashEncodingUsesFixedLengthSegments() throws Exception {
         var serDes = FileSystemSerDes.builder(basePath)
                 .pathEncoding(FileSystemPathEncoding.HASH)
