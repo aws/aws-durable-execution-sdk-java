@@ -66,7 +66,7 @@ public interface SerDes {
 
     <T> T deserialize(String data, TypeToken<T> typeToken);
 
-    default ComposableSerDes then(SerDesStage nextStage) {
+    default SerDes then(SerDesStage nextStage) {
         return ComposableSerDes.builder(this).then(nextStage).build();
     }
 }
@@ -150,7 +150,7 @@ public final class ComposableSerDes implements SerDes {
 
     public SerDes getValueCodec();
 
-    public ComposableSerDes then(SerDesStage stage);
+    public SerDes then(SerDesStage stage);
 
     public static final class Builder {
         public Builder then(SerDesStage stage);

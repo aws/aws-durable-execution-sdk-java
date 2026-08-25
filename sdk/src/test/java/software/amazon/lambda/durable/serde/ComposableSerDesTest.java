@@ -21,11 +21,13 @@ import software.amazon.lambda.durable.exception.SerDesException;
 class ComposableSerDesTest {
 
     @Test
-    void onlyAcceptsStringStagesAfterTheValueCodec() throws Exception {
+    void exposesStringStageCompositionThroughTheSerDesInterface() throws Exception {
         assertThrows(NoSuchMethodException.class, () -> SerDes.class.getMethod("then", SerDes.class));
         assertEquals(
-                ComposableSerDes.class,
-                SerDes.class.getMethod("then", SerDesStage.class).getReturnType());
+                SerDes.class, SerDes.class.getMethod("then", SerDesStage.class).getReturnType());
+        assertEquals(
+                SerDes.class,
+                ComposableSerDes.class.getMethod("then", SerDesStage.class).getReturnType());
     }
 
     @Test

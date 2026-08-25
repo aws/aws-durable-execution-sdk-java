@@ -65,7 +65,7 @@ public final class ComposableSerDes implements SerDes {
 
     /** Returns a new pipeline with the supplied string stage appended. */
     @Override
-    public ComposableSerDes then(SerDesStage stage) {
+    public SerDes then(SerDesStage stage) {
         var combined = new ArrayList<>(stages);
         combined.add(Objects.requireNonNull(stage, "stage cannot be null"));
         return new ComposableSerDes(valueCodec, combined);

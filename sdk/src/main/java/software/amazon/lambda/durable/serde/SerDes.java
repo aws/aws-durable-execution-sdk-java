@@ -42,9 +42,9 @@ public interface SerDes {
      * Returns an immutable processing pipeline with a string stage appended.
      *
      * @param nextStage the reversible string stage to append
-     * @return a composable SerDes pipeline
+     * @return a SerDes backed by an immutable processing pipeline
      */
-    default ComposableSerDes then(SerDesStage nextStage) {
+    default SerDes then(SerDesStage nextStage) {
         return ComposableSerDes.builder(this).then(nextStage).build();
     }
 }
