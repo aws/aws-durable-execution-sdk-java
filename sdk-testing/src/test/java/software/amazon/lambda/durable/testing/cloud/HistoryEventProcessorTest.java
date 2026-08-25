@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.testing.cloud;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -26,6 +27,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.serde.SerDesStage;
 
 class HistoryEventProcessorTest {
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST"
@@ -115,6 +117,7 @@ class HistoryEventProcessorTest {
         assertEquals(OperationType.EXECUTION, outputContext.operationType());
         assertEquals(SerDesPayloadKind.OUTPUT, outputContext.payloadKind());
         assertEquals("execution/invocation-id/output", outputContext.entityId());
+        assertNull(outputContext.originalValue());
 
         var stepContext = observedContexts.get(1);
         assertEquals(OperationType.STEP, stepContext.operationType());
@@ -124,7 +127,7 @@ class HistoryEventProcessorTest {
     }
 
     private static SerDes recordingStringSerDes(List<SerDesContext> observedContexts) {
-        return new SerDes() {
+        SerDes valueCodec = new SerDes() {
             @Override
             public String serialize(Object value) {
                 return value.toString();
@@ -133,9 +136,20 @@ class HistoryEventProcessorTest {
             @Override
             @SuppressWarnings("unchecked")
             public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                observedContexts.add(SerDesContext.getCurrentContext());
                 return (T) data;
             }
         };
+        return valueCodec.then(new SerDesStage() {
+            @Override
+            public String serialize(String value, SerDesContext context) {
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                observedContexts.add(context);
+                return data;
+            }
+        });
     }
 }

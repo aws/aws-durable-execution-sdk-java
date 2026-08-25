@@ -63,12 +63,15 @@ class ComposableSerDesTest {
         var context = SerDesContext.forExecution("arn", "invocation", "execution", SerDesPayloadKind.RESULT);
         var pipeline = new JacksonSerDes().then(stage);
         var runner = new SerDesRunner(null);
+        var originalValue = new String("value");
 
-        var serialized = runner.serialize(pipeline, "value", context);
+        var serialized = runner.serialize(pipeline, originalValue, context);
         runner.deserialize(pipeline, serialized, TypeToken.get(String.class), context);
 
-        assertSame(context, observedSerializeContext.get());
+        assertSame(originalValue, observedSerializeContext.get().originalValue());
+        assertEquals(context.entityId(), observedSerializeContext.get().entityId());
         assertSame(context, observedDeserializeContext.get());
+        assertNull(observedDeserializeContext.get().originalValue());
     }
 
     @Test

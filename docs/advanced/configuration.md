@@ -48,9 +48,9 @@ By default, SerDes runs synchronously on the calling thread to preserve existing
 SerDes executor must be different from the user-operation executor to avoid deadlock when the operation pool is
 saturated.
 
-The SDK passes `SerDesContext` explicitly to every `SerDesStage` and nested `BinarySerDesStage`. It also installs the
-same context on whichever thread performs the root `SerDes` call for backward compatibility with existing value
-codecs, restores any previous nested context afterward, and uses a bounded weak-reference cache for successful
+The SDK passes `SerDesContext` explicitly only to every `SerDesStage` and nested `BinarySerDesStage`; root `SerDes`
+value codecs remain context-free. During serialization, `context.originalValue()` contains the object supplied to the
+root value codec. During deserialization it is `null`. The SDK also uses a bounded weak-reference cache for successful
 deserialization results during the current invocation.
 
 ### Filesystem-backed payload storage
@@ -63,7 +63,7 @@ var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payload
     .pathEncoding(FileSystemPathEncoding.HASH)
     .build();
 
-var resilientFileSystemStage = new RetrySerDes(
+var resilientFileSystemStage = new RetrySerDesStage(
     fileSystemStage,
     RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
 
@@ -87,8 +87,10 @@ return DurableConfig.builder()
 ```
 
 Every top-level stage consumes and produces a string, so stages compose without intermediate type mismatches.
-Every stage method also receives the current read-only `SerDesContext`; the same instance is propagated through the
-complete pipeline and through every retry attempt.
+Every stage method also receives the current read-only `SerDesContext`. Serialization stages receive one derived
+context whose `originalValue()` is the object supplied to the root value codec; deserialization stages receive a
+context whose `originalValue()` is `null`. The same stage context is propagated through the complete pipeline and
+through every retry attempt.
 Every stage must emit a self-identifying, normally versioned representation. On deserialization it reverses recognized
 valid input, rejects recognized malformed or unsupported input, and returns unrecognized input unchanged. This lets
 raw external payloads pass through the configured stages and reach the root value codec.
@@ -121,11 +123,13 @@ var serDes = new JacksonSerDes().then(fileSystemStage);
 
 The built-in preview configuration parses the string produced by the preceding stage as JSON. Use
 `previewGenerator(...)` when the preceding stage produces another format or when fully custom preview logic is needed.
+The custom generator receives both that string and `SerDesContext`, so it can use `originalValue()` when the preview
+should be derived from the pre-serialization object. Custom generators must avoid exposing sensitive fields.
 
-`RetrySerDes` implements `SerDesStage` and retries only failures marked with `RetryableSerDesException`. Filesystem
-read and write I/O use this marker; malformed envelopes and codec failures fail immediately. Backoff occurs within the
-current Lambda invocation, so use short, bounded retry strategies. Without a configured SerDes executor, filesystem
-I/O and retry delays block the calling thread.
+`RetrySerDesStage` wraps a `SerDesStage`, while `RetryBinarySerDesStage` wraps a `BinarySerDesStage`. Both retry only
+failures marked with `RetryableSerDesException`. Filesystem read and write I/O use this marker; malformed envelopes and
+codec failures fail immediately. Backoff occurs within the current Lambda invocation, so use short, bounded retry
+strategies. Without a configured SerDes executor, filesystem I/O and retry delays block the calling thread.
 
 Do not use Lambda's ephemeral `/tmp` directory: replay can run in a different execution environment. Use a durable,
 shared mount such as EFS or S3 Files. Payloads are published with one immutable `CREATE_NEW` write, without hard links

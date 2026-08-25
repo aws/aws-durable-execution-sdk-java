@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,6 +23,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -77,7 +79,7 @@ class FileSystemSerDesTest {
         var stage = FileSystemSerDes.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
-        var pipeline = new JacksonSerDes().then(new RetrySerDes(stage, RetryStrategies.Presets.NO_RETRY));
+        var pipeline = new JacksonSerDes().then(new RetrySerDesStage(stage, RetryStrategies.Presets.NO_RETRY));
         var runner = new SerDesRunner(null);
 
         var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
@@ -223,22 +225,31 @@ class FileSystemSerDesTest {
 
     @Test
     void includesBoundedPreviewWithoutChangingStoredPayload() throws Exception {
+        var previewValue = new AtomicReference<String>();
+        var previewContext = new AtomicReference<SerDesContext>();
         var stage = FileSystemSerDes.builder(basePath)
-                .previewGenerator(value -> Map.of("summary", "order"))
+                .previewGenerator((value, context) -> {
+                    previewValue.set(value);
+                    previewContext.set(context);
+                    return Map.of("summary", "order");
+                })
                 .build();
         var serDes = new JacksonSerDes().then(stage);
         var runner = new SerDesRunner(null);
+        var originalValue = Map.of("secret", "value");
 
-        var envelope = runner.serialize(serDes, Map.of("secret", "value"), context());
+        var envelope = runner.serialize(serDes, originalValue, context());
         var json = MAPPER.readTree(envelope);
 
         assertEquals("order", json.get("preview").get("summary").textValue());
+        assertEquals("{\"secret\":\"value\"}", previewValue.get());
+        assertSame(originalValue, previewContext.get().originalValue());
         assertEquals(
                 "{\"secret\":\"value\"}",
                 Files.readString(Path.of(json.get("file").textValue())));
 
         var oversizedPreviewStage = FileSystemSerDes.builder(basePath)
-                .previewGenerator(value -> Map.of("summary", "x".repeat(256 * 1024)))
+                .previewGenerator((value, context) -> Map.of("summary", "x".repeat(256 * 1024)))
                 .build();
         var oversizedPreview = stringCodec().then(oversizedPreviewStage);
         var failure = assertThrows(SerDesException.class, () -> runner.serialize(oversizedPreview, "value", context()));

@@ -4,7 +4,7 @@ package software.amazon.lambda.durable.serde;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,25 +36,30 @@ class SerDesRunnerTest {
     }
 
     @Test
-    void setsContextInsideExecutorAndClearsItAfterCall() throws Exception {
+    void passesContextToStagesInsideExecutor() {
         var observedContext = new AtomicReference<SerDesContext>();
         var observedThread = new AtomicReference<String>();
-        var serDes = new JacksonSerDes() {
+        var stage = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
-                observedContext.set(SerDesContext.getCurrentContext());
+            public String serialize(String value, SerDesContext context) {
+                observedContext.set(context);
                 observedThread.set(Thread.currentThread().getName());
-                return super.serialize(value);
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                return data;
             }
         };
         var context = context("operation/1/result");
 
-        new SerDesRunner(executor).serialize(serDes, "value", context);
+        new SerDesRunner(executor).serialize(new JacksonSerDes().then(stage), "value", context);
 
-        assertSame(context, observedContext.get());
+        assertNotSame(context, observedContext.get());
+        assertEquals(context.entityId(), observedContext.get().entityId());
+        assertEquals("value", observedContext.get().originalValue());
         assertEquals("test-serdes", observedThread.get());
-        assertNull(executor.submit(SerDesContext::getCurrentContext).get());
-        assertNull(SerDesContext.getCurrentContext());
     }
 
     @Test
@@ -74,40 +79,8 @@ class SerDesRunnerTest {
     }
 
     @Test
-    void restoresPreviousContextAcrossNestedInlineCalls() {
-        var runner = new SerDesRunner(null);
-        var previous = context("previous");
-        var outer = context("outer");
-        var inner = context("inner");
-        var duringOuter = new AtomicReference<SerDesContext>();
-        var afterInner = new AtomicReference<SerDesContext>();
-        var innerSerDes = new JacksonSerDes() {
-            @Override
-            public String serialize(Object value) {
-                assertSame(inner, SerDesContext.getCurrentContext());
-                return super.serialize(value);
-            }
-        };
-        var outerSerDes = new JacksonSerDes() {
-            @Override
-            public String serialize(Object value) {
-                duringOuter.set(SerDesContext.getCurrentContext());
-                runner.serialize(innerSerDes, value, inner);
-                afterInner.set(SerDesContext.getCurrentContext());
-                return super.serialize(value);
-            }
-        };
-
-        SerDesContextHolder.set(previous);
-        try {
-            runner.serialize(outerSerDes, "value", outer);
-            assertSame(previous, SerDesContext.getCurrentContext());
-        } finally {
-            SerDesContextHolder.clear();
-        }
-
-        assertSame(outer, duringOuter.get());
-        assertSame(outer, afterInner.get());
+    void doesNotExposeThreadLocalContextAccessor() {
+        assertThrows(NoSuchMethodException.class, () -> SerDesContext.class.getMethod("getCurrentContext"));
     }
 
     @Test
@@ -141,7 +114,8 @@ class SerDesRunnerTest {
                 context.parentId(),
                 context.operationType(),
                 context.operationSubType(),
-                2);
+                2,
+                null);
         assertEquals("one", runner.deserialize(serDes, "\"one\"", TypeToken.get(String.class), nextAttempt));
 
         assertEquals(3, count.get());
@@ -349,6 +323,7 @@ class SerDesRunnerTest {
                 null,
                 OperationType.STEP,
                 OperationSubType.STEP,
-                1);
+                1,
+                null);
     }
 }

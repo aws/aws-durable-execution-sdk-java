@@ -27,6 +27,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesStage;
 
 class StepOperationTest {
 
@@ -99,13 +100,18 @@ class StepOperationTest {
     @Test
     void successfulReplayUsesCheckpointedAttemptInSerDesContext() {
         var observedContext = new AtomicReference<SerDesContext>();
-        var serDes = new JacksonSerDes() {
+        var serDes = new JacksonSerDes().then(new SerDesStage() {
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                observedContext.set(SerDesContext.getCurrentContext());
-                return super.deserialize(data, typeToken);
+            public String serialize(String value, SerDesContext context) {
+                return value;
             }
-        };
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                observedContext.set(context);
+                return data;
+            }
+        });
         var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name(OPERATION_NAME)
@@ -127,6 +133,7 @@ class StepOperationTest {
 
         assertEquals("cached-result", operation.get());
         assertEquals(3, observedContext.get().attempt());
+        assertNull(observedContext.get().originalValue());
     }
 
     @Test

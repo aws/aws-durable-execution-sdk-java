@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.TypeToken;
@@ -82,6 +83,33 @@ class ComposableBinarySerDesStageTest {
 
         assertSame(CONTEXT, serializeContext.get());
         assertSame(CONTEXT, deserializeContext.get());
+    }
+
+    @Test
+    void receivesTheOriginalValueFromTheRootPipeline() {
+        var serializeContext = new AtomicReference<SerDesContext>();
+        var binaryStage = ComposableBinarySerDesStage.builder()
+                .startWith(Utf8StringBinaryCodec.INSTANCE)
+                .then(new BinarySerDesStage() {
+                    @Override
+                    public byte[] serialize(byte[] value, SerDesContext context) {
+                        serializeContext.set(context);
+                        return value;
+                    }
+
+                    @Override
+                    public byte[] deserialize(byte[] data, SerDesContext context) {
+                        return data;
+                    }
+                })
+                .endWith(Base64StringBinaryCodec.INSTANCE)
+                .build();
+        var pipeline = new JacksonSerDes().then(binaryStage);
+        var originalValue = Map.of("id", 42);
+
+        new SerDesRunner(null).serialize(pipeline, originalValue, CONTEXT);
+
+        assertSame(originalValue, serializeContext.get().originalValue());
     }
 
     @Test

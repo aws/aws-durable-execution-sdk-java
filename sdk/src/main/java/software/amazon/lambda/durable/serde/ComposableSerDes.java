@@ -15,7 +15,8 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * <p>The first component is the value codec. Every later component is a {@link SerDesStage} that consumes and produces
  * a string. Serialization runs from first to last; deserialization runs from last to first. Each stage returns
  * unrecognized input unchanged, allowing raw values to pass through to the root value codec. SDK-managed calls pass the
- * same {@link SerDesContext} explicitly to every stage.
+ * same {@link SerDesContext} explicitly to every stage. During serialization that context also exposes the original
+ * object supplied to the value codec.
  */
 public final class ComposableSerDes implements SerDes {
     private final SerDes valueCodec;
@@ -72,23 +73,24 @@ public final class ComposableSerDes implements SerDes {
 
     @Override
     public String serialize(Object value) {
-        return serialize(value, SerDesContext.getCurrentContext());
+        return serialize(value, null);
     }
 
     String serialize(Object value, SerDesContext context) {
         if (value == null) {
             return null;
         }
+        var stageContext = context == null ? null : context.withOriginalValue(value);
         String current = invokeValueCodecSerialize(valueCodec, value);
         for (int index = 0; index < stages.size(); index++) {
-            current = invokeStageSerialize(stages.get(index), current, context, index + 1);
+            current = invokeStageSerialize(stages.get(index), current, stageContext, index + 1);
         }
         return current;
     }
 
     @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
-        return deserialize(data, typeToken, SerDesContext.getCurrentContext());
+        return deserialize(data, typeToken, null);
     }
 
     <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
@@ -96,9 +98,10 @@ public final class ComposableSerDes implements SerDes {
             return null;
         }
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
+        var stageContext = context == null ? null : context.withOriginalValue(null);
         String current = data;
         for (int index = stages.size() - 1; index >= 0; index--) {
-            current = invokeStageDeserialize(stages.get(index), current, context, index + 1);
+            current = invokeStageDeserialize(stages.get(index), current, stageContext, index + 1);
         }
         return invokeValueCodecDeserialize(valueCodec, current, typeToken);
     }

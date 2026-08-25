@@ -12,7 +12,7 @@ Error
 RuntimeException
 └── DurableExecutionException              - General durable exception
     ├── SerDesException                    - Serialization and deserialization exception.
-    │   └── RetryableSerDesException       - Transient SerDes failure eligible for RetrySerDes.
+    │   └── RetryableSerDesException       - Transient SerDes failure eligible for a retry stage wrapper.
     ├── UnrecoverableDurableExecutionException - Execution cannot be recovered. The durable execution will be immediately terminated.
     │   ├── NonDeterministicExecutionException - Code changed between original execution and replay. Fix code to maintain determinism; don't change step order/names.
     │   └── IllegalDurableOperationException   - An illegal operation was detected. The execution will be immediately terminated.

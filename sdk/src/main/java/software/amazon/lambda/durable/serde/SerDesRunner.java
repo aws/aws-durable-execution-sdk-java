@@ -21,7 +21,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
- * Runs customer SerDes calls with the correct {@link SerDesContext}.
+ * Runs customer SerDes calls and passes {@link SerDesContext} explicitly to composable pipeline stages.
  *
  * <p>Calls execute inline unless an executor is configured. Instances are invocation-scoped so successful
  * deserialization results are cached only for one Lambda invocation. Completed values use a bounded weak-reference
@@ -152,10 +152,9 @@ public final class SerDesRunner {
         Objects.requireNonNull(context, "SerDesContext cannot be null");
         try {
             if (executorService == null) {
-                return runWithContext(context, supplier);
+                return supplier.get();
             }
-            return CompletableFuture.supplyAsync(() -> runWithContext(context, supplier), executorService)
-                    .join();
+            return CompletableFuture.supplyAsync(supplier, executorService).join();
         } catch (Throwable throwable) {
             var cause = ExceptionHelper.unwrapCompletableFuture(throwable);
             if (cause instanceof Error error) {
@@ -167,20 +166,6 @@ public final class SerDesRunner {
                 throw new RetryableSerDesException(message, cause);
             }
             throw new SerDesException(message, cause);
-        }
-    }
-
-    private static <T> T runWithContext(SerDesContext context, Supplier<T> supplier) {
-        var previous = SerDesContextHolder.get();
-        SerDesContextHolder.set(context);
-        try {
-            return supplier.get();
-        } finally {
-            if (previous == null) {
-                SerDesContextHolder.clear();
-            } else {
-                SerDesContextHolder.set(previous);
-            }
         }
     }
 

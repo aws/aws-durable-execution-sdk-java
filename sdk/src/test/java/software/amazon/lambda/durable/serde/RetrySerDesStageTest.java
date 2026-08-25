@@ -19,9 +19,11 @@ import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
-class RetrySerDesTest {
-    private static final SerDesContext CONTEXT =
-            SerDesContext.forExecution("arn", "invocation", "execution", SerDesPayloadKind.RESULT);
+class RetrySerDesStageTest {
+    private static final Object ORIGINAL_VALUE = new Object();
+    private static final SerDesContext CONTEXT = SerDesContext.forExecution(
+                    "arn", "invocation", "execution", SerDesPayloadKind.RESULT)
+            .withOriginalValue(ORIGINAL_VALUE);
 
     @Test
     void retriesSerializationWithStrategyDelays() {
@@ -32,6 +34,7 @@ class RetrySerDesTest {
             @Override
             public String serialize(String value, SerDesContext context) {
                 assertSame(CONTEXT, context);
+                assertSame(ORIGINAL_VALUE, context.originalValue());
                 if (calls.incrementAndGet() < 3) {
                     throw new RetryableSerDesException("transient");
                 }
@@ -43,7 +46,7 @@ class RetrySerDesTest {
                 return data;
             }
         };
-        var retrySerDes = new RetrySerDes(
+        var retrySerDes = new RetrySerDesStage(
                 delegate,
                 (error, attempt) -> {
                     strategyAttempts.add(attempt);
@@ -76,7 +79,7 @@ class RetrySerDesTest {
             }
         };
         var retrySerDes =
-                new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
+                new RetrySerDesStage(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
 
         assertEquals("value", retrySerDes.deserialize("value", CONTEXT));
         assertEquals(2, calls.get());
@@ -97,9 +100,10 @@ class RetrySerDesTest {
                 return data;
             }
         };
-        var retrySerDes = new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {
-            throw new AssertionError("permanent failures must not sleep");
-        });
+        var retrySerDes =
+                new RetrySerDesStage(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {
+                    throw new AssertionError("permanent failures must not sleep");
+                });
 
         var failure = assertThrows(SerDesException.class, () -> retrySerDes.serialize("value", CONTEXT));
         assertEquals("permanent", failure.getMessage());
@@ -110,11 +114,11 @@ class RetrySerDesTest {
     void rejectsInvalidConfigurationAndRetryDelay() {
         var delegate = identityStage();
 
-        assertThrows(NullPointerException.class, () -> new RetrySerDes(null, RetryStrategies.Presets.NO_RETRY));
-        assertThrows(NullPointerException.class, () -> new RetrySerDes(delegate, null));
-        assertFalse(SerDes.class.isAssignableFrom(RetrySerDes.class));
+        assertThrows(NullPointerException.class, () -> new RetrySerDesStage(null, RetryStrategies.Presets.NO_RETRY));
+        assertThrows(NullPointerException.class, () -> new RetrySerDesStage(delegate, null));
+        assertFalse(SerDes.class.isAssignableFrom(RetrySerDesStage.class));
 
-        var retrySerDes = new RetrySerDes(
+        var retrySerDes = new RetrySerDesStage(
                 new SerDesStage() {
                     @Override
                     public String serialize(String value, SerDesContext context) {
@@ -150,7 +154,8 @@ class RetrySerDesTest {
                 return data;
             }
         };
-        var retrySerDes = new RetrySerDes(delegate, RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)), delay -> {});
+        var retrySerDes =
+                new RetrySerDesStage(delegate, RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)), delay -> {});
 
         var thrown = assertThrows(RetryableSerDesException.class, () -> retrySerDes.serialize("value", CONTEXT));
         assertSame(lastFailure.get(), thrown);
@@ -172,8 +177,8 @@ class RetrySerDesTest {
                 return data;
             }
         };
-        var retrySerDes =
-                new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)), delay -> {
+        var retrySerDes = new RetrySerDesStage(
+                delegate, (error, attempt) -> RetryDecision.retry(Duration.ofSeconds(1)), delay -> {
                     throw new InterruptedException("stop");
                 });
 

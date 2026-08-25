@@ -11,15 +11,8 @@ import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
-/**
- * A string-stage decorator that retries transient failures from another {@link SerDesStage}.
- *
- * <p>Only {@link RetryableSerDesException} is retried. Other failures are propagated immediately. Retry delays block
- * the thread executing the SerDes call: the caller by default or the configured SerDes executor thread. Every attempt
- * receives the same {@link SerDesContext} supplied to this decorator.
- */
-public final class RetrySerDes implements SerDesStage {
-    private static final Sleeper DEFAULT_SLEEPER = delay -> {
+final class SerDesRetryExecutor {
+    static final Sleeper DEFAULT_SLEEPER = delay -> {
         if (delay.getSeconds() > 0) {
             TimeUnit.SECONDS.sleep(delay.getSeconds());
         }
@@ -28,37 +21,15 @@ public final class RetrySerDes implements SerDesStage {
         }
     };
 
-    private final SerDesStage delegate;
     private final RetryStrategy retryStrategy;
     private final Sleeper sleeper;
 
-    /**
-     * Creates a retrying string-stage decorator.
-     *
-     * @param delegate the stage to invoke
-     * @param retryStrategy strategy that controls attempts and delays
-     */
-    public RetrySerDes(SerDesStage delegate, RetryStrategy retryStrategy) {
-        this(delegate, retryStrategy, DEFAULT_SLEEPER);
-    }
-
-    RetrySerDes(SerDesStage delegate, RetryStrategy retryStrategy, Sleeper sleeper) {
-        this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
+    SerDesRetryExecutor(RetryStrategy retryStrategy, Sleeper sleeper) {
         this.retryStrategy = Objects.requireNonNull(retryStrategy, "retryStrategy cannot be null");
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper cannot be null");
     }
 
-    @Override
-    public String serialize(String value, SerDesContext context) {
-        return execute("pipeline stage serialization", () -> delegate.serialize(value, context));
-    }
-
-    @Override
-    public String deserialize(String data, SerDesContext context) {
-        return execute("pipeline stage deserialization", () -> delegate.deserialize(data, context));
-    }
-
-    private <T> T execute(String action, Supplier<T> operation) {
+    <T> T execute(String action, Supplier<T> operation) {
         int attempt = 1;
         while (true) {
             try {

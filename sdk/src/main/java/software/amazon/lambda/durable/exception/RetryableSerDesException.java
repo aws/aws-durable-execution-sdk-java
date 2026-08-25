@@ -5,7 +5,8 @@ package software.amazon.lambda.durable.exception;
 /**
  * Indicates a transient serialization or deserialization failure that may succeed when retried.
  *
- * <p>{@link software.amazon.lambda.durable.serde.RetrySerDes} retries only this exception type. Other
+ * <p>{@link software.amazon.lambda.durable.serde.RetrySerDesStage} and
+ * {@link software.amazon.lambda.durable.serde.RetryBinarySerDesStage} retry only this exception type. Other
  * {@link SerDesException} instances are treated as permanent failures.
  */
 public class RetryableSerDesException extends SerDesException {

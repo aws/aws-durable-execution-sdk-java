@@ -21,15 +21,18 @@ package software.amazon.lambda.durable.serde;
  * codec without special pipeline control flow. Implementations should inspect an explicit marker or versioned envelope
  * before decoding rather than treating any successfully decodable value as recognized.
  *
- * <p>The SDK passes the durable payload context explicitly to every stage invocation. The context may be {@code null}
- * only when a pipeline or stage is invoked directly outside an SDK-managed SerDes call.
+ * <p>The SDK passes the durable payload context explicitly to every stage invocation. During serialization,
+ * {@link SerDesContext#originalValue()} is the object supplied to the root value codec. During deserialization it is
+ * {@code null}. Stages must treat the original value as read-only. The context itself may be {@code null} only when a
+ * pipeline or stage is invoked directly outside an SDK-managed SerDes call.
  */
 public interface SerDesStage {
     /**
      * Applies this stage during forward serialization.
      *
      * @param value the non-null input string
-     * @param context the current durable payload context, or {@code null} outside SDK-managed calls
+     * @param context the current durable payload context including the original value, or {@code null} outside
+     *     SDK-managed calls
      * @return the non-null transformed string
      */
     String serialize(String value, SerDesContext context);
@@ -41,7 +44,8 @@ public interface SerDesStage {
      * it identifies this stage's format but is malformed or unsupported, implementations must throw a SerDes failure.
      *
      * @param data the non-null input string
-     * @param context the current durable payload context, or {@code null} outside SDK-managed calls
+     * @param context the current durable payload context with a {@code null} original value, or {@code null} outside
+     *     SDK-managed calls
      * @return the non-null string expected by the preceding stage, or {@code data} unchanged when unrecognized
      */
     String deserialize(String data, SerDesContext context);

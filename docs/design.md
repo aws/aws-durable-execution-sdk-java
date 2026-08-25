@@ -363,14 +363,15 @@ software.amazon.lambda.durable
 │   ├── Base64StringBinaryCodec # Standard Base64 string/byte conversion
 │   ├── ComposableBinarySerDesStage # Ordered binary chain exposed as one string stage
 │   ├── JacksonSerDes       # Jackson impl
-│   ├── RetrySerDes         # Retrying string-stage decorator
+│   ├── RetrySerDesStage    # Retrying string-stage decorator
+│   ├── RetryBinarySerDesStage # Retrying binary-stage decorator
 │   ├── SerDesPreview       # Structured preview builder
 │   ├── PreviewConfig       # Preview selection, masking, and size configuration
 │   ├── PreviewField        # Field-name or exact-path preview selector
 │   ├── PreviewMode         # Include-all or exclude-all preview default
 │   ├── FieldMatchMode      # Anywhere or exact-path field matching
-│   ├── SerDesRunner        # Context, optional executor dispatch, and invocation cache
-│   ├── SerDesContext       # Read-only durable payload identity
+│   ├── SerDesRunner        # Stage context, optional executor dispatch, and invocation cache
+│   ├── SerDesContext       # Read-only durable payload identity and serialization source value
 │   ├── SerDesPayloadKind   # Input/result/state/exception/invoke payload kind
 │   └── AwsSdkV2Module      # SDK type support
 │
@@ -528,7 +529,7 @@ SuspendExecutionException                  # Internal: triggers suspension (not 
 | `NonDeterministicExecutionException` | Replay finds different operation than expected | Bug in handler (non-deterministic code) |
 | `IllegalDurableOperationException` | Illegal operation detected | Bug in handler |
 | `SerDesException` | Jackson fails to serialize/deserialize | Fix data model or custom SerDes |
-| `RetryableSerDesException` | Transient stage or payload storage failure | Wrap the failing `SerDesStage` with `RetrySerDes` and a bounded retry strategy |
+| `RetryableSerDesException` | Transient stage or payload storage failure | Wrap the failing string or binary stage with `RetrySerDesStage` or `RetryBinarySerDesStage` and a bounded retry strategy |
 
 ---
 

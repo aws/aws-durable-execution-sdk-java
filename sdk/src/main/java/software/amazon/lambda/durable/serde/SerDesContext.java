@@ -6,12 +6,11 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.model.OperationSubType;
 
 /**
- * Describes the durable payload currently being processed by a {@link SerDes}.
+ * Describes the durable payload currently being processed by a {@link SerDesStage} or {@link BinarySerDesStage}.
  *
- * <p>The SDK passes this context explicitly to {@link SerDesStage} and {@link BinarySerDesStage} methods. It is also
- * installed for the duration of the configured {@link SerDes} call so existing value codecs can read it without
- * changing the backward-compatible SerDes interface. Direct customer calls to SerDes methods do not have a current
- * context.
+ * <p>The SDK passes this context explicitly only to pipeline stages. Root {@link SerDes} value codecs remain
+ * context-free. During serialization, {@link #originalValue()} contains the object supplied to the root value codec;
+ * during deserialization it is {@code null}. Stages must treat the original value as read-only.
  */
 public record SerDesContext(
         String durableExecutionArn,
@@ -22,17 +21,8 @@ public record SerDesContext(
         String parentId,
         OperationType operationType,
         OperationSubType operationSubType,
-        Integer attempt) {
-
-    /**
-     * Returns the context for the SerDes call on the current thread, or {@code null} outside SDK-managed calls.
-     *
-     * <p>Pipeline stages should use the context parameter passed to their methods instead of this compatibility
-     * accessor.
-     */
-    public static SerDesContext getCurrentContext() {
-        return SerDesContextHolder.get();
-    }
+        Integer attempt,
+        Object originalValue) {
 
     /** Creates context for a root execution payload. */
     public static SerDesContext forExecution(
@@ -48,6 +38,7 @@ public record SerDesContext(
                 executionOperationName,
                 null,
                 OperationType.EXECUTION,
+                null,
                 null,
                 null);
     }
@@ -75,6 +66,24 @@ public record SerDesContext(
                 parentId,
                 operationType,
                 operationSubType,
-                attempt);
+                attempt,
+                null);
+    }
+
+    SerDesContext withOriginalValue(Object originalValue) {
+        if (this.originalValue == originalValue) {
+            return this;
+        }
+        return new SerDesContext(
+                durableExecutionArn,
+                entityId,
+                payloadKind,
+                operationId,
+                operationName,
+                parentId,
+                operationType,
+                operationSubType,
+                attempt,
+                originalValue);
     }
 }

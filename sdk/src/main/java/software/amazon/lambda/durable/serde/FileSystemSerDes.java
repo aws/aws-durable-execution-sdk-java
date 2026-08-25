@@ -19,7 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 import java.util.regex.Pattern;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
@@ -51,7 +51,7 @@ public final class FileSystemSerDes implements SerDesStage {
     private final Path basePath;
     private final FileSystemStorageMode storageMode;
     private final FileSystemPathEncoding pathEncoding;
-    private final Function<String, Map<String, Object>> previewGenerator;
+    private final BiFunction<String, SerDesContext, Map<String, Object>> previewGenerator;
     private volatile Path canonicalBasePath;
 
     private FileSystemSerDes(Builder builder) {
@@ -332,7 +332,7 @@ public final class FileSystemSerDes implements SerDesStage {
             return null;
         }
         try {
-            return previewGenerator.apply(value);
+            return previewGenerator.apply(value, context);
         } catch (RuntimeException e) {
             throw new SerDesException(
                     "Failed to generate filesystem payload preview for entity '" + context.entityId() + "'", e);
@@ -565,7 +565,7 @@ public final class FileSystemSerDes implements SerDesStage {
         private final Path basePath;
         private FileSystemStorageMode storageMode = FileSystemStorageMode.ALWAYS;
         private FileSystemPathEncoding pathEncoding = FileSystemPathEncoding.URI;
-        private Function<String, Map<String, Object>> previewGenerator;
+        private BiFunction<String, SerDesContext, Map<String, Object>> previewGenerator;
 
         private Builder(Path basePath) {
             this.basePath = Objects.requireNonNull(basePath, "basePath cannot be null");
@@ -582,11 +582,14 @@ public final class FileSystemSerDes implements SerDesStage {
         }
 
         /**
-         * Configures a custom preview generator that receives the string produced by the preceding pipeline stage.
+         * Configures a custom preview generator that receives the string produced by the preceding pipeline stage and
+         * its serialization context.
          *
-         * <p>The returned preview is included only when the payload is stored in a file.
+         * <p>{@link SerDesContext#originalValue()} contains the object supplied to the pipeline's root value codec. The
+         * returned preview is included only when the payload is stored in a file. Preview generators are responsible
+         * for avoiding disclosure of sensitive fields from either input.
          */
-        public Builder previewGenerator(Function<String, Map<String, Object>> previewGenerator) {
+        public Builder previewGenerator(BiFunction<String, SerDesContext, Map<String, Object>> previewGenerator) {
             this.previewGenerator = Objects.requireNonNull(previewGenerator, "previewGenerator cannot be null");
             return this;
         }
@@ -594,11 +597,11 @@ public final class FileSystemSerDes implements SerDesStage {
         /**
          * Configures structured preview generation for JSON produced by the preceding stage.
          *
-         * <p>Use {@link #previewGenerator(Function)} for non-JSON stage values or fully custom preview logic.
+         * <p>Use {@link #previewGenerator(BiFunction)} for non-JSON stage values or fully custom preview logic.
          */
         public Builder previewConfig(PreviewConfig previewConfig) {
             Objects.requireNonNull(previewConfig, "previewConfig cannot be null");
-            this.previewGenerator = value -> SerDesPreview.buildPreviewFromJson(value, previewConfig);
+            this.previewGenerator = (value, context) -> SerDesPreview.buildPreviewFromJson(value, previewConfig);
             return this;
         }
 

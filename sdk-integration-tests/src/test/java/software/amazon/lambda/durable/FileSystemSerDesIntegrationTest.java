@@ -155,8 +155,7 @@ class FileSystemSerDesIntegrationTest {
     @Test
     void acceptsRawCallbackAndInvokeResultsAndOffloadsInvokePayload() throws Exception {
         var invokePayload = new AtomicReference<String>();
-        var recordingStage = identityStage((action, value) -> {
-            var context = SerDesContext.getCurrentContext();
+        var recordingStage = identityStage((action, value, context) -> {
             if ("serialize".equals(action) && context.payloadKind() == SerDesPayloadKind.INVOKE_PAYLOAD) {
                 invokePayload.set(value);
             }
@@ -270,8 +269,7 @@ class FileSystemSerDesIntegrationTest {
     @Test
     void repeatedGetUsesInvocationCacheForTheCompletePipeline() {
         var resultDeserializations = new AtomicInteger();
-        var countingStage = identityStage((action, value) -> {
-            var context = SerDesContext.getCurrentContext();
+        var countingStage = identityStage((action, value, context) -> {
             if ("deserialize".equals(action)
                     && context.payloadKind() == SerDesPayloadKind.RESULT
                     && "cached-step".equals(context.operationName())) {
@@ -306,8 +304,7 @@ class FileSystemSerDesIntegrationTest {
     void successfulRetryUsesTheProducingAttemptForResultSerialization() {
         var executions = new AtomicInteger();
         var resultAttempts = new ArrayList<Integer>();
-        var attemptStage = identityStage((action, value) -> {
-            var context = SerDesContext.getCurrentContext();
+        var attemptStage = identityStage((action, value, context) -> {
             if ("serialize".equals(action)
                     && context.payloadKind() == SerDesPayloadKind.RESULT
                     && "retry-step".equals(context.operationName())) {
@@ -503,13 +500,13 @@ class FileSystemSerDesIntegrationTest {
         return new SerDesStage() {
             @Override
             public String serialize(String value, SerDesContext context) {
-                recorder.record("serialize", value);
+                recorder.record("serialize", value, context);
                 return value;
             }
 
             @Override
             public String deserialize(String data, SerDesContext context) {
-                recorder.record("deserialize", data);
+                recorder.record("deserialize", data, context);
                 return data;
             }
         };
@@ -532,7 +529,7 @@ class FileSystemSerDesIntegrationTest {
 
     @FunctionalInterface
     private interface RecordingFunction {
-        void record(String action, String value);
+        void record(String action, String value, SerDesContext context);
     }
 
     record Payload(String value) {}

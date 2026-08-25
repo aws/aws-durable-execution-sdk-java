@@ -23,7 +23,7 @@ var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payload
     .pathEncoding(FileSystemPathEncoding.URI)
     .build();
 
-var resilientFileSystemStage = new RetrySerDes(
+var resilientFileSystemStage = new RetrySerDesStage(
     fileSystemStage,
     RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
 
@@ -50,10 +50,11 @@ Serialization follows the declaration order above and deserialization runs in re
 `SerDes` value codec; every component appended with `then(...)` implements `SerDesStage` and consumes and produces a
 string. Each stage must use a self-identifying format: it reverses recognized valid input, rejects recognized malformed
 or unsupported input, and returns unrecognized input unchanged. The runner passes the same read-only
-`SerDesContext` explicitly to every string stage and binary substage. `ComposableBinarySerDesStage` converts the string
-with its starting codec, passes bytes directly through each `BinarySerDesStage`, converts the final bytes to a string
-with its ending codec, and adds a reserved versioned frame. Both boundaries are customizable through the same
-`StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once around the complete
+`SerDesContext` explicitly to every string stage and binary substage. During serialization, `originalValue()` exposes
+the object supplied to the root value codec; during deserialization it is `null`. `ComposableBinarySerDesStage`
+converts the string with its starting codec, passes bytes directly through each `BinarySerDesStage`, converts the final
+bytes to a string with its ending codec, and adds a reserved versioned frame. Both boundaries are customizable through
+the same `StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once around the complete
 compression/encryption chain.
 
 - `ALWAYS` writes every non-null payload to a file.
@@ -86,8 +87,10 @@ visible; include and mask rules make selected fields visible. `ANYWHERE` matches
 `PATH` matches an exact dot-separated path. Exclude rules win over mask rules, and masking implies visibility.
 
 The built-in `previewConfig(...)` parses the incoming stage string as JSON. Use `previewGenerator(...)` for non-JSON
-stage values or fully custom logic. Previews are included only in file envelopes. The structured builder defaults to a
-4 KB preview budget, and the complete file envelope must still remain below the checkpoint threshold.
+stage values or fully custom logic. The custom generator receives the stage string and `SerDesContext`, including the
+pre-serialization object in `originalValue()`. Previews are included only in file envelopes. The structured builder
+defaults to a 4 KB preview budget, and the complete file envelope must still remain below the checkpoint threshold.
+Custom generators must avoid exposing sensitive fields.
 
 ## Execution and retries
 
@@ -95,10 +98,12 @@ SerDes runs inline by default. Filesystem access and retry backoff are blocking,
 provide a dedicated executor with `withSerDesExecutorService(...)`. It must be different from the user-operation
 executor.
 
-Filesystem read and write I/O failures are reported as `RetryableSerDesException`. `RetrySerDes` implements
-`SerDesStage`, so the retrying filesystem component can be appended directly to the pipeline. It retries only that
-exception type. Malformed envelopes, invalid paths, unsupported stage types, and codec failures are permanent. Retry
-delays consume time in the current Lambda invocation, so keep attempts and delays bounded.
+Filesystem read and write I/O failures are reported as `RetryableSerDesException`. `RetrySerDesStage` wraps a
+`SerDesStage`, so the retrying filesystem component can be appended directly to the pipeline.
+`RetryBinarySerDesStage` provides the same behavior for a `BinarySerDesStage` inside
+`ComposableBinarySerDesStage`. Both retry only that exception type. Malformed envelopes, invalid paths, unsupported
+stage types, and codec failures are permanent. Retry delays consume time in the current Lambda invocation, so keep
+attempts and delays bounded.
 
 ## Replay and envelope behavior
 
