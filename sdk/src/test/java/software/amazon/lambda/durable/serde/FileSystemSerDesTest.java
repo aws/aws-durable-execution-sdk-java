@@ -65,6 +65,7 @@ class FileSystemSerDesTest {
         var runner = new SerDesRunner(null);
 
         assertFalse(SerDes.class.isAssignableFrom(FileSystemSerDes.class));
+        assertTrue(stage.requiresDurableContext());
         var checkpoint = runner.serialize(pipeline, Map.of("id", 42), context());
         assertTrue(checkpoint.startsWith("<"));
         assertEquals(
@@ -183,6 +184,9 @@ class FileSystemSerDesTest {
             assertTrue(fileName.startsWith(
                     deterministicFile.getFileName().toString().replace(".payload", "-")));
             assertTrue(fileName.endsWith(".payload"));
+            assertEquals(
+                    "expected",
+                    new SerDesRunner(null).deserialize(serDes, envelope, TypeToken.get(String.class), context()));
         }
     }
 

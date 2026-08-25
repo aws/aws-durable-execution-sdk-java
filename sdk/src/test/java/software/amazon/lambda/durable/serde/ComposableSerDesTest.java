@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.serde;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -91,6 +92,35 @@ class ComposableSerDesTest {
 
         assertEquals("21\"value\"12", pipeline.serialize("value"));
         assertEquals(List.of("one-serialize", "two-serialize"), calls);
+    }
+
+    @Test
+    void reportsWhetherAnyStageRequiresDurableContext() {
+        var contextDependentStage = new SerDesStage() {
+            @Override
+            public boolean requiresDurableContext() {
+                return true;
+            }
+
+            @Override
+            public String serialize(String value) {
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data) {
+                return data;
+            }
+        };
+
+        assertFalse(ComposableSerDes.of(new JacksonSerDes()).requiresDurableContext());
+        assertFalse(new JacksonSerDes()
+                .then(stringStage("context-free", "<", ">", new ArrayList<>()))
+                .requiresDurableContext());
+        assertTrue(new JacksonSerDes()
+                .then(stringStage("context-free", "<", ">", new ArrayList<>()))
+                .then(contextDependentStage)
+                .requiresDurableContext());
     }
 
     @Test

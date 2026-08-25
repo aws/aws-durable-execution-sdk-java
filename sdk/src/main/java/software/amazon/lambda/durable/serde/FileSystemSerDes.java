@@ -65,6 +65,11 @@ public final class FileSystemSerDes implements SerDesStage {
     }
 
     @Override
+    public boolean requiresDurableContext() {
+        return true;
+    }
+
+    @Override
     public String serialize(String value) {
         if (value == null) {
             return null;
@@ -173,7 +178,7 @@ public final class FileSystemSerDes implements SerDesStage {
 
     private SerializedPayload readPayload(
             String fileValue, PayloadType payloadType, PayloadOwner owner, SerDesContext context) {
-        var file = Path.of(fileValue).toAbsolutePath().normalize();
+        var file = basePath.getFileSystem().getPath(fileValue).toAbsolutePath().normalize();
         validatePayloadPath(file, owner);
         try {
             var realBasePath = validateBasePath(false);

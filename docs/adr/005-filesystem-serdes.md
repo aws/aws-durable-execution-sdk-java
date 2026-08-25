@@ -45,6 +45,10 @@ serialized.
 
 ```java
 public interface SerDesStage {
+    default boolean requiresDurableContext() {
+        return false;
+    }
+
     String serialize(String value);
 
     String deserialize(String data);
@@ -223,11 +227,11 @@ Pipeline rules:
 
 - A pipeline must contain exactly one value codec in the first position and zero or more string stages.
 - Every top-level stage consumes and produces a non-null `String`. This makes all stage orderings type-compatible.
-- Context requirements are stage behavior rather than a capability on `SerDes`, `SerDesStage`, binary transformations,
-  or codecs. A context-dependent stage accesses `SerDesContext` when it runs and reports a normal SerDes failure when
-  the required context is unavailable.
-- The test runners identify a configured input pipeline directly as `ComposableSerDes` and reject it because initial
-  input accepts one value codec, not a pipeline.
+- `SerDesStage.requiresDurableContext()` reports whether a stage needs `SerDesContext`. It defaults to `false`;
+  context-dependent stages return `true`, and decorators preserve their delegate's requirement.
+- `ComposableSerDes.requiresDurableContext()` reports whether any contained stage requires context. The test runners
+  can use a context-free pipeline for initial input, but use only the root value codec when the persisted pipeline
+  requires context.
 - `SerDes.then(...)`, `ComposableSerDes.then(...)`, and the builder accept only `SerDesStage` after the value codec.
   This makes the root `SerDes` versus subsequent string-stage roles explicit in the Java type system.
 - If the value-codec argument to `ComposableSerDes.of(...)` or the builder is already a `ComposableSerDes`, its root
@@ -535,15 +539,14 @@ When serializing `errorData`, set `SerDesPayloadKind.EXCEPTION` and use an entit
 Root user input and output payloads should route through `SerDesRunner` so `FileSystemSerDes` can see `SerDesContext`. The internal `DurableExecutionInput` and `DurableExecutionOutput` envelope stays with `DurableInputOutputSerDes`.
 
 The cloud test runner must send initial Lambda input before it receives a durable execution ARN. The cloud and local
-runners therefore always serialize that input with a separate context-free value codec. By default, they use the
-configured persisted SerDes when it is a plain value codec, or the root value codec when it is composable.
-`withInputSerDes(...)` replaces this codec, but rejects `ComposableSerDes`: the runners must never reuse persisted
-pipeline stages for the initial invocation, and an unframed external payload does not identify which stages ran. A
-custom input codec must produce data that the persisted pipeline's root value codec can decode at the external-input
-boundary. Fluent configuration preserves an explicit input-codec override when other runner configuration is
-replaced. `LocalDurableTestRunner` creates the execution operation with this raw external payload and lets
-`DurableExecutor` apply the persisted pipeline's external-boundary behavior; it does not synthesize a durable context
-or serialize initial input through the persisted pipeline.
+runners therefore serialize that input with a context-free SerDes. By default, they use the entire configured
+persisted SerDes when it is plain or when every stage in a composable pipeline is context-free. When the persisted
+pipeline contains a context-dependent stage, they use only its root value codec. `withInputSerDes(...)` accepts plain
+and context-free composable overrides but rejects a pipeline whose stages require durable context. A custom input
+SerDes must produce data that the persisted pipeline can decode at the external-input boundary. Fluent configuration
+preserves an explicit input-SerDes override when other runner configuration is replaced.
+`LocalDurableTestRunner` creates the execution operation with this raw external payload and lets `DurableExecutor`
+apply the persisted pipeline's external-boundary behavior; it does not synthesize a durable context for initial input.
 
 ### Implementation plan
 

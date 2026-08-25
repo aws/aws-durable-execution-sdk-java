@@ -60,6 +60,11 @@ public final class ComposableSerDes implements SerDes {
         return valueCodec;
     }
 
+    /** Returns whether any stage in this pipeline requires a durable execution context. */
+    public boolean requiresDurableContext() {
+        return stages.stream().anyMatch(SerDesStage::requiresDurableContext);
+    }
+
     /** Returns a new pipeline with the supplied string stage appended. */
     @Override
     public ComposableSerDes then(SerDesStage stage) {

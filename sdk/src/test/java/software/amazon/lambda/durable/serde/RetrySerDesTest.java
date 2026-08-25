@@ -112,6 +112,29 @@ class RetrySerDesTest {
     }
 
     @Test
+    void preservesDelegateContextRequirement() {
+        var contextDependentStage = new SerDesStage() {
+            @Override
+            public boolean requiresDurableContext() {
+                return true;
+            }
+
+            @Override
+            public String serialize(String value) {
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data) {
+                return data;
+            }
+        };
+
+        assertFalse(new RetrySerDes(identityStage(), RetryStrategies.Presets.NO_RETRY).requiresDurableContext());
+        assertTrue(new RetrySerDes(contextDependentStage, RetryStrategies.Presets.NO_RETRY).requiresDurableContext());
+    }
+
+    @Test
     void doesNotRetryPermanentSerDesFailure() {
         var calls = new AtomicInteger();
         var delegate = new SerDesStage() {

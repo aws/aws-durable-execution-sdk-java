@@ -11,6 +11,19 @@ package software.amazon.lambda.durable.serde;
  */
 public interface SerDesStage {
     /**
+     * Returns whether this stage requires a durable execution context when it runs.
+     *
+     * <p>Context-free stages may be used to serialize the initial Lambda invocation before a durable execution ARN is
+     * available. Stages that access {@link SerDesContext} must override this method and return {@code true}. Decorators
+     * must preserve the requirement of the stage they wrap.
+     *
+     * @return {@code true} when this stage requires a durable execution context
+     */
+    default boolean requiresDurableContext() {
+        return false;
+    }
+
+    /**
      * Applies this stage during forward serialization.
      *
      * @param value the non-null input string

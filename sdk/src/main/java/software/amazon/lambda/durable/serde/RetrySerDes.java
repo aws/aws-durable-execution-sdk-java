@@ -48,6 +48,11 @@ public final class RetrySerDes implements SerDesStage {
     }
 
     @Override
+    public boolean requiresDurableContext() {
+        return delegate.requiresDurableContext();
+    }
+
+    @Override
     public String serialize(String value) {
         return execute("pipeline stage serialization", () -> delegate.serialize(value));
     }

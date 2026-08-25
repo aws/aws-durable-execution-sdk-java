@@ -58,7 +58,7 @@ public class CloudDurableTestRunner<I, O> {
         this.invocationType = invocationType;
         this.serDes = Objects.requireNonNullElseGet(serDes, JacksonSerDes::new);
         this.inputSerDesOverride = inputSerDes;
-        this.inputSerDes = inputValueCodec(inputSerDes, this.serDes);
+        this.inputSerDes = selectInputSerDes(inputSerDes, this.serDes);
     }
 
     private static LambdaClient createDefaultLambdaClient() {
@@ -180,11 +180,11 @@ public class CloudDurableTestRunner<I, O> {
     }
 
     /**
-     * Returns a new runner with a separate value codec for the initial Lambda invocation payload.
+     * Returns a new runner with a separate SerDes for the initial Lambda invocation payload.
      *
-     * <p>The input codec is independent of the SerDes used for persisted execution payloads and must not be a
-     * {@link ComposableSerDes}. By default, the configured persisted SerDes is used when it is a value codec; for a
-     * composable pipeline, its root value codec is used.
+     * <p>The input SerDes is independent of the SerDes used for persisted execution payloads and must not require a
+     * durable execution context. By default, the configured persisted SerDes is used unless it is a composable pipeline
+     * that requires context, in which case its root value codec is used.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(
@@ -291,15 +291,15 @@ public class CloudDurableTestRunner<I, O> {
         return inputSerDes.serialize(input);
     }
 
-    private static SerDes inputValueCodec(SerDes inputSerDes, SerDes persistedSerDes) {
+    private static SerDes selectInputSerDes(SerDes inputSerDes, SerDes persistedSerDes) {
         var codec = inputSerDes;
         if (codec == null) {
-            codec = persistedSerDes instanceof ComposableSerDes composable
+            codec = persistedSerDes instanceof ComposableSerDes composable && composable.requiresDurableContext()
                     ? composable.getValueCodec()
                     : persistedSerDes;
         }
-        if (codec instanceof ComposableSerDes) {
-            throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
+        if (codec instanceof ComposableSerDes composable && composable.requiresDurableContext()) {
+            throw new IllegalArgumentException("inputSerDes must not require a durable execution context");
         }
         return codec;
     }

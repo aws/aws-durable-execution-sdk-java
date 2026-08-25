@@ -178,7 +178,35 @@ class LocalDurableTestRunnerTest {
     }
 
     @Test
-    void rejectsComposableInputSerDes(@TempDir Path basePath) {
+    void contextFreePersistedComposableSerDesUsesFullPipeline() {
+        var config = DurableConfig.builder()
+                .withSerDes(new JacksonSerDes().then(wrappingStage(new AtomicInteger())))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value", result.getResult());
+    }
+
+    @Test
+    void explicitContextFreeComposableInputSerDesIsUsed() {
+        var pipeline = new JacksonSerDes().then(wrappingStage(new AtomicInteger()));
+        var config = DurableConfig.builder().withSerDes(pipeline).build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
+                .withInputSerDes(pipeline)
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value", result.getResult());
+    }
+
+    @Test
+    void rejectsContextDependentComposableInputSerDes(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()
                         .then(FileSystemSerDes.builder(basePath).build()))
@@ -187,9 +215,10 @@ class LocalDurableTestRunnerTest {
 
         var failure = assertThrows(
                 IllegalArgumentException.class,
-                () -> runner.withInputSerDes(new JacksonSerDes().then(wrappingStage(new AtomicInteger()))));
+                () -> runner.withInputSerDes(new JacksonSerDes()
+                        .then(FileSystemSerDes.builder(basePath).build())));
 
-        assertTrue(failure.getMessage().contains("value codec"));
+        assertTrue(failure.getMessage().contains("durable execution context"));
     }
 
     @Test
