@@ -37,6 +37,7 @@ jobs:
     env:
       AWS_REGION: us-west-2
       E2E_TEST_PARALLELISM: 4
+      FILESYSTEM_SERDES_E2E_ENABLED: ${{ vars.FILESYSTEM_SERDES_E2E_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -69,9 +70,11 @@ jobs:
       - name: Build locally
         run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
       - name: Generate SAM template
-        run: |
-          python3 generate-template.py
-          python3 generate-template.py --file-system-only --output filesystem-template.yaml
+        run: python3 generate-template.py
+        working-directory: ./examples
+      - name: Generate filesystem SerDes E2E SAM template
+        if: env.FILESYSTEM_SERDES_E2E_ENABLED == 'true'
+        run: python3 generate-template.py --file-system-only --output filesystem-template.yaml
         working-directory: ./examples
       - name: sam build
         env:
@@ -81,6 +84,7 @@ jobs:
             'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=FunctionNamePrefix,ParameterValue=Java${{ matrix.java }}- ParameterKey=RoleArn,ParameterValue=${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}'
         working-directory: ./examples
       - name: sam build filesystem SerDes E2E stack
+        if: env.FILESYSTEM_SERDES_E2E_ENABLED == 'true'
         env:
           MAVEN_OPTS: -DskipTests=true -Dmaven.test.skip=true
         run: |
@@ -100,6 +104,7 @@ jobs:
             'ParameterKey=Architecture,ParameterValue=x86_64 ParameterKey=JavaVersion,ParameterValue=java${{ matrix.java }} ParameterKey=FunctionNamePrefix,ParameterValue=Java${{ matrix.java }}- ParameterKey=RoleArn,ParameterValue=${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}'
         working-directory: ./examples
       - name: sam deploy filesystem SerDes E2E stack
+        if: env.FILESYSTEM_SERDES_E2E_ENABLED == 'true'
         run: |
           sam deploy --template-file .aws-sam-filesystem/template.yaml \
             --stack-name Java${{ matrix.java }}-JavaSDKFileSystemSerDesE2EStack \
@@ -110,6 +115,7 @@ jobs:
         run: |
           mvn clean test -B \
             -Dtest.cloud.enabled=true \
+            -Dtest.filesystem.enabled='${{ env.FILESYSTEM_SERDES_E2E_ENABLED }}' \
             -Dtest.aws.account='${{ secrets.TEST_ACCOUNT_ID }}' \
             -Dtest=CloudBasedIntegrationTest \
             -Dtest.function.name.prefix='Java${{ matrix.java }}-' \
@@ -120,7 +126,7 @@ jobs:
             -Djunit.jupiter.execution.parallel.config.fixed.parallelism=${{ env.E2E_TEST_PARALLELISM }}
         working-directory: ./examples
       - name: Delete filesystem SerDes E2E stack
-        if: always()
+        if: ${{ always() && env.FILESYSTEM_SERDES_E2E_ENABLED == 'true' }}
         run: |
           if aws cloudformation describe-stacks \
             --stack-name Java${{ matrix.java }}-JavaSDKFileSystemSerDesE2EStack >/dev/null 2>&1; then

@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -374,6 +375,7 @@ class CloudBasedIntegrationTest {
     }
 
     @Test
+    @EnabledIfSystemProperty(named = "test.filesystem.enabled", matches = "true")
     void testFileSystemSerDesExample() throws Exception {
         var value = "filesystem-e2e-".repeat(24 * 1024);
         var input = new FileSystemSerDesExample.Input("payload-1", value);

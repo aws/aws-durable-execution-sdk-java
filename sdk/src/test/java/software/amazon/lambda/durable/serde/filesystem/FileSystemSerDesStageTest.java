@@ -19,11 +19,13 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -32,6 +34,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.serde.Base64StringBinaryCodec;
 import software.amazon.lambda.durable.serde.BinarySerDesStage;
@@ -311,6 +314,30 @@ class FileSystemSerDesStageTest {
         var oversizedPreview = stringCodec().then(oversizedPreviewStage);
         var failure = assertThrows(SerDesException.class, () -> runner.serialize(oversizedPreview, "value", context()));
         assertCauseMessage(failure, "checkpoint payload limit");
+    }
+
+    @Test
+    void retryablePreviewFailureCanBeRetried() throws Exception {
+        var attempts = new AtomicInteger();
+        var fileSystemStage = FileSystemSerDesStage.builder(basePath)
+                .previewGenerator((value, context) -> {
+                    if (attempts.incrementAndGet() == 1) {
+                        throw new RetryableSerDesException("preview service unavailable");
+                    }
+                    return Map.of("summary", "order");
+                })
+                .build();
+        var pipeline = stringCodec()
+                .then(new RetrySerDesStage(
+                        fileSystemStage,
+                        (failure, attempt) ->
+                                attempt == 1 ? RetryDecision.retry(Duration.ZERO) : RetryDecision.fail()));
+
+        var envelope = new SerDesRunner(null).serialize(pipeline, "value", context());
+
+        assertEquals(2, attempts.get());
+        assertEquals(
+                "order", MAPPER.readTree(envelope).get("preview").get("summary").textValue());
     }
 
     @Test

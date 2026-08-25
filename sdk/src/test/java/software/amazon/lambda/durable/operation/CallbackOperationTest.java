@@ -224,6 +224,38 @@ class CallbackOperationTest {
     }
 
     @Test
+    void getThrowsCallbackFailedExceptionWhenErrorTypeIsMissing() {
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.FAILED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .error(ErrorObject.builder()
+                                .errorMessage("untyped callback failure")
+                                .errorData("not-json")
+                                .build())
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var operation = new CallbackOperation<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(new JacksonSerDes()).build(),
+                durableContext);
+        operation.execute();
+
+        var exception = assertThrows(CallbackFailedException.class, operation::get);
+        assertEquals("untyped callback failure", exception.getMessage());
+        assertNull(exception.getErrorObject().errorType());
+        assertNull(exception.deserializedError());
+    }
+
+    @Test
     void getThrowsCallbackTimeoutExceptionWhenTimedOut() {
         var existingCallback = Operation.builder()
                 .id(OPERATION_ID)

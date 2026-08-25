@@ -405,6 +405,8 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
         try {
             return previewGenerator.apply(value, context);
+        } catch (RetryableSerDesException e) {
+            throw e;
         } catch (RuntimeException e) {
             throw new SerDesException(
                     "Failed to generate filesystem payload preview for entity '" + context.entityId() + "'", e);
