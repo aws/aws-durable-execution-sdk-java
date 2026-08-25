@@ -10,11 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -151,6 +154,25 @@ class FileSystemSerDesTest {
 
         assertTrue(failure.getCause().getMessage().contains("contains unexpected data"));
         assertEquals("unexpected", Files.readString(file));
+    }
+
+    @Test
+    void rejectsMalformedUtf8StringsAndFilePayloads() throws Exception {
+        var serDes = FileSystemSerDes.stageBuilder(basePath).build();
+        var runner = new SerDesRunner(null);
+
+        assertThrows(SerDesException.class, () -> runner.serialize(serDes, "lone surrogate \uD800", context()));
+
+        var envelope = runner.serialize(serDes, "valid", context());
+        var malformed = new byte[] {(byte) 0xC3, (byte) 0x28};
+        var malformedFile = contentAddressedPath(payloadFile(envelope), malformed);
+        Files.write(malformedFile, malformed);
+        var malformedEnvelope = (ObjectNode) MAPPER.readTree(envelope);
+        malformedEnvelope.put("file", malformedFile.toString());
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, malformedEnvelope.toString(), TypeToken.get(String.class), context()));
     }
 
     @Test
@@ -460,6 +482,14 @@ class FileSystemSerDesTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
+    }
+
+    private static Path contentAddressedPath(Path original, byte[] data) throws Exception {
+        var name = original.getFileName().toString();
+        var suffix = ".payload";
+        var hashStart = name.length() - suffix.length() - 64;
+        var hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
+        return original.resolveSibling(name.substring(0, hashStart) + hash + suffix);
     }
 
     private static SerDesContext context() {

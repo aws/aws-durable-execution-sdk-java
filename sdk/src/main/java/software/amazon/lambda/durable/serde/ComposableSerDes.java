@@ -22,8 +22,17 @@ public final class ComposableSerDes implements SerDes {
 
     private ComposableSerDes(SerDes valueCodec, List<Object> stages) {
         this.valueCodec = Objects.requireNonNull(valueCodec, "valueCodec cannot be null");
+        if (!stages.isEmpty() && !valueCodec.isValueCodecOnly()) {
+            throw nestedPipelineFailure(0, valueCodec);
+        }
         if (!stages.isEmpty() && valueCodec.isTerminalPipelineStage()) {
             throw terminalStageFailure(0, valueCodec);
+        }
+        for (int index = 0; index < stages.size(); index++) {
+            var stage = stages.get(index);
+            if (stage instanceof SerDes serDes && !serDes.isValueCodecOnly()) {
+                throw nestedPipelineFailure(index + 1, stage);
+            }
         }
         for (int index = 0; index < stages.size() - 1; index++) {
             if (isTerminal(stages.get(index))) {
@@ -195,6 +204,12 @@ public final class ComposableSerDes implements SerDes {
     private static IllegalArgumentException terminalStageFailure(int index, Object stage) {
         return new IllegalArgumentException(String.format(
                 "SerDes pipeline stage %d (%s) must be the final stage",
+                index, stage.getClass().getName()));
+    }
+
+    private static IllegalArgumentException nestedPipelineFailure(int index, Object stage) {
+        return new IllegalArgumentException(String.format(
+                "SerDes pipeline stage %d (%s) must be a value codec or a single reversible stage, not a nested pipeline",
                 index, stage.getClass().getName()));
     }
 

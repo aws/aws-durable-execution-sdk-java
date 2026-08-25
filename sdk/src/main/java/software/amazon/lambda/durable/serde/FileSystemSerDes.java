@@ -6,7 +6,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -409,7 +408,7 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private static boolean fitsCheckpoint(String envelope) {
-        return envelope.getBytes(StandardCharsets.UTF_8).length <= CHECKPOINT_ENVELOPE_LIMIT_BYTES;
+        return Utf8StringBinaryCodec.INSTANCE.toBytes(envelope).length <= CHECKPOINT_ENVELOPE_LIMIT_BYTES;
     }
 
     private SerDesContext requireContext() {
@@ -552,7 +551,7 @@ public final class FileSystemSerDes implements SerDes {
             return sha256(value);
         }
         var encoded = new StringBuilder();
-        for (byte valueByte : value.getBytes(StandardCharsets.UTF_8)) {
+        for (byte valueByte : Utf8StringBinaryCodec.INSTANCE.toBytes(value)) {
             int current = valueByte & 0xff;
             if (current >= 'a' && current <= 'z'
                     || current >= 'A' && current <= 'Z'
@@ -572,7 +571,7 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private static String sha256(String value) {
-        return sha256(value.getBytes(StandardCharsets.UTF_8));
+        return sha256(Utf8StringBinaryCodec.INSTANCE.toBytes(value));
     }
 
     private static String sha256(byte[] value) {
@@ -599,7 +598,7 @@ public final class FileSystemSerDes implements SerDes {
         }
 
         private static SerializedPayload fromString(String value) {
-            return new SerializedPayload(PayloadType.STRING, value.getBytes(StandardCharsets.UTF_8));
+            return new SerializedPayload(PayloadType.STRING, Utf8StringBinaryCodec.INSTANCE.toBytes(value));
         }
 
         private static SerializedPayload fromInlineValue(PayloadType type, String value) {
@@ -623,14 +622,14 @@ public final class FileSystemSerDes implements SerDes {
             if (data == null) {
                 throw new IllegalStateException("Serialized payload does not contain inline data");
             }
-            return new String(data, StandardCharsets.UTF_8);
+            return Utf8StringBinaryCodec.INSTANCE.fromBytes(data);
         }
 
         private String value() {
             if (data == null) {
                 throw new IllegalStateException("Serialized payload does not contain data");
             }
-            return new String(data, StandardCharsets.UTF_8);
+            return Utf8StringBinaryCodec.INSTANCE.fromBytes(data);
         }
     }
 
