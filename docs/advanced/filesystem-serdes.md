@@ -15,7 +15,7 @@ envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-
 
 ## Pipeline configuration
 
-The preferred configuration uses `FileSystemSerDes` as a reversible terminal stage after a value codec:
+The preferred configuration uses `FileSystemSerDes` as a reversible terminal `SerDesStage` after a value codec:
 
 ```java
 var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
@@ -46,11 +46,12 @@ return DurableConfig.builder()
     .build();
 ```
 
-Serialization follows the declaration order above and deserialization runs in reverse. Every top-level stage consumes
-and produces a string. `ComposableBinarySerDesStage` converts the string with its starting codec, passes bytes directly
-through each `BinarySerDes`, then converts the final bytes to a string with its ending codec. Both boundaries are
-customizable through the same `StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once
-around the complete compression/encryption chain.
+Serialization follows the declaration order above and deserialization runs in reverse. The first component is the
+`SerDes` value codec; every component appended with `then(...)` implements `SerDesStage` and consumes and produces a
+string. `ComposableBinarySerDesStage` converts the string with its starting codec, passes bytes directly through each
+`BinarySerDes`, then converts the final bytes to a string with its ending codec. Both boundaries are customizable
+through the same `StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once around the
+complete compression/encryption chain.
 
 - `ALWAYS` writes every non-null payload to a file.
 - `OVERFLOW` stores small payloads inline and offloads envelopes approaching the 256 KB checkpoint limit.
@@ -69,7 +70,8 @@ SerDes runs inline by default. Filesystem access and retry backoff are blocking,
 provide a dedicated executor with `withSerDesExecutorService(...)`. It must be different from the user-operation
 executor.
 
-Filesystem read and write I/O failures are reported as `RetryableSerDesException`. `RetrySerDes` retries only that
+Filesystem read and write I/O failures are reported as `RetryableSerDesException`. `RetrySerDes` implements
+`SerDesStage`, so the retrying filesystem component can be appended directly to the pipeline. It retries only that
 exception type. Malformed envelopes, invalid paths, unsupported stage types, and codec failures are permanent. Retry
 delays consume time in the current Lambda invocation, so keep attempts and delays bounded.
 

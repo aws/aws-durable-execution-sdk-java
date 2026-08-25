@@ -26,6 +26,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class FileSystemSerDesTest {
     private static final String ARN =
@@ -74,6 +75,21 @@ class FileSystemSerDesTest {
         assertThrows(IllegalStateException.class, () -> FileSystemSerDes.stageBuilder(basePath)
                 .delegate(new JacksonSerDes()));
         assertThrows(IllegalArgumentException.class, () -> pipeline.then(wrappingStage()));
+    }
+
+    @Test
+    void retryDecoratorComposesAsAFileSystemStage() {
+        var stage = FileSystemSerDes.stageBuilder(basePath)
+                .storageMode(FileSystemStorageMode.OVERFLOW)
+                .build();
+        var pipeline = new JacksonSerDes().then(new RetrySerDes(stage, RetryStrategies.Presets.NO_RETRY));
+        var runner = new SerDesRunner(null);
+
+        var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
+
+        assertEquals(
+                Map.of("id", 42),
+                runner.deserialize(pipeline, envelope, new TypeToken<Map<String, Integer>>() {}, context()));
     }
 
     @Test
@@ -532,17 +548,16 @@ class FileSystemSerDesTest {
         return result;
     }
 
-    private static SerDes wrappingStage() {
-        return new SerDes() {
+    private static SerDesStage wrappingStage() {
+        return new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 return "<" + value + ">";
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return (T) data.substring(1, data.length() - 1);
+            public String deserialize(String data) {
+                return data.substring(1, data.length() - 1);
             }
         };
     }

@@ -44,6 +44,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestResult;
@@ -505,20 +506,18 @@ class FileSystemSerDesIntegrationTest {
                 .build();
     }
 
-    private static SerDes identityStage(RecordingFunction recorder) {
-        return new SerDes() {
+    private static SerDesStage identityStage(RecordingFunction recorder) {
+        return new SerDesStage() {
             @Override
-            public String serialize(Object value) {
-                var stringValue = (String) value;
-                recorder.record("serialize", stringValue);
-                return stringValue;
+            public String serialize(String value) {
+                recorder.record("serialize", value);
+                return value;
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 recorder.record("deserialize", data);
-                return (T) data;
+                return data;
             }
         };
     }

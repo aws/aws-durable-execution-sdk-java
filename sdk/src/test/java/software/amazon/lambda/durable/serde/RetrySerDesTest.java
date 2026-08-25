@@ -77,7 +77,7 @@ class RetrySerDesTest {
     @Test
     void retriesPipelineStageDeserializationAndDelegatesCapabilities() {
         var calls = new AtomicInteger();
-        var delegate = new SerDes() {
+        class RetryableStage implements SerDes, SerDesStage {
             @Override
             public String serialize(Object value) {
                 return value.toString();
@@ -86,6 +86,16 @@ class RetrySerDesTest {
             @Override
             public <T> T deserialize(String data, TypeToken<T> typeToken) {
                 return null;
+            }
+
+            @Override
+            public String serialize(String value) {
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data) {
+                return data;
             }
 
             @Override
@@ -110,7 +120,8 @@ class RetrySerDesTest {
             public boolean isValueCodecOnly() {
                 return false;
             }
-        };
+        }
+        var delegate = new RetryableStage();
         var retrySerDes =
                 new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
 

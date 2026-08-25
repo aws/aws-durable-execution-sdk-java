@@ -95,10 +95,10 @@ approaches the 256 KB service limit. `URI` produces readable escaped paths; `HAS
 segments. Files are content-addressed and never overwrite data referenced by an earlier checkpoint. References are
 validated against the current durable execution and entity, and symbolic-link paths are rejected.
 
-`RetrySerDes` retries only failures marked with `RetryableSerDesException`. Filesystem read and write I/O use this
-marker; malformed envelopes and codec failures fail immediately. Backoff occurs within the current Lambda invocation,
-so use short, bounded retry strategies. Without a configured SerDes executor, filesystem I/O and retry delays block the
-calling thread.
+`RetrySerDes` implements `SerDesStage` and retries only failures marked with `RetryableSerDesException`. Filesystem
+read and write I/O use this marker; malformed envelopes and codec failures fail immediately. Backoff occurs within the
+current Lambda invocation, so use short, bounded retry strategies. Without a configured SerDes executor, filesystem
+I/O and retry delays block the calling thread.
 
 Do not use Lambda's ephemeral `/tmp` directory: replay can run in a different execution environment. Use a durable,
 shared mount such as EFS. S3 Files can have delayed synchronization, so a runtime crash before the mount flushes may

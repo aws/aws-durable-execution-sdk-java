@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.serde.SerDesStage;
 
 class CloudDurableTestRunnerTest {
 
@@ -190,38 +191,49 @@ class CloudDurableTestRunnerTest {
         assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
     }
 
-    private static SerDes wrappingStage() {
-        return new SerDes() {
+    private static SerDesStage wrappingStage() {
+        return new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 return "<" + value + ">";
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return (T) data.substring(1, data.length() - 1);
+            public String deserialize(String data) {
+                return data.substring(1, data.length() - 1);
             }
         };
     }
 
-    private static SerDes contextDependentStage() {
-        return new SerDes() {
-            @Override
-            public String serialize(Object value) {
-                return value.toString();
-            }
+    private static ContextDependentSerDesStage contextDependentStage() {
+        return new ContextDependentSerDesStage();
+    }
 
-            @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return (T) data;
-            }
+    private static final class ContextDependentSerDesStage implements SerDes, SerDesStage {
+        @Override
+        public String serialize(Object value) {
+            return value.toString();
+        }
 
-            @Override
-            public boolean requiresDurableContext() {
-                return true;
-            }
-        };
+        @Override
+        public String serialize(String value) {
+            return value;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return (T) data;
+        }
+
+        @Override
+        public String deserialize(String data) {
+            return data;
+        }
+
+        @Override
+        public boolean requiresDurableContext() {
+            return true;
+        }
     }
 }

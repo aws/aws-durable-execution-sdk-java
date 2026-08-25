@@ -363,7 +363,7 @@ software.amazon.lambda.durable
 │   ├── Base64StringBinaryCodec # Standard Base64 string/byte conversion
 │   ├── ComposableBinarySerDesStage # Ordered binary chain exposed as one string stage
 │   ├── JacksonSerDes       # Jackson impl
-│   ├── RetrySerDes         # Retry decorator for transient SerDes failures
+│   ├── RetrySerDes         # Retrying SerDes and string-stage decorator
 │   ├── SerDesRunner        # Context, optional executor dispatch, and invocation cache
 │   ├── SerDesContext       # Read-only durable payload identity
 │   ├── SerDesPayloadKind   # Input/result/state/exception/invoke payload kind

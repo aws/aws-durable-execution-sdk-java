@@ -26,7 +26,7 @@ import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 /**
- * A SerDes that stores payloads on a durable shared filesystem.
+ * A SerDes and terminal string stage that stores payloads on a durable shared filesystem.
  *
  * <p>Use {@link #stageBuilder(Path)} when composing this implementation after a value codec. The compatibility
  * {@link #builder(Path)} form includes its own value codec and can be used as a standalone SerDes.
@@ -34,7 +34,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. Use a durable shared mount such as EFS, or S3 Files only when
  * its synchronization and crash-durability tradeoffs are acceptable for the workload.
  */
-public final class FileSystemSerDes implements SerDes {
+public final class FileSystemSerDes implements SerDes, SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
@@ -115,6 +115,11 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     @Override
+    public String serialize(String value) {
+        return serialize((Object) value);
+    }
+
+    @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
         if (data == null) {
             return null;
@@ -134,9 +139,14 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     @Override
+    public String deserialize(String data) {
+        return deserialize(data, TypeToken.get(String.class));
+    }
+
+    @Override
     public SerDesStageResult deserializePipelineStage(String data) {
         if (!stageMode) {
-            return SerDes.super.deserializePipelineStage(data);
+            return SerDesStage.super.deserializePipelineStage(data);
         }
         var context = requireContext();
         var resolved = resolveSerializedPayload(data, context);

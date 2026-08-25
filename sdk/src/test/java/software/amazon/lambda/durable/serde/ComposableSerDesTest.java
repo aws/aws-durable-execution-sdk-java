@@ -21,6 +21,14 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 class ComposableSerDesTest {
 
     @Test
+    void onlyAcceptsStringStagesAfterTheValueCodec() throws Exception {
+        assertThrows(NoSuchMethodException.class, () -> SerDes.class.getMethod("then", SerDes.class));
+        assertEquals(
+                ComposableSerDes.class,
+                SerDes.class.getMethod("then", SerDesStage.class).getReturnType());
+    }
+
+    @Test
     void serializesForwardAndDeserializesInReverse() {
         var calls = new ArrayList<String>();
         var first = stringStage("first", "<", ">", calls);
@@ -75,15 +83,15 @@ class ComposableSerDesTest {
     }
 
     @Test
-    void factoryBuilderAndThenFlattenNestedPipelines() {
+    void factoryBuilderAndThenFlattenRootPipeline() {
         var calls = new ArrayList<String>();
-        var nested = ComposableSerDes.builder(stringStage("codec", "", "", calls))
+        var nested = ComposableSerDes.builder(new JacksonSerDes())
                 .then(stringStage("one", "1", "1", calls))
                 .build();
         var pipeline = ComposableSerDes.of(nested).then(stringStage("two", "2", "2", calls));
 
-        assertEquals("21value12", pipeline.serialize("value"));
-        assertEquals(List.of("codec-serialize", "one-serialize", "two-serialize"), calls);
+        assertEquals("21\"value\"12", pipeline.serialize("value"));
+        assertEquals(List.of("one-serialize", "two-serialize"), calls);
     }
 
     @Test
@@ -112,17 +120,16 @@ class ComposableSerDesTest {
     @Test
     void valueCodecMayDecodeNonNullRepresentationToNull() {
         var intermediateCalls = new AtomicInteger();
-        var identityStage = new SerDes() {
+        var identityStage = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
-                return value.toString();
+            public String serialize(String value) {
+                return value;
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 intermediateCalls.incrementAndGet();
-                return (T) data;
+                return data;
             }
         };
         var pipeline = new JacksonSerDes().then(identityStage);
@@ -134,29 +141,27 @@ class ComposableSerDesTest {
     @Test
     void stageMayDecodeExternalDataDirectlyWithValueCodec() {
         var transformDeserializations = new AtomicInteger();
-        var transform = new SerDes() {
+        var transform = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 return "<" + value + ">";
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 transformDeserializations.incrementAndGet();
-                return (T) data.substring(1, data.length() - 1);
+                return data.substring(1, data.length() - 1);
             }
         };
-        var externalBoundary = new SerDes() {
+        var externalBoundary = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
-                return value.toString();
+            public String serialize(String value) {
+                return value;
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return (T) data;
+            public String deserialize(String data) {
+                return data;
             }
 
             @Override
@@ -172,16 +177,15 @@ class ComposableSerDesTest {
 
     @Test
     void rejectsStagesAfterTerminalStage() {
-        var terminal = new SerDes() {
+        var terminal = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
-                return value.toString();
+            public String serialize(String value) {
+                return value;
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return (T) data;
+            public String deserialize(String data) {
+                return data;
             }
 
             @Override
@@ -214,14 +218,14 @@ class ComposableSerDesTest {
 
     @Test
     void rejectsNullIntermediateValues() {
-        var nullStage = new SerDes() {
+        var nullStage = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 return null;
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 return null;
             }
         };
@@ -233,14 +237,14 @@ class ComposableSerDesTest {
 
     @Test
     void preservesRetryabilityWhenDecoratingStageFailures() {
-        var transientStage = new SerDes() {
+        var transientStage = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 throw new RetryableSerDesException("retry");
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 return null;
             }
         };
@@ -256,14 +260,14 @@ class ComposableSerDesTest {
     @Test
     void preservesFatalErrorsFromEveryPipelineCall() {
         var serializeError = new OutOfMemoryError("serialize");
-        var serializeStage = new SerDes() {
+        var serializeStage = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 throw serializeError;
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 return null;
             }
         };
@@ -272,14 +276,14 @@ class ComposableSerDesTest {
                 .serialize("value")));
 
         var stringStageError = new StackOverflowError("string-stage-deserialize");
-        var stringStage = new SerDes() {
+        var stringStage = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
-                return value.toString();
+            public String serialize(String value) {
+                return value;
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 return null;
             }
 
@@ -308,19 +312,18 @@ class ComposableSerDesTest {
                 .deserialize("value", TypeToken.get(String.class))));
     }
 
-    private static SerDes stringStage(String name, String prefix, String suffix, List<String> calls) {
-        return new SerDes() {
+    private static SerDesStage stringStage(String name, String prefix, String suffix, List<String> calls) {
+        return new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 calls.add(name + "-serialize");
                 return prefix + value + suffix;
             }
 
             @Override
-            @SuppressWarnings("unchecked")
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String deserialize(String data) {
                 calls.add(name + "-deserialize");
-                return (T) data.substring(prefix.length(), data.length() - suffix.length());
+                return data.substring(prefix.length(), data.length() - suffix.length());
             }
         };
     }
