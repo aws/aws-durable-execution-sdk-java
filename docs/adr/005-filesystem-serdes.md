@@ -2,8 +2,8 @@
 
 **Status:** Accepted — Approach A with ComposableSerDes pipeline
 **Date:** 2026-07-02
-**Updated:** 2026-08-25 — Included FileSystemSerDes in core and made every post-codec pipeline component an explicit
-string stage.
+**Updated:** 2026-08-25 — Included FileSystemSerDes in core, made every post-codec pipeline component an explicit
+string stage, and documented the rejected binary-only top-level pipeline.
 
 ## Context
 
@@ -809,6 +809,59 @@ Approach B remains a possible future direction if payload offloading grows into 
 that requires SDK-owned storage envelopes and lifecycle policy.
 
 ## Other Alternatives Considered
+
+### Use a binary-only top-level SerDes pipeline
+
+Considered replacing the two-level string/binary composition model with one binary pipeline:
+
+```java
+public interface BinarySerDes {
+    byte[] serialize(Object value);
+
+    <T> T deserialize(byte[] data, TypeToken<T> typeToken);
+
+    BinarySerDes then(SerDesStage stage);
+
+    SerDes then(StringBinaryCodec terminalCodec);
+}
+
+public interface SerDesStage {
+    byte[] serialize(byte[] value);
+
+    byte[] deserialize(byte[] data);
+}
+```
+
+In this alternative, `SerDes` keeps only its existing object-to-string methods for backward compatibility.
+Composition starts from a new object-to-bytes implementation such as `JacksonBinarySerDes`, every intermediate stage
+uses `byte[]`, and the chain ends with one binary-to-string codec. `JacksonSerDes` could appear to be implemented as:
+
+```java
+var jacksonSerDes = new JacksonBinarySerDes()
+        .then(Utf8StringBinaryCodec.INSTANCE);
+```
+
+This has an attractive single-level type model and is potentially more efficient when compression, encryption, or
+another binary stage always follows Jackson. Jackson can produce bytes directly, and those bytes can pass through all
+intermediate stages without first creating a JSON string and encoding that string back to UTF-8. It also eliminates
+the need for `ComposableBinarySerDesStage`.
+
+Rejected for the current design because it makes the common default `JacksonSerDes` path less efficient. Implementing
+the existing string-facing API through `JacksonBinarySerDes` would serialize as object -> UTF-8 `byte[]` -> `String`
+and deserialize as `String` -> UTF-8 `byte[]` -> object. Compared with Jackson's direct `writeValueAsString(...)` and
+`readValue(String, ...)` paths, that requires an additional full-payload conversion and byte-array allocation in both
+directions. Special-casing `JacksonBinarySerDes` plus the UTF-8 terminal codec to bypass those conversions would restore
+performance, but it would introduce a second execution path and undermine the uniform pipeline model.
+
+The alternative also moves all existing string-oriented stages and custom `SerDes` implementations behind adapters or
+requires binary replacements, while removing `SerDes.then(...)` from the composable API. The accepted design preserves
+direct string SerDes performance and compatibility, and its nested binary composite already avoids conversions between
+individual binary transformations: it converts to bytes once before the binary chain and back to a string once after
+the chain.
+
+Revisit a binary-root pipeline in a future major version if profiling shows that JSON string creation before
+binary-heavy pipelines is a material bottleneck and the benefit outweighs the default-path allocation cost and
+migration burden.
 
 ### Add FileSystemSerDes without SerDesContext
 
