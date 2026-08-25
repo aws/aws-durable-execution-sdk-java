@@ -161,7 +161,7 @@ public final class FileSystemSerDes implements SerDesStage {
 
     private SerializedPayload readPayload(
             String fileValue, PayloadType payloadType, PayloadOwner owner, SerDesContext context) {
-        var file = Path.of(fileValue).toAbsolutePath().normalize();
+        var file = basePath.getFileSystem().getPath(fileValue).toAbsolutePath().normalize();
         validatePayloadPath(file, owner);
         try {
             var realBasePath = validateBasePath(false);

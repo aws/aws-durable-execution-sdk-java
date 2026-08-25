@@ -185,6 +185,9 @@ class FileSystemSerDesTest {
             assertTrue(fileName.startsWith(
                     deterministicFile.getFileName().toString().replace(".payload", "-")));
             assertTrue(fileName.endsWith(".payload"));
+            assertEquals(
+                    "expected",
+                    new SerDesRunner(null).deserialize(serDes, envelope, TypeToken.get(String.class), context()));
         }
     }
 
