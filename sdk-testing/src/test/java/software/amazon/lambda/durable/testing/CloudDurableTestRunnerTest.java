@@ -15,8 +15,10 @@ import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.awssdk.services.lambda.model.InvokeResponse;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.RetrySerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
@@ -116,6 +118,22 @@ class CloudDurableTestRunnerTest {
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
                 .withSerDes(new JacksonSerDes().then(contextDependentStage()))
                 .withInputSerDes(new JacksonSerDes().then(wrappingStage()));
+
+        var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
+
+        assertInstanceOf(IllegalStateException.class, failure.getCause());
+        assertTrue(failure.getCause().getMessage().contains("must use a value codec"));
+        verifyNoInteractions(mockClient);
+    }
+
+    @Test
+    void contextDependentPersistedSerDesRejectsRetryWrappedComposableInput() {
+        var mockClient = mock(LambdaClient.class);
+        var inputSerDes = new RetrySerDes(new JacksonSerDes().then(wrappingStage()), RetryStrategies.Presets.NO_RETRY);
+        var runner = CloudDurableTestRunner.create(
+                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
+                .withSerDes(new JacksonSerDes().then(contextDependentStage()))
+                .withInputSerDes(inputSerDes);
 
         var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
 

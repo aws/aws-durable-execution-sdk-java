@@ -79,6 +79,11 @@ public final class ComposableSerDes implements SerDes {
         return stages.isEmpty() ? valueCodec.isTerminalPipelineStage() : isTerminal(stages.get(stages.size() - 1));
     }
 
+    @Override
+    public boolean isValueCodecOnly() {
+        return stages.isEmpty() && valueCodec.isValueCodecOnly();
+    }
+
     /** Returns a new pipeline with the supplied stage appended. */
     @Override
     public ComposableSerDes then(SerDes stage) {

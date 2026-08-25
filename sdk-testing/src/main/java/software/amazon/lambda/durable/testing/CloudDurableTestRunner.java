@@ -10,7 +10,6 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
@@ -286,7 +285,7 @@ public class CloudDurableTestRunner<I, O> {
                     "Initial input SerDes requires a durable execution context; configure a context-free "
                             + "input SerDes with withInputSerDes(...)");
         }
-        if (inputSerDes instanceof ComposableSerDes && serDes.requiresDurableContext()) {
+        if (!serializer.isValueCodecOnly() && serDes.requiresDurableContext()) {
             throw new IllegalStateException(
                     "Initial input for a context-dependent persisted SerDes must use a value codec, not a composable "
                             + "pipeline");

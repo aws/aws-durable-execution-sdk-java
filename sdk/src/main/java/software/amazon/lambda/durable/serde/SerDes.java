@@ -73,6 +73,15 @@ public interface SerDes {
     }
 
     /**
+     * Returns whether this SerDes performs only value-codec processing without additional composable pipeline stages.
+     *
+     * <p>SerDes decorators should delegate this capability to their wrapped SerDes.
+     */
+    default boolean isValueCodecOnly() {
+        return true;
+    }
+
+    /**
      * Returns an immutable processing pipeline that invokes this SerDes followed by {@code nextStage} when serializing
      * and in reverse order when deserializing.
      *

@@ -73,6 +73,11 @@ public final class RetrySerDes implements SerDes {
         return delegate.isTerminalPipelineStage();
     }
 
+    @Override
+    public boolean isValueCodecOnly() {
+        return delegate.isValueCodecOnly();
+    }
+
     private <T> T execute(String action, Supplier<T> operation) {
         int attempt = 1;
         while (true) {
