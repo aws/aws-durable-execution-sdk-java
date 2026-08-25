@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package plugin;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
@@ -18,12 +20,8 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
  * fails. The plugin, filtering to step-type operations, logs operation-end with the operation's status, its
  * checkpointed serialized result, and its error message.
  *
- * <p>SDK CAPABILITY GAP (Java): {@link OperationEndInfo} exposes no serialized-result field — its record is {@code (id,
- * name, type, subType, parentId, startTimestamp, endTimestamp, status, attempt, isReplay, error)}. The result of a
- * successful operation is therefore not available to the hook, so this handler honestly logs {@code result: NONE} for
- * step A. The requirement expects {@code result: "task-a"}; that assertion will fail, which is the correct signal that
- * the Java plugin API does not surface operation results at the operation-end boundary. The error path (step B,
- * {@code error: boom}) is fully supported via {@link OperationEndInfo#error()}.
+ * <p>{@link OperationEndInfo#result()} contains the serialized result, so the log record stores it as a JSON string
+ * without parsing or otherwise changing the checkpointed value.
  */
 @SuppressWarnings("deprecation")
 public class PluginTerminalPayloads extends DurableHandler<Object, String> {
@@ -60,15 +58,22 @@ public class PluginTerminalPayloads extends DurableHandler<Object, String> {
             if (!PluginSupport.isStep(info.type())) {
                 return;
             }
-            // OperationEndInfo has no serialized-result accessor in the Java SDK; honestly report NONE.
-            String result = "NONE";
+            String result = info.result() != null ? info.result() : "NONE";
             String error = info.error() != null && info.error().getMessage() != null
                     ? info.error().getMessage()
                     : "NONE";
-            System.out.println(String.format(
-                    "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"operation-end\", \"op\": \"%s\", \"status\": \"%s\", "
-                            + "\"result\": \"%s\", \"error\": \"%s\"%s}",
-                    info.id(), info.status(), result, error, PluginSupport.arnField(executionArn)));
+            ObjectNode record = JsonNodeFactory.instance
+                    .objectNode()
+                    .put("plugin", "CONFPLUGIN")
+                    .put("hook", "operation-end")
+                    .put("op", info.id())
+                    .put("status", info.status())
+                    .put("result", result)
+                    .put("error", error);
+            if (executionArn != null) {
+                record.put("durableExecutionArn", executionArn);
+            }
+            System.out.println(record);
         }
     }
 }
