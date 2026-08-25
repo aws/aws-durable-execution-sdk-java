@@ -117,7 +117,7 @@ public final class FileSystemSerDes implements SerDesStage {
         try {
             envelope = ENVELOPE_MAPPER.readTree(data);
         } catch (JsonProcessingException e) {
-            if (data.startsWith(ENVELOPE_PREFIX)) {
+            if (data.stripLeading().startsWith(ENVELOPE_PREFIX)) {
                 throw malformedEnvelope(requireContext(context), e);
             }
             return data;
