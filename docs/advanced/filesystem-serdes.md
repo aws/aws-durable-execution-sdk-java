@@ -82,10 +82,12 @@ malformed marked envelopes and unsupported versions fail instead of falling back
 
 Offloaded files are content-addressed and immutable. Updating wait-for-condition state or retry results creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Repeating the same write can safely reuse the
-same file. File envelopes identify the producing execution and entity. Ordinary checkpoint replay must match that
-owner, while invoke input and result boundaries may consume a file owned by the other Lambda execution when both
-functions use the same shared root and path encoding. Treat file envelopes as capabilities. Content hashes are
-verified when reading, and symbolic-link paths are rejected.
+same file. Publication uses an atomic hard-link create-if-absent operation when the provider supports it and falls back
+to a create-new copy without replacing an existing target on providers that do not support hard links. File envelopes
+identify the producing execution and entity. Ordinary checkpoint replay must match that owner, while invoke input and
+result boundaries may consume a file owned by the other Lambda execution when both functions use the same shared root
+and path encoding. Treat file envelopes as capabilities. Content hashes are verified when reading, and symbolic-link
+paths are rejected.
 
 Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. The filesystem stage's
 `OVERFLOW` and preview-size checks apply before those later transformations, so account for any expansion when staying

@@ -12,7 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -154,6 +156,22 @@ class FileSystemSerDesTest {
 
         assertCauseMessage(failure, "contains unexpected data");
         assertEquals("unexpected", Files.readString(file));
+    }
+
+    @Test
+    void publishesOnFileSystemsWithoutHardLinkSupport() throws Exception {
+        var archive = basePath.resolve("payloads.zip");
+        try (var fileSystem =
+                FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
+            var archiveBasePath = fileSystem.getPath("/payloads");
+            var serDes =
+                    stringCodec().then(FileSystemSerDes.builder(archiveBasePath).build());
+
+            var envelope = new SerDesRunner(null).serialize(serDes, "expected", context());
+            var file = fileSystem.getPath(MAPPER.readTree(envelope).get("file").textValue());
+
+            assertEquals("expected", Files.readString(file));
+        }
     }
 
     @Test

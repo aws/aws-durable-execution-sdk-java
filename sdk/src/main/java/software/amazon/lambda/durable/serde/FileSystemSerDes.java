@@ -456,6 +456,21 @@ public final class FileSystemSerDes implements SerDesStage {
             Files.createLink(file, temporary);
         } catch (FileAlreadyExistsException ignored) {
             validateExistingPayload(file, expectedData);
+        } catch (UnsupportedOperationException | IOException linkFailure) {
+            publishByCreateNewCopy(temporary, file, expectedData, linkFailure);
+        }
+    }
+
+    private void publishByCreateNewCopy(Path temporary, Path file, byte[] expectedData, Exception linkFailure)
+            throws IOException {
+        try {
+            Files.copy(temporary, file);
+            validateExistingPayload(file, expectedData);
+        } catch (FileAlreadyExistsException ignored) {
+            validateExistingPayload(file, expectedData);
+        } catch (IOException | RuntimeException copyFailure) {
+            copyFailure.addSuppressed(linkFailure);
+            throw copyFailure;
         }
     }
 
