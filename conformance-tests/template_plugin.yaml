@@ -305,6 +305,22 @@ Resources:
         RetentionPeriodInDays: 7
         ExecutionTimeout: 300
 
+  PluginTerminalPayloads:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["10-14"]
+    Properties:
+      CodeUri: .
+      Handler: plugin.PluginTerminalPayloads
+      Description: Operation-end info carries the checkpointed result on success and the error on failure
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
+
   PluginWaitReplayFlag:
     Type: AWS::Serverless::Function
     TestingMetadata:
