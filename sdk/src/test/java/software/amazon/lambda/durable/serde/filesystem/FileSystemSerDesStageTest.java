@@ -144,6 +144,50 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
+    void checkpointEnvelopeLimitCanBeIncreasedForLargerInlinePayloads() throws Exception {
+        var value = "x".repeat(300 * 1024);
+        var runner = new SerDesRunner(null);
+        var defaultPipeline = stringCodec()
+                .then(FileSystemSerDesStage.builder(basePath)
+                        .storageMode(FileSystemStorageMode.OVERFLOW)
+                        .build());
+        var largerEnvelopePipeline = stringCodec()
+                .then(FileSystemSerDesStage.builder(basePath)
+                        .storageMode(FileSystemStorageMode.OVERFLOW)
+                        .checkpointEnvelopeLimitBytes(512 * 1024)
+                        .build());
+
+        assertTrue(MAPPER.readTree(runner.serialize(defaultPipeline, value, context()))
+                .has("file"));
+        assertTrue(MAPPER.readTree(runner.serialize(largerEnvelopePipeline, value, context()))
+                .has("data"));
+    }
+
+    @Test
+    void checkpointEnvelopeLimitMustBePositive() {
+        var zeroFailure = assertThrows(IllegalArgumentException.class, () -> FileSystemSerDesStage.builder(basePath)
+                .checkpointEnvelopeLimitBytes(0));
+        var negativeFailure = assertThrows(IllegalArgumentException.class, () -> FileSystemSerDesStage.builder(basePath)
+                .checkpointEnvelopeLimitBytes(-1));
+
+        assertEquals("checkpointEnvelopeLimitBytes must be positive", zeroFailure.getMessage());
+        assertEquals("checkpointEnvelopeLimitBytes must be positive", negativeFailure.getMessage());
+    }
+
+    @Test
+    void checkpointEnvelopeLimitAlsoAppliesToFileEnvelopes() {
+        var pipeline = stringCodec()
+                .then(FileSystemSerDesStage.builder(basePath)
+                        .checkpointEnvelopeLimitBytes(1)
+                        .build());
+
+        var failure = assertThrows(
+                SerDesException.class, () -> new SerDesRunner(null).serialize(pipeline, "value", context()));
+
+        assertCauseMessage(failure, "checkpoint payload limit");
+    }
+
+    @Test
     void immutableContentAddressedFilesPreservePriorCheckpoints() throws Exception {
         var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var runner = new SerDesRunner(null);

@@ -62,6 +62,7 @@ path, and preview APIs live in `software.amazon.lambda.durable.serde.filesystem`
 var fileSystemStage = FileSystemSerDesStage.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.OVERFLOW)
     .pathEncoding(FileSystemPathEncoding.HASH)
+    .checkpointEnvelopeLimitBytes(configuredCheckpointEnvelopeLimitBytes)
     .build();
 
 var resilientFileSystemStage = new RetrySerDesStage(
@@ -102,9 +103,10 @@ interface. UTF-8 and Base64 implementations are included in the core SDK, conver
 binary chain, and the outer stage adds a reserved versioned frame for reliable format recognition.
 
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
-approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path
-segments. Files include a content hash and never overwrite data referenced by an earlier checkpoint. References are
-validated against the current durable execution and entity, and symbolic-link paths are rejected.
+approaches the configured limit. The limit defaults to 255 KiB and can be increased when the service accepts larger
+payloads. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path segments. Files include a
+content hash and never overwrite data referenced by an earlier checkpoint. References are validated against the
+current durable execution and entity, and symbolic-link paths are rejected.
 
 For a `JacksonSerDes -> FileSystemSerDesStage` pipeline, structured preview configuration provides the same field
 selection, masking, exact-path matching, and default 4 KB preview budget as the Python and TypeScript SDKs:

@@ -49,7 +49,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
-    private static final int CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
+    private static final int DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
     private static final ObjectMapper ENVELOPE_MAPPER = new ObjectMapper();
     private static final ObjectReader ENVELOPE_READER =
             ENVELOPE_MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
@@ -59,6 +59,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private final Path basePath;
     private final FileSystemStorageMode storageMode;
     private final FileSystemPathEncoding pathEncoding;
+    private final int checkpointEnvelopeLimitBytes;
     private final BiFunction<String, SerDesContext, Map<String, Object>> previewGenerator;
     private volatile Path canonicalBasePath;
 
@@ -66,6 +67,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
         basePath = builder.basePath.toAbsolutePath().normalize();
         storageMode = builder.storageMode;
         pathEncoding = builder.pathEncoding;
+        checkpointEnvelopeLimitBytes = builder.checkpointEnvelopeLimitBytes;
         previewGenerator = builder.previewGenerator;
     }
 
@@ -409,8 +411,8 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
     }
 
-    private static boolean fitsCheckpoint(String envelope) {
-        return Utf8StringBinaryCodec.INSTANCE.toBytes(envelope).length <= CHECKPOINT_ENVELOPE_LIMIT_BYTES;
+    private boolean fitsCheckpoint(String envelope) {
+        return Utf8StringBinaryCodec.INSTANCE.toBytes(envelope).length <= checkpointEnvelopeLimitBytes;
     }
 
     private SerDesContext requireContext(SerDesContext context) {
@@ -635,6 +637,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
         private final Path basePath;
         private FileSystemStorageMode storageMode = FileSystemStorageMode.ALWAYS;
         private FileSystemPathEncoding pathEncoding = FileSystemPathEncoding.URI;
+        private int checkpointEnvelopeLimitBytes = DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES;
         private BiFunction<String, SerDesContext, Map<String, Object>> previewGenerator;
 
         private Builder(Path basePath) {
@@ -648,6 +651,25 @@ public final class FileSystemSerDesStage implements SerDesStage {
 
         public Builder pathEncoding(FileSystemPathEncoding pathEncoding) {
             this.pathEncoding = Objects.requireNonNull(pathEncoding, "pathEncoding cannot be null");
+            return this;
+        }
+
+        /**
+         * Configures the maximum UTF-8 size of an inline or file checkpoint envelope.
+         *
+         * <p>{@link FileSystemStorageMode#OVERFLOW} offloads an inline envelope that exceeds this limit. A final file
+         * envelope that exceeds the limit is rejected. The configured value should not exceed the payload limit
+         * accepted by the durable execution service. The default is 255 KiB.
+         *
+         * @param checkpointEnvelopeLimitBytes positive envelope limit in bytes
+         * @return this builder
+         * @throws IllegalArgumentException if {@code checkpointEnvelopeLimitBytes} is not positive
+         */
+        public Builder checkpointEnvelopeLimitBytes(int checkpointEnvelopeLimitBytes) {
+            if (checkpointEnvelopeLimitBytes <= 0) {
+                throw new IllegalArgumentException("checkpointEnvelopeLimitBytes must be positive");
+            }
+            this.checkpointEnvelopeLimitBytes = checkpointEnvelopeLimitBytes;
             return this;
         }
 

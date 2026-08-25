@@ -22,6 +22,7 @@ envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-
 var fileSystemStage = FileSystemSerDesStage.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.ALWAYS)
     .pathEncoding(FileSystemPathEncoding.URI)
+    .checkpointEnvelopeLimitBytes(configuredCheckpointEnvelopeLimitBytes)
     .build();
 
 var resilientFileSystemStage = new RetrySerDesStage(
@@ -59,9 +60,12 @@ the same `StringBinaryCodec` interface; the example performs UTF-8 and Base64 co
 compression/encryption chain.
 
 - `ALWAYS` writes every non-null payload to a file.
-- `OVERFLOW` stores small payloads inline and offloads envelopes approaching the 256 KB checkpoint limit.
+- `OVERFLOW` stores small payloads inline and offloads envelopes approaching the configured checkpoint-envelope limit.
 - `URI` uses readable escaped path segments.
 - `HASH` uses fixed-length SHA-256 path segments.
+
+`checkpointEnvelopeLimitBytes(...)` controls the maximum UTF-8 size accepted for both inline and file envelopes. It
+defaults to 255 KiB and can be increased when the durable execution service supports a larger payload limit.
 
 ## Structured previews
 
@@ -90,7 +94,8 @@ visible; include and mask rules make selected fields visible. `ANYWHERE` matches
 The built-in `previewConfig(...)` parses the incoming stage string as JSON. Use `previewGenerator(...)` for non-JSON
 stage values or fully custom logic. The custom generator receives the stage string and `SerDesContext`, including the
 pre-serialization object in `originalValue()`. Previews are included only in file envelopes. The structured builder
-defaults to a 4 KB preview budget, and the complete file envelope must still remain below the checkpoint threshold.
+defaults to a 4 KB preview budget, and the complete file envelope must still remain below the configured checkpoint
+threshold.
 Custom generators must avoid exposing sensitive fields.
 
 ## Execution and retries

@@ -127,6 +127,7 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
 var fileSystemStage = FileSystemSerDesStage.builder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemStorageMode.ALWAYS)
         .pathEncoding(FileSystemPathEncoding.URI)
+        .checkpointEnvelopeLimitBytes(configuredCheckpointEnvelopeLimitBytes)
         .previewGenerator(optionalPreviewGenerator)
         .build();
 
@@ -386,7 +387,7 @@ Storage modes:
 | Mode | Behavior |
 |------|----------|
 | `ALWAYS` | Always write the incoming stage representation to a file and return a file envelope. |
-| `OVERFLOW` | Return an inline envelope until it approaches the service payload limit, then write the incoming stage representation to a file. |
+| `OVERFLOW` | Return an inline envelope until it approaches the configured checkpoint-envelope limit, then write the incoming stage representation to a file. |
 
 Path encodings:
 
@@ -426,8 +427,10 @@ encoding to exchange offloaded invoke payloads and results. The declared owner m
 path, and the resolved file must remain beneath the configured root. The file envelope is therefore a capability and
 must be protected with the same care as the payload it references.
 
-The final file envelope, including any preview, must remain below the checkpoint threshold. Oversized previews are
-rejected rather than producing a checkpoint that the service cannot accept.
+The final file envelope, including any preview, must remain below the configured checkpoint-envelope threshold.
+`FileSystemSerDesStage` retains the current 255 KiB value as its default while allowing applications to increase it as
+the service adds support for larger payloads. Oversized previews are rejected rather than producing a checkpoint that
+the service cannot accept.
 
 Stages may follow `FileSystemSerDesStage` to transform its inline or file-reference envelope. Its overflow and preview-size
 checks apply at the filesystem stage boundary, so configurations must account for any size expansion introduced by
