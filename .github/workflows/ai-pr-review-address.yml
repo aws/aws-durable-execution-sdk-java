@@ -1,0 +1,41 @@
+name: AI PR Review Address
+
+on:
+  issue_comment:
+    types: [created]
+
+  pull_request_review_comment:
+    types: [created]
+
+  workflow_dispatch:
+    inputs:
+      pull-request-number:
+        description: Pull request number
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  intake:
+    if: github.event_name == 'pull_request_review_comment'
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    uses: aws/aws-durable-execution-ci/.github/workflows/ai-pr-review-address.yml@8de63fa646c1b7b778829126cf53b7874074795e
+
+  address:
+    if: >-
+      github.event_name == 'issue_comment' ||
+      github.event_name == 'workflow_dispatch'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: aws/aws-durable-execution-ci/.github/workflows/ai-pr-review-address.yml@8de63fa646c1b7b778829126cf53b7874074795e
+    with:
+      pull-request-number: ${{ inputs['pull-request-number'] || '' }}
+    secrets: inherit
