@@ -11,18 +11,22 @@ import software.amazon.lambda.durable.exception.SerDesException;
 /**
  * A string SerDes stage containing an ordered chain of binary transformations.
  *
- * <p>Serialization converts the input string with the starting codec, applies binary SerDes instances in declaration
- * order, and converts the final bytes to a string with the ending codec. Deserialization reverses the complete process.
+ * <p>Serialization converts the input string with the starting codec, applies binary stages in declaration order,
+ * converts the final bytes to a string with the ending codec, and adds a versioned frame. Deserialization reverses the
+ * complete process when that frame is present and passes unrecognized input through unchanged.
  */
 public final class ComposableBinarySerDesStage implements SerDesStage {
+    private static final String FRAME_MARKER = "__durable_execution_composable_binary_serdes:";
+    private static final String FRAME_PREFIX = FRAME_MARKER + "1:";
+
     private final StringBinaryCodec startingCodec;
-    private final List<BinarySerDes> binarySerDes;
+    private final List<BinarySerDesStage> binaryStages;
     private final StringBinaryCodec endingCodec;
 
     private ComposableBinarySerDesStage(
-            StringBinaryCodec startingCodec, List<BinarySerDes> binarySerDes, StringBinaryCodec endingCodec) {
+            StringBinaryCodec startingCodec, List<BinarySerDesStage> binaryStages, StringBinaryCodec endingCodec) {
         this.startingCodec = startingCodec;
-        this.binarySerDes = List.copyOf(binarySerDes);
+        this.binaryStages = List.copyOf(binaryStages);
         this.endingCodec = endingCodec;
     }
 
@@ -35,18 +39,24 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
     public String serialize(String value) {
         Objects.requireNonNull(value, "value cannot be null");
         var current = invokeToBytes(startingCodec, value, "starting codec");
-        for (int index = 0; index < binarySerDes.size(); index++) {
-            current = invokeSerialize(binarySerDes.get(index), current, index);
+        for (int index = 0; index < binaryStages.size(); index++) {
+            current = invokeSerialize(binaryStages.get(index), current, index);
         }
-        return invokeFromBytes(endingCodec, current, "ending codec");
+        return FRAME_PREFIX + invokeFromBytes(endingCodec, current, "ending codec");
     }
 
     @Override
     public String deserialize(String data) {
         Objects.requireNonNull(data, "data cannot be null");
-        var current = invokeToBytes(endingCodec, data, "ending codec");
-        for (int index = binarySerDes.size() - 1; index >= 0; index--) {
-            current = invokeDeserialize(binarySerDes.get(index), current, index);
+        if (!data.startsWith(FRAME_MARKER)) {
+            return data;
+        }
+        if (!data.startsWith(FRAME_PREFIX)) {
+            throw new SerDesException("Unsupported or malformed composable binary SerDes frame");
+        }
+        var current = invokeToBytes(endingCodec, data.substring(FRAME_PREFIX.length()), "ending codec");
+        for (int index = binaryStages.size() - 1; index >= 0; index--) {
+            current = invokeDeserialize(binaryStages.get(index), current, index);
         }
         return invokeFromBytes(startingCodec, current, "starting codec");
     }
@@ -67,19 +77,19 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
         }
     }
 
-    private static byte[] invokeSerialize(BinarySerDes serDes, byte[] value, int index) {
+    private static byte[] invokeSerialize(BinarySerDesStage stage, byte[] value, int index) {
         try {
-            return requireResult(serDes.serialize(value), binaryStageName(index, serDes));
+            return requireResult(stage.serialize(value), binaryStageName(index, stage));
         } catch (Throwable failure) {
-            throw componentFailure(binaryStageName(index, serDes), "serialize", failure);
+            throw componentFailure(binaryStageName(index, stage), "serialize", failure);
         }
     }
 
-    private static byte[] invokeDeserialize(BinarySerDes serDes, byte[] data, int index) {
+    private static byte[] invokeDeserialize(BinarySerDesStage stage, byte[] data, int index) {
         try {
-            return requireResult(serDes.deserialize(data), binaryStageName(index, serDes));
+            return requireResult(stage.deserialize(data), binaryStageName(index, stage));
         } catch (Throwable failure) {
-            throw componentFailure(binaryStageName(index, serDes), "deserialize", failure);
+            throw componentFailure(binaryStageName(index, stage), "deserialize", failure);
         }
     }
 
@@ -90,15 +100,15 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
         return result;
     }
 
-    private static String binaryStageName(int index, BinarySerDes serDes) {
-        return String.format("binary stage %d (%s)", index, serDes.getClass().getName());
+    private static String binaryStageName(int index, BinarySerDesStage stage) {
+        return String.format("binary stage %d (%s)", index, stage.getClass().getName());
     }
 
     private static RuntimeException componentFailure(String component, String action, Throwable failure) {
         if (failure instanceof Error error) {
             throw error;
         }
-        var message = String.format("Composable binary SerDes %s failed to %s", component, action);
+        var message = String.format("Composable binary SerDes stage %s failed to %s", component, action);
         if (failure instanceof RetryableSerDesException) {
             return new RetryableSerDesException(message, failure);
         }
@@ -116,15 +126,15 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
         BinaryStagesBuilder startWith(StringBinaryCodec codec);
     }
 
-    /** Builder stage that accepts binary SerDes instances in processing order. */
+    /** Builder stage that accepts binary stages in processing order. */
     public interface BinaryStagesBuilder {
         /**
          * Appends a binary transformation.
          *
-         * @param serDes the binary SerDes
+         * @param stage the binary stage
          * @return this builder stage
          */
-        BinaryStagesBuilder then(BinarySerDes serDes);
+        BinaryStagesBuilder then(BinarySerDesStage stage);
 
         /**
          * Sets the codec that converts the final bytes to a string during serialization.
@@ -143,7 +153,7 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
 
     private static final class Builder implements StartBuilder, BinaryStagesBuilder, CompletedBuilder {
         private StringBinaryCodec startingCodec;
-        private final List<BinarySerDes> binarySerDes = new ArrayList<>();
+        private final List<BinarySerDesStage> binaryStages = new ArrayList<>();
         private StringBinaryCodec endingCodec;
 
         @Override
@@ -153,8 +163,8 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
         }
 
         @Override
-        public BinaryStagesBuilder then(BinarySerDes serDes) {
-            binarySerDes.add(Objects.requireNonNull(serDes, "binary SerDes cannot be null"));
+        public BinaryStagesBuilder then(BinarySerDesStage stage) {
+            binaryStages.add(Objects.requireNonNull(stage, "binary stage cannot be null"));
             return this;
         }
 
@@ -166,7 +176,7 @@ public final class ComposableBinarySerDesStage implements SerDesStage {
 
         @Override
         public ComposableBinarySerDesStage build() {
-            return new ComposableBinarySerDesStage(startingCodec, binarySerDes, endingCodec);
+            return new ComposableBinarySerDesStage(startingCodec, binaryStages, endingCodec);
         }
     }
 }

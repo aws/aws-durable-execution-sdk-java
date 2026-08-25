@@ -91,7 +91,7 @@ class FileSystemSerDesTest {
     void storesAndRestoresComposableBinaryOutput() throws Exception {
         var binaryStage = ComposableBinarySerDesStage.builder()
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
-                .then(xorBinarySerDes((byte) 0x5A))
+                .then(xorBinaryStage((byte) 0x5A))
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
         var stage = FileSystemSerDes.builder(basePath).build();
@@ -104,7 +104,9 @@ class FileSystemSerDesTest {
 
         assertEquals("STRING", json.get("payloadType").textValue());
         assertEquals(
-                Base64.getEncoder().encodeToString(xor("{\"id\":42}".getBytes(StandardCharsets.UTF_8), (byte) 0x5A)),
+                "__durable_execution_composable_binary_serdes:1:"
+                        + Base64.getEncoder()
+                                .encodeToString(xor("{\"id\":42}".getBytes(StandardCharsets.UTF_8), (byte) 0x5A)),
                 Files.readString(file));
         assertEquals(
                 Map.of("id", 42),
@@ -245,10 +247,11 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void acceptsExternallyOriginatedRawPayloadsOnlyForSupportedSources() {
+    void passesUnrecognizedPayloadsThroughAtEverySource() {
         var stage = FileSystemSerDes.builder(basePath).build();
         var filesystemPipeline = new JacksonSerDes().then(stage);
         var pipeline = new JacksonSerDes().then(wrappingStage()).then(stage);
+        var pipelineWithStageAfterFilesystem = new JacksonSerDes().then(stage).then(wrappingStage());
         var runner = new SerDesRunner(null);
 
         assertEquals(
@@ -273,6 +276,13 @@ class FileSystemSerDesTest {
                         TypeToken.get(String.class),
                         operationContext(OperationType.CHAINED_INVOKE, OperationSubType.CHAINED_INVOKE)));
         assertEquals(
+                Map.of("id", 42),
+                runner.deserialize(
+                        pipelineWithStageAfterFilesystem,
+                        "{\"id\":42}",
+                        new TypeToken<Map<String, Integer>>() {},
+                        executionContext(SerDesPayloadKind.INPUT)));
+        assertEquals(
                 Map.of("domainMarker", 1, "data", "domain-value"),
                 runner.deserialize(
                         filesystemPipeline,
@@ -287,9 +297,9 @@ class FileSystemSerDesTest {
                         new TypeToken<Map<String, Object>>() {},
                         executionContext(SerDesPayloadKind.INPUT)));
 
-        assertThrows(
-                SerDesException.class,
-                () -> runner.deserialize(filesystemPipeline, "\"raw-step\"", TypeToken.get(String.class), context()));
+        assertEquals(
+                "raw-step",
+                runner.deserialize(filesystemPipeline, "\"raw-step\"", TypeToken.get(String.class), context()));
     }
 
     @Test
@@ -406,10 +416,14 @@ class FileSystemSerDesTest {
         var stage = FileSystemSerDes.builder(basePath).build();
         var serDes = stringCodec().then(stage);
         assertThrows(SerDesException.class, () -> stage.serialize("value"));
+        assertEquals("value", stage.deserialize("value"));
 
         var runner = new SerDesRunner(null);
+        assertEquals("{}", runner.deserialize(serDes, "{}", TypeToken.get(String.class), context()));
         assertThrows(
-                SerDesException.class, () -> runner.deserialize(serDes, "{}", TypeToken.get(String.class), context()));
+                SerDesException.class,
+                () -> runner.deserialize(
+                        serDes, "{\"__durable_execution_filesystem_serdes\":", TypeToken.get(String.class), context()));
         assertThrows(
                 SerDesException.class,
                 () -> runner.deserialize(
@@ -571,8 +585,8 @@ class FileSystemSerDesTest {
                 ARN, "1", "operation", null, operationType, operationSubType, SerDesPayloadKind.RESULT, null);
     }
 
-    private static BinarySerDes xorBinarySerDes(byte key) {
-        return new BinarySerDes() {
+    private static BinarySerDesStage xorBinaryStage(byte key) {
+        return new BinarySerDesStage() {
             @Override
             public byte[] serialize(byte[] value) {
                 return xor(value, key);
@@ -602,6 +616,12 @@ class FileSystemSerDesTest {
 
             @Override
             public String deserialize(String data) {
+                if (!data.startsWith("<")) {
+                    return data;
+                }
+                if (!data.endsWith(">")) {
+                    throw new SerDesException("Malformed wrapping stage value");
+                }
                 return data.substring(1, data.length() - 1);
             }
         };

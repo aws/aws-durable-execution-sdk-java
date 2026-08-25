@@ -57,11 +57,6 @@ public final class RetrySerDes implements SerDesStage {
         return execute("pipeline stage deserialization", () -> delegate.deserialize(data));
     }
 
-    @Override
-    public SerDesStageResult deserializePipelineStage(String data) {
-        return execute("pipeline stage deserialization", () -> delegate.deserializePipelineStage(data));
-    }
-
     private <T> T execute(String action, Supplier<T> operation) {
         int attempt = 1;
         while (true) {

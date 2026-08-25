@@ -29,9 +29,13 @@ import software.amazon.lambda.durable.exception.SerDesException;
  *
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. Use a durable shared mount such as EFS, or S3 Files only when
  * its synchronization and crash-durability tradeoffs are acceptable for the workload.
+ *
+ * <p>Deserialization recognizes the reserved filesystem envelope marker. Input without that marker is returned
+ * unchanged; input with the marker must be a valid supported envelope.
  */
 public final class FileSystemSerDes implements SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
+    private static final String ENVELOPE_PREFIX = "{\"" + ENVELOPE_MARKER + "\":";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
     private static final int CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
@@ -109,36 +113,24 @@ public final class FileSystemSerDes implements SerDesStage {
         if (data == null) {
             return null;
         }
-        var context = requireContext();
-        return resolveSerializedPayload(data, context).value();
+        return resolveSerializedPayload(data);
     }
 
-    @Override
-    public SerDesStageResult deserializePipelineStage(String data) {
-        var context = requireContext();
-        var resolved = resolveSerializedPayload(data, context);
-        return resolved.external()
-                ? SerDesStageResult.decodeWithValueCodec(resolved.value())
-                : SerDesStageResult.continueWith(resolved.value());
-    }
-
-    private ResolvedPayload resolveSerializedPayload(String data, SerDesContext context) {
+    private String resolveSerializedPayload(String data) {
         final JsonNode envelope;
         try {
             envelope = ENVELOPE_MAPPER.readTree(data);
         } catch (JsonProcessingException e) {
-            if (acceptsExternalPayload(context)) {
-                return new ResolvedPayload(data, true);
+            if (data.startsWith(ENVELOPE_PREFIX)) {
+                throw malformedEnvelope(requireContext(), e);
             }
-            throw malformedEnvelope(context, e);
+            return data;
         }
 
         if (!hasFilesystemMarker(envelope)) {
-            if (acceptsExternalPayload(context)) {
-                return new ResolvedPayload(data, true);
-            }
-            throw malformedEnvelope(context, null);
+            return data;
         }
+        var context = requireContext();
         var marker = envelope.get(ENVELOPE_MARKER);
         if (!marker.isIntegralNumber()) {
             throw malformedEnvelope(context, null);
@@ -156,19 +148,15 @@ public final class FileSystemSerDes implements SerDesStage {
         var owner = payloadOwner(envelope, context);
         if (hasData) {
             try {
-                return new ResolvedPayload(
-                        SerializedPayload.fromInlineValue(
-                                        payloadType, envelope.get("data").textValue())
-                                .value(),
-                        false);
+                return SerializedPayload.fromInlineValue(
+                                payloadType, envelope.get("data").textValue())
+                        .value();
             } catch (IllegalArgumentException e) {
                 throw malformedEnvelope(context, e);
             }
         }
-        return new ResolvedPayload(
-                readPayload(envelope.get("file").textValue(), payloadType, owner, context)
-                        .value(),
-                false);
+        return readPayload(envelope.get("file").textValue(), payloadType, owner, context)
+                .value();
     }
 
     private SerializedPayload readPayload(
@@ -305,12 +293,6 @@ public final class FileSystemSerDes implements SerDesStage {
 
     private static boolean hasFilesystemMarker(JsonNode envelope) {
         return envelope != null && envelope.isObject() && envelope.has(ENVELOPE_MARKER);
-    }
-
-    private static boolean acceptsExternalPayload(SerDesContext context) {
-        return context.payloadKind() == SerDesPayloadKind.INPUT
-                || context.operationType() == OperationType.CALLBACK
-                || context.operationType() == OperationType.CHAINED_INVOKE;
     }
 
     private static SerDesException malformedEnvelope(SerDesContext context, Throwable cause) {
@@ -559,8 +541,6 @@ public final class FileSystemSerDes implements SerDesStage {
     }
 
     private record PayloadOwner(String durableExecutionArn, String entityId) {}
-
-    private record ResolvedPayload(String value, boolean external) {}
 
     private enum PayloadType {
         STRING

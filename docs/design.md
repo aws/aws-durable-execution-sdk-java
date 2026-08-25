@@ -357,7 +357,7 @@ software.amazon.lambda.durable
 │   ├── SerDes              # Interface and pipeline composition entry point
 │   ├── SerDesStage         # Reversible string-to-string pipeline stage
 │   ├── ComposableSerDes    # Immutable ordered value-codec/string-stage pipeline
-│   ├── BinarySerDes        # Reversible byte-array transformation
+│   ├── BinarySerDesStage   # Reversible byte-array transformation
 │   ├── StringBinaryCodec   # Customizable string/byte boundary conversion
 │   ├── Utf8StringBinaryCodec   # UTF-8 string/byte conversion
 │   ├── Base64StringBinaryCodec # Standard Base64 string/byte conversion

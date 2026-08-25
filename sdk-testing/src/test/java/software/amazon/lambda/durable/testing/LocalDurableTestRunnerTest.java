@@ -21,7 +21,7 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.serde.Base64StringBinaryCodec;
-import software.amazon.lambda.durable.serde.BinarySerDes;
+import software.amazon.lambda.durable.serde.BinarySerDesStage;
 import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -193,7 +193,7 @@ class LocalDurableTestRunnerTest {
     }
 
     @Test
-    void defaultInputCodecBypassesPersistedStagesBeforeFileSystemSerDes(@TempDir Path basePath) {
+    void rawInputPassesThroughPersistedStagesBeforeFileSystemSerDes(@TempDir Path basePath) {
         var deserializeCalls = new AtomicInteger();
         var persistedSerDes = new JacksonSerDes()
                 .then(bytesStage(deserializeCalls))
@@ -219,6 +219,12 @@ class LocalDurableTestRunnerTest {
             @Override
             public String deserialize(String data) {
                 deserializeCalls.incrementAndGet();
+                if (!data.startsWith("<")) {
+                    return data;
+                }
+                if (!data.endsWith(">")) {
+                    throw new SerDesException("Malformed wrapping stage value");
+                }
                 return data.substring(1, data.length() - 1);
             }
         };
@@ -227,7 +233,7 @@ class LocalDurableTestRunnerTest {
     private static SerDesStage bytesStage(AtomicInteger deserializeCalls) {
         return ComposableBinarySerDesStage.builder()
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
-                .then(new BinarySerDes() {
+                .then(new BinarySerDesStage() {
                     @Override
                     public byte[] serialize(byte[] value) {
                         return value;

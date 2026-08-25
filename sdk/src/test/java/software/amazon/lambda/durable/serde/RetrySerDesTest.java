@@ -79,39 +79,6 @@ class RetrySerDesTest {
     }
 
     @Test
-    void retriesPipelineStageDeserialization() {
-        var calls = new AtomicInteger();
-        class RetryableStage implements SerDesStage {
-            @Override
-            public String serialize(String value) {
-                return value;
-            }
-
-            @Override
-            public String deserialize(String data) {
-                return data;
-            }
-
-            @Override
-            public SerDesStageResult deserializePipelineStage(String data) {
-                if (calls.incrementAndGet() == 1) {
-                    throw new RetryableSerDesException("transient");
-                }
-                return SerDesStageResult.decodeWithValueCodec(data);
-            }
-        }
-        var delegate = new RetryableStage();
-        var retrySerDes =
-                new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
-
-        var result = retrySerDes.deserializePipelineStage("value");
-
-        assertEquals("value", result.value());
-        assertTrue(result.skipRemainingStages());
-        assertEquals(2, calls.get());
-    }
-
-    @Test
     void doesNotRetryPermanentSerDesFailure() {
         var calls = new AtomicInteger();
         var delegate = new SerDesStage() {

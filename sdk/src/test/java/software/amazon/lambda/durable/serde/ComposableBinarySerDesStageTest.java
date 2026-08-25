@@ -19,21 +19,25 @@ import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 class ComposableBinarySerDesStageTest {
+    private static final String BINARY_FRAME_MARKER = "__durable_execution_composable_binary_serdes:";
+    private static final String BINARY_FRAME_PREFIX = BINARY_FRAME_MARKER + "1:";
 
     @Test
-    void processesBoundariesAndBinarySerDesInDeclarationOrder() {
+    void processesBoundariesAndBinaryStagesInDeclarationOrder() {
         var calls = new ArrayList<String>();
         var stage = ComposableBinarySerDesStage.builder()
                 .startWith(recordingCodec("starting", calls))
-                .then(appendingSerDes("first", (byte) 1, calls))
-                .then(appendingSerDes("second", (byte) 2, calls))
+                .then(appendingStage("first", (byte) 1, calls))
+                .then(appendingStage("second", (byte) 2, calls))
                 .endWith(recordingCodec("ending", calls))
                 .build();
 
         var serialized = stage.serialize("value");
         var deserialized = stage.deserialize(serialized);
 
-        assertEquals(Base64.getEncoder().encodeToString(new byte[] {'v', 'a', 'l', 'u', 'e', 1, 2}), serialized);
+        assertEquals(
+                BINARY_FRAME_PREFIX + Base64.getEncoder().encodeToString(new byte[] {'v', 'a', 'l', 'u', 'e', 1, 2}),
+                serialized);
         assertEquals("value", deserialized);
         assertEquals(
                 List.of(
@@ -52,7 +56,7 @@ class ComposableBinarySerDesStageTest {
     void composesWithRootSerDesAsOneStringStage() {
         var stage = ComposableBinarySerDesStage.builder()
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
-                .then(xorSerDes((byte) 0x5A))
+                .then(xorStage((byte) 0x5A))
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
         var pipeline = new JacksonSerDes().then(stage);
@@ -86,8 +90,22 @@ class ComposableBinarySerDesStageTest {
 
         var serialized = stage.serialize("value");
 
-        assertEquals(Base64.getEncoder().encodeToString("eulav".getBytes(StandardCharsets.UTF_8)), serialized);
+        assertEquals(
+                BINARY_FRAME_PREFIX + Base64.getEncoder().encodeToString("eulav".getBytes(StandardCharsets.UTF_8)),
+                serialized);
         assertEquals("value", stage.deserialize(serialized));
+    }
+
+    @Test
+    void passesThroughUnrecognizedInputAndRejectsInvalidFrames() {
+        var stage = ComposableBinarySerDesStage.builder()
+                .startWith(Utf8StringBinaryCodec.INSTANCE)
+                .endWith(Base64StringBinaryCodec.INSTANCE)
+                .build();
+
+        assertEquals("\"external\"", stage.deserialize("\"external\""));
+        assertThrows(SerDesException.class, () -> stage.deserialize(BINARY_FRAME_MARKER + "2:value"));
+        assertThrows(SerDesException.class, () -> stage.deserialize(BINARY_FRAME_PREFIX + "not-base64!"));
     }
 
     @Test
@@ -103,7 +121,7 @@ class ComposableBinarySerDesStageTest {
 
         var nullStage = ComposableBinarySerDesStage.builder()
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
-                .then(new BinarySerDes() {
+                .then(new BinarySerDesStage() {
                     @Override
                     public byte[] serialize(byte[] value) {
                         return null;
@@ -125,7 +143,7 @@ class ComposableBinarySerDesStageTest {
     void preservesRetryableFailuresAndFatalErrors() {
         var retryableStage = ComposableBinarySerDesStage.builder()
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
-                .then(new BinarySerDes() {
+                .then(new BinarySerDesStage() {
                     @Override
                     public byte[] serialize(byte[] value) {
                         throw new RetryableSerDesException("retry");
@@ -199,8 +217,8 @@ class ComposableBinarySerDesStageTest {
         };
     }
 
-    private static BinarySerDes appendingSerDes(String name, byte suffix, List<String> calls) {
-        return new BinarySerDes() {
+    private static BinarySerDesStage appendingStage(String name, byte suffix, List<String> calls) {
+        return new BinarySerDesStage() {
             @Override
             public byte[] serialize(byte[] value) {
                 calls.add(name + "-serialize");
@@ -220,8 +238,8 @@ class ComposableBinarySerDesStageTest {
         };
     }
 
-    private static BinarySerDes xorSerDes(byte key) {
-        return new BinarySerDes() {
+    private static BinarySerDesStage xorStage(byte key) {
+        return new BinarySerDesStage() {
             @Override
             public byte[] serialize(byte[] value) {
                 return xor(value, key);

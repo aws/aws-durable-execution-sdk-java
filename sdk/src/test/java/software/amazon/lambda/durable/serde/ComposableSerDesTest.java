@@ -138,40 +138,25 @@ class ComposableSerDesTest {
     }
 
     @Test
-    void stageMayDecodeExternalDataDirectlyWithValueCodec() {
-        var transformDeserializations = new AtomicInteger();
-        var transform = new SerDesStage() {
-            @Override
-            public String serialize(String value) {
-                return "<" + value + ">";
-            }
-
-            @Override
-            public String deserialize(String data) {
-                transformDeserializations.incrementAndGet();
-                return data.substring(1, data.length() - 1);
-            }
-        };
-        var externalBoundary = new SerDesStage() {
-            @Override
-            public String serialize(String value) {
-                return value;
-            }
-
-            @Override
-            public String deserialize(String data) {
-                return data;
-            }
-
-            @Override
-            public SerDesStageResult deserializePipelineStage(String data) {
-                return SerDesStageResult.decodeWithValueCodec(data);
-            }
-        };
-        var pipeline = new JacksonSerDes().then(transform).then(externalBoundary);
+    void unrecognizedInputPassesThroughEveryStage() {
+        var calls = new ArrayList<String>();
+        var pipeline = new JacksonSerDes()
+                .then(stringStage("first", "<", ">", calls))
+                .then(stringStage("second", "[", "]", calls));
 
         assertEquals("value", pipeline.deserialize("\"value\"", TypeToken.get(String.class)));
-        assertEquals(0, transformDeserializations.get());
+        assertEquals(List.of("second-deserialize", "first-deserialize"), calls);
+    }
+
+    @Test
+    void recognizedMalformedInputFailsAtTheOwningStage() {
+        var pipeline = new JacksonSerDes().then(stringStage("framed", "<", ">", new ArrayList<>()));
+
+        var failure = assertThrows(
+                SerDesException.class, () -> pipeline.deserialize("<\"value\"", TypeToken.get(String.class)));
+
+        assertTrue(failure.getMessage().contains("stage 1"));
+        assertTrue(failure.getCause().getMessage().contains("Malformed framed stage value"));
     }
 
     @Test
@@ -242,11 +227,6 @@ class ComposableSerDesTest {
 
             @Override
             public String deserialize(String data) {
-                return null;
-            }
-
-            @Override
-            public SerDesStageResult deserializePipelineStage(String data) {
                 throw stringStageError;
             }
         };
@@ -281,6 +261,12 @@ class ComposableSerDesTest {
             @Override
             public String deserialize(String data) {
                 calls.add(name + "-deserialize");
+                if (!data.startsWith(prefix)) {
+                    return data;
+                }
+                if (!data.endsWith(suffix) || data.length() < prefix.length() + suffix.length()) {
+                    throw new SerDesException("Malformed " + name + " stage value");
+                }
                 return data.substring(prefix.length(), data.length() - suffix.length());
             }
         };

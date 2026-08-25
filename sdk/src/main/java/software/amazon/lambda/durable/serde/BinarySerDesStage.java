@@ -3,12 +3,12 @@
 package software.amazon.lambda.durable.serde;
 
 /**
- * A reversible binary transformation used inside a {@link ComposableBinarySerDesStage}.
+ * A reversible binary stage used inside a {@link ComposableBinarySerDesStage}.
  *
  * <p>Implementations must include any metadata needed for deserialization, such as format versions or encryption
  * initialization vectors, in the returned bytes.
  */
-public interface BinarySerDes {
+public interface BinarySerDesStage {
     /**
      * Applies this transformation during forward serialization.
      *

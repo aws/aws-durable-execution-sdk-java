@@ -30,8 +30,8 @@ var resilientFileSystemStage = new RetrySerDes(
 
 var binaryStage = ComposableBinarySerDesStage.builder()
     .startWith(Utf8StringBinaryCodec.INSTANCE)
-    .then(compressionBinarySerDes)
-    .then(encryptionBinarySerDes)
+    .then(compressionBinaryStage)
+    .then(encryptionBinaryStage)
     .endWith(Base64StringBinaryCodec.INSTANCE)
     .build();
 
@@ -49,10 +49,12 @@ return DurableConfig.builder()
 
 Serialization follows the declaration order above and deserialization runs in reverse. The first component is the
 `SerDes` value codec; every component appended with `then(...)` implements `SerDesStage` and consumes and produces a
-string. `ComposableBinarySerDesStage` converts the string with its starting codec, passes bytes directly through each
-`BinarySerDes`, then converts the final bytes to a string with its ending codec. Both boundaries are customizable
-through the same `StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once around the
-complete compression/encryption chain.
+string. Each stage must use a self-identifying format: it reverses recognized valid input, rejects recognized malformed
+or unsupported input, and returns unrecognized input unchanged. `ComposableBinarySerDesStage` converts the string
+with its starting codec, passes bytes directly through each `BinarySerDesStage`, converts the final bytes to a string
+with its ending codec, and adds a reserved versioned frame. Both boundaries are customizable through the same
+`StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once around the complete
+compression/encryption chain.
 
 - `ALWAYS` writes every non-null payload to a file.
 - `OVERFLOW` stores small payloads inline and offloads envelopes approaching the 256 KB checkpoint limit.
@@ -75,10 +77,11 @@ delays consume time in the current Lambda invocation, so keep attempts and delay
 
 ## Replay and envelope behavior
 
-Filesystem envelopes include a reserved version marker. Raw root input, callback results, and standard Lambda invoke
-results bypass every intermediate stage and decode directly with the pipeline value codec when they have not yet
-been wrapped by this SerDes. Payloads containing the reserved marker must be valid supported filesystem envelopes;
-malformed marked envelopes and unsupported versions fail instead of falling back to raw-data decoding.
+Filesystem envelopes include a reserved version marker. `FileSystemSerDes` returns input without that marker unchanged,
+allowing raw root input, callback results, and standard Lambda invoke results to continue through the remaining stages
+to the pipeline value codec. Payloads containing the reserved marker must be valid supported filesystem envelopes;
+malformed marked envelopes and unsupported versions fail instead of falling back to pass-through behavior. An
+unrecognized value does not require `SerDesContext`; a recognized filesystem envelope does.
 
 Offloaded files are content-addressed and immutable. Updating wait-for-condition state or retry results creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Publication uses an atomic hard-link
@@ -92,16 +95,17 @@ capabilities. Content hashes are verified when reading, and symbolic-link paths 
 
 Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. The filesystem stage's
 `OVERFLOW` and preview-size checks apply before those later transformations, so account for any expansion when staying
-within the service checkpoint limit. During deserialization of a raw external payload, later stages run before
-`FileSystemSerDes` can identify the external boundary; those stages must tolerate or explicitly bypass payloads that
-have not passed through the pipeline.
+within the service checkpoint limit. During deserialization, every stage checks its own marker and returns
+unrecognized input unchanged, so raw external payloads can traverse later and earlier stages without being decoded by
+them.
 
 The cloud and local test runners always use a separate context-free value codec for the initial Lambda invocation
 because an execution ARN is not available yet. By default, they use the configured persisted SerDes when it is a plain
 value codec, or the root value codec when it is a `ComposableSerDes`; `withInputSerDes(...)` provides an explicit
-override. The runners never reuse persisted pipeline stages for this boundary. Do not configure a `ComposableSerDes`
-as the explicit input codec: the unframed external payload does not identify which stages ran before the filesystem
-stage. A custom input codec must produce data that the persisted pipeline's root value codec can decode.
+override. The runners never use persisted pipeline stages to encode this boundary. Do not configure a
+`ComposableSerDes` as the explicit input codec. When the runtime later deserializes the raw input, each persisted stage
+passes it through unless its self-identifying format is present. A custom input codec must produce data that the
+persisted pipeline's root value codec can decode.
 
 ## Storage requirements
 

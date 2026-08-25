@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.awssdk.services.lambda.model.InvokeResponse;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -168,6 +169,12 @@ class CloudDurableTestRunnerTest {
 
             @Override
             public String deserialize(String data) {
+                if (!data.startsWith("<")) {
+                    return data;
+                }
+                if (!data.endsWith(">")) {
+                    throw new SerDesException("Malformed wrapping stage value");
+                }
                 return data.substring(1, data.length() - 1);
             }
         };

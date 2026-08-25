@@ -68,8 +68,8 @@ var resilientFileSystemStage = new RetrySerDes(
 
 var binaryStage = ComposableBinarySerDesStage.builder()
     .startWith(Utf8StringBinaryCodec.INSTANCE)
-    .then(compressionBinarySerDes)
-    .then(encryptionBinarySerDes)
+    .then(compressionBinaryStage)
+    .then(encryptionBinaryStage)
     .endWith(Base64StringBinaryCodec.INSTANCE)
     .build();
 
@@ -86,10 +86,14 @@ return DurableConfig.builder()
 ```
 
 Every top-level stage consumes and produces a string, so stages compose without intermediate type mismatches.
-`ComposableBinarySerDesStage` contains an ordered chain of `BinarySerDes` implementations for compression, encryption,
-or other `byte[]` transformations. Its `startWith(...)`, `then(...)`, and `endWith(...)` calls follow serialization
-order; deserialization reverses them. Both boundaries use the customizable `StringBinaryCodec` interface. UTF-8 and
-Base64 implementations are included in the core SDK, and conversion occurs only around the complete binary chain.
+Every stage must emit a self-identifying, normally versioned representation. On deserialization it reverses recognized
+valid input, rejects recognized malformed or unsupported input, and returns unrecognized input unchanged. This lets
+raw external payloads pass through the configured stages and reach the root value codec.
+`ComposableBinarySerDesStage` contains an ordered chain of `BinarySerDesStage` implementations for compression,
+encryption, or other `byte[]` transformations. Its `startWith(...)`, `then(...)`, and `endWith(...)` calls follow
+serialization order; deserialization reverses them. Both boundaries use the customizable `StringBinaryCodec`
+interface. UTF-8 and Base64 implementations are included in the core SDK, conversion occurs only around the complete
+binary chain, and the outer stage adds a reserved versioned frame for reliable format recognition.
 
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
 approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path
@@ -109,14 +113,16 @@ storage lifecycle and retention separately.
 The cloud and local test runners always serialize the initial Lambda invocation with a separate context-free value
 codec. By default, this is the configured persisted SerDes when it is a plain value codec, or the root value codec when
 the persisted SerDes is a `ComposableSerDes`; `withInputSerDes(...)` provides an explicit override. The runners never
-apply persisted pipeline stages to the initial invocation. The explicit input SerDes must therefore be a value codec
-rather than a `ComposableSerDes`. A custom input codec must produce data that the persisted pipeline's root value codec
-can decode at the external-input boundary.
+use persisted pipeline stages to encode the initial invocation. The explicit input SerDes must therefore be a value
+codec rather than a `ComposableSerDes`. When the runtime later deserializes that raw input, each persisted stage passes
+it through unless its self-identifying format is present. A custom input codec must produce data that the persisted
+pipeline's root value codec can decode.
 
 Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. `OVERFLOW` and preview-size
 checks apply to the filesystem stage's output; account for any expansion introduced by later stages when staying
-within the service checkpoint limit. At external payload boundaries, later stages run before `FileSystemSerDes` during
-deserialization, so they must tolerate or explicitly bypass raw payloads that have not passed through the pipeline.
+within the service checkpoint limit. On deserialization, every stage passes input through unchanged when its own
+self-identifying format is absent, so raw external payloads can safely traverse stages on either side of the
+filesystem stage.
 
 ### Dynamic plugin loading
 

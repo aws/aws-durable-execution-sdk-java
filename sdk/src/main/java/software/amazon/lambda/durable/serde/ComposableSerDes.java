@@ -13,7 +13,8 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * An immutable SerDes processing pipeline.
  *
  * <p>The first component is the value codec. Every later component is a {@link SerDesStage} that consumes and produces
- * a string. Serialization runs from first to last; deserialization runs from last to first.
+ * a string. Serialization runs from first to last; deserialization runs from last to first. Each stage returns
+ * unrecognized input unchanged, allowing raw values to pass through to the root value codec.
  */
 public final class ComposableSerDes implements SerDes {
     private final SerDes valueCodec;
@@ -88,11 +89,7 @@ public final class ComposableSerDes implements SerDes {
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
         String current = data;
         for (int index = stages.size() - 1; index >= 0; index--) {
-            var decoded = invokeStageDeserialize(stages.get(index), current, index + 1);
-            current = decoded.value();
-            if (decoded.skipRemainingStages()) {
-                break;
-            }
+            current = invokeStageDeserialize(stages.get(index), current, index + 1);
         }
         return invokeValueCodecDeserialize(valueCodec, current, typeToken);
     }
@@ -109,11 +106,11 @@ public final class ComposableSerDes implements SerDes {
         }
     }
 
-    private static SerDesStageResult invokeStageDeserialize(SerDesStage stage, String data, int index) {
+    private static String invokeStageDeserialize(SerDesStage stage, String data, int index) {
         try {
-            var result = stage.deserializePipelineStage(data);
+            var result = stage.deserialize(data);
             if (result == null) {
-                throw new SerDesException("Stage returned a null pipeline result");
+                throw new SerDesException("Stage returned null for non-null input");
             }
             return result;
         } catch (Throwable failure) {

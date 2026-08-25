@@ -8,6 +8,18 @@ package software.amazon.lambda.durable.serde;
  * <p>Every top-level stage consumes and produces a string, so stages can be composed in any order without intermediate
  * type mismatches. Use {@link ComposableBinarySerDesStage} to perform an efficient chain of binary transformations
  * inside one string stage.
+ *
+ * <p>A stage must serialize values into a self-identifying format. During deserialization, it must:
+ *
+ * <ul>
+ *   <li>reverse input that is in its recognized, valid format;
+ *   <li>throw a SerDes failure when input identifies itself as this stage's format but is malformed or unsupported;
+ *   <li>return input unchanged when it is not in this stage's format.
+ * </ul>
+ *
+ * <p>This pass-through behavior allows raw external payloads to traverse a configured pipeline and reach its root value
+ * codec without special pipeline control flow. Implementations should inspect an explicit marker or versioned envelope
+ * before decoding rather than treating any successfully decodable value as recognized.
  */
 public interface SerDesStage {
     /**
@@ -21,22 +33,11 @@ public interface SerDesStage {
     /**
      * Reverses this stage during deserialization.
      *
-     * @param data the non-null serialized string produced by this stage
-     * @return the non-null string expected by the preceding stage
+     * <p>If {@code data} is not in this stage's self-identifying format, implementations must return it unchanged. If
+     * it identifies this stage's format but is malformed or unsupported, implementations must throw a SerDes failure.
+     *
+     * @param data the non-null input string
+     * @return the non-null string expected by the preceding stage, or {@code data} unchanged when unrecognized
      */
     String deserialize(String data);
-
-    /**
-     * Reverses this stage with control over external-boundary processing.
-     *
-     * <p>Most stages should use the default result. Boundary stages may return
-     * {@link SerDesStageResult#decodeWithValueCodec(String)} when the input originated outside the configured pipeline
-     * and should bypass the remaining intermediate stages.
-     *
-     * @param data the non-null serialized form produced by this stage
-     * @return the stage result
-     */
-    default SerDesStageResult deserializePipelineStage(String data) {
-        return SerDesStageResult.continueWith(deserialize(data));
-    }
 }
