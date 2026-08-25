@@ -26,6 +26,7 @@ import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 
@@ -212,12 +213,12 @@ class LocalDurableTestRunnerTest {
     private static SerDesStage wrappingStage(AtomicInteger deserializeCalls) {
         return new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return "<" + value + ">";
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 deserializeCalls.incrementAndGet();
                 if (!data.startsWith("<")) {
                     return data;
@@ -235,12 +236,12 @@ class LocalDurableTestRunnerTest {
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
                 .then(new BinarySerDesStage() {
                     @Override
-                    public byte[] serialize(byte[] value) {
+                    public byte[] serialize(byte[] value, SerDesContext context) {
                         return value;
                     }
 
                     @Override
-                    public byte[] deserialize(byte[] data) {
+                    public byte[] deserialize(byte[] data, SerDesContext context) {
                         deserializeCalls.incrementAndGet();
                         return data;
                     }

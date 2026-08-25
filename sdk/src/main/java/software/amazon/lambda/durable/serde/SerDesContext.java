@@ -8,8 +8,10 @@ import software.amazon.lambda.durable.model.OperationSubType;
 /**
  * Describes the durable payload currently being processed by a {@link SerDes}.
  *
- * <p>The SDK sets this context only while invoking a configured SerDes. Direct customer calls to SerDes methods do not
- * have a current context.
+ * <p>The SDK passes this context explicitly to {@link SerDesStage} and {@link BinarySerDesStage} methods. It is also
+ * installed for the duration of the configured {@link SerDes} call so existing value codecs can read it without
+ * changing the backward-compatible SerDes interface. Direct customer calls to SerDes methods do not have a current
+ * context.
  */
 public record SerDesContext(
         String durableExecutionArn,
@@ -22,7 +24,12 @@ public record SerDesContext(
         OperationSubType operationSubType,
         Integer attempt) {
 
-    /** Returns the context for the SerDes call on the current thread, or {@code null} outside SDK-managed calls. */
+    /**
+     * Returns the context for the SerDes call on the current thread, or {@code null} outside SDK-managed calls.
+     *
+     * <p>Pipeline stages should use the context parameter passed to their methods instead of this compatibility
+     * accessor.
+     */
     public static SerDesContext getCurrentContext() {
         return SerDesContextHolder.get();
     }

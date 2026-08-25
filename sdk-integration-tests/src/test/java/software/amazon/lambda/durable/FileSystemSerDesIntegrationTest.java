@@ -502,13 +502,13 @@ class FileSystemSerDesIntegrationTest {
     private static SerDesStage identityStage(RecordingFunction recorder) {
         return new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 recorder.record("serialize", value);
                 return value;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 recorder.record("deserialize", data);
                 return data;
             }

@@ -15,7 +15,8 @@ import software.amazon.lambda.durable.retry.RetryStrategy;
  * A string-stage decorator that retries transient failures from another {@link SerDesStage}.
  *
  * <p>Only {@link RetryableSerDesException} is retried. Other failures are propagated immediately. Retry delays block
- * the thread executing the SerDes call: the caller by default or the configured SerDes executor thread.
+ * the thread executing the SerDes call: the caller by default or the configured SerDes executor thread. Every attempt
+ * receives the same {@link SerDesContext} supplied to this decorator.
  */
 public final class RetrySerDes implements SerDesStage {
     private static final Sleeper DEFAULT_SLEEPER = delay -> {
@@ -48,13 +49,13 @@ public final class RetrySerDes implements SerDesStage {
     }
 
     @Override
-    public String serialize(String value) {
-        return execute("pipeline stage serialization", () -> delegate.serialize(value));
+    public String serialize(String value, SerDesContext context) {
+        return execute("pipeline stage serialization", () -> delegate.serialize(value, context));
     }
 
     @Override
-    public String deserialize(String data) {
-        return execute("pipeline stage deserialization", () -> delegate.deserialize(data));
+    public String deserialize(String data, SerDesContext context) {
+        return execute("pipeline stage deserialization", () -> delegate.deserialize(data, context));
     }
 
     private <T> T execute(String action, Supplier<T> operation) {

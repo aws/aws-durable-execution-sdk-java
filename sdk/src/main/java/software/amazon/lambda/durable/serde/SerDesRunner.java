@@ -54,7 +54,7 @@ public final class SerDesRunner {
     /** Serializes a value with the supplied durable payload context. */
     public String serialize(SerDes serDes, Object value, SerDesContext context) {
         Objects.requireNonNull(serDes, "serDes cannot be null");
-        return run("serialize", context, () -> serDes.serialize(value));
+        return run("serialize", context, () -> serializeWithContext(serDes, value, context));
     }
 
     /** Deserializes a value with invocation-scoped caching. */
@@ -91,7 +91,7 @@ public final class SerDesRunner {
                 return (T) unmaskNull(cached);
             }
 
-            T value = run("deserialize", context, () -> serDes.deserialize(data, typeToken));
+            T value = run("deserialize", context, () -> deserializeWithContext(serDes, data, typeToken, context));
             var cacheValue = maskNull(value);
             putCompleted(key, cacheValue);
             pending.complete(cacheValue);
@@ -130,6 +130,21 @@ public final class SerDesRunner {
 
     private static Object unmaskNull(Object value) {
         return value == NULL_VALUE ? null : value;
+    }
+
+    private static String serializeWithContext(SerDes serDes, Object value, SerDesContext context) {
+        if (serDes instanceof ComposableSerDes composable) {
+            return composable.serialize(value, context);
+        }
+        return serDes.serialize(value);
+    }
+
+    private static <T> T deserializeWithContext(
+            SerDes serDes, String data, TypeToken<T> typeToken, SerDesContext context) {
+        if (serDes instanceof ComposableSerDes composable) {
+            return composable.deserialize(data, typeToken, context);
+        }
+        return serDes.deserialize(data, typeToken);
     }
 
     private <T> T run(String action, SerDesContext context, Supplier<T> supplier) {

@@ -35,7 +35,8 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * links or renames, so the write path is compatible with S3 Files.
  *
  * <p>Deserialization recognizes the reserved filesystem envelope marker. Input without that marker is returned
- * unchanged; input with the marker must be a valid supported envelope.
+ * unchanged; input with the marker must be a valid supported envelope. Filesystem operations use the explicit
+ * {@link SerDesContext} stage parameter for durable payload identity.
  */
 public final class FileSystemSerDes implements SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
@@ -73,11 +74,11 @@ public final class FileSystemSerDes implements SerDesStage {
     }
 
     @Override
-    public String serialize(String value) {
+    public String serialize(String value, SerDesContext context) {
         if (value == null) {
             return null;
         }
-        var context = requireContext();
+        context = requireContext(context);
         var payload = SerializedPayload.fromString(value);
         if (storageMode == FileSystemStorageMode.OVERFLOW) {
             var inlineEnvelope = encodeEnvelope(payload, null, null, context);
@@ -104,20 +105,20 @@ public final class FileSystemSerDes implements SerDesStage {
     }
 
     @Override
-    public String deserialize(String data) {
+    public String deserialize(String data, SerDesContext context) {
         if (data == null) {
             return null;
         }
-        return resolveSerializedPayload(data);
+        return resolveSerializedPayload(data, context);
     }
 
-    private String resolveSerializedPayload(String data) {
+    private String resolveSerializedPayload(String data, SerDesContext context) {
         final JsonNode envelope;
         try {
             envelope = ENVELOPE_MAPPER.readTree(data);
         } catch (JsonProcessingException e) {
             if (data.startsWith(ENVELOPE_PREFIX)) {
-                throw malformedEnvelope(requireContext(), e);
+                throw malformedEnvelope(requireContext(context), e);
             }
             return data;
         }
@@ -125,7 +126,7 @@ public final class FileSystemSerDes implements SerDesStage {
         if (!hasFilesystemMarker(envelope)) {
             return data;
         }
-        var context = requireContext();
+        context = requireContext(context);
         var marker = envelope.get(ENVELOPE_MARKER);
         if (!marker.isIntegralNumber()) {
             throw malformedEnvelope(context, null);
@@ -342,8 +343,7 @@ public final class FileSystemSerDes implements SerDesStage {
         return Utf8StringBinaryCodec.INSTANCE.toBytes(envelope).length <= CHECKPOINT_ENVELOPE_LIMIT_BYTES;
     }
 
-    private SerDesContext requireContext() {
-        var context = SerDesContext.getCurrentContext();
+    private SerDesContext requireContext(SerDesContext context) {
         if (context == null
                 || context.durableExecutionArn() == null
                 || context.durableExecutionArn().isBlank()

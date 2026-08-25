@@ -456,8 +456,8 @@ class FileSystemSerDesTest {
     void rejectsCallsWithoutContextAndMalformedOrUnsafeEnvelopes() throws Exception {
         var stage = FileSystemSerDes.builder(basePath).build();
         var serDes = stringCodec().then(stage);
-        assertThrows(SerDesException.class, () -> stage.serialize("value"));
-        assertEquals("value", stage.deserialize("value"));
+        assertThrows(SerDesException.class, () -> stage.serialize("value", null));
+        assertEquals("value", stage.deserialize("value", null));
 
         var runner = new SerDesRunner(null);
         assertEquals("{}", runner.deserialize(serDes, "{}", TypeToken.get(String.class), context()));
@@ -629,12 +629,12 @@ class FileSystemSerDesTest {
     private static BinarySerDesStage xorBinaryStage(byte key) {
         return new BinarySerDesStage() {
             @Override
-            public byte[] serialize(byte[] value) {
+            public byte[] serialize(byte[] value, SerDesContext context) {
                 return xor(value, key);
             }
 
             @Override
-            public byte[] deserialize(byte[] data) {
+            public byte[] deserialize(byte[] data, SerDesContext context) {
                 return xor(data, key);
             }
         };
@@ -651,12 +651,12 @@ class FileSystemSerDesTest {
     private static SerDesStage wrappingStage() {
         return new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return "<" + value + ">";
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 if (!data.startsWith("<")) {
                     return data;
                 }

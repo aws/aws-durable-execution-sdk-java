@@ -163,12 +163,12 @@ class CloudDurableTestRunnerTest {
     private static SerDesStage wrappingStage() {
         return new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return "<" + value + ">";
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 if (!data.startsWith("<")) {
                     return data;
                 }

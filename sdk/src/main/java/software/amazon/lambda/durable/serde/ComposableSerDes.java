@@ -14,7 +14,8 @@ import software.amazon.lambda.durable.exception.SerDesException;
  *
  * <p>The first component is the value codec. Every later component is a {@link SerDesStage} that consumes and produces
  * a string. Serialization runs from first to last; deserialization runs from last to first. Each stage returns
- * unrecognized input unchanged, allowing raw values to pass through to the root value codec.
+ * unrecognized input unchanged, allowing raw values to pass through to the root value codec. SDK-managed calls pass the
+ * same {@link SerDesContext} explicitly to every stage.
  */
 public final class ComposableSerDes implements SerDes {
     private final SerDes valueCodec;
@@ -71,32 +72,40 @@ public final class ComposableSerDes implements SerDes {
 
     @Override
     public String serialize(Object value) {
+        return serialize(value, SerDesContext.getCurrentContext());
+    }
+
+    String serialize(Object value, SerDesContext context) {
         if (value == null) {
             return null;
         }
         String current = invokeValueCodecSerialize(valueCodec, value);
         for (int index = 0; index < stages.size(); index++) {
-            current = invokeStageSerialize(stages.get(index), current, index + 1);
+            current = invokeStageSerialize(stages.get(index), current, context, index + 1);
         }
         return current;
     }
 
     @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
+        return deserialize(data, typeToken, SerDesContext.getCurrentContext());
+    }
+
+    <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
         if (data == null) {
             return null;
         }
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
         String current = data;
         for (int index = stages.size() - 1; index >= 0; index--) {
-            current = invokeStageDeserialize(stages.get(index), current, index + 1);
+            current = invokeStageDeserialize(stages.get(index), current, context, index + 1);
         }
         return invokeValueCodecDeserialize(valueCodec, current, typeToken);
     }
 
-    private static String invokeStageSerialize(SerDesStage stage, String value, int index) {
+    private static String invokeStageSerialize(SerDesStage stage, String value, SerDesContext context, int index) {
         try {
-            var result = stage.serialize(value);
+            var result = stage.serialize(value, context);
             if (result == null) {
                 throw new SerDesException("Stage returned null for a non-null value");
             }
@@ -106,9 +115,9 @@ public final class ComposableSerDes implements SerDes {
         }
     }
 
-    private static String invokeStageDeserialize(SerDesStage stage, String data, int index) {
+    private static String invokeStageDeserialize(SerDesStage stage, String data, SerDesContext context, int index) {
         try {
-            var result = stage.deserialize(data);
+            var result = stage.deserialize(data, context);
             if (result == null) {
                 throw new SerDesException("Stage returned null for non-null input");
             }

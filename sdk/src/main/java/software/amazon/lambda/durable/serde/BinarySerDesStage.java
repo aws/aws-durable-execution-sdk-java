@@ -7,21 +7,26 @@ package software.amazon.lambda.durable.serde;
  *
  * <p>Implementations must include any metadata needed for deserialization, such as format versions or encryption
  * initialization vectors, in the returned bytes.
+ *
+ * <p>The enclosing composable stage passes the same durable payload context to each binary stage. The context may be
+ * {@code null} only when the stage is invoked outside an SDK-managed SerDes call.
  */
 public interface BinarySerDesStage {
     /**
      * Applies this transformation during forward serialization.
      *
      * @param value the non-null input bytes
+     * @param context the current durable payload context, or {@code null} outside SDK-managed calls
      * @return the non-null transformed bytes
      */
-    byte[] serialize(byte[] value);
+    byte[] serialize(byte[] value, SerDesContext context);
 
     /**
      * Reverses this transformation during deserialization.
      *
      * @param data the non-null bytes produced by this transformation
+     * @param context the current durable payload context, or {@code null} outside SDK-managed calls
      * @return the non-null bytes expected by the preceding transformation
      */
-    byte[] deserialize(byte[] data);
+    byte[] deserialize(byte[] data, SerDesContext context);
 }

@@ -20,6 +20,8 @@ import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class RetrySerDesTest {
+    private static final SerDesContext CONTEXT =
+            SerDesContext.forExecution("arn", "invocation", "execution", SerDesPayloadKind.RESULT);
 
     @Test
     void retriesSerializationWithStrategyDelays() {
@@ -28,7 +30,8 @@ class RetrySerDesTest {
         var delays = new ArrayList<Duration>();
         var delegate = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
+                assertSame(CONTEXT, context);
                 if (calls.incrementAndGet() < 3) {
                     throw new RetryableSerDesException("transient");
                 }
@@ -36,7 +39,7 @@ class RetrySerDesTest {
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return data;
             }
         };
@@ -48,7 +51,7 @@ class RetrySerDesTest {
                 },
                 delays::add);
 
-        assertEquals("serialized", retrySerDes.serialize("value"));
+        assertEquals("serialized", retrySerDes.serialize("value", CONTEXT));
         assertEquals(3, calls.get());
         assertEquals(List.of(1, 2), strategyAttempts);
         assertEquals(List.of(Duration.ofMillis(1), Duration.ofMillis(2)), delays);
@@ -59,12 +62,13 @@ class RetrySerDesTest {
         var calls = new AtomicInteger();
         var delegate = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return value;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
+                assertSame(CONTEXT, context);
                 if (calls.incrementAndGet() == 1) {
                     throw new RetryableSerDesException("transient");
                 }
@@ -74,7 +78,7 @@ class RetrySerDesTest {
         var retrySerDes =
                 new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
 
-        assertEquals("value", retrySerDes.deserialize("value"));
+        assertEquals("value", retrySerDes.deserialize("value", CONTEXT));
         assertEquals(2, calls.get());
     }
 
@@ -83,13 +87,13 @@ class RetrySerDesTest {
         var calls = new AtomicInteger();
         var delegate = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 calls.incrementAndGet();
                 throw new SerDesException("permanent");
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return data;
             }
         };
@@ -97,7 +101,7 @@ class RetrySerDesTest {
             throw new AssertionError("permanent failures must not sleep");
         });
 
-        var failure = assertThrows(SerDesException.class, () -> retrySerDes.serialize("value"));
+        var failure = assertThrows(SerDesException.class, () -> retrySerDes.serialize("value", CONTEXT));
         assertEquals("permanent", failure.getMessage());
         assertEquals(1, calls.get());
     }
@@ -113,19 +117,19 @@ class RetrySerDesTest {
         var retrySerDes = new RetrySerDes(
                 new SerDesStage() {
                     @Override
-                    public String serialize(String value) {
+                    public String serialize(String value, SerDesContext context) {
                         throw new RetryableSerDesException("transient");
                     }
 
                     @Override
-                    public String deserialize(String data) {
+                    public String deserialize(String data, SerDesContext context) {
                         return data;
                     }
                 },
                 (error, attempt) -> RetryDecision.retry(Duration.ofSeconds(-1)),
                 delay -> {});
 
-        var failure = assertThrows(SerDesException.class, () -> retrySerDes.serialize("value"));
+        var failure = assertThrows(SerDesException.class, () -> retrySerDes.serialize("value", CONTEXT));
         assertTrue(failure.getMessage().contains("invalid delay"));
     }
 
@@ -135,20 +139,20 @@ class RetrySerDesTest {
         var lastFailure = new AtomicReference<RetryableSerDesException>();
         var delegate = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 var failure = new RetryableSerDesException("attempt-" + calls.incrementAndGet());
                 lastFailure.set(failure);
                 throw failure;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return data;
             }
         };
         var retrySerDes = new RetrySerDes(delegate, RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)), delay -> {});
 
-        var thrown = assertThrows(RetryableSerDesException.class, () -> retrySerDes.serialize("value"));
+        var thrown = assertThrows(RetryableSerDesException.class, () -> retrySerDes.serialize("value", CONTEXT));
         assertSame(lastFailure.get(), thrown);
         assertEquals("attempt-2", thrown.getMessage());
         assertEquals(2, calls.get());
@@ -159,12 +163,12 @@ class RetrySerDesTest {
         var retryable = new RetryableSerDesException("transient");
         var delegate = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 throw retryable;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return data;
             }
         };
@@ -174,7 +178,7 @@ class RetrySerDesTest {
                 });
 
         try {
-            var thrown = assertThrows(SerDesException.class, () -> retrySerDes.serialize("value"));
+            var thrown = assertThrows(SerDesException.class, () -> retrySerDes.serialize("value", CONTEXT));
             assertTrue(thrown.getMessage().contains("Interrupted"));
             assertTrue(Thread.currentThread().isInterrupted());
             assertSame(retryable, thrown.getSuppressed()[0]);
@@ -186,12 +190,12 @@ class RetrySerDesTest {
     private static SerDesStage identityStage() {
         return new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return value;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return data;
             }
         };

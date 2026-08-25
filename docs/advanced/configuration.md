@@ -48,8 +48,10 @@ By default, SerDes runs synchronously on the calling thread to preserve existing
 SerDes executor must be different from the user-operation executor to avoid deadlock when the operation pool is
 saturated.
 
-The SDK installs `SerDesContext` on whichever thread performs the call, restores any previous nested context afterward,
-and uses a bounded weak-reference cache for successful deserialization results during the current invocation.
+The SDK passes `SerDesContext` explicitly to every `SerDesStage` and nested `BinarySerDesStage`. It also installs the
+same context on whichever thread performs the root `SerDes` call for backward compatibility with existing value
+codecs, restores any previous nested context afterward, and uses a bounded weak-reference cache for successful
+deserialization results during the current invocation.
 
 ### Filesystem-backed payload storage
 
@@ -85,6 +87,8 @@ return DurableConfig.builder()
 ```
 
 Every top-level stage consumes and produces a string, so stages compose without intermediate type mismatches.
+Every stage method also receives the current read-only `SerDesContext`; the same instance is propagated through the
+complete pipeline and through every retry attempt.
 Every stage must emit a self-identifying, normally versioned representation. On deserialization it reverses recognized
 valid input, rejects recognized malformed or unsupported input, and returns unrecognized input unchanged. This lets
 raw external payloads pass through the configured stages and reach the root value codec.

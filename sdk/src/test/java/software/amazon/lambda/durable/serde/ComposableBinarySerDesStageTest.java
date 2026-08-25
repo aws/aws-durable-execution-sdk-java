@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
@@ -21,6 +22,8 @@ import software.amazon.lambda.durable.exception.SerDesException;
 class ComposableBinarySerDesStageTest {
     private static final String BINARY_FRAME_MARKER = "__durable_execution_composable_binary_serdes:";
     private static final String BINARY_FRAME_PREFIX = BINARY_FRAME_MARKER + "1:";
+    private static final SerDesContext CONTEXT =
+            SerDesContext.forExecution("arn", "invocation", "execution", SerDesPayloadKind.RESULT);
 
     @Test
     void processesBoundariesAndBinaryStagesInDeclarationOrder() {
@@ -32,8 +35,8 @@ class ComposableBinarySerDesStageTest {
                 .endWith(recordingCodec("ending", calls))
                 .build();
 
-        var serialized = stage.serialize("value");
-        var deserialized = stage.deserialize(serialized);
+        var serialized = stage.serialize("value", CONTEXT);
+        var deserialized = stage.deserialize(serialized, CONTEXT);
 
         assertEquals(
                 BINARY_FRAME_PREFIX + Base64.getEncoder().encodeToString(new byte[] {'v', 'a', 'l', 'u', 'e', 1, 2}),
@@ -50,6 +53,35 @@ class ComposableBinarySerDesStageTest {
                         "first-deserialize",
                         "starting-from-bytes"),
                 calls);
+    }
+
+    @Test
+    void passesTheSameContextToEveryBinaryStageCall() {
+        var serializeContext = new AtomicReference<SerDesContext>();
+        var deserializeContext = new AtomicReference<SerDesContext>();
+        var stage = ComposableBinarySerDesStage.builder()
+                .startWith(Utf8StringBinaryCodec.INSTANCE)
+                .then(new BinarySerDesStage() {
+                    @Override
+                    public byte[] serialize(byte[] value, SerDesContext context) {
+                        serializeContext.set(context);
+                        return value;
+                    }
+
+                    @Override
+                    public byte[] deserialize(byte[] data, SerDesContext context) {
+                        deserializeContext.set(context);
+                        return data;
+                    }
+                })
+                .endWith(Base64StringBinaryCodec.INSTANCE)
+                .build();
+
+        var serialized = stage.serialize("value", CONTEXT);
+        stage.deserialize(serialized, CONTEXT);
+
+        assertSame(CONTEXT, serializeContext.get());
+        assertSame(CONTEXT, deserializeContext.get());
     }
 
     @Test
@@ -88,12 +120,12 @@ class ComposableBinarySerDesStageTest {
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
 
-        var serialized = stage.serialize("value");
+        var serialized = stage.serialize("value", CONTEXT);
 
         assertEquals(
                 BINARY_FRAME_PREFIX + Base64.getEncoder().encodeToString("eulav".getBytes(StandardCharsets.UTF_8)),
                 serialized);
-        assertEquals("value", stage.deserialize(serialized));
+        assertEquals("value", stage.deserialize(serialized, CONTEXT));
     }
 
     @Test
@@ -103,9 +135,9 @@ class ComposableBinarySerDesStageTest {
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
 
-        assertEquals("\"external\"", stage.deserialize("\"external\""));
-        assertThrows(SerDesException.class, () -> stage.deserialize(BINARY_FRAME_MARKER + "2:value"));
-        assertThrows(SerDesException.class, () -> stage.deserialize(BINARY_FRAME_PREFIX + "not-base64!"));
+        assertEquals("\"external\"", stage.deserialize("\"external\"", CONTEXT));
+        assertThrows(SerDesException.class, () -> stage.deserialize(BINARY_FRAME_MARKER + "2:value", CONTEXT));
+        assertThrows(SerDesException.class, () -> stage.deserialize(BINARY_FRAME_PREFIX + "not-base64!", CONTEXT));
     }
 
     @Test
@@ -123,19 +155,19 @@ class ComposableBinarySerDesStageTest {
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
                 .then(new BinarySerDesStage() {
                     @Override
-                    public byte[] serialize(byte[] value) {
+                    public byte[] serialize(byte[] value, SerDesContext context) {
                         return null;
                     }
 
                     @Override
-                    public byte[] deserialize(byte[] data) {
+                    public byte[] deserialize(byte[] data, SerDesContext context) {
                         return data;
                     }
                 })
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
 
-        var failure = assertThrows(SerDesException.class, () -> nullStage.serialize("value"));
+        var failure = assertThrows(SerDesException.class, () -> nullStage.serialize("value", CONTEXT));
         assertTrue(failure.getMessage().contains("binary stage 0"));
     }
 
@@ -145,19 +177,19 @@ class ComposableBinarySerDesStageTest {
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
                 .then(new BinarySerDesStage() {
                     @Override
-                    public byte[] serialize(byte[] value) {
+                    public byte[] serialize(byte[] value, SerDesContext context) {
                         throw new RetryableSerDesException("retry");
                     }
 
                     @Override
-                    public byte[] deserialize(byte[] data) {
+                    public byte[] deserialize(byte[] data, SerDesContext context) {
                         return data;
                     }
                 })
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
 
-        var retryable = assertThrows(RetryableSerDesException.class, () -> retryableStage.serialize("value"));
+        var retryable = assertThrows(RetryableSerDesException.class, () -> retryableStage.serialize("value", CONTEXT));
         assertTrue(retryable.getMessage().contains("binary stage 0"));
 
         var fatalError = new AssertionError("fatal");
@@ -176,7 +208,7 @@ class ComposableBinarySerDesStageTest {
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
 
-        assertSame(fatalError, assertThrows(AssertionError.class, () -> fatalStage.serialize("value")));
+        assertSame(fatalError, assertThrows(AssertionError.class, () -> fatalStage.serialize("value", CONTEXT)));
     }
 
     @Test
@@ -220,7 +252,7 @@ class ComposableBinarySerDesStageTest {
     private static BinarySerDesStage appendingStage(String name, byte suffix, List<String> calls) {
         return new BinarySerDesStage() {
             @Override
-            public byte[] serialize(byte[] value) {
+            public byte[] serialize(byte[] value, SerDesContext context) {
                 calls.add(name + "-serialize");
                 var result = Arrays.copyOf(value, value.length + 1);
                 result[value.length] = suffix;
@@ -228,7 +260,7 @@ class ComposableBinarySerDesStageTest {
             }
 
             @Override
-            public byte[] deserialize(byte[] data) {
+            public byte[] deserialize(byte[] data, SerDesContext context) {
                 calls.add(name + "-deserialize");
                 if (data.length == 0 || data[data.length - 1] != suffix) {
                     throw new SerDesException("Unexpected suffix");
@@ -241,12 +273,12 @@ class ComposableBinarySerDesStageTest {
     private static BinarySerDesStage xorStage(byte key) {
         return new BinarySerDesStage() {
             @Override
-            public byte[] serialize(byte[] value) {
+            public byte[] serialize(byte[] value, SerDesContext context) {
                 return xor(value, key);
             }
 
             @Override
-            public byte[] deserialize(byte[] data) {
+            public byte[] deserialize(byte[] data, SerDesContext context) {
                 return xor(data, key);
             }
         };

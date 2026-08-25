@@ -49,7 +49,8 @@ return DurableConfig.builder()
 Serialization follows the declaration order above and deserialization runs in reverse. The first component is the
 `SerDes` value codec; every component appended with `then(...)` implements `SerDesStage` and consumes and produces a
 string. Each stage must use a self-identifying format: it reverses recognized valid input, rejects recognized malformed
-or unsupported input, and returns unrecognized input unchanged. `ComposableBinarySerDesStage` converts the string
+or unsupported input, and returns unrecognized input unchanged. The runner passes the same read-only
+`SerDesContext` explicitly to every string stage and binary substage. `ComposableBinarySerDesStage` converts the string
 with its starting codec, passes bytes directly through each `BinarySerDesStage`, converts the final bytes to a string
 with its ending codec, and adds a reserved versioned frame. Both boundaries are customizable through the same
 `StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once around the complete
@@ -105,7 +106,8 @@ Filesystem envelopes include a reserved version marker. `FileSystemSerDes` retur
 allowing raw root input, callback results, and standard Lambda invoke results to continue through the remaining stages
 to the pipeline value codec. Payloads containing the reserved marker must be valid supported filesystem envelopes;
 malformed marked envelopes and unsupported versions fail instead of falling back to pass-through behavior. An
-unrecognized value does not require `SerDesContext`; a recognized filesystem envelope does.
+unrecognized value does not require the explicit `SerDesContext` parameter to be non-null; a recognized filesystem
+envelope does.
 
 Offloaded files are content-hashed and immutable. Every serialization uses a unique filename containing the entity
 identity, content hash, and UUID, and publishes it with one `CREATE_NEW` write. Existing files are never overwritten,

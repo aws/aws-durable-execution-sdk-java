@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
@@ -43,30 +44,58 @@ class ComposableSerDesTest {
     }
 
     @Test
+    void passesTheRunnerContextExplicitlyToEveryStageCall() {
+        var observedSerializeContext = new AtomicReference<SerDesContext>();
+        var observedDeserializeContext = new AtomicReference<SerDesContext>();
+        var stage = new SerDesStage() {
+            @Override
+            public String serialize(String value, SerDesContext context) {
+                observedSerializeContext.set(context);
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                observedDeserializeContext.set(context);
+                return data;
+            }
+        };
+        var context = SerDesContext.forExecution("arn", "invocation", "execution", SerDesPayloadKind.RESULT);
+        var pipeline = new JacksonSerDes().then(stage);
+        var runner = new SerDesRunner(null);
+
+        var serialized = runner.serialize(pipeline, "value", context);
+        runner.deserialize(pipeline, serialized, TypeToken.get(String.class), context);
+
+        assertSame(context, observedSerializeContext.get());
+        assertSame(context, observedDeserializeContext.get());
+    }
+
+    @Test
     void supportsDedicatedStringStages() {
         var calls = new ArrayList<String>();
         var first = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 calls.add("first-serialize");
                 return "<" + value + ">";
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 calls.add("first-deserialize");
                 return data.substring(1, data.length() - 1);
             }
         };
         var second = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 calls.add("second-serialize");
                 return "[" + value + "]";
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 calls.add("second-deserialize");
                 return data.substring(1, data.length() - 1);
             }
@@ -121,12 +150,12 @@ class ComposableSerDesTest {
         var intermediateCalls = new AtomicInteger();
         var identityStage = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return value;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 intermediateCalls.incrementAndGet();
                 return data;
             }
@@ -163,12 +192,12 @@ class ComposableSerDesTest {
     void rejectsNullIntermediateValues() {
         var nullStage = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return null;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return null;
             }
         };
@@ -182,12 +211,12 @@ class ComposableSerDesTest {
     void preservesRetryabilityWhenDecoratingStageFailures() {
         var transientStage = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 throw new RetryableSerDesException("retry");
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return null;
             }
         };
@@ -205,12 +234,12 @@ class ComposableSerDesTest {
         var serializeError = new OutOfMemoryError("serialize");
         var serializeStage = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 throw serializeError;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 return null;
             }
         };
@@ -221,12 +250,12 @@ class ComposableSerDesTest {
         var stringStageError = new StackOverflowError("string-stage-deserialize");
         var stringStage = new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 return value;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 throw stringStageError;
             }
         };
@@ -253,13 +282,13 @@ class ComposableSerDesTest {
     private static SerDesStage stringStage(String name, String prefix, String suffix, List<String> calls) {
         return new SerDesStage() {
             @Override
-            public String serialize(String value) {
+            public String serialize(String value, SerDesContext context) {
                 calls.add(name + "-serialize");
                 return prefix + value + suffix;
             }
 
             @Override
-            public String deserialize(String data) {
+            public String deserialize(String data, SerDesContext context) {
                 calls.add(name + "-deserialize");
                 if (!data.startsWith(prefix)) {
                     return data;

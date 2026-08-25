@@ -40,20 +40,19 @@ uniform and preventing intermediate type mismatches.
 Binary transformations compose inside one `ComposableBinarySerDesStage`. That outer stage converts strings to bytes
 with a configurable starting codec, applies any number of reversible `BinarySerDesStage` implementations without
 intermediate text conversion, and converts the final bytes back to a string with a configurable ending codec. The
-filesystem stage uses `SerDesContext.getCurrentContext()` to identify the durable execution and entity being
-serialized.
+filesystem stage receives `SerDesContext` explicitly to identify the durable execution and entity being serialized.
 
 ```java
 public interface SerDesStage {
-    String serialize(String value);
+    String serialize(String value, SerDesContext context);
 
-    String deserialize(String data);
+    String deserialize(String data, SerDesContext context);
 }
 
 public interface BinarySerDesStage {
-    byte[] serialize(byte[] value);
+    byte[] serialize(byte[] value, SerDesContext context);
 
-    byte[] deserialize(byte[] data);
+    byte[] deserialize(byte[] data, SerDesContext context);
 }
 
 public interface StringBinaryCodec {
@@ -82,9 +81,10 @@ compression, encryption, and similar byte processing internally and encodes the 
 filesystem when configured to do so and returns a small checkpoint envelope. It is only a `SerDesStage`; a value codec
 must precede it in a `ComposableSerDes`, and other string stages may follow it.
 
-Because the existing `SerDes` methods do not accept context parameters, this approach needs a thread-local
-`SerDesContext` so `FileSystemSerDes` can discover the current payload identity without changing the
-`serialize`/`deserialize` signatures.
+The existing `SerDes` methods remain unchanged. `SerDesRunner` passes `SerDesContext` directly into
+`ComposableSerDes`, which forwards the same instance to every `SerDesStage` and nested `BinarySerDesStage` call.
+The runner also installs the context in a thread-local compatibility accessor for existing root value codecs and
+custom `SerDes` implementations whose backward-compatible methods cannot accept it explicitly.
 
 ```java
 public record SerDesContext(
@@ -103,7 +103,10 @@ public record SerDesContext(
 }
 ```
 
-The SDK owns setting and clearing this thread-local value around SDK-managed SerDes calls. The setter should not be part of the public customer API; customers only read the current context. If SerDes is called directly by customer code outside the SDK, `getCurrentContext()` returns `null`.
+The SDK owns setting and clearing this thread-local value around SDK-managed SerDes calls. The setter is not part of
+the public customer API. Stage implementations use their context parameter; existing value codecs may read the
+compatibility accessor. If SerDes is called directly by customer code outside the SDK, `getCurrentContext()` returns
+`null`, and a stage invoked through that direct call receives `null`.
 
 ### Package
 
@@ -192,18 +195,18 @@ checkpoint String
 Equivalent pseudocode:
 
 ```java
-String serialize(Object value) {
+String serialize(Object value, SerDesContext context) {
     String current = valueCodec.serialize(value);
     for (var stage : stages) {
-        current = stage.serialize(current);
+        current = stage.serialize(current, context);
     }
     return current;
 }
 
-<T> T deserialize(String data, TypeToken<T> targetType) {
+<T> T deserialize(String data, TypeToken<T> targetType, SerDesContext context) {
     String current = data;
     for (int i = stages.size() - 1; i >= 0; i--) {
-        current = stages.get(i).deserialize(current);
+        current = stages.get(i).deserialize(current, context);
     }
     return valueCodec.deserialize(current, targetType);
 }
@@ -213,9 +216,9 @@ Pipeline rules:
 
 - A pipeline must contain exactly one value codec in the first position and zero or more string stages.
 - Every top-level stage consumes and produces a non-null `String`. This makes all stage orderings type-compatible.
-- Context requirements are stage behavior rather than a capability on `SerDes`, `SerDesStage`, binary transformations,
-  or codecs. A context-dependent stage accesses `SerDesContext` when it runs and reports a normal SerDes failure when
-  the required context is unavailable.
+- `SerDesRunner` passes the same read-only `SerDesContext` explicitly to every top-level and binary stage call.
+  A context-dependent stage validates the supplied parameter and reports a normal SerDes failure when it is
+  unavailable or incomplete.
 - The test runners identify a configured input pipeline directly as `ComposableSerDes` and reject it because initial
   input accepts one value codec, not a pipeline.
 - `SerDes.then(...)`, `ComposableSerDes.then(...)`, and the builder accept only `SerDesStage` after the value codec.
@@ -225,7 +228,7 @@ Pipeline rules:
 - A `null` value at the pipeline boundary short-circuits the entire pipeline: serializing or deserializing `null`
   returns `null` without invoking any stage. A stage returning `null` for non-null input is an error. The value
   codec may decode a non-null representation such as the JSON literal `null` to a null domain value.
-- All stages execute within the same `SerDesRunner` invocation and observe the same read-only `SerDesContext`, whether
+- All stages execute within the same `SerDesRunner` invocation and receive the same read-only `SerDesContext`, whether
   the runner executes inline or dispatches to a configured executor.
 - `ComposableSerDes` is immutable. It is safe for concurrent use only when every contained stage is also safe for
   concurrent use, matching the existing `SerDes` requirement.
@@ -243,7 +246,7 @@ Pipeline rules:
 Equivalent stage pseudocode:
 
 ```java
-String deserialize(String data) {
+String deserialize(String data, SerDesContext context) {
     if (!hasStageMarker(data)) {
         return data;
     }
@@ -357,7 +360,7 @@ Retry rules:
 - Only `RetryableSerDesException` is retried. Ordinary `SerDesException` and other failures propagate immediately.
 - `RetryStrategy.makeRetryDecision(error, attempt)` receives the transient failure and a 1-based attempt number.
 - When the strategy returns `fail`, `RetrySerDes` rethrows the last `RetryableSerDesException`.
-- The same read-only `SerDesContext` remains installed for every attempt because retrying happens inside the original
+- The same read-only `SerDesContext` parameter is passed to every attempt because retrying happens inside the original
   `SerDesRunner` task.
 - A retry delay blocks the thread executing the SerDes call. This is the caller thread by default or a SerDes executor
   thread when one is explicitly configured. It is an in-invocation infrastructure retry, not a durable wait or
@@ -394,16 +397,17 @@ Envelope format:
 {"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>","preview":{ "...": "..." }}
 ```
 
-`FileSystemSerDes` must reject calls when `SerDesContext.getCurrentContext()` is `null` or does not include
-`durableExecutionArn` and `entityId`. It accepts a `String`, records the payload type in the envelope, and restores that
-string during reverse processing. A preceding `ComposableBinarySerDesStage` must encode its final bytes to a string
-before filesystem storage.
+`FileSystemSerDes` must reject recognized filesystem operations when its `SerDesContext` parameter is `null` or does
+not include `durableExecutionArn` and `entityId`. It accepts a `String`, records the payload type in the envelope, and
+restores that string during reverse processing. A preceding `ComposableBinarySerDesStage` must encode its final bytes
+to a string before filesystem storage.
 
 The marker and version distinguish filesystem envelopes from strings that were not produced by this stage.
 `FileSystemSerDes.deserialize(...)` returns input without the filesystem marker unchanged, regardless of payload
 source. If the marker is present, the value is recognized as filesystem data and must be a valid supported envelope;
-malformed marked envelopes and unsupported versions fail rather than falling back to pass-through behavior. A
-recognized filesystem envelope also requires an SDK-managed `SerDesContext`, while unrecognized input does not.
+malformed marked envelopes and unsupported versions fail rather than falling back to pass-through behavior. The
+context parameter is explicit on every call, but a recognized filesystem envelope requires a non-null SDK-managed
+context while unrecognized input passes through even if that parameter is `null`.
 
 Offloaded filenames include the entity identity, content hash, and a UUID. Each serialization publishes a new immutable
 file with one `CREATE_NEW` write. It does not require hard links or renames, making the write path compatible with S3
@@ -434,19 +438,13 @@ remains available for non-JSON stage values and fully custom preview logic.
 ### Runtime flow
 
 ```java
-var previousContext = SerDesContextHolder.get();
-SerDesContextHolder.set(context);
-try {
-    var checkpointPayload = composableSerDes.serialize(value);
-    sendCheckpoint(checkpointPayload);
-} finally {
-    if (previousContext == null) {
-        SerDesContextHolder.clear();
-    } else {
-        SerDesContextHolder.set(previousContext);
-    }
-}
+var checkpointPayload = serDesRunner.serialize(composableSerDes, value, context);
+sendCheckpoint(checkpointPayload);
 ```
+
+Inside `SerDesRunner`, a composable pipeline receives `context` directly and forwards it to every stage. The runner
+also installs the same value in `SerDesContextHolder` around the call so the root `SerDes` value codec remains
+backward-compatible.
 
 On deserialization, `FileSystemSerDes` first checks for its reserved marker. Unmarked input is returned unchanged. If
 the marked envelope contains `data`, it restores the inline text; if it contains `file`, it reads the stored string.
@@ -478,8 +476,10 @@ The core SDK should route user payload SerDes calls through a helper, tentativel
 - Builds the correct `SerDesContext`.
 - Executes inline when no SerDes executor is configured.
 - Dispatches to the configured executor only when one is present.
-- Sets `SerDesContext` in TLS on the thread that actually invokes the SerDes.
-- Invokes the existing `SerDes.serialize` and `SerDes.deserialize` methods.
+- Passes `SerDesContext` explicitly to every stage in a `ComposableSerDes`.
+- Sets the same `SerDesContext` in TLS on the thread that invokes the root `SerDes`, preserving compatibility for
+  existing value codecs.
+- Invokes the existing `SerDes.serialize` and `SerDes.deserialize` methods for non-composable implementations.
 - Restores the previous TLS value after each SerDes call, or clears it when there was no previous value.
 - Wraps failures in `SerDesException` with operation and payload kind metadata.
 
@@ -800,7 +800,7 @@ This approach gives the SDK one consistent policy for root payloads, operation r
 | Responsibility boundary | Combines value serialization and storage-reference creation in ordered, composable SerDes stages. | Keeps object encoding in `SerDes` and storage movement in a separate offloader. |
 | User configuration | Users configure one SerDes or a `ComposableSerDes` pipeline. Operation-level SerDes selection replaces the whole pipeline. | Users configure both a SerDes and an offloader. The SDK must define global, per-operation, and per-payload precedence. |
 | Parity with JS issue | Closest to the current JavaScript `createFileSystemSerdes` model and issue #463 wording. | Diverges from JavaScript naming and shape, though it may be architecturally cleaner for Java. |
-| Core SDK changes | Adds the compatible `SerDes.then(SerDesStage)` default method, `ComposableSerDes`, and `SerDesContext` TLS because the existing serialization methods have no context parameter. | Requires a new core extension point, envelope type, config surface, payload pipeline, and migration story. |
+| Core SDK changes | Adds the compatible `SerDes.then(SerDesStage)` default method, `ComposableSerDes`, explicit stage context parameters, and `SerDesContext` TLS compatibility for existing root codecs because `SerDes` methods have no context parameter. | Requires a new core extension point, envelope type, config surface, payload pipeline, and migration story. |
 | Applicability | Any compatible `SerDesStage` implementations can be chained, but storage stages still own their envelope and lifecycle behavior. | Any SerDes output can be offloaded uniformly after serialization. Users can combine Jackson/custom SerDes with any offloader. |
 | Envelope ownership | FileSystemSerDes owns the checkpoint envelope (`data`, `file`, preview), so the SDK treats it as opaque serialized data. | SDK owns the checkpoint/offload envelope and must guarantee it composes with replay, errors, callbacks, and test utilities. |
 | Caching | SDK can cache deserialized values, but FileSystemSerDes may still do file reads internally unless cache hits happen before SerDes. | SDK can cache at both layers: resolved offloaded payload text and final deserialized object. |
@@ -835,9 +835,9 @@ public interface BinarySerDes {
 }
 
 public interface SerDesStage {
-    byte[] serialize(byte[] value);
+    byte[] serialize(byte[] value, SerDesContext context);
 
-    byte[] deserialize(byte[] data);
+    byte[] deserialize(byte[] data, SerDesContext context);
 }
 ```
 
@@ -884,9 +884,10 @@ publishing, documentation, and dependency-management overhead without isolating 
 
 ### Add context-aware SerDes overloads
 
-Rejected for Approach A. Explicit overloads are more discoverable, but they force context into every custom
-implementation's serialization method surface. Approach A uses `SerDesContext` TLS to keep the existing
-`serialize`/`deserialize` signatures unchanged. Approach B does not need SerDes TLS because `PayloadOffloader` receives
+Rejected for the root `SerDes` interface in Approach A. Context is explicit on the new stage interfaces, where it does
+not affect compatibility. Adding it to `SerDes` itself would force every existing custom value codec to change its
+serialization method surface. Approach A keeps those signatures unchanged and retains `SerDesContext` TLS only as a
+compatibility bridge for root codecs. Approach B does not need SerDes TLS because `PayloadOffloader` receives
 `PayloadOffloadContext` explicitly.
 
 ### Make SerDes async
@@ -932,7 +933,8 @@ Negative:
 
 - Adds optional executor, context, and caching machinery that must stay deterministic.
 - Adds storage-specific public API and implementation code to the core SDK artifact.
-- Approach A requires thread-local SerDes context because the existing `SerDes` methods do not accept context.
+- Approach A retains thread-local SerDes context for backward-compatible root codecs because the existing `SerDes`
+  methods do not accept context; pipeline stages receive it explicitly.
 - Top-level stages must encode non-string representations at their boundaries. A composable binary stage avoids
   repeated conversion between binary substages, but its final bytes still require one string encoding.
 - Pipeline ordering and stage configuration must remain compatible with persisted checkpoints.
