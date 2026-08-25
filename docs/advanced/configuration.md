@@ -55,10 +55,11 @@ deserialization results during the current invocation.
 
 ### Filesystem-backed payload storage
 
-The core SDK provides a reversible stage for storing serialized strings on a shared filesystem:
+The core SDK provides a reversible stage for storing serialized strings on a shared filesystem. Its stage, storage,
+path, and preview APIs live in `software.amazon.lambda.durable.serde.filesystem`:
 
 ```java
-var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+var fileSystemStage = FileSystemSerDesStage.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.OVERFLOW)
     .pathEncoding(FileSystemPathEncoding.HASH)
     .build();
@@ -105,7 +106,7 @@ approaches the 256 KB service limit. `URI` produces readable escaped paths; `HAS
 segments. Files include a content hash and never overwrite data referenced by an earlier checkpoint. References are
 validated against the current durable execution and entity, and symbolic-link paths are rejected.
 
-For a `JacksonSerDes -> FileSystemSerDes` pipeline, structured preview configuration provides the same field
+For a `JacksonSerDes -> FileSystemSerDesStage` pipeline, structured preview configuration provides the same field
 selection, masking, exact-path matching, and default 4 KB preview budget as the Python and TypeScript SDKs:
 
 ```java
@@ -114,7 +115,7 @@ var previewConfig = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
     .mask(PreviewField.anywhere("email"))
     .build();
 
-var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/s3/durable-payloads"))
+var fileSystemStage = FileSystemSerDesStage.builder(Path.of("/mnt/s3/durable-payloads"))
     .previewConfig(previewConfig)
     .build();
 
@@ -145,7 +146,7 @@ codec rather than a `ComposableSerDes`. When the runtime later deserializes that
 it through unless its self-identifying format is present. A custom input codec must produce data that the persisted
 pipeline's root value codec can decode.
 
-Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. `OVERFLOW` and preview-size
+Stages may follow `FileSystemSerDesStage` to transform its inline or file-reference envelope. `OVERFLOW` and preview-size
 checks apply to the filesystem stage's output; account for any expansion introduced by later stages when staying
 within the service checkpoint limit. On deserialization, every stage passes input through unchanged when its own
 self-identifying format is absent, so raw external payloads can safely traverse stages on either side of the

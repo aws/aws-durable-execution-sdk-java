@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.serde;
+package software.amazon.lambda.durable.serde.filesystem;
 
 /** Controls which fields are visible by default in a structured payload preview. */
 public enum PreviewMode {

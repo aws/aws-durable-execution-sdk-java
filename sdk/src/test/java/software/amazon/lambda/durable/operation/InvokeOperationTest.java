@@ -32,12 +32,12 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
-import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 
 class InvokeOperationTest {
     private static final String OPERATION_ID = "2";
@@ -214,7 +214,8 @@ class InvokeOperationTest {
         var calleeArn = "arn:aws:lambda:us-east-1:123456789012:function:callee/durable-execution/callee/invocation";
         when(executionManager.getDurableExecutionArn()).thenReturn(callerArn);
 
-        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
         var original = new IllegalStateException("callee failed");
         var errorData = new SerDesRunner(null)
                 .serialize(

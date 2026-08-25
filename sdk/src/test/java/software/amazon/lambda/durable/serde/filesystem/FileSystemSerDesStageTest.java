@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.serde;
+package software.amazon.lambda.durable.serde.filesystem;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,8 +32,19 @@ import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.retry.RetryStrategies;
+import software.amazon.lambda.durable.serde.Base64StringBinaryCodec;
+import software.amazon.lambda.durable.serde.BinarySerDesStage;
+import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.RetrySerDesStage;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.serde.SerDesStage;
+import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 
-class FileSystemSerDesTest {
+class FileSystemSerDesStageTest {
     private static final String ARN =
             "arn:aws:lambda:us-east-1:123456789012:function:orders:1/durable-execution/execution-1/invocation-1";
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
@@ -44,7 +55,8 @@ class FileSystemSerDesTest {
 
     @Test
     void writesValueCodecPayloadAndReplaysIt() throws Exception {
-        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
         var runner = new SerDesRunner(null);
 
         var envelope = runner.serialize(serDes, Map.of("id", 42), context());
@@ -62,11 +74,11 @@ class FileSystemSerDesTest {
 
     @Test
     void isAStageThatCanBeFollowedByOtherStages() {
-        var stage = FileSystemSerDes.builder(basePath).build();
+        var stage = FileSystemSerDesStage.builder(basePath).build();
         var pipeline = new JacksonSerDes().then(stage).then(wrappingStage());
         var runner = new SerDesRunner(null);
 
-        assertFalse(SerDes.class.isAssignableFrom(FileSystemSerDes.class));
+        assertFalse(SerDes.class.isAssignableFrom(FileSystemSerDesStage.class));
         var checkpoint = runner.serialize(pipeline, Map.of("id", 42), context());
         assertTrue(checkpoint.startsWith("<"));
         assertEquals(
@@ -76,7 +88,7 @@ class FileSystemSerDesTest {
 
     @Test
     void retryDecoratorComposesAsAFileSystemStage() {
-        var stage = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDesStage.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
         var pipeline = new JacksonSerDes().then(new RetrySerDesStage(stage, RetryStrategies.Presets.NO_RETRY));
@@ -96,7 +108,7 @@ class FileSystemSerDesTest {
                 .then(xorBinaryStage((byte) 0x5A))
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
-        var stage = FileSystemSerDes.builder(basePath).build();
+        var stage = FileSystemSerDesStage.builder(basePath).build();
         var pipeline = new JacksonSerDes().then(binaryStage).then(stage);
         var runner = new SerDesRunner(null);
 
@@ -117,7 +129,7 @@ class FileSystemSerDesTest {
 
     @Test
     void overflowModeKeepsSmallPayloadInlineAndWritesLargePayload() throws Exception {
-        var stage = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDesStage.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
         var serDes = stringCodec().then(stage);
@@ -132,7 +144,7 @@ class FileSystemSerDesTest {
 
     @Test
     void immutableContentAddressedFilesPreservePriorCheckpoints() throws Exception {
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var runner = new SerDesRunner(null);
 
         var firstContext = context(1);
@@ -150,7 +162,7 @@ class FileSystemSerDesTest {
 
     @Test
     void repeatedPayloadsUseDistinctImmutableFiles() throws Exception {
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var runner = new SerDesRunner(null);
         var firstEnvelope = runner.serialize(serDes, "expected", context());
         var secondEnvelope = runner.serialize(serDes, "expected", context());
@@ -168,8 +180,8 @@ class FileSystemSerDesTest {
         try (var fileSystem =
                 FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
             var archiveBasePath = fileSystem.getPath("/payloads");
-            var serDes =
-                    stringCodec().then(FileSystemSerDes.builder(archiveBasePath).build());
+            var serDes = stringCodec()
+                    .then(FileSystemSerDesStage.builder(archiveBasePath).build());
 
             var envelope = new SerDesRunner(null).serialize(serDes, "expected", context());
             var file = fileSystem.getPath(MAPPER.readTree(envelope).get("file").textValue());
@@ -190,7 +202,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsMalformedUtf8StringsAndFilePayloads() throws Exception {
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var runner = new SerDesRunner(null);
 
         assertThrows(SerDesException.class, () -> runner.serialize(serDes, "lone surrogate \uD800", context()));
@@ -209,7 +221,7 @@ class FileSystemSerDesTest {
 
     @Test
     void hashEncodingUsesFixedLengthSegments() throws Exception {
-        var stage = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDesStage.builder(basePath)
                 .pathEncoding(FileSystemPathEncoding.HASH)
                 .build();
         var serDes = stringCodec().then(stage);
@@ -227,7 +239,7 @@ class FileSystemSerDesTest {
     void includesBoundedPreviewWithoutChangingStoredPayload() throws Exception {
         var previewValue = new AtomicReference<String>();
         var previewContext = new AtomicReference<SerDesContext>();
-        var stage = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDesStage.builder(basePath)
                 .previewGenerator((value, context) -> {
                     previewValue.set(value);
                     previewContext.set(context);
@@ -248,7 +260,7 @@ class FileSystemSerDesTest {
                 "{\"secret\":\"value\"}",
                 Files.readString(Path.of(json.get("file").textValue())));
 
-        var oversizedPreviewStage = FileSystemSerDes.builder(basePath)
+        var oversizedPreviewStage = FileSystemSerDesStage.builder(basePath)
                 .previewGenerator((value, context) -> Map.of("summary", "x".repeat(256 * 1024)))
                 .build();
         var oversizedPreview = stringCodec().then(oversizedPreviewStage);
@@ -258,7 +270,7 @@ class FileSystemSerDesTest {
 
     @Test
     void structuredPreviewConfigSelectsAndMasksJsonFields() throws Exception {
-        var stage = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDesStage.builder(basePath)
                 .previewConfig(PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
                         .include(PreviewField.anywhere("id"), PreviewField.path("customer.status"))
                         .mask(PreviewField.anywhere("email"))
@@ -287,7 +299,7 @@ class FileSystemSerDesTest {
 
     @Test
     void structuredPreviewConfigRequiresJsonStageValue() {
-        var stage = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDesStage.builder(basePath)
                 .previewConfig(PreviewConfig.builder(PreviewMode.INCLUDE_ALL).build())
                 .build();
         var runner = new SerDesRunner(null);
@@ -300,7 +312,7 @@ class FileSystemSerDesTest {
 
     @Test
     void passesUnrecognizedPayloadsThroughAtEverySource() {
-        var stage = FileSystemSerDes.builder(basePath).build();
+        var stage = FileSystemSerDesStage.builder(basePath).build();
         var filesystemPipeline = new JacksonSerDes().then(stage);
         var pipeline = new JacksonSerDes().then(wrappingStage()).then(stage);
         var pipelineWithStageAfterFilesystem = new JacksonSerDes().then(stage).then(wrappingStage());
@@ -356,7 +368,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsUnsupportedEnvelopeVersionsAtExternalBoundaries() {
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var futureEnvelope = "{\"__durable_execution_filesystem_serdes\":2,"
                 + "\"ownerDurableExecutionArn\":\""
                 + ARN
@@ -381,7 +393,8 @@ class FileSystemSerDesTest {
 
         assertThrows(SerDesException.class, () -> new SerDesRunner(null)
                 .deserialize(
-                        stringCodec().then(FileSystemSerDes.builder(basePath).build()),
+                        stringCodec()
+                                .then(FileSystemSerDesStage.builder(basePath).build()),
                         envelope,
                         TypeToken.get(String.class),
                         context()));
@@ -389,7 +402,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsOutOfRangeEnvelopeVersionsWithoutTruncation() {
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var oversizedVersion = "{\"__durable_execution_filesystem_serdes\":4294967297,"
                 + "\"ownerDurableExecutionArn\":\""
                 + ARN
@@ -407,7 +420,7 @@ class FileSystemSerDesTest {
 
     @Test
     void overflowFilesystemStageCanBeFollowedByAnotherStage() {
-        var filesystem = FileSystemSerDes.builder(basePath)
+        var filesystem = FileSystemSerDesStage.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
         var pipeline = stringCodec().then(filesystem).then(wrappingStage());
@@ -421,7 +434,8 @@ class FileSystemSerDesTest {
 
     @Test
     void fileReferencesCrossInvokeInputAndResultBoundaries() {
-        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
         var runner = new SerDesRunner(null);
         var callerArn =
                 "arn:aws:lambda:us-east-1:123456789012:function:caller:1/durable-execution/caller-execution/caller-invocation";
@@ -465,7 +479,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsCallsWithoutContextAndMalformedOrUnsafeEnvelopes() throws Exception {
-        var stage = FileSystemSerDes.builder(basePath).build();
+        var stage = FileSystemSerDesStage.builder(basePath).build();
         var serDes = stringCodec().then(stage);
         assertThrows(SerDesException.class, () -> stage.serialize("value", null));
         assertEquals("value", stage.deserialize("value", null));
@@ -492,7 +506,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsCrossEntityAndSymbolicLinkReferences() throws Exception {
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var envelope = new SerDesRunner(null).serialize(serDes, "payload", context());
 
         var otherEntity = SerDesContext.forOperation(
@@ -514,7 +528,7 @@ class FileSystemSerDesTest {
     void rejectsSymbolicLinkDirectoriesWhenWriting() throws Exception {
         var outside = Files.createTempDirectory(basePath.getParent(), "outside-payloads-");
         Files.createSymbolicLink(basePath.resolve("orders"), outside);
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
 
         assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(serDes, "payload", context()));
         try (var files = Files.list(outside)) {
@@ -528,14 +542,15 @@ class FileSystemSerDesTest {
         var linkedRoot = basePath.resolve("linked-root");
         Files.createSymbolicLink(linkedRoot, outsideRoot);
 
-        var rootSerDes = stringCodec().then(FileSystemSerDes.builder(linkedRoot).build());
+        var rootSerDes =
+                stringCodec().then(FileSystemSerDesStage.builder(linkedRoot).build());
         assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(rootSerDes, "payload", context()));
 
         var outsideAncestor = Files.createTempDirectory(basePath.getParent(), "outside-ancestor-");
         var linkedAncestor = basePath.resolve("linked-ancestor");
         Files.createSymbolicLink(linkedAncestor, outsideAncestor);
         var nestedSerDes = stringCodec()
-                .then(FileSystemSerDes.builder(linkedAncestor.resolve("payloads"))
+                .then(FileSystemSerDesStage.builder(linkedAncestor.resolve("payloads"))
                         .build());
 
         assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(nestedSerDes, "payload", context()));
@@ -544,7 +559,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsExecutionPathsOutsideConfiguredBasePath() {
-        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var unsafeContext = SerDesContext.forOperation(
                 "arn:aws:lambda:us-east-1:123456789012:function:..:1/durable-execution/../..",
                 "1",

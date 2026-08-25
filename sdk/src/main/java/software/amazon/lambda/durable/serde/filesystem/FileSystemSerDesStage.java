@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.serde;
+package software.amazon.lambda.durable.serde.filesystem;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -24,6 +24,11 @@ import java.util.regex.Pattern;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesStage;
+import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 
 /**
  * A string stage that stores payloads on a durable shared filesystem.
@@ -38,7 +43,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * unchanged; input with the marker must be a valid supported envelope. Filesystem operations use the explicit
  * {@link SerDesContext} stage parameter for durable payload identity.
  */
-public final class FileSystemSerDes implements SerDesStage {
+public final class FileSystemSerDesStage implements SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
     private static final String ENVELOPE_PREFIX = "{\"" + ENVELOPE_MARKER + "\":";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
@@ -54,7 +59,7 @@ public final class FileSystemSerDes implements SerDesStage {
     private final BiFunction<String, SerDesContext, Map<String, Object>> previewGenerator;
     private volatile Path canonicalBasePath;
 
-    private FileSystemSerDes(Builder builder) {
+    private FileSystemSerDesStage(Builder builder) {
         basePath = builder.basePath.toAbsolutePath().normalize();
         storageMode = builder.storageMode;
         pathEncoding = builder.pathEncoding;
@@ -350,7 +355,7 @@ public final class FileSystemSerDes implements SerDesStage {
                 || context.entityId() == null
                 || context.entityId().isBlank()) {
             throw new SerDesException(
-                    "FileSystemSerDes requires an SDK-managed SerDesContext with durableExecutionArn and entityId");
+                    "FileSystemSerDesStage requires an SDK-managed SerDesContext with durableExecutionArn and entityId");
         }
         return context;
     }
@@ -560,7 +565,7 @@ public final class FileSystemSerDes implements SerDesStage {
         }
     }
 
-    /** Builder for {@link FileSystemSerDes}. */
+    /** Builder for {@link FileSystemSerDesStage}. */
     public static final class Builder {
         private final Path basePath;
         private FileSystemStorageMode storageMode = FileSystemStorageMode.ALWAYS;
@@ -605,8 +610,8 @@ public final class FileSystemSerDes implements SerDesStage {
             return this;
         }
 
-        public FileSystemSerDes build() {
-            return new FileSystemSerDes(this);
+        public FileSystemSerDesStage build() {
+            return new FileSystemSerDesStage(this);
         }
     }
 }

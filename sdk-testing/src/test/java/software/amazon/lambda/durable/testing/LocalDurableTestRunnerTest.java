@@ -23,12 +23,12 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.serde.Base64StringBinaryCodec;
 import software.amazon.lambda.durable.serde.BinarySerDesStage;
 import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
-import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
+import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 
 class LocalDurableTestRunnerTest {
 
@@ -155,7 +155,7 @@ class LocalDurableTestRunnerTest {
     void filesystemPersistedSerDesUsesDefaultJacksonInputCodec(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()
-                        .then(FileSystemSerDes.builder(basePath).build()))
+                        .then(FileSystemSerDesStage.builder(basePath).build()))
                 .build();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
                 .withOutputType(String.class);
@@ -182,7 +182,7 @@ class LocalDurableTestRunnerTest {
     void rejectsComposableInputSerDes(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()
-                        .then(FileSystemSerDes.builder(basePath).build()))
+                        .then(FileSystemSerDesStage.builder(basePath).build()))
                 .build();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config);
 
@@ -194,11 +194,11 @@ class LocalDurableTestRunnerTest {
     }
 
     @Test
-    void rawInputPassesThroughPersistedStagesBeforeFileSystemSerDes(@TempDir Path basePath) {
+    void rawInputPassesThroughPersistedStagesBeforeFileSystemSerDesStage(@TempDir Path basePath) {
         var deserializeCalls = new AtomicInteger();
         var persistedSerDes = new JacksonSerDes()
                 .then(bytesStage(deserializeCalls))
-                .then(FileSystemSerDes.builder(basePath).build());
+                .then(FileSystemSerDesStage.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(persistedSerDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class, (input, context) -> input + ":" + deserializeCalls.get(), config)

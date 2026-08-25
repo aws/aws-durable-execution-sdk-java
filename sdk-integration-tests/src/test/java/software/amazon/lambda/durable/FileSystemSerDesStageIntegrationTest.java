@@ -38,7 +38,6 @@ import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.Base64StringBinaryCodec;
 import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
-import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
@@ -46,12 +45,13 @@ import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
+import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestResult;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
 
-class FileSystemSerDesIntegrationTest {
+class FileSystemSerDesStageIntegrationTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @TempDir
@@ -162,7 +162,7 @@ class FileSystemSerDesIntegrationTest {
         });
         var serDes = new JacksonSerDes()
                 .then(recordingStage)
-                .then(FileSystemSerDes.builder(basePath).build());
+                .then(FileSystemSerDesStage.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class,
@@ -278,7 +278,7 @@ class FileSystemSerDesIntegrationTest {
         });
         var serDes = new JacksonSerDes()
                 .then(countingStage)
-                .then(FileSystemSerDes.builder(basePath).build());
+                .then(FileSystemSerDesStage.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class,
@@ -313,7 +313,7 @@ class FileSystemSerDesIntegrationTest {
         });
         var serDes = new JacksonSerDes()
                 .then(attemptStage)
-                .then(FileSystemSerDes.builder(basePath).build());
+                .then(FileSystemSerDesStage.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var stepConfig = StepConfig.builder()
                 .retryStrategy(RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)))
@@ -467,7 +467,7 @@ class FileSystemSerDesIntegrationTest {
                 .build();
         return new JacksonSerDes()
                 .then(binaryStage)
-                .then(FileSystemSerDes.builder(basePath).build());
+                .then(FileSystemSerDesStage.builder(basePath).build());
     }
 
     private static DurableExecutionInput durableInput(

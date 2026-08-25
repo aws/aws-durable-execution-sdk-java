@@ -1,7 +1,8 @@
 # Filesystem SerDes
 
-`FileSystemSerDes` stores durable user payloads on a shared filesystem while keeping small, versioned file-reference
-envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-java` artifact.
+`FileSystemSerDesStage` stores durable user payloads on a shared filesystem while keeping small, versioned file-reference
+envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-java` artifact under the
+`software.amazon.lambda.durable.serde.filesystem` Java package.
 
 ## Installation
 
@@ -15,10 +16,10 @@ envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-
 
 ## Pipeline configuration
 
-`FileSystemSerDes` is a reversible `SerDesStage` that must be configured after a value codec:
+`FileSystemSerDesStage` is a reversible `SerDesStage` that must be configured after a value codec:
 
 ```java
-var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+var fileSystemStage = FileSystemSerDesStage.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.ALWAYS)
     .pathEncoding(FileSystemPathEncoding.URI)
     .build();
@@ -75,7 +76,7 @@ var previewConfig = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
     .maxPreviewBytes(4096)
     .build();
 
-var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/s3/durable-payloads"))
+var fileSystemStage = FileSystemSerDesStage.builder(Path.of("/mnt/s3/durable-payloads"))
     .previewConfig(previewConfig)
     .build();
 
@@ -107,7 +108,7 @@ attempts and delays bounded.
 
 ## Replay and envelope behavior
 
-Filesystem envelopes include a reserved version marker. `FileSystemSerDes` returns input without that marker unchanged,
+Filesystem envelopes include a reserved version marker. `FileSystemSerDesStage` returns input without that marker unchanged,
 allowing raw root input, callback results, and standard Lambda invoke results to continue through the remaining stages
 to the pipeline value codec. Payloads containing the reserved marker must be valid supported filesystem envelopes;
 malformed marked envelopes and unsupported versions fail instead of falling back to pass-through behavior. An
@@ -123,7 +124,7 @@ result boundaries may consume a file owned by the other Lambda execution when bo
 and path encoding. Treat file envelopes as capabilities. Content hashes are verified when reading, and symbolic-link
 paths are rejected.
 
-Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. The filesystem stage's
+Stages may follow `FileSystemSerDesStage` to transform its inline or file-reference envelope. The filesystem stage's
 `OVERFLOW` and preview-size checks apply before those later transformations, so account for any expansion when staying
 within the service checkpoint limit. During deserialization, every stage checks its own marker and returns
 unrecognized input unchanged, so raw external payloads can traverse later and earlier stages without being decoded by

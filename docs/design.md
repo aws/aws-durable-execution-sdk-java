@@ -18,7 +18,7 @@ aws-durable-execution-sdk-java/
 
 | Module | Purpose | Key Classes |
 |--------|---------|-------------|
-| `sdk` | Core runtime - extend `DurableHandler`, use `DurableContext` for durable operations, and configure composable or filesystem-backed SerDes | `DurableHandler`, `DurableContext`, `DurableExecutor`, `ExecutionManager`, `FileSystemSerDes` |
+| `sdk` | Core runtime - extend `DurableHandler`, use `DurableContext` for durable operations, and configure composable or filesystem-backed SerDes | `DurableHandler`, `DurableContext`, `DurableExecutor`, `ExecutionManager`, `FileSystemSerDesStage` |
 | `sdk-testing` | Test utilities: `LocalDurableTestRunner` (in-memory, simulates re-invocations and time-skipping) and `CloudDurableTestRunner` (executes against deployed Lambda) | `LocalDurableTestRunner`, `CloudDurableTestRunner`, `LocalMemoryExecutionClient`, `TestResult` |
 | `sdk-integration-tests` | Dogfooding tests - validates the SDK using its own test utilities. Separate module keeps dependencies acyclic: `sdk` → `sdk-testing` → `sdk-integration-tests`. | Test classes only |
 | `examples` | Real-world usage patterns as customers would implement them, with local and cloud tests | Example handlers, `CloudBasedIntegrationTest` |
@@ -365,15 +365,19 @@ software.amazon.lambda.durable
 │   ├── JacksonSerDes       # Jackson impl
 │   ├── RetrySerDesStage    # Retrying string-stage decorator
 │   ├── RetryBinarySerDesStage # Retrying binary-stage decorator
-│   ├── SerDesPreview       # Structured preview builder
-│   ├── PreviewConfig       # Preview selection, masking, and size configuration
-│   ├── PreviewField        # Field-name or exact-path preview selector
-│   ├── PreviewMode         # Include-all or exclude-all preview default
-│   ├── FieldMatchMode      # Anywhere or exact-path field matching
 │   ├── SerDesRunner        # Stage context, optional executor dispatch, and invocation cache
 │   ├── SerDesContext       # Read-only durable payload identity and serialization source value
 │   ├── SerDesPayloadKind   # Input/result/state/exception/invoke payload kind
-│   └── AwsSdkV2Module      # SDK type support
+│   ├── AwsSdkV2Module      # SDK type support
+│   └── filesystem/
+│       ├── FileSystemSerDesStage # Filesystem-backed string stage
+│       ├── FileSystemStorageMode # Always or overflow-only storage
+│       ├── FileSystemPathEncoding # URI or hashed path encoding
+│       ├── SerDesPreview   # Structured preview builder
+│       ├── PreviewConfig   # Preview selection, masking, and size configuration
+│       ├── PreviewField    # Field-name or exact-path preview selector
+│       ├── PreviewMode     # Include-all or exclude-all preview default
+│       └── FieldMatchMode  # Anywhere or exact-path field matching
 │
 └── exception/
     ├── DurableExecutionException

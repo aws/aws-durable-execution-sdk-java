@@ -49,9 +49,9 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
-import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 
 class SerializableDurableOperationTest {
 
@@ -543,7 +543,8 @@ class SerializableDurableOperationTest {
         when(executionManager.getDurableExecutionArn())
                 .thenReturn(
                         "arn:aws:lambda:us-east-1:123456789012:function:test:1/durable-execution/execution/invocation");
-        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
         var checkpointedError = new AtomicReference<ErrorObject>();
         SerializableDurableOperation<String> producer =
                 new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {

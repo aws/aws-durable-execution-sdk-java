@@ -16,13 +16,13 @@ import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.awssdk.services.lambda.model.InvokeResponse;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.serde.SerDesStage;
+import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 
 class CloudDurableTestRunnerTest {
 
@@ -122,7 +122,7 @@ class CloudDurableTestRunnerTest {
                         .durableExecutionArn(executionArn)
                         .build());
         var persistedSerDes =
-                new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
                 .withSerDes(persistedSerDes);

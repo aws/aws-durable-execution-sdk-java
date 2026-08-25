@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.serde;
+package software.amazon.lambda.durable.serde.filesystem;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,7 +42,7 @@ public final class SerDesPreview {
     /**
      * Builds a preview from a JSON string.
      *
-     * <p>This is used by {@link FileSystemSerDes.Builder#previewConfig(PreviewConfig)}, because a pipeline stage
+     * <p>This is used by {@link FileSystemSerDesStage.Builder#previewConfig(PreviewConfig)}, because a pipeline stage
      * receives the serialized string produced by the preceding stage.
      *
      * @return a nested preview map, or {@code null} when no fields are visible
