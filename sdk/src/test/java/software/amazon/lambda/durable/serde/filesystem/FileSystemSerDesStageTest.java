@@ -22,6 +22,7 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -364,6 +365,41 @@ class FileSystemSerDesStageTest {
         assertEquals(
                 "raw-step",
                 runner.deserialize(filesystemPipeline, "\"raw-step\"", TypeToken.get(String.class), context()));
+    }
+
+    @Test
+    void rejectsTrailingTokensAfterFilesystemEnvelope() {
+        var stage = FileSystemSerDesStage.builder(basePath).build();
+        var envelope = "{\"__durable_execution_filesystem_serdes\":1,"
+                + "\"ownerDurableExecutionArn\":\""
+                + ARN
+                + "\",\"ownerEntityId\":\"1\",\"payloadType\":\"STRING\",\"data\":\"value\"}";
+
+        var failure = assertThrows(SerDesException.class, () -> stage.deserialize(envelope + " true", context()));
+
+        assertCauseMessage(failure, "Invalid filesystem SerDes envelope");
+    }
+
+    @Test
+    void recognizesMalformedFilesystemMarkerRegardlessOfWhitespaceOrFieldOrder() {
+        var stage = FileSystemSerDesStage.builder(basePath).build();
+        var malformedEnvelopes = List.of(
+                "{ \n  \"__durable_execution_filesystem_serdes\" : 1",
+                "{\"precedingField\":true,\n  \"__durable_execution_filesystem_serdes\" : 1",
+                "{\"\\u005f_durable_execution_filesystem_serdes\" : 1");
+
+        for (var envelope : malformedEnvelopes) {
+            var failure = assertThrows(SerDesException.class, () -> stage.deserialize(envelope, context()));
+            assertCauseMessage(failure, "Invalid filesystem SerDes envelope");
+        }
+    }
+
+    @Test
+    void doesNotTreatFilesystemMarkerTextInsideAStringAsAnEnvelope() {
+        var stage = FileSystemSerDesStage.builder(basePath).build();
+        var value = "{\"message\":\"__durable_execution_filesystem_serdes\"} trailing";
+
+        assertEquals(value, stage.deserialize(value, null));
     }
 
     @Test

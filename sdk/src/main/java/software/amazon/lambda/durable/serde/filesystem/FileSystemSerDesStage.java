@@ -3,8 +3,10 @@
 package software.amazon.lambda.durable.serde.filesystem;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -45,11 +47,12 @@ import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
  */
 public final class FileSystemSerDesStage implements SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
-    private static final String ENVELOPE_PREFIX = "{\"" + ENVELOPE_MARKER + "\":";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
     private static final int CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
     private static final ObjectMapper ENVELOPE_MAPPER = new ObjectMapper();
+    private static final ObjectReader ENVELOPE_READER =
+            ENVELOPE_MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final Pattern DURABLE_EXECUTION_ARN_PATTERN = Pattern.compile(
             "^arn:[^:]*:lambda:[^:]*:[^:]*:function:([^:/]+):[^:/]+/durable-execution/([^/]+)/([^/]+)$");
 
@@ -120,9 +123,9 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private String resolveSerializedPayload(String data, SerDesContext context) {
         final JsonNode envelope;
         try {
-            envelope = ENVELOPE_MAPPER.readTree(data);
+            envelope = ENVELOPE_READER.readTree(data);
         } catch (JsonProcessingException e) {
-            if (data.stripLeading().startsWith(ENVELOPE_PREFIX)) {
+            if (containsFilesystemMarkerField(data)) {
                 throw malformedEnvelope(requireContext(context), e);
             }
             return data;
@@ -294,6 +297,68 @@ public final class FileSystemSerDesStage implements SerDesStage {
 
     private static boolean hasFilesystemMarker(JsonNode envelope) {
         return envelope != null && envelope.isObject() && envelope.has(ENVELOPE_MARKER);
+    }
+
+    private static boolean containsFilesystemMarkerField(String data) {
+        var index = 0;
+        while (index < data.length() && Character.isWhitespace(data.charAt(index))) {
+            index++;
+        }
+        if (index == data.length() || data.charAt(index) != '{') {
+            return false;
+        }
+
+        var containerDepth = 1;
+        for (index++; index < data.length() && containerDepth > 0; index++) {
+            var current = data.charAt(index);
+            if (current == '{' || current == '[') {
+                containerDepth++;
+            } else if (current == '}' || current == ']') {
+                containerDepth--;
+            } else if (current == '"') {
+                var literalStart = index;
+                var valueStart = index + 1;
+                var escaped = false;
+                while (++index < data.length()) {
+                    current = data.charAt(index);
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == '"') {
+                        break;
+                    }
+                }
+                if (index == data.length()) {
+                    return false;
+                }
+
+                var delimiter = index + 1;
+                while (delimiter < data.length() && Character.isWhitespace(data.charAt(delimiter))) {
+                    delimiter++;
+                }
+                if (containerDepth == 1
+                        && delimiter < data.length()
+                        && data.charAt(delimiter) == ':'
+                        && isFilesystemMarkerLiteral(data, literalStart, valueStart, index)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isFilesystemMarkerLiteral(String data, int literalStart, int valueStart, int literalEnd) {
+        if (literalEnd - valueStart == ENVELOPE_MARKER.length()
+                && data.regionMatches(valueStart, ENVELOPE_MARKER, 0, ENVELOPE_MARKER.length())) {
+            return true;
+        }
+        try {
+            return ENVELOPE_MARKER.equals(
+                    ENVELOPE_MAPPER.readValue(data.substring(literalStart, literalEnd + 1), String.class));
+        } catch (JsonProcessingException ignored) {
+            return false;
+        }
     }
 
     private static SerDesException malformedEnvelope(SerDesContext context, Throwable cause) {
