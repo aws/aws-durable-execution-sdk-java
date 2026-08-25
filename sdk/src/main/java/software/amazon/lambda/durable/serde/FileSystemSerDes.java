@@ -87,8 +87,17 @@ public final class FileSystemSerDes implements SerDesStage {
                     + "'");
         }
         try {
-            writePayload(payload, file);
-            return fileEnvelope;
+            var publishedFile = writePayload(payload, file);
+            if (publishedFile.equals(file)) {
+                return fileEnvelope;
+            }
+            var fallbackEnvelope = encodeEnvelope(payload.withoutData(), publishedFile, preview, context);
+            if (!fitsCheckpoint(fallbackEnvelope)) {
+                throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
+                        + context.entityId()
+                        + "'");
+            }
+            return fallbackEnvelope;
         } catch (IOException e) {
             throw new RetryableSerDesException(
                     "Failed to store filesystem payload for entity '" + context.entityId() + "'", e);
@@ -178,7 +187,7 @@ public final class FileSystemSerDes implements SerDesStage {
             }
             var serialized = new SerializedPayload(payloadType, Files.readAllBytes(realFile));
             var expectedFileName = payloadFileName(serialized, owner.entityId());
-            if (!realFile.getFileName().toString().equals(expectedFileName)) {
+            if (!matchesPublishedPayloadFileName(realFile.getFileName().toString(), expectedFileName)) {
                 throw new SerDesException("Filesystem SerDes file content does not match its content-addressed path");
             }
             return serialized;
@@ -194,7 +203,9 @@ public final class FileSystemSerDes implements SerDesStage {
         if (fileName == null
                 || file.getParent() == null
                 || !file.getParent().equals(expectedDirectory)
-                || !fileName.toString().matches(Pattern.quote(encode(owner.entityId())) + "-[0-9a-f]{64}\\.payload")) {
+                || !fileName.toString()
+                        .matches(Pattern.quote(encode(owner.entityId()))
+                                + "-[0-9a-f]{64}(?:-[A-Za-z0-9_-]+)?\\.payload")) {
             throw new SerDesException("Filesystem SerDes file is not valid for its declared durable entity");
         }
     }
@@ -381,7 +392,7 @@ public final class FileSystemSerDes implements SerDesStage {
         return encode(entityId) + "-" + sha256(payload.data()) + ".payload";
     }
 
-    private void writePayload(SerializedPayload payload, Path file) throws IOException {
+    private Path writePayload(SerializedPayload payload, Path file) throws IOException {
         var directory = file.getParent();
         var realBasePath = createDirectoriesWithoutSymbolicLinks(directory);
         rejectSymbolicLinks(file);
@@ -391,15 +402,22 @@ public final class FileSystemSerDes implements SerDesStage {
         }
         if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
             validateExistingPayload(file, payload.data());
-            return;
+            return file;
         }
 
-        var temporary = Files.createTempFile(directory, file.getFileName().toString(), ".tmp");
+        var fileName = file.getFileName().toString();
+        var temporary = Files.createTempFile(
+                directory, fileName.substring(0, fileName.length() - ".payload".length()) + "-", ".payload");
+        var retainTemporary = false;
         try {
             Files.write(temporary, payload.data());
-            publishWithoutReplacement(temporary, file, payload.data());
+            var publishedFile = publishWithoutReplacement(temporary, file, payload.data());
+            retainTemporary = publishedFile.equals(temporary);
+            return publishedFile;
         } finally {
-            Files.deleteIfExists(temporary);
+            if (!retainTemporary) {
+                Files.deleteIfExists(temporary);
+            }
         }
     }
 
@@ -451,27 +469,26 @@ public final class FileSystemSerDes implements SerDesStage {
         return canonicalBasePath;
     }
 
-    private void publishWithoutReplacement(Path temporary, Path file, byte[] expectedData) throws IOException {
+    private Path publishWithoutReplacement(Path temporary, Path file, byte[] expectedData) throws IOException {
         try {
             Files.createLink(file, temporary);
+            return file;
         } catch (FileAlreadyExistsException ignored) {
             validateExistingPayload(file, expectedData);
-        } catch (UnsupportedOperationException | IOException linkFailure) {
-            publishByCreateNewCopy(temporary, file, expectedData, linkFailure);
+            return file;
+        } catch (UnsupportedOperationException | IOException ignored) {
+            validateExistingPayload(temporary, expectedData);
+            return temporary;
         }
     }
 
-    private void publishByCreateNewCopy(Path temporary, Path file, byte[] expectedData, Exception linkFailure)
-            throws IOException {
-        try {
-            Files.copy(temporary, file);
-            validateExistingPayload(file, expectedData);
-        } catch (FileAlreadyExistsException ignored) {
-            validateExistingPayload(file, expectedData);
-        } catch (IOException | RuntimeException copyFailure) {
-            copyFailure.addSuppressed(linkFailure);
-            throw copyFailure;
+    private static boolean matchesPublishedPayloadFileName(String actualFileName, String expectedFileName) {
+        if (actualFileName.equals(expectedFileName)) {
+            return true;
         }
+        var suffix = ".payload";
+        var expectedPrefix = expectedFileName.substring(0, expectedFileName.length() - suffix.length());
+        return actualFileName.startsWith(expectedPrefix + "-") && actualFileName.endsWith(suffix);
     }
 
     private void validateExistingPayload(Path file, byte[] expectedData) throws IOException {

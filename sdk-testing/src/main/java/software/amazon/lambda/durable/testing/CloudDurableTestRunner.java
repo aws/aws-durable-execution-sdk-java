@@ -33,6 +33,7 @@ public class CloudDurableTestRunner<I, O> {
     private final Duration timeout;
     private final InvocationType invocationType;
     private final SerDes inputSerDes;
+    private final SerDes inputSerDesOverride;
     private final SerDes serDes;
     // Store last execution result for operation inspection
     private TestResult<O> lastResult;
@@ -56,7 +57,8 @@ public class CloudDurableTestRunner<I, O> {
         this.timeout = timeout;
         this.invocationType = invocationType;
         this.serDes = Objects.requireNonNullElseGet(serDes, JacksonSerDes::new);
-        this.inputSerDes = inputValueCodec(inputSerDes);
+        this.inputSerDesOverride = inputSerDes;
+        this.inputSerDes = inputValueCodec(inputSerDes, this.serDes);
     }
 
     private static LambdaClient createDefaultLambdaClient() {
@@ -117,7 +119,7 @@ public class CloudDurableTestRunner<I, O> {
                 pollInterval,
                 timeout,
                 invocationType,
-                inputSerDes,
+                inputSerDesOverride,
                 serDes);
     }
 
@@ -131,7 +133,7 @@ public class CloudDurableTestRunner<I, O> {
                 interval,
                 timeout,
                 invocationType,
-                inputSerDes,
+                inputSerDesOverride,
                 serDes);
     }
 
@@ -145,14 +147,22 @@ public class CloudDurableTestRunner<I, O> {
                 pollInterval,
                 timeout,
                 invocationType,
-                inputSerDes,
+                inputSerDesOverride,
                 serDes);
     }
 
     /** Returns a new runner with the specified Lambda invocation type. */
     public CloudDurableTestRunner<I, O> withInvocationType(InvocationType type) {
         return new CloudDurableTestRunner<>(
-                functionArn, inputType, outputType, lambdaClient, pollInterval, timeout, type, inputSerDes, serDes);
+                functionArn,
+                inputType,
+                outputType,
+                lambdaClient,
+                pollInterval,
+                timeout,
+                type,
+                inputSerDesOverride,
+                serDes);
     }
 
     /** Returns a new runner with the specified SerDes for persisted execution payloads. */
@@ -165,7 +175,7 @@ public class CloudDurableTestRunner<I, O> {
                 pollInterval,
                 timeout,
                 invocationType,
-                inputSerDes,
+                inputSerDesOverride,
                 serDes);
     }
 
@@ -173,7 +183,8 @@ public class CloudDurableTestRunner<I, O> {
      * Returns a new runner with a separate value codec for the initial Lambda invocation payload.
      *
      * <p>The input codec is independent of the SerDes used for persisted execution payloads and must not be a
-     * {@link ComposableSerDes}. The default is {@link JacksonSerDes}.
+     * {@link ComposableSerDes}. By default, the configured persisted SerDes is used when it is a value codec; for a
+     * composable pipeline, its root value codec is used.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(
@@ -280,8 +291,13 @@ public class CloudDurableTestRunner<I, O> {
         return inputSerDes.serialize(input);
     }
 
-    private static SerDes inputValueCodec(SerDes inputSerDes) {
-        var codec = Objects.requireNonNullElseGet(inputSerDes, JacksonSerDes::new);
+    private static SerDes inputValueCodec(SerDes inputSerDes, SerDes persistedSerDes) {
+        var codec = inputSerDes;
+        if (codec == null) {
+            codec = persistedSerDes instanceof ComposableSerDes composable
+                    ? composable.getValueCodec()
+                    : persistedSerDes;
+        }
         if (codec instanceof ComposableSerDes) {
             throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
         }

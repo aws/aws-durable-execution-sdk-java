@@ -24,7 +24,6 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.ComposableSerDes;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
@@ -45,6 +44,7 @@ public class LocalDurableTestRunner<I, O> {
     private final BiFunction<I, DurableContext, O> handler;
     private final LocalMemoryExecutionClient storage;
     private final SerDes inputSerDes;
+    private final SerDes inputSerDesOverride;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
     private final Instant executionStartTime = Instant.now();
@@ -63,7 +63,7 @@ public class LocalDurableTestRunner<I, O> {
         this.inputType = inputType;
         this.outputType = outputType;
         this.handler = handlerFn;
-        this.inputSerDes = inputValueCodec(inputSerDes);
+        this.inputSerDesOverride = inputSerDes;
         this.storage = new LocalMemoryExecutionClient();
 
         // Create config that uses customer's configuration but overrides the client with in-memory storage
@@ -90,6 +90,7 @@ public class LocalDurableTestRunner<I, O> {
                     DurableConfig.builder().withDurableExecutionClient(storage).build();
         }
         this.serDes = this.customerConfig.getSerDes();
+        this.inputSerDes = inputValueCodec(inputSerDes, this.serDes);
     }
 
     /**
@@ -203,24 +204,26 @@ public class LocalDurableTestRunner<I, O> {
      * a new runner instance.
      */
     public LocalDurableTestRunner<I, O> withDurableConfig(DurableConfig config) {
-        return new LocalDurableTestRunner<>(inputType, outputType, handler, config, inputSerDes);
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, config, inputSerDesOverride);
     }
 
     /** Overrides the output type for this test runner. */
     public LocalDurableTestRunner<I, O> withOutputType(TypeToken<O> outputType) {
-        return new LocalDurableTestRunner<>(inputType, outputType, handler, customerConfig, inputSerDes);
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, customerConfig, inputSerDesOverride);
     }
 
     /** Overrides the output type for this test runner. */
     public LocalDurableTestRunner<I, O> withOutputType(Class<O> outputType) {
-        return new LocalDurableTestRunner<>(inputType, TypeToken.get(outputType), handler, customerConfig, inputSerDes);
+        return new LocalDurableTestRunner<>(
+                inputType, TypeToken.get(outputType), handler, customerConfig, inputSerDesOverride);
     }
 
     /**
      * Returns a new runner with a separate value codec for the initial Lambda invocation payload.
      *
      * <p>The input codec is independent of the SerDes used for persisted execution payloads and must not be a
-     * {@link ComposableSerDes}. The default is {@link JacksonSerDes}.
+     * {@link ComposableSerDes}. By default, the configured persisted SerDes is used when it is a value codec; for a
+     * composable pipeline, its root value codec is used.
      */
     public LocalDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new LocalDurableTestRunner<>(
@@ -403,8 +406,13 @@ public class LocalDurableTestRunner<I, O> {
         return inputSerDes.serialize(input);
     }
 
-    private static SerDes inputValueCodec(SerDes inputSerDes) {
-        var codec = Objects.requireNonNullElseGet(inputSerDes, JacksonSerDes::new);
+    private static SerDes inputValueCodec(SerDes inputSerDes, SerDes persistedSerDes) {
+        var codec = inputSerDes;
+        if (codec == null) {
+            codec = persistedSerDes instanceof ComposableSerDes composable
+                    ? composable.getValueCodec()
+                    : persistedSerDes;
+        }
         if (codec instanceof ComposableSerDes) {
             throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
         }

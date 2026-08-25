@@ -81,13 +81,14 @@ been wrapped by this SerDes. Payloads containing the reserved marker must be val
 malformed marked envelopes and unsupported versions fail instead of falling back to raw-data decoding.
 
 Offloaded files are content-addressed and immutable. Updating wait-for-condition state or retry results creates a new
-path instead of replacing a file referenced by an earlier checkpoint. Repeating the same write can safely reuse the
-same file. Publication uses an atomic hard-link create-if-absent operation when the provider supports it and falls back
-to a create-new copy without replacing an existing target on providers that do not support hard links. File envelopes
-identify the producing execution and entity. Ordinary checkpoint replay must match that owner, while invoke input and
-result boundaries may consume a file owned by the other Lambda execution when both functions use the same shared root
-and path encoding. Treat file envelopes as capabilities. Content hashes are verified when reading, and symbolic-link
-paths are rejected.
+path instead of replacing a file referenced by an earlier checkpoint. Publication uses an atomic hard-link
+create-if-absent operation when the provider supports it, allowing repeated identical writes to reuse one file. On
+providers that do not support hard links, it retains the completed, uniquely named content-addressed staging file. The
+fallback path is not exposed in an envelope until its write completes, so a crash can leave only an unreferenced orphan
+rather than a partial checkpoint target. File envelopes identify the producing execution and entity. Ordinary
+checkpoint replay must match that owner, while invoke input and result boundaries may consume a file owned by the
+other Lambda execution when both functions use the same shared root and path encoding. Treat file envelopes as
+capabilities. Content hashes are verified when reading, and symbolic-link paths are rejected.
 
 Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. The filesystem stage's
 `OVERFLOW` and preview-size checks apply before those later transformations, so account for any expansion when staying
@@ -96,10 +97,11 @@ within the service checkpoint limit. During deserialization of a raw external pa
 have not passed through the pipeline.
 
 The cloud and local test runners always use a separate context-free value codec for the initial Lambda invocation
-because an execution ARN is not available yet. The input codec defaults to `JacksonSerDes` and can be replaced with
-`withInputSerDes(...)`. The runners never reuse the persisted composable pipeline for this boundary. Do not configure a
-`ComposableSerDes` as the input codec: the unframed external payload does not identify which stages ran before the
-filesystem stage. A custom input codec must produce data that the persisted pipeline's root value codec can decode.
+because an execution ARN is not available yet. By default, they use the configured persisted SerDes when it is a plain
+value codec, or the root value codec when it is a `ComposableSerDes`; `withInputSerDes(...)` provides an explicit
+override. The runners never reuse persisted pipeline stages for this boundary. Do not configure a `ComposableSerDes`
+as the explicit input codec: the unframed external payload does not identify which stages ran before the filesystem
+stage. A custom input codec must produce data that the persisted pipeline's root value codec can decode.
 
 ## Storage requirements
 

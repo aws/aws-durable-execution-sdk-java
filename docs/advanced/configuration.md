@@ -107,10 +107,11 @@ lose recent writes; use it only when that tradeoff is acceptable. The SDK does n
 storage lifecycle and retention separately.
 
 The cloud and local test runners always serialize the initial Lambda invocation with a separate context-free value
-codec. This codec defaults to `JacksonSerDes` and can be replaced with `withInputSerDes(...)`. It is independent of the
-SerDes used for persisted execution payloads: the runners never apply that persisted composable pipeline to the initial
-invocation. The input SerDes must therefore be a value codec rather than a `ComposableSerDes`. A custom input codec must
-produce data that the persisted pipeline's root value codec can decode at the external-input boundary.
+codec. By default, this is the configured persisted SerDes when it is a plain value codec, or the root value codec when
+the persisted SerDes is a `ComposableSerDes`; `withInputSerDes(...)` provides an explicit override. The runners never
+apply persisted pipeline stages to the initial invocation. The explicit input SerDes must therefore be a value codec
+rather than a `ComposableSerDes`. A custom input codec must produce data that the persisted pipeline's root value codec
+can decode at the external-input boundary.
 
 Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. `OVERFLOW` and preview-size
 checks apply to the filesystem stage's output; account for any expansion introduced by later stages when staying

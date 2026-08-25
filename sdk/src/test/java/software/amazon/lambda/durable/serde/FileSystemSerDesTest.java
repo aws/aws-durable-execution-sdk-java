@@ -169,8 +169,20 @@ class FileSystemSerDesTest {
 
             var envelope = new SerDesRunner(null).serialize(serDes, "expected", context());
             var file = fileSystem.getPath(MAPPER.readTree(envelope).get("file").textValue());
+            var hash = HexFormat.of()
+                    .formatHex(
+                            MessageDigest.getInstance("SHA-256").digest("expected".getBytes(StandardCharsets.UTF_8)));
+            var fileName = file.getFileName().toString();
+            assertTrue(fileName.contains(hash));
+            var hashEnd = fileName.indexOf(hash) + hash.length();
+            var deterministicFile = file.resolveSibling(fileName.substring(0, hashEnd) + ".payload");
 
             assertEquals("expected", Files.readString(file));
+            assertNotEquals(deterministicFile, file);
+            assertFalse(Files.exists(deterministicFile));
+            assertTrue(fileName.startsWith(
+                    deterministicFile.getFileName().toString().replace(".payload", "-")));
+            assertTrue(fileName.endsWith(".payload"));
         }
     }
 

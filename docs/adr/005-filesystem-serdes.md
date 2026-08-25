@@ -535,11 +535,12 @@ When serializing `errorData`, set `SerDesPayloadKind.EXCEPTION` and use an entit
 Root user input and output payloads should route through `SerDesRunner` so `FileSystemSerDes` can see `SerDesContext`. The internal `DurableExecutionInput` and `DurableExecutionOutput` envelope stays with `DurableInputOutputSerDes`.
 
 The cloud test runner must send initial Lambda input before it receives a durable execution ARN. The cloud and local
-runners therefore always serialize that input with a separate context-free value codec, defaulting to
-`JacksonSerDes`. `withInputSerDes(...)` replaces this codec, but rejects `ComposableSerDes`: the runners must never
-reuse the persisted composable pipeline for the initial invocation, and an unframed external payload does not identify
-which stages ran. A custom input codec must produce data that the persisted pipeline's root value codec can decode at
-the external-input boundary. Fluent configuration preserves the input codec when other runner configuration is
+runners therefore always serialize that input with a separate context-free value codec. By default, they use the
+configured persisted SerDes when it is a plain value codec, or the root value codec when it is composable.
+`withInputSerDes(...)` replaces this codec, but rejects `ComposableSerDes`: the runners must never reuse persisted
+pipeline stages for the initial invocation, and an unframed external payload does not identify which stages ran. A
+custom input codec must produce data that the persisted pipeline's root value codec can decode at the external-input
+boundary. Fluent configuration preserves an explicit input-codec override when other runner configuration is
 replaced. `LocalDurableTestRunner` creates the execution operation with this raw external payload and lets
 `DurableExecutor` apply the persisted pipeline's external-boundary behavior; it does not synthesize a durable context
 or serialize initial input through the persisted pipeline.

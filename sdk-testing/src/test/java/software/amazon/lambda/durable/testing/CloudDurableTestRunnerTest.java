@@ -59,7 +59,7 @@ class CloudDurableTestRunnerTest {
     }
 
     @Test
-    void persistedComposableSerDesUsesDefaultJacksonInputCodec() {
+    void persistedComposableSerDesUsesRootValueCodec() {
         var mockClient = mock(LambdaClient.class);
         when(mockClient.invoke(any(InvokeRequest.class)))
                 .thenReturn(InvokeResponse.builder()
@@ -67,13 +67,31 @@ class CloudDurableTestRunnerTest {
                         .build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(new JacksonSerDes().then(wrappingStage()));
+                .withSerDes(wrappingValueCodec().then(wrappingStage()));
 
         runner.startAsync("value");
 
         var request = ArgumentCaptor.forClass(InvokeRequest.class);
         verify(mockClient).invoke(request.capture());
-        assertEquals("\"value\"", request.getValue().payload().asUtf8String());
+        assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
+    }
+
+    @Test
+    void plainPersistedSerDesIsUsedAsDefaultInputCodec() {
+        var mockClient = mock(LambdaClient.class);
+        when(mockClient.invoke(any(InvokeRequest.class)))
+                .thenReturn(InvokeResponse.builder()
+                        .durableExecutionArn("arn:aws:lambda:us-east-2:123:function:test:1/durable-execution/e/i")
+                        .build());
+        var runner = CloudDurableTestRunner.create(
+                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
+                .withSerDes(wrappingValueCodec());
+
+        runner.startAsync("value");
+
+        var request = ArgumentCaptor.forClass(InvokeRequest.class);
+        verify(mockClient).invoke(request.capture());
+        assertEquals("<\"value\">", request.getValue().payload().asUtf8String());
     }
 
     @Test

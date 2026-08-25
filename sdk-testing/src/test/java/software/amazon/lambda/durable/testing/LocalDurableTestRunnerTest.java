@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -24,6 +25,7 @@ import software.amazon.lambda.durable.serde.BinarySerDes;
 import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 
@@ -164,6 +166,18 @@ class LocalDurableTestRunnerTest {
     }
 
     @Test
+    void plainPersistedSerDesIsUsedAsDefaultInputCodec() {
+        var config = DurableConfig.builder().withSerDes(prefixedStringSerDes()).build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value", result.getResult());
+    }
+
+    @Test
     void rejectsComposableInputSerDes(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()
@@ -227,5 +241,23 @@ class LocalDurableTestRunnerTest {
                 })
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
+    }
+
+    private static SerDes prefixedStringSerDes() {
+        return new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "custom:" + value;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                if (!TypeToken.get(String.class).equals(typeToken) || !data.startsWith("custom:")) {
+                    throw new SerDesException("Invalid custom string payload");
+                }
+                return (T) data.substring("custom:".length());
+            }
+        };
     }
 }
