@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
@@ -113,5 +114,28 @@ class LocalDurableTestRunnerTest {
         assertEquals(2, executionStartTimes.size());
         assertNotNull(executionStartTimes.get(0));
         assertEquals(executionStartTimes.get(0), executionStartTimes.get(1));
+    }
+
+    @Test
+    void checkpointedLargeOutputReplaysWithoutDuplicateExecutionOperation() {
+        var stepExecutions = new AtomicInteger();
+        var largeResult = "x".repeat(7 * 1024 * 1024);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+                    context.step("once", Void.class, step -> {
+                        stepExecutions.incrementAndGet();
+                        return null;
+                    });
+                    return largeResult;
+                })
+                .withOutputType(String.class);
+
+        var firstResult = runner.run("test");
+        var replayResult = runner.run("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, firstResult.getStatus());
+        assertEquals(largeResult, firstResult.getResult());
+        assertEquals(ExecutionStatus.SUCCEEDED, replayResult.getStatus());
+        assertEquals(largeResult, replayResult.getResult());
+        assertEquals(1, stepExecutions.get());
     }
 }
