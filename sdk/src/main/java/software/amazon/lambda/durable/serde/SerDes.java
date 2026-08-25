@@ -5,8 +5,13 @@ package software.amazon.lambda.durable.serde;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.SerDesException;
 
-/** Interface for serialization and deserialization of objects at the persisted string boundary. */
-public interface SerDes {
+/**
+ * Interface for serialization and deserialization of objects at the persisted string boundary.
+ *
+ * <p>This is the backward-compatible string specialization of {@link ValueSerDes}. Use {@code ValueSerDes<R>} with
+ * {@link ComposableSerDes} when the first pipeline stage should consume a non-string representation.
+ */
+public interface SerDes extends ValueSerDes<String> {
     /**
      * Serializes an object to a JSON string.
      *
@@ -33,6 +38,11 @@ public interface SerDes {
      * @return the deserialized object, or null if data is null
      */
     <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    @Override
+    default <T> T deserializeExternal(String data, TypeToken<T> typeToken) {
+        return deserialize(data, typeToken);
+    }
 
     /**
      * Deserializes this SerDes when it is used as an intermediate pipeline stage.

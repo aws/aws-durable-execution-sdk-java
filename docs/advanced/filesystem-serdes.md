@@ -37,11 +37,12 @@ return DurableConfig.builder()
     .build();
 ```
 
-Serialization runs from `JacksonSerDes` to the filesystem stage. Deserialization runs in reverse. Additional reversible
-typed stages such as compression or encryption compose through `SerDesStage.then(...)` before the stage chain is passed
-to `ComposableSerDes.of(...)`. A
-`SerDesStage<String, byte[]>` may pass compressed or encrypted bytes directly to `FileSystemSerDes`; no Base64 adapter
-is required between those stages. The complete pipeline still produces a string checkpoint envelope.
+Serialization runs from the value codec to the filesystem stage. Deserialization runs in reverse. Additional
+reversible typed stages such as compression or encryption compose through `SerDesStage.then(...)` before the stage
+chain is passed to `ComposableSerDes.of(...)`. The value codec may produce any representation type, so a custom
+`ValueSerDes<EncodedPayload>` can start a chain such as `EncodedPayload -> byte[] -> FileSystemSerDes`; no String or
+Base64 adapter is required between those components. The complete pipeline still produces a string checkpoint
+envelope.
 
 - `ALWAYS` writes every non-null payload to a file.
 - `OVERFLOW` stores small payloads inline and offloads envelopes approaching the 256 KB checkpoint limit.

@@ -354,8 +354,9 @@ software.amazon.lambda.durable
 │   └── WaitForConditionResult<T>    # Check function return type (value + isDone)
 │
 ├── serde/
-│   ├── SerDes              # Interface and pipeline composition entry point
-│   ├── SerDesStage         # Reversible typed intermediate pipeline stage
+│   ├── SerDes              # Backward-compatible String value SerDes
+│   ├── ValueSerDes         # TypeToken-aware value codec with a typed representation
+│   ├── SerDesStage         # Reversible typed pipeline transformation
 │   ├── ComposableSerDes    # Immutable ordered value-codec/typed-stage pipeline
 │   ├── JacksonSerDes       # Jackson impl
 │   ├── RetrySerDes         # Retry decorator for transient SerDes failures
