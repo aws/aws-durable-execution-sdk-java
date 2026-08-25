@@ -106,17 +106,12 @@ public final class PluginInfoConverter {
      *
      * @param identifier the operation identifier containing id, name, type, and subType
      * @param parentId the parent operation ID (may be null)
-     * @param isReplay true if this operation was already present in the checkpointed state when it started
-     * @param isReplayingChildren true if the child operations of this context body are replaying from checkpoints
+     * @param isReplay true if this operation was present in the checkpointed state delivered at invocation start
      * @param attempt the 1-based attempt number (null for context operations)
      * @return a UserFunctionStartInfo record
      */
     public static UserFunctionStartInfo toUserFunctionStartInfo(
-            OperationIdentifier identifier,
-            String parentId,
-            boolean isReplay,
-            boolean isReplayingChildren,
-            Integer attempt) {
+            OperationIdentifier identifier, String parentId, boolean isReplay, Integer attempt) {
         return new UserFunctionStartInfo(
                 identifier.operationId(),
                 identifier.name(),
@@ -125,7 +120,6 @@ public final class PluginInfoConverter {
                 parentId,
                 Instant.now(),
                 isReplay,
-                isReplayingChildren,
                 attempt);
     }
 
@@ -148,7 +142,6 @@ public final class PluginInfoConverter {
                 startInfo.startTimestamp(),
                 Instant.now(),
                 startInfo.isReplay(),
-                startInfo.isReplayingChildren(),
                 startInfo.attempt(),
                 outcome,
                 error);
@@ -162,7 +155,7 @@ public final class PluginInfoConverter {
      * @param durableExecutionArn the durable execution ARN
      * @param updatedOperations the durable operations whose status changed in this checkpoint response
      * @param allOperations all durable operations tracked for the execution after this response
-     * @param replayedOperationIds ids of the operations delivered in this invocation's initial state, used to populate
+     * @param initialOperationIds ids of the operations delivered in this invocation's initial state, used to populate
      *     each item's {@code isReplay} indicator
      * @return an OperationChangeInfo record
      */
@@ -171,29 +164,29 @@ public final class PluginInfoConverter {
             String durableExecutionArn,
             Collection<Operation> updatedOperations,
             Collection<Operation> allOperations,
-            Set<String> replayedOperationIds) {
+            Set<String> initialOperationIds) {
         return new OperationChangeInfo(
                 requestId,
                 durableExecutionArn,
-                toOperationItemMap(updatedOperations, replayedOperationIds),
-                toOperationItemMap(allOperations, replayedOperationIds));
+                toOperationItemMap(updatedOperations, initialOperationIds),
+                toOperationItemMap(allOperations, initialOperationIds));
     }
 
     /**
      * Converts durable operations to an unmodifiable map of {@link OperationChangeItemInfo}, keyed by operation ID.
      *
      * @param operations the durable operations to convert
-     * @param replayedOperationIds ids of the operations delivered in this invocation's initial state, used to populate
+     * @param initialOperationIds ids of the operations delivered in this invocation's initial state, used to populate
      *     each item's {@code isReplay} indicator
      * @return an unmodifiable map of operation ID to item info
      */
     public static Map<String, OperationChangeItemInfo> toOperationItemMap(
-            Collection<Operation> operations, Set<String> replayedOperationIds) {
+            Collection<Operation> operations, Set<String> initialOperationIds) {
         return operations.stream()
                 .collect(Collectors.toUnmodifiableMap(
                         Operation::id,
                         operation ->
-                                toOperationChangeItemInfo(operation, replayedOperationIds.contains(operation.id()))));
+                                toOperationChangeItemInfo(operation, initialOperationIds.contains(operation.id()))));
     }
 
     private static OperationChangeItemInfo toOperationChangeItemInfo(Operation operation, boolean isReplay) {

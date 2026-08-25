@@ -354,7 +354,6 @@ public abstract class BaseDurableOperation {
                 operationIdentifier,
                 durableContext.getParentId(),
                 executionManager.wasObservedAtInvocationStart(getOperationId()),
-                durableContext.isReplaying(),
                 attempt);
         pluginRunner.onUserFunctionStart(startInfo);
         try {

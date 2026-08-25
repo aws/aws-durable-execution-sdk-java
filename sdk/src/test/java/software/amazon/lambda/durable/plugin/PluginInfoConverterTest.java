@@ -294,7 +294,7 @@ class PluginInfoConverterTest {
 
     @Test
     void toUserFunctionStartInfo_stepAttempt() {
-        var info = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, true, false, 3);
+        var info = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, true, 3);
 
         assertEquals(OPERATION_ID, info.id());
         assertEquals(OPERATION_NAME, info.name());
@@ -303,18 +303,16 @@ class PluginInfoConverterTest {
         assertEquals(PARENT_ID, info.parentId());
         assertNotNull(info.startTimestamp());
         assertTrue(info.isReplay());
-        assertFalse(info.isReplayingChildren());
         assertEquals(3, info.attempt());
     }
 
     @Test
     void toUserFunctionStartInfo_contextOperation() {
-        var info = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, PARENT_ID, false, true, null);
+        var info = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, PARENT_ID, false, null);
 
         assertEquals("CONTEXT", info.type());
         assertEquals("Map", info.subType());
         assertFalse(info.isReplay());
-        assertTrue(info.isReplayingChildren());
         assertNull(info.attempt());
     }
 
@@ -322,7 +320,7 @@ class PluginInfoConverterTest {
 
     @Test
     void toUserFunctionEndInfo_succeeded() {
-        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, true, false, 1);
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, true, 1);
 
         var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null);
 
@@ -331,7 +329,6 @@ class PluginInfoConverterTest {
         assertEquals(startInfo.startTimestamp(), endInfo.startTimestamp());
         assertNotNull(endInfo.endTimestamp());
         assertTrue(endInfo.isReplay());
-        assertFalse(endInfo.isReplayingChildren());
         assertEquals(1, endInfo.attempt());
         assertEquals(UserFunctionOutcome.SUCCEEDED, endInfo.outcome());
         assertNull(endInfo.error());
@@ -340,7 +337,7 @@ class PluginInfoConverterTest {
     @Test
     void toUserFunctionEndInfo_failed() {
         var error = new RuntimeException("step failed");
-        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, null, false, false, 2);
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, null, false, 2);
 
         var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.FAILED, error);
 
@@ -352,7 +349,7 @@ class PluginInfoConverterTest {
     @Test
     void toUserFunctionEndInfo_incomplete() {
         var error = new SuspendExecutionException();
-        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, null, false, false, null);
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, null, false, null);
 
         var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.INCOMPLETE, error);
 
