@@ -9,8 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -18,6 +22,7 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
@@ -27,7 +32,12 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 
 class InvokeOperationTest {
     private static final String OPERATION_ID = "2";
@@ -37,6 +47,9 @@ class InvokeOperationTest {
 
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
+
+    @TempDir
+    Path basePath;
 
     @BeforeEach
     void setUp() {
@@ -192,6 +205,59 @@ class InvokeOperationTest {
         assertEquals("errorMessage", ex.getMessage());
     }
 
+    @ParameterizedTest
+    @EnumSource(
+            value = OperationStatus.class,
+            names = {"TIMED_OUT", "STOPPED"})
+    void nestedTerminalInvokeRebindsFilesystemErrorForReplay(OperationStatus status) {
+        var callerArn = "arn:aws:lambda:us-east-1:123456789012:function:caller/durable-execution/caller/invocation";
+        var calleeArn = "arn:aws:lambda:us-east-1:123456789012:function:callee/durable-execution/callee/invocation";
+        when(executionManager.getDurableExecutionArn()).thenReturn(callerArn);
+
+        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
+        var original = new IllegalStateException("callee failed");
+        var errorData = new SerDesRunner(null)
+                .serialize(
+                        serDes,
+                        original,
+                        SerDesContext.forExecution(
+                                calleeArn, "callee-invocation", "callee-execution", SerDesPayloadKind.EXCEPTION));
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .status(status)
+                .chainedInvokeDetails(ChainedInvokeDetails.builder()
+                        .error(ErrorObject.builder()
+                                .errorType(original.getClass().getName())
+                                .errorMessage(original.getMessage())
+                                .errorData(errorData)
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
+
+        var invoke = new InvokeOperation<>(
+                OPERATION_IDENTIFIER,
+                "test-function",
+                "{}",
+                TypeToken.get(String.class),
+                InvokeConfig.builder().serDes(serDes).build(),
+                durableContext);
+        invoke.onCheckpointComplete(op);
+
+        DurableOperationException forwarded = status == OperationStatus.TIMED_OUT
+                ? assertThrows(InvokeTimedOutException.class, invoke::get)
+                : assertThrows(InvokeStoppedException.class, invoke::get);
+        assertInstanceOf(IllegalStateException.class, forwarded.deserializedError());
+
+        var child = new ChildContextRebindingOperation(serDes, durableContext);
+        var rebound = child.rebind(forwarded);
+        var replayed = child.deserialize(rebound);
+
+        assertInstanceOf(IllegalStateException.class, replayed);
+        assertEquals("callee failed", replayed.getMessage());
+    }
+
     @Test
     void getInvokeFailedExceptionWhenInvocationEndedUnexpectedly() {
         var op = Operation.builder()
@@ -218,5 +284,34 @@ class InvokeOperationTest {
         operation.onCheckpointComplete(op);
 
         assertThrows(InvokeException.class, () -> operation.get());
+    }
+
+    private static final class ChildContextRebindingOperation extends SerializableDurableOperation<String> {
+        private ChildContextRebindingOperation(SerDes serDes, DurableContextImpl durableContext) {
+            super(
+                    OperationIdentifier.of("child", "child", OperationSubType.RUN_IN_CHILD_CONTEXT),
+                    TypeToken.get(String.class),
+                    serDes,
+                    durableContext);
+        }
+
+        private ErrorObject rebind(DurableOperationException exception) {
+            return rebindForwardedException(exception);
+        }
+
+        private Throwable deserialize(ErrorObject error) {
+            return deserializeException(error);
+        }
+
+        @Override
+        protected void start() {}
+
+        @Override
+        protected void replay(Operation existing) {}
+
+        @Override
+        public String get() {
+            return null;
+        }
     }
 }

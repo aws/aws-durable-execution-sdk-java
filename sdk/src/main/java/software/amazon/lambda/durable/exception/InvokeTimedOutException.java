@@ -10,4 +10,8 @@ public class InvokeTimedOutException extends InvokeException {
     public InvokeTimedOutException(Operation operation) {
         super(operation);
     }
+
+    public InvokeTimedOutException(Operation operation, Throwable deserializedError) {
+        super(operation, deserializedError);
+    }
 }

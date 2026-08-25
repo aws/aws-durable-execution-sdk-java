@@ -10,4 +10,8 @@ public class InvokeStoppedException extends InvokeException {
     public InvokeStoppedException(Operation operation) {
         super(operation);
     }
+
+    public InvokeStoppedException(Operation operation, Throwable deserializedError) {
+        super(operation, deserializedError);
+    }
 }
