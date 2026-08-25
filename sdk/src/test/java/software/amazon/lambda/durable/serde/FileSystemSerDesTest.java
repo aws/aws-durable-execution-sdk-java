@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.serde;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -10,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -40,6 +42,7 @@ class FileSystemSerDesTest {
         var file = Path.of(json.get("file").textValue());
 
         assertEquals(1, json.get(ENVELOPE_MARKER).intValue());
+        assertEquals("STRING", json.get("payloadType").textValue());
         assertTrue(file.startsWith(basePath.resolve("orders/execution-1/invocation-1")));
         assertEquals("{\"id\":42}", Files.readString(file));
         assertEquals(
@@ -67,6 +70,50 @@ class FileSystemSerDesTest {
         assertThrows(IllegalStateException.class, () -> FileSystemSerDes.stageBuilder(basePath)
                 .delegate(new JacksonSerDes()));
         assertThrows(IllegalArgumentException.class, () -> pipeline.then(wrappingStage()));
+    }
+
+    @Test
+    void stageModeStoresAndRestoresBinaryIntermediateValues() throws Exception {
+        SerDesStage<String, byte[]> utf8 = new SerDesStage<>() {
+            @Override
+            public byte[] serialize(String value) {
+                return value.getBytes(StandardCharsets.UTF_8);
+            }
+
+            @Override
+            public String deserialize(byte[] data) {
+                return new String(data, StandardCharsets.UTF_8);
+            }
+        };
+        var stage = FileSystemSerDes.stageBuilder(basePath).build();
+        var pipeline = new JacksonSerDes().then(utf8).then(stage);
+        var runner = new SerDesRunner(null);
+
+        var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
+        var json = MAPPER.readTree(envelope);
+        var file = Path.of(json.get("file").textValue());
+
+        assertEquals("BYTES", json.get("payloadType").textValue());
+        assertEquals("{\"id\":42}", new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+        assertEquals(
+                Map.of("id", 42),
+                runner.deserialize(pipeline, envelope, new TypeToken<Map<String, Integer>>() {}, context()));
+    }
+
+    @Test
+    void overflowModeKeepsSmallBinaryPayloadsInline() throws Exception {
+        var stage = FileSystemSerDes.stageBuilder(basePath)
+                .storageMode(FileSystemStorageMode.OVERFLOW)
+                .build();
+        var runner = new SerDesRunner(null);
+        var value = new byte[] {0, 1, 2, -1};
+
+        var envelope = runner.serialize(stage, value, context());
+        var json = MAPPER.readTree(envelope);
+
+        assertEquals("BYTES", json.get("payloadType").textValue());
+        assertTrue(json.has("data"));
+        assertArrayEquals(value, runner.deserialize(stage, envelope, TypeToken.get(byte[].class), context()));
     }
 
     @Test
@@ -111,7 +158,7 @@ class FileSystemSerDesTest {
         var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
 
         assertEquals(64, file.getParent().getFileName().toString().length());
-        assertEquals(134, file.getFileName().toString().length());
+        assertEquals(137, file.getFileName().toString().length());
         assertFalse(file.toString().contains("operation"));
     }
 
@@ -201,6 +248,21 @@ class FileSystemSerDesTest {
                         executionContext(SerDesPayloadKind.INPUT)));
 
         assertTrue(failure.getCause().getMessage().contains("Unsupported filesystem SerDes envelope version 2"));
+    }
+
+    @Test
+    void rejectsMalformedBinaryInlinePayload() {
+        var envelope = "{\"__durable_execution_filesystem_serdes\":1,"
+                + "\"ownerDurableExecutionArn\":\""
+                + ARN
+                + "\",\"ownerEntityId\":\"1\",\"payloadType\":\"BYTES\",\"data\":\"not-base64!\"}";
+
+        assertThrows(SerDesException.class, () -> new SerDesRunner(null)
+                .deserialize(
+                        FileSystemSerDes.stageBuilder(basePath).build(),
+                        envelope,
+                        TypeToken.get(byte[].class),
+                        context()));
     }
 
     @Test
@@ -371,8 +433,17 @@ class FileSystemSerDesTest {
 
     private static String envelopeWithFile(String file) {
         try {
-            return MAPPER.writeValueAsString(
-                    Map.of(ENVELOPE_MARKER, 1, "file", file, "ownerDurableExecutionArn", ARN, "ownerEntityId", "1"));
+            return MAPPER.writeValueAsString(Map.of(
+                    ENVELOPE_MARKER,
+                    1,
+                    "file",
+                    file,
+                    "ownerDurableExecutionArn",
+                    ARN,
+                    "ownerEntityId",
+                    "1",
+                    "payloadType",
+                    "STRING"));
         } catch (Exception e) {
             throw new AssertionError(e);
         }

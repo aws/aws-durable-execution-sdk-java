@@ -15,7 +15,7 @@ envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-
 
 ## Pipeline configuration
 
-The preferred configuration uses `FileSystemSerDes` as a reversible string stage after a value codec:
+The preferred configuration uses `FileSystemSerDes` as a reversible terminal stage after a value codec:
 
 ```java
 var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
@@ -38,15 +38,17 @@ return DurableConfig.builder()
 ```
 
 Serialization runs from `JacksonSerDes` to the filesystem stage. Deserialization runs in reverse. Additional reversible
-string stages such as compression or encryption can be inserted with `then(...)`.
+typed stages such as compression or encryption can be inserted with `then(...)`. A
+`SerDesStage<String, byte[]>` may pass compressed or encrypted bytes directly to `FileSystemSerDes`; no Base64 adapter
+is required between those stages. The complete pipeline still produces a string checkpoint envelope.
 
 - `ALWAYS` writes every non-null payload to a file.
 - `OVERFLOW` stores small payloads inline and offloads envelopes approaching the 256 KB checkpoint limit.
 - `URI` uses readable escaped path segments.
 - `HASH` uses fixed-length SHA-256 path segments.
 
-The preview generator receives the incoming stage string. Its output is included only in file envelopes and the final
-envelope must remain below the checkpoint threshold.
+The preview generator receives the incoming stage value, which may be a `String` or `byte[]`. Its output is included
+only in file envelopes and the final envelope must remain below the checkpoint threshold.
 
 For compatibility, `FileSystemSerDes.builder(path)` creates a standalone SerDes with `JacksonSerDes` as its default
 value codec. A custom standalone codec can be supplied with `.delegate(...)`.
@@ -64,7 +66,7 @@ delays consume time in the current Lambda invocation, so keep attempts and delay
 ## Replay and envelope behavior
 
 Filesystem envelopes include a reserved version marker. Raw root input, callback results, and standard Lambda invoke
-results bypass every string-processing stage and decode directly with the pipeline value codec when they have not yet
+results bypass every intermediate stage and decode directly with the pipeline value codec when they have not yet
 been wrapped by this SerDes. Payloads containing the reserved marker must be valid supported filesystem envelopes;
 malformed marked envelopes and unsupported versions fail instead of falling back to raw-data decoding.
 
@@ -78,11 +80,11 @@ verified when reading, and symbolic-link paths are rejected.
 `FileSystemSerDes` must be the final stage in a pipeline. Its overflow decision is therefore made against the final
 checkpoint representation; a later expanding transform cannot push an inline envelope over the service limit.
 
-`CloudDurableTestRunner` cannot use `FileSystemSerDes` for the initial Lambda invocation because an execution ARN is
-not available yet. Configure a separate context-free initial-input value codec with `withInputSerDes(...)`. Do not use
-a composable string-processing pipeline for that input boundary: the unframed external payload does not identify which
-stages ran before the context-dependent filesystem stage. Context-free persisted pipelines still use their complete
-pipeline for the initial invocation.
+The cloud and local test runners cannot use `FileSystemSerDes` for the initial Lambda invocation because an execution
+ARN is not available yet. Configure a separate context-free initial-input value codec with
+`withInputSerDes(...)`. Do not use a composable pipeline for that input boundary: the unframed external payload does
+not identify which stages ran before the context-dependent filesystem stage. Context-free
+persisted pipelines still use their complete pipeline for the initial invocation.
 
 ## Storage requirements
 

@@ -53,7 +53,7 @@ and uses a bounded weak-reference cache for successful deserialization results d
 
 ### Filesystem-backed payload storage
 
-The core SDK provides a reversible string stage for storing serialized payloads on a shared filesystem:
+The core SDK provides a reversible terminal stage for storing serialized text or bytes on a shared filesystem:
 
 ```java
 var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
@@ -75,6 +75,11 @@ return DurableConfig.builder()
     .build();
 ```
 
+Pipelines may exchange non-string intermediate values. For example, a custom
+`SerDesStage<String, byte[]>` can compress the JSON string and feed the resulting bytes directly into
+`FileSystemSerDes`; reverse processing restores the bytes to the compression stage. The complete pipeline still
+returns a string checkpoint envelope.
+
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
 approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path
 segments. Files are content-addressed and never overwrite data referenced by an earlier checkpoint. References are
@@ -90,11 +95,11 @@ shared mount such as EFS. S3 Files can have delayed synchronization, so a runtim
 lose recent writes; use it only when that tradeoff is acceptable. The SDK does not delete offloaded files, so configure
 storage lifecycle and retention separately.
 
-For a context-free `ComposableSerDes`, `CloudDurableTestRunner` applies the complete pipeline to the initial Lambda
-invocation. If the persisted SerDes requires durable context, such as `FileSystemSerDes`, call
+For a context-free `ComposableSerDes`, the test runners apply the complete pipeline to the initial Lambda invocation.
+If the persisted SerDes requires durable context, such as `FileSystemSerDes`, call
 `withInputSerDes(...)` with a separate context-free input value codec because the durable execution ARN does not exist
-yet. In that case, the input SerDes must not include composable string-processing stages because the external payload
-does not carry framing that identifies which stages ran.
+yet. In that case, the input SerDes must be a value codec rather than a composable pipeline because the external
+payload does not carry framing that identifies which stages ran.
 `FileSystemSerDes` must also be the final pipeline stage so its checkpoint-size decision cannot be invalidated by a
 later expanding transformation.
 

@@ -6,9 +6,10 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 /**
- * Interface for serialization and deserialization of objects.
+ * Interface for serialization and deserialization of objects at the persisted string boundary.
  *
- * <p>Implementations must support both simple types via {@link Class} and complex generic types via {@link TypeToken}.
+ * <p>Implementations can also be used as string-producing stages in a {@link ComposableSerDes}. Use {@link SerDesStage}
+ * for typed intermediate transformations that produce or consume non-string values.
  */
 public interface SerDes {
     /**
@@ -39,24 +40,16 @@ public interface SerDes {
     <T> T deserialize(String data, TypeToken<T> typeToken);
 
     /**
-     * Deserializes this SerDes when it is used as a string-processing pipeline stage.
+     * Deserializes this SerDes when it is used as an intermediate pipeline stage.
      *
-     * <p>Most stages should use the default result, which continues reverse processing through earlier string stages.
-     * Boundary stages may return {@link SerDesStageResult#decodeWithValueCodec(String)} when the input originated
-     * outside the configured pipeline and must be decoded directly by the value codec.
-     *
-     * @param data the non-null string supplied to this stage
-     * @return the stage result
+     * <p>The default uses {@link String} as the intermediate value type, preserving existing SerDes behavior.
      */
     default SerDesStageResult deserializePipelineStage(String data) {
-        Object result = deserialize(data, TypeToken.get(String.class));
+        var result = deserialize(data, TypeToken.get(String.class));
         if (result == null) {
             throw new SerDesException("Stage returned null for non-null data");
         }
-        if (!(result instanceof String stringResult)) {
-            throw new SerDesException("String stage returned a non-string value");
-        }
-        return SerDesStageResult.continueWith(stringResult);
+        return SerDesStageResult.continueWith(result);
     }
 
     /**
@@ -83,12 +76,23 @@ public interface SerDes {
      * Returns an immutable processing pipeline that invokes this SerDes followed by {@code nextStage} when serializing
      * and in reverse order when deserializing.
      *
-     * <p>This SerDes is the value codec. The next stage must accept and return strings.
+     * <p>This SerDes is the value codec. Intermediate stages may transform values into arbitrary Java types, but the
+     * final stage must return a string for persistence.
      *
-     * @param nextStage the reversible string-processing stage to append
+     * @param nextStage the reversible stage to append
      * @return a composable SerDes pipeline
      */
     default ComposableSerDes then(SerDes nextStage) {
         return ComposableSerDes.of(this, nextStage);
+    }
+
+    /**
+     * Returns an immutable processing pipeline with a typed intermediate stage appended.
+     *
+     * @param nextStage the reversible typed stage to append
+     * @return a composable SerDes pipeline
+     */
+    default ComposableSerDes then(SerDesStage<?, ?> nextStage) {
+        return ComposableSerDes.builder(this).then(nextStage).build();
     }
 }

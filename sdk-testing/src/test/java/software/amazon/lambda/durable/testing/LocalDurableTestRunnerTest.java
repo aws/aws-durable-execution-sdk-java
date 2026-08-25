@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.testing;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -12,11 +14,16 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.serde.FileSystemSerDes;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesStage;
 
 class LocalDurableTestRunnerTest {
 
@@ -137,5 +144,81 @@ class LocalDurableTestRunnerTest {
         assertEquals(ExecutionStatus.SUCCEEDED, replayResult.getStatus());
         assertEquals(largeResult, replayResult.getResult());
         assertEquals(1, stepExecutions.get());
+    }
+
+    @Test
+    void contextDependentPersistedSerDesRequiresExplicitInputSerDes(@TempDir Path basePath) {
+        var config = DurableConfig.builder()
+                .withSerDes(new JacksonSerDes()
+                        .then(FileSystemSerDes.stageBuilder(basePath).build()))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config);
+
+        var failure = assertThrows(IllegalStateException.class, () -> runner.run("value"));
+
+        assertTrue(failure.getMessage().contains("withInputSerDes"));
+    }
+
+    @Test
+    void contextDependentPersistedSerDesRequiresValueCodecInput(@TempDir Path basePath) {
+        var config = DurableConfig.builder()
+                .withSerDes(new JacksonSerDes()
+                        .then(FileSystemSerDes.stageBuilder(basePath).build()))
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
+                .withInputSerDes(new JacksonSerDes().then(wrappingStage(new AtomicInteger())));
+
+        var failure = assertThrows(IllegalStateException.class, () -> runner.run("value"));
+
+        assertTrue(failure.getMessage().contains("must use a value codec"));
+    }
+
+    @Test
+    void initialInputBypassesStagesBeforeFileSystemSerDes(@TempDir Path basePath) {
+        var deserializeCalls = new AtomicInteger();
+        var persistedSerDes = new JacksonSerDes()
+                .then(bytesStage(deserializeCalls))
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
+        var config = DurableConfig.builder().withSerDes(persistedSerDes).build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class, (input, context) -> input + ":" + deserializeCalls.get(), config)
+                .withInputSerDes(new JacksonSerDes())
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value:0", result.getResult());
+    }
+
+    private static SerDes wrappingStage(AtomicInteger deserializeCalls) {
+        return new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "<" + value + ">";
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                deserializeCalls.incrementAndGet();
+                return (T) data.substring(1, data.length() - 1);
+            }
+        };
+    }
+
+    private static SerDesStage<String, byte[]> bytesStage(AtomicInteger deserializeCalls) {
+        return new SerDesStage<>() {
+            @Override
+            public byte[] serialize(String value) {
+                return value.getBytes(StandardCharsets.UTF_8);
+            }
+
+            @Override
+            public String deserialize(byte[] data) {
+                deserializeCalls.incrementAndGet();
+                return new String(data, StandardCharsets.UTF_8);
+            }
+        };
     }
 }

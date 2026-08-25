@@ -5,23 +5,23 @@ package software.amazon.lambda.durable.serde;
 import java.util.Objects;
 
 /**
- * Result returned when a {@link SerDes} is used as a string-processing stage in a {@link ComposableSerDes}.
+ * Result returned when a {@link SerDesStage} is reversed in a {@link ComposableSerDes}.
  *
- * @param value the string produced by the stage
- * @param skipRemainingStages whether deserialization should skip the remaining string stages and decode {@code value}
- *     directly with the pipeline's value codec
+ * @param value the non-null value produced by the stage
+ * @param skipRemainingStages whether deserialization should skip the remaining intermediate stages and decode
+ *     {@code value} directly with the pipeline's value codec
  */
-public record SerDesStageResult(String value, boolean skipRemainingStages) {
+public record SerDesStageResult(Object value, boolean skipRemainingStages) {
     public SerDesStageResult {
         Objects.requireNonNull(value, "value cannot be null");
     }
 
-    /** Continues reverse processing through the remaining string stages. */
-    public static SerDesStageResult continueWith(String value) {
+    /** Continues reverse processing through the remaining intermediate stages. */
+    public static SerDesStageResult continueWith(Object value) {
         return new SerDesStageResult(value, false);
     }
 
-    /** Skips the remaining string stages and decodes the value directly with the pipeline's value codec. */
+    /** Skips the remaining intermediate stages and decodes the value directly with the pipeline's value codec. */
     public static SerDesStageResult decodeWithValueCodec(String value) {
         return new SerDesStageResult(value, true);
     }

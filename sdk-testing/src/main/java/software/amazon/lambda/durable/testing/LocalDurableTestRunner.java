@@ -6,6 +6,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
@@ -22,9 +23,8 @@ import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.serde.SerDesContext;
-import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
@@ -43,6 +43,7 @@ public class LocalDurableTestRunner<I, O> {
     private final TypeToken<O> outputType;
     private final BiFunction<I, DurableContext, O> handler;
     private final LocalMemoryExecutionClient storage;
+    private final SerDes inputSerDes;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
     private final Instant executionStartTime = Instant.now();
@@ -56,10 +57,12 @@ public class LocalDurableTestRunner<I, O> {
             TypeToken<I> inputType,
             TypeToken<O> outputType,
             BiFunction<I, DurableContext, O> handlerFn,
-            DurableConfig customerConfig) {
+            DurableConfig customerConfig,
+            SerDes inputSerDes) {
         this.inputType = inputType;
         this.outputType = outputType;
         this.handler = handlerFn;
+        this.inputSerDes = inputSerDes;
         this.storage = new LocalMemoryExecutionClient();
 
         // Create config that uses customer's configuration but overrides the client with in-memory storage
@@ -100,7 +103,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
-        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, null);
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, null, null);
     }
 
     /**
@@ -121,7 +124,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
-        return new LocalDurableTestRunner<>(inputType, null, handlerFn, null);
+        return new LocalDurableTestRunner<>(inputType, null, handlerFn, null, null);
     }
 
     /**
@@ -137,7 +140,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
-        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, config);
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, config, null);
     }
     /**
      * Creates a LocalDurableTestRunner that uses a custom configuration. This allows the test runner to use custom
@@ -175,7 +178,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
-        return new LocalDurableTestRunner<>(inputType, null, handlerFn, config);
+        return new LocalDurableTestRunner<>(inputType, null, handlerFn, config, null);
     }
 
     /**
@@ -191,7 +194,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, DurableHandler<I, O> handler) {
         return new LocalDurableTestRunner<>(
-                TypeToken.get(inputType), null, handler::handleRequest, handler.getConfiguration());
+                TypeToken.get(inputType), null, handler::handleRequest, handler.getConfiguration(), null);
     }
 
     /**
@@ -199,17 +202,33 @@ public class LocalDurableTestRunner<I, O> {
      * a new runner instance.
      */
     public LocalDurableTestRunner<I, O> withDurableConfig(DurableConfig config) {
-        return new LocalDurableTestRunner<>(inputType, outputType, handler, config);
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, config, inputSerDes);
     }
 
     /** Overrides the output type for this test runner. */
     public LocalDurableTestRunner<I, O> withOutputType(TypeToken<O> outputType) {
-        return new LocalDurableTestRunner<>(inputType, outputType, handler, customerConfig);
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, customerConfig, inputSerDes);
     }
 
     /** Overrides the output type for this test runner. */
     public LocalDurableTestRunner<I, O> withOutputType(Class<O> outputType) {
-        return new LocalDurableTestRunner<>(inputType, TypeToken.get(outputType), handler, customerConfig);
+        return new LocalDurableTestRunner<>(inputType, TypeToken.get(outputType), handler, customerConfig, inputSerDes);
+    }
+
+    /**
+     * Returns a new runner with a separate SerDes for the initial Lambda invocation payload.
+     *
+     * <p>Configure a context-free input value codec when the persisted SerDes requires durable context. This preserves
+     * production behavior: the initial external payload is decoded directly by the value codec, while the persisted
+     * pipeline processes payloads after the durable execution context exists.
+     */
+    public LocalDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
+        return new LocalDurableTestRunner<>(
+                inputType,
+                outputType,
+                handler,
+                customerConfig,
+                Objects.requireNonNull(inputSerDes, "inputSerDes cannot be null"));
     }
 
     /**
@@ -245,13 +264,13 @@ public class LocalDurableTestRunner<I, O> {
      * @return LocalDurableTestRunner configured with the handler's settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(TypeToken<I> inputType, DurableHandler<I, O> handler) {
-        return new LocalDurableTestRunner<>(inputType, null, handler::handleRequest, handler.getConfiguration());
+        return new LocalDurableTestRunner<>(inputType, null, handler::handleRequest, handler.getConfiguration(), null);
     }
 
     /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
         var serDesRunner = new SerDesRunner(customerConfig.getSerDesExecutorService());
-        var durableInput = createDurableInput(input, serDesRunner);
+        var durableInput = createDurableInput(input);
 
         var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
 
@@ -350,11 +369,8 @@ public class LocalDurableTestRunner<I, O> {
         storage.completeChainedInvoke(name, OperationResult.stopped(error));
     }
 
-    private DurableExecutionInput createDurableInput(I input, SerDesRunner serDesRunner) {
-        var inputJson = serDesRunner.serialize(
-                serDes,
-                input,
-                SerDesContext.forExecution(executionArn, invocationId, executionName, SerDesPayloadKind.INPUT));
+    private DurableExecutionInput createDurableInput(I input) {
+        var inputJson = serializeInput(input);
         var executionOp = Operation.builder()
                 .id(invocationId)
                 .name(executionName)
@@ -381,6 +397,21 @@ public class LocalDurableTestRunner<I, O> {
                 UUID.randomUUID().toString(),
                 CheckpointUpdatedExecutionState.builder().operations(allOps).build(),
                 updatedOperationIds);
+    }
+
+    private String serializeInput(I input) {
+        var serializer = inputSerDes != null ? inputSerDes : serDes;
+        if (serializer.requiresDurableContext()) {
+            throw new IllegalStateException(
+                    "Initial input SerDes requires a durable execution context; configure a context-free "
+                            + "input SerDes with withInputSerDes(...)");
+        }
+        if (inputSerDes instanceof ComposableSerDes && serDes.requiresDurableContext()) {
+            throw new IllegalStateException(
+                    "Initial input for a context-dependent persisted SerDes must use a value codec, not a composable "
+                            + "pipeline");
+        }
+        return serializer.serialize(input);
     }
 
     private Context mockLambdaContext() {

@@ -16,6 +16,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -38,6 +40,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
  */
 public final class FileSystemSerDes implements SerDes {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
+    private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
     private static final int CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
     private static final ObjectMapper ENVELOPE_MAPPER = new ObjectMapper();
@@ -72,10 +75,12 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     /**
-     * Creates a filesystem string-stage builder for use in a composable SerDes pipeline.
+     * Creates a filesystem terminal-stage builder for use in a composable SerDes pipeline.
+     *
+     * <p>Stage mode accepts {@link String} and {@code byte[]} values.
      *
      * @param basePath durable shared filesystem root
-     * @return a string-stage builder
+     * @return a terminal-stage builder
      */
     public static Builder stageBuilder(Path basePath) {
         return new Builder(basePath, true);
@@ -87,24 +92,24 @@ public final class FileSystemSerDes implements SerDes {
             return null;
         }
         var context = requireContext();
-        var serialized = serializeValue(value);
+        var payload = serializeValue(value);
         if (storageMode == FileSystemStorageMode.OVERFLOW) {
-            var inlineEnvelope = encodeEnvelope(serialized, null, null, context);
+            var inlineEnvelope = encodeEnvelope(payload, null, null, context);
             if (fitsCheckpoint(inlineEnvelope)) {
                 return inlineEnvelope;
             }
         }
 
-        var file = resolvePayloadPath(serialized, context);
+        var file = resolvePayloadPath(payload, context);
         var preview = generatePreview(value, context);
-        var fileEnvelope = encodeEnvelope(null, file, preview, context);
+        var fileEnvelope = encodeEnvelope(payload.withoutData(), file, preview, context);
         if (!fitsCheckpoint(fileEnvelope)) {
             throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
                     + context.entityId()
                     + "'");
         }
         try {
-            writePayload(serialized, file);
+            writePayload(payload, file);
             return fileEnvelope;
         } catch (IOException e) {
             throw new RetryableSerDesException(
@@ -119,16 +124,20 @@ public final class FileSystemSerDes implements SerDes {
         }
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
         var context = requireContext();
-        var serialized = resolveSerializedPayload(data, context).serialized();
+        var serialized = resolveSerializedPayload(data, context).value();
         if (stageMode) {
-            if (!TypeToken.get(String.class).equals(typeToken)) {
-                throw new SerDesException("FileSystemSerDes stage can only deserialize to String");
+            if ((TypeToken.get(String.class).equals(typeToken) && serialized instanceof String)
+                    || (TypeToken.get(byte[].class).equals(typeToken) && serialized instanceof byte[])) {
+                @SuppressWarnings("unchecked")
+                var value = (T) serialized;
+                return value;
             }
-            @SuppressWarnings("unchecked")
-            var value = (T) serialized;
-            return value;
+            throw new SerDesException("FileSystemSerDes stage payload type does not match requested type " + typeToken);
         }
-        return delegate.deserialize(serialized, typeToken);
+        if (!(serialized instanceof String serializedString)) {
+            throw new SerDesException("Standalone FileSystemSerDes cannot decode a binary stage payload");
+        }
+        return delegate.deserialize(serializedString, typeToken);
     }
 
     @Override
@@ -139,8 +148,8 @@ public final class FileSystemSerDes implements SerDes {
         var context = requireContext();
         var resolved = resolveSerializedPayload(data, context);
         return resolved.external()
-                ? SerDesStageResult.decodeWithValueCodec(resolved.serialized())
-                : SerDesStageResult.continueWith(resolved.serialized());
+                ? SerDesStageResult.decodeWithValueCodec((String) resolved.value())
+                : SerDesStageResult.continueWith(resolved.value());
     }
 
     @Override
@@ -153,18 +162,22 @@ public final class FileSystemSerDes implements SerDes {
         return true;
     }
 
-    private String serializeValue(Object value) {
+    private SerializedPayload serializeValue(Object value) {
         if (stageMode) {
-            if (!(value instanceof String stringValue)) {
-                throw new SerDesException("FileSystemSerDes stage can only serialize String values");
+            if (value instanceof String stringValue) {
+                return SerializedPayload.fromString(stringValue);
             }
-            return stringValue;
+            if (value instanceof byte[] bytes) {
+                return SerializedPayload.fromBytes(bytes);
+            }
+            throw new SerDesException("FileSystemSerDes stage supports String and byte[] values, but received "
+                    + value.getClass().getName());
         }
         var serialized = delegate.serialize(value);
         if (serialized == null) {
             throw new SerDesException("Delegate SerDes returned null for a non-null value");
         }
-        return serialized;
+        return SerializedPayload.fromString(serialized);
     }
 
     private ResolvedPayload resolveSerializedPayload(String data, SerDesContext context) {
@@ -197,14 +210,27 @@ public final class FileSystemSerDes implements SerDes {
 
         var hasData = envelope.has("data") && envelope.get("data").isTextual();
         var hasFile = envelope.has("file") && envelope.get("file").isTextual();
+        var payloadType = payloadType(envelope, context);
         var owner = payloadOwner(envelope, context);
         if (hasData) {
-            return new ResolvedPayload(envelope.get("data").textValue(), false);
+            try {
+                return new ResolvedPayload(
+                        SerializedPayload.fromInlineValue(
+                                        payloadType, envelope.get("data").textValue())
+                                .value(),
+                        false);
+            } catch (IllegalArgumentException e) {
+                throw malformedEnvelope(context, e);
+            }
         }
-        return new ResolvedPayload(readPayload(envelope.get("file").textValue(), owner, context), false);
+        return new ResolvedPayload(
+                readPayload(envelope.get("file").textValue(), payloadType, owner, context)
+                        .value(),
+                false);
     }
 
-    private String readPayload(String fileValue, PayloadOwner owner, SerDesContext context) {
+    private SerializedPayload readPayload(
+            String fileValue, PayloadType payloadType, PayloadOwner owner, SerDesContext context) {
         var file = Path.of(fileValue).toAbsolutePath().normalize();
         validatePayloadPath(file, owner);
         try {
@@ -217,7 +243,7 @@ public final class FileSystemSerDes implements SerDes {
                     || !realFile.equals(file.toRealPath(LinkOption.NOFOLLOW_LINKS))) {
                 throw new SerDesException("Filesystem SerDes file does not resolve to the expected payload path");
             }
-            var serialized = Files.readString(realFile, StandardCharsets.UTF_8);
+            var serialized = new SerializedPayload(payloadType, Files.readAllBytes(realFile));
             var expectedFileName = payloadFileName(serialized, owner.entityId());
             if (!realFile.getFileName().toString().equals(expectedFileName)) {
                 throw new SerDesException("Filesystem SerDes file content does not match its content-addressed path");
@@ -235,8 +261,20 @@ public final class FileSystemSerDes implements SerDes {
         if (fileName == null
                 || file.getParent() == null
                 || !file.getParent().equals(expectedDirectory)
-                || !fileName.toString().matches(Pattern.quote(encode(owner.entityId())) + "-[0-9a-f]{64}\\.json")) {
+                || !fileName.toString().matches(Pattern.quote(encode(owner.entityId())) + "-[0-9a-f]{64}\\.payload")) {
             throw new SerDesException("Filesystem SerDes file is not valid for its declared durable entity");
+        }
+    }
+
+    private static PayloadType payloadType(JsonNode envelope, SerDesContext context) {
+        var node = envelope.get(PAYLOAD_TYPE_FIELD);
+        if (node == null || !node.isTextual()) {
+            throw malformedEnvelope(context, null);
+        }
+        try {
+            return PayloadType.valueOf(node.textValue());
+        } catch (IllegalArgumentException e) {
+            throw malformedEnvelope(context, e);
         }
     }
 
@@ -292,7 +330,10 @@ public final class FileSystemSerDes implements SerDes {
                 || envelope.get("ownerDurableExecutionArn").textValue().isBlank()
                 || !envelope.has("ownerEntityId")
                 || !envelope.get("ownerEntityId").isTextual()
-                || envelope.get("ownerEntityId").textValue().isBlank()) {
+                || envelope.get("ownerEntityId").textValue().isBlank()
+                || !envelope.has(PAYLOAD_TYPE_FIELD)
+                || !envelope.get(PAYLOAD_TYPE_FIELD).isTextual()
+                || !isPayloadType(envelope.get(PAYLOAD_TYPE_FIELD).textValue())) {
             return false;
         }
 
@@ -306,7 +347,16 @@ public final class FileSystemSerDes implements SerDes {
         if (hasPreview && (hasData || !envelope.get("preview").isObject())) {
             return false;
         }
-        return envelope.size() == (hasPreview ? 5 : 4);
+        return envelope.size() == (hasPreview ? 6 : 5);
+    }
+
+    private static boolean isPayloadType(String value) {
+        try {
+            PayloadType.valueOf(value);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private static boolean hasFilesystemMarker(JsonNode envelope) {
@@ -332,13 +382,15 @@ public final class FileSystemSerDes implements SerDes {
                 + "'");
     }
 
-    private String encodeEnvelope(String data, Path file, Map<String, Object> preview, SerDesContext context) {
+    private String encodeEnvelope(
+            SerializedPayload payload, Path file, Map<String, Object> preview, SerDesContext context) {
         var envelope = new LinkedHashMap<String, Object>();
         envelope.put(ENVELOPE_MARKER, ENVELOPE_VERSION);
         envelope.put("ownerDurableExecutionArn", context.durableExecutionArn());
         envelope.put("ownerEntityId", context.entityId());
-        if (data != null) {
-            envelope.put("data", data);
+        envelope.put(PAYLOAD_TYPE_FIELD, payload.type().name());
+        if (payload.hasData()) {
+            envelope.put("data", payload.inlineValue());
         } else {
             envelope.put("file", file.toString());
             if (preview != null) {
@@ -382,9 +434,9 @@ public final class FileSystemSerDes implements SerDes {
         return context;
     }
 
-    private Path resolvePayloadPath(String serialized, SerDesContext context) {
+    private Path resolvePayloadPath(SerializedPayload payload, SerDesContext context) {
         var directory = resolveExecutionDirectory(context.durableExecutionArn());
-        var fileName = payloadFileName(serialized, context.entityId());
+        var fileName = payloadFileName(payload, context.entityId());
         var file = directory.resolve(fileName).normalize();
         if (!file.startsWith(directory)) {
             throw new SerDesException("Resolved filesystem payload path is outside the execution directory");
@@ -392,11 +444,11 @@ public final class FileSystemSerDes implements SerDes {
         return file;
     }
 
-    private String payloadFileName(String serialized, String entityId) {
-        return encode(entityId) + "-" + sha256(serialized) + ".json";
+    private String payloadFileName(SerializedPayload payload, String entityId) {
+        return encode(entityId) + "-" + sha256(payload.data()) + ".payload";
     }
 
-    private void writePayload(String serialized, Path file) throws IOException {
+    private void writePayload(SerializedPayload payload, Path file) throws IOException {
         var directory = file.getParent();
         var realBasePath = createDirectoriesWithoutSymbolicLinks(directory);
         rejectSymbolicLinks(file);
@@ -405,8 +457,8 @@ public final class FileSystemSerDes implements SerDes {
             throw new SerDesException("Filesystem SerDes directory resolves outside the configured base path");
         }
         if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
-            var existing = Files.readString(file, StandardCharsets.UTF_8);
-            if (!existing.equals(serialized)) {
+            var existing = Files.readAllBytes(file);
+            if (!Arrays.equals(existing, payload.data())) {
                 throw new SerDesException("Filesystem SerDes content-addressed file contains unexpected data");
             }
             return;
@@ -414,7 +466,7 @@ public final class FileSystemSerDes implements SerDes {
 
         var temporary = Files.createTempFile(directory, file.getFileName().toString(), ".tmp");
         try {
-            Files.writeString(temporary, serialized, StandardCharsets.UTF_8);
+            Files.write(temporary, payload.data());
             moveWithoutReplacement(temporary, file);
         } finally {
             Files.deleteIfExists(temporary);
@@ -530,8 +582,12 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private static String sha256(String value) {
+        return sha256(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String sha256(byte[] value) {
         try {
-            var digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            var digest = MessageDigest.getInstance("SHA-256").digest(value);
             return HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
@@ -540,7 +596,67 @@ public final class FileSystemSerDes implements SerDes {
 
     private record PayloadOwner(String durableExecutionArn, String entityId) {}
 
-    private record ResolvedPayload(String serialized, boolean external) {}
+    private record ResolvedPayload(Object value, boolean external) {}
+
+    private enum PayloadType {
+        STRING,
+        BYTES
+    }
+
+    private record SerializedPayload(PayloadType type, byte[] data) {
+        private SerializedPayload {
+            Objects.requireNonNull(type, "type cannot be null");
+            data = data == null ? null : data.clone();
+        }
+
+        private static SerializedPayload fromString(String value) {
+            return new SerializedPayload(PayloadType.STRING, value.getBytes(StandardCharsets.UTF_8));
+        }
+
+        private static SerializedPayload fromBytes(byte[] value) {
+            return new SerializedPayload(PayloadType.BYTES, value);
+        }
+
+        private static SerializedPayload fromInlineValue(PayloadType type, String value) {
+            return switch (type) {
+                case STRING -> fromString(value);
+                case BYTES -> fromBytes(Base64.getDecoder().decode(value));
+            };
+        }
+
+        @Override
+        public byte[] data() {
+            return data == null ? null : data.clone();
+        }
+
+        private boolean hasData() {
+            return data != null;
+        }
+
+        private SerializedPayload withoutData() {
+            return new SerializedPayload(type, null);
+        }
+
+        private String inlineValue() {
+            if (data == null) {
+                throw new IllegalStateException("Serialized payload does not contain inline data");
+            }
+            return switch (type) {
+                case STRING -> new String(data, StandardCharsets.UTF_8);
+                case BYTES -> Base64.getEncoder().encodeToString(data);
+            };
+        }
+
+        private Object value() {
+            if (data == null) {
+                throw new IllegalStateException("Serialized payload does not contain data");
+            }
+            return switch (type) {
+                case STRING -> new String(data, StandardCharsets.UTF_8);
+                case BYTES -> data.clone();
+            };
+        }
+    }
 
     /** Builder for {@link FileSystemSerDes}. */
     public static final class Builder {

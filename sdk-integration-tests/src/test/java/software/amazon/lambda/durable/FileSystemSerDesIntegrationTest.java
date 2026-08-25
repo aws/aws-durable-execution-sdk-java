@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -42,6 +43,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestResult;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
@@ -89,6 +91,7 @@ class FileSystemSerDesIntegrationTest {
                             return childResult + "-" + pollResult + "-" + mapResult.results();
                         },
                         config)
+                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         var result = runner.runUntilComplete("order");
@@ -170,6 +173,7 @@ class FileSystemSerDesIntegrationTest {
                                     "notify", "target-function", Map.of("approval", approval), String.class);
                         },
                         config)
+                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         var waitingForCallback = runner.run("input");
@@ -289,6 +293,7 @@ class FileSystemSerDesIntegrationTest {
                             return first.value();
                         },
                         config)
+                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         var result = runner.runUntilComplete("cached");
@@ -330,6 +335,7 @@ class FileSystemSerDesIntegrationTest {
                                 },
                                 stepConfig),
                         config)
+                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         var result = runner.runUntilComplete("value");
@@ -356,6 +362,7 @@ class FileSystemSerDesIntegrationTest {
                                 },
                                 stepConfig),
                         config)
+                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         var result = runner.runUntilComplete("input");
@@ -386,6 +393,7 @@ class FileSystemSerDesIntegrationTest {
                             }
                         },
                         config)
+                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
@@ -436,6 +444,7 @@ class FileSystemSerDesIntegrationTest {
                             }
                         },
                         config)
+                .withInputSerDes(new JacksonSerDes())
                 .withOutputType(String.class);
 
         assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
@@ -460,7 +469,20 @@ class FileSystemSerDesIntegrationTest {
     }
 
     private SerDes filesystemPipeline() {
-        return new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
+        SerDesStage<String, byte[]> utf8 = new SerDesStage<>() {
+            @Override
+            public byte[] serialize(String value) {
+                return value.getBytes(StandardCharsets.UTF_8);
+            }
+
+            @Override
+            public String deserialize(byte[] data) {
+                return new String(data, StandardCharsets.UTF_8);
+            }
+        };
+        return new JacksonSerDes()
+                .then(utf8)
+                .then(FileSystemSerDes.stageBuilder(basePath).build());
     }
 
     private static DurableExecutionInput durableInput(

@@ -355,7 +355,8 @@ software.amazon.lambda.durable
 │
 ├── serde/
 │   ├── SerDes              # Interface and pipeline composition entry point
-│   ├── ComposableSerDes    # Immutable ordered value-codec/string-stage pipeline
+│   ├── SerDesStage         # Reversible typed intermediate pipeline stage
+│   ├── ComposableSerDes    # Immutable ordered value-codec/typed-stage pipeline
 │   ├── JacksonSerDes       # Jackson impl
 │   ├── RetrySerDes         # Retry decorator for transient SerDes failures
 │   ├── SerDesRunner        # Context, optional executor dispatch, and invocation cache

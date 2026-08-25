@@ -175,8 +175,8 @@ public class CloudDurableTestRunner<I, O> {
      * <p>The supplied SerDes is used exactly as configured, including every stage in a composable pipeline. Configure a
      * separate context-free input SerDes when the persisted SerDes requires a durable execution context, because that
      * context does not exist before the initial Lambda invocation. In that case the input SerDes must be a value codec,
-     * not a composable string-processing pipeline, because context-dependent persisted stages cannot distinguish which
-     * input stages produced an unframed external payload.
+     * not a composable pipeline, because context-dependent persisted stages cannot distinguish which input stages
+     * produced an unframed external payload.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(
@@ -289,7 +289,7 @@ public class CloudDurableTestRunner<I, O> {
         if (inputSerDes instanceof ComposableSerDes && serDes.requiresDurableContext()) {
             throw new IllegalStateException(
                     "Initial input for a context-dependent persisted SerDes must use a value codec, not a composable "
-                            + "string-processing pipeline");
+                            + "pipeline");
         }
         return serializer.serialize(input);
     }
