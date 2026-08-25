@@ -178,11 +178,7 @@ public final class FileSystemSerDes implements SerDes {
             throw malformedEnvelope(context, e);
         }
 
-        if (envelope != null && envelope.isObject() && envelope.has(ENVELOPE_MARKER)) {
-            if (!isFilesystemEnvelope(envelope)) {
-                throw malformedEnvelope(context, null);
-            }
-        } else {
+        if (!isFilesystemEnvelope(envelope)) {
             if (acceptsExternalPayload(context)) {
                 return new ResolvedPayload(data, true);
             }
@@ -191,13 +187,10 @@ public final class FileSystemSerDes implements SerDes {
 
         var hasData = envelope.has("data") && envelope.get("data").isTextual();
         var hasFile = envelope.has("file") && envelope.get("file").isTextual();
-        if (hasData == hasFile) {
-            throw malformedEnvelope(context, null);
-        }
+        var owner = payloadOwner(envelope, context);
         if (hasData) {
             return new ResolvedPayload(envelope.get("data").textValue(), false);
         }
-        var owner = payloadOwner(envelope, context);
         return new ResolvedPayload(readPayload(envelope.get("file").textValue(), owner, context), false);
     }
 
@@ -242,15 +235,13 @@ public final class FileSystemSerDes implements SerDes {
                 && envelope.get("ownerDurableExecutionArn").isTextual();
         var hasOwnerEntity =
                 envelope.has("ownerEntityId") && envelope.get("ownerEntityId").isTextual();
-        if (hasOwnerArn != hasOwnerEntity) {
+        if (!hasOwnerArn || !hasOwnerEntity) {
             throw malformedEnvelope(context, null);
         }
 
-        var owner = hasOwnerArn
-                ? new PayloadOwner(
-                        envelope.get("ownerDurableExecutionArn").textValue(),
-                        envelope.get("ownerEntityId").textValue())
-                : new PayloadOwner(context.durableExecutionArn(), context.entityId());
+        var owner = new PayloadOwner(
+                envelope.get("ownerDurableExecutionArn").textValue(),
+                envelope.get("ownerEntityId").textValue());
         if (owner.durableExecutionArn().isBlank() || owner.entityId().isBlank()) {
             throw malformedEnvelope(context, null);
         }
@@ -280,11 +271,31 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private static boolean isFilesystemEnvelope(JsonNode envelope) {
-        return envelope != null
-                && envelope.isObject()
-                && envelope.has(ENVELOPE_MARKER)
-                && envelope.get(ENVELOPE_MARKER).isIntegralNumber()
-                && envelope.get(ENVELOPE_MARKER).intValue() == ENVELOPE_VERSION;
+        if (envelope == null
+                || !envelope.isObject()
+                || !envelope.has(ENVELOPE_MARKER)
+                || !envelope.get(ENVELOPE_MARKER).isIntegralNumber()
+                || envelope.get(ENVELOPE_MARKER).intValue() != ENVELOPE_VERSION
+                || !envelope.has("ownerDurableExecutionArn")
+                || !envelope.get("ownerDurableExecutionArn").isTextual()
+                || envelope.get("ownerDurableExecutionArn").textValue().isBlank()
+                || !envelope.has("ownerEntityId")
+                || !envelope.get("ownerEntityId").isTextual()
+                || envelope.get("ownerEntityId").textValue().isBlank()) {
+            return false;
+        }
+
+        var hasData = envelope.has("data") && envelope.get("data").isTextual();
+        var hasFile = envelope.has("file") && envelope.get("file").isTextual();
+        if (hasData == hasFile) {
+            return false;
+        }
+
+        var hasPreview = envelope.has("preview");
+        if (hasPreview && (hasData || !envelope.get("preview").isObject())) {
+            return false;
+        }
+        return envelope.size() == (hasPreview ? 5 : 4);
     }
 
     private static boolean acceptsExternalPayload(SerDesContext context) {
@@ -301,12 +312,12 @@ public final class FileSystemSerDes implements SerDes {
     private String encodeEnvelope(String data, Path file, Map<String, Object> preview, SerDesContext context) {
         var envelope = new LinkedHashMap<String, Object>();
         envelope.put(ENVELOPE_MARKER, ENVELOPE_VERSION);
+        envelope.put("ownerDurableExecutionArn", context.durableExecutionArn());
+        envelope.put("ownerEntityId", context.entityId());
         if (data != null) {
             envelope.put("data", data);
         } else {
             envelope.put("file", file.toString());
-            envelope.put("ownerDurableExecutionArn", context.durableExecutionArn());
-            envelope.put("ownerEntityId", context.entityId());
             if (preview != null) {
                 envelope.put("preview", preview);
             }

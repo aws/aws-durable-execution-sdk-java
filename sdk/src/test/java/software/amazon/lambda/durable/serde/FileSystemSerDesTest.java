@@ -165,6 +165,13 @@ class FileSystemSerDesTest {
                         "\"invoke-result\"",
                         TypeToken.get(String.class),
                         operationContext(OperationType.CHAINED_INVOKE, OperationSubType.CHAINED_INVOKE)));
+        assertEquals(
+                Map.of(ENVELOPE_MARKER, 1, "data", "domain-value"),
+                runner.deserialize(
+                        standalone,
+                        "{\"__durable_execution_filesystem_serdes\":1,\"data\":\"domain-value\"}",
+                        new TypeToken<Map<String, Object>>() {},
+                        executionContext(SerDesPayloadKind.INPUT)));
 
         assertThrows(
                 SerDesException.class,
@@ -320,7 +327,8 @@ class FileSystemSerDesTest {
 
     private static String envelopeWithFile(String file) {
         try {
-            return MAPPER.writeValueAsString(Map.of(ENVELOPE_MARKER, 1, "file", file));
+            return MAPPER.writeValueAsString(
+                    Map.of(ENVELOPE_MARKER, 1, "file", file, "ownerDurableExecutionArn", ARN, "ownerEntityId", "1"));
         } catch (Exception e) {
             throw new AssertionError(e);
         }

@@ -10,6 +10,7 @@ import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -222,6 +223,8 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
             }
         } catch (ClassNotFoundException e) {
             logger.warn("Cannot re-construct original exception type. Falling back to generic StepFailedException.");
+        } catch (RetryableSerDesException e) {
+            throw e;
         } catch (SerDesException e) {
             logger.warn("Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
         }

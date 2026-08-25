@@ -15,14 +15,19 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -34,12 +39,14 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -94,7 +101,11 @@ class SerializableDurableOperationTest {
     private static final TypeToken<String> RESULT_TYPE = TypeToken.get(String.class);
     private static final SerDes SER_DES = new JacksonSerDes();
     private static final String RESULT = "name";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
     private final ExecutorService internalExecutor = Executors.newFixedThreadPool(2);
+
+    @TempDir
+    Path basePath;
 
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
@@ -501,6 +512,54 @@ class SerializableDurableOperationTest {
                 };
 
         op.get();
+    }
+
+    @Test
+    void deserializeExceptionPreservesRetryableStorageFailure() {
+        when(executionManager.getDurableExecutionArn())
+                .thenReturn(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test:1/durable-execution/execution/invocation");
+        var serDes = FileSystemSerDes.builder(basePath).build();
+        var checkpointedError = new AtomicReference<ErrorObject>();
+        SerializableDurableOperation<String> producer =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        checkpointedError.set(serializeException(new RuntimeException("test exception"), 1));
+                        return RESULT;
+                    }
+                };
+        producer.get();
+        try {
+            Files.delete(Path.of(MAPPER.readTree(checkpointedError.get().errorData())
+                    .get("file")
+                    .textValue()));
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+
+        SerializableDurableOperation<String> replay =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        assertThrows(
+                                RetryableSerDesException.class, () -> deserializeException(checkpointedError.get(), 1));
+                        return RESULT;
+                    }
+                };
+        replay.get();
     }
 
     @Test
