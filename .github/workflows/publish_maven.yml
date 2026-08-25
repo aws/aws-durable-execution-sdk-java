@@ -90,7 +90,6 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" \
             "sdk/target/aws-durable-execution-sdk-java-${RELEASE_VERSION}.jar" \
-            "extra-filesystem-serdes/target/aws-durable-execution-sdk-java-extra-filesystem-serdes-${RELEASE_VERSION}.jar" \
             "sdk-testing/target/aws-durable-execution-sdk-java-testing-${RELEASE_VERSION}.jar" \
             "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${RELEASE_VERSION}.jar" \
             --clobber

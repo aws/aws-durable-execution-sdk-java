@@ -1,14 +1,14 @@
 # Filesystem SerDes
 
-`aws-durable-execution-sdk-java-extra-filesystem-serdes` stores durable user payloads on a shared filesystem while
-keeping small, versioned file-reference envelopes in checkpoints.
+`FileSystemSerDes` stores durable user payloads on a shared filesystem while keeping small, versioned file-reference
+envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-java` artifact.
 
 ## Installation
 
 ```xml
 <dependency>
     <groupId>software.amazon.lambda.durable</groupId>
-    <artifactId>aws-durable-execution-sdk-java-extra-filesystem-serdes</artifactId>
+    <artifactId>aws-durable-execution-sdk-java</artifactId>
     <version>VERSION</version>
 </dependency>
 ```

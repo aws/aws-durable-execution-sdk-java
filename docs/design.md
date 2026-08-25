@@ -10,8 +10,7 @@ This document explains the internal architecture, threading model, and extension
 
 ```
 aws-durable-execution-sdk-java/
-├── sdk/                      # Core SDK - DurableHandler, DurableContext, operations
-├── extra-filesystem-serdes/  # Optional filesystem-backed SerDes pipeline stage
+├── sdk/                      # Core SDK - DurableHandler, DurableContext, operations, SerDes
 ├── sdk-testing/              # Test utilities for local and cloud testing
 ├── sdk-integration-tests/    # Integration tests using LocalDurableTestRunner
 └── examples/                 # Real-world usage patterns as customers would implement them
@@ -19,8 +18,7 @@ aws-durable-execution-sdk-java/
 
 | Module | Purpose | Key Classes |
 |--------|---------|-------------|
-| `sdk` | Core runtime - extend `DurableHandler`, use `DurableContext` for durable operations | `DurableHandler`, `DurableContext`, `DurableExecutor`, `ExecutionManager` |
-| `extra-filesystem-serdes` | Optional filesystem-backed payload storage for SerDes pipelines | `FileSystemSerDes`, `FileSystemStorageMode`, `FileSystemPathEncoding` |
+| `sdk` | Core runtime - extend `DurableHandler`, use `DurableContext` for durable operations, and configure composable or filesystem-backed SerDes | `DurableHandler`, `DurableContext`, `DurableExecutor`, `ExecutionManager`, `FileSystemSerDes` |
 | `sdk-testing` | Test utilities: `LocalDurableTestRunner` (in-memory, simulates re-invocations and time-skipping) and `CloudDurableTestRunner` (executes against deployed Lambda) | `LocalDurableTestRunner`, `CloudDurableTestRunner`, `LocalMemoryExecutionClient`, `TestResult` |
 | `sdk-integration-tests` | Dogfooding tests - validates the SDK using its own test utilities. Separate module keeps dependencies acyclic: `sdk` → `sdk-testing` → `sdk-integration-tests`. | Test classes only |
 | `examples` | Real-world usage patterns as customers would implement them, with local and cloud tests | Example handlers, `CloudBasedIntegrationTest` |

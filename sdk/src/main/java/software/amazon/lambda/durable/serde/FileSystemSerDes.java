@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.extra.filesystem;
+package software.amazon.lambda.durable.serde;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -25,11 +25,6 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.serde.SerDesContext;
-import software.amazon.lambda.durable.serde.SerDesPayloadKind;
-import software.amazon.lambda.durable.serde.SerDesStageResult;
 
 /**
  * A SerDes that stores payloads on a durable shared filesystem.

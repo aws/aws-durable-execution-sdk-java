@@ -53,8 +53,7 @@ and caches successful deserialization results for the current invocation.
 
 ### Filesystem-backed payload storage
 
-The optional `aws-durable-execution-sdk-java-extra-filesystem-serdes` artifact provides a reversible string stage for
-storing serialized payloads on a shared filesystem:
+The core SDK provides a reversible string stage for storing serialized payloads on a shared filesystem:
 
 ```java
 var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))

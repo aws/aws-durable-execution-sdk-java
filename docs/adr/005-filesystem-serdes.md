@@ -2,7 +2,7 @@
 
 **Status:** Accepted — Approach A with ComposableSerDes pipeline
 **Date:** 2026-07-02
-**Updated:** 2026-08-24 — Added the composable SerDes pipeline and optional executor design.
+**Updated:** 2026-08-25 — Included FileSystemSerDes in the core SDK artifact.
 
 ## Context
 
@@ -23,7 +23,8 @@ There are a few Java-specific constraints:
 - The same operation payload can be deserialized multiple times in one invocation because most operation results are not cached after deserialization.
 - Java uses the configured `SerDes` for both operation results and user-defined exception objects stored in `ErrorObject.errorData`.
 - `DurableInputOutputSerDes` is a hard-coded internal serializer for the Lambda Durable Functions request and response envelope. It is separate from the customer-facing `DurableConfig.getSerDes()`.
-- Filesystem-backed storage is optional and storage-specific. It should not add filesystem-oriented public surface area to the core SDK artifact.
+- The filesystem implementation uses JDK filesystem APIs and existing core dependencies. Including the initial
+  implementation in the core SDK avoids a second artifact and release path for the accepted parity feature.
 - Filesystem persistence is not automatically durable. Lambda `/tmp` is not valid for replay across environments. Mounted S3 Files may have delayed synchronization and can lose recent writes if the runtime crashes before the mount flushes. EFS or an explicitly accepted S3 Files durability tradeoff should be required for production use.
 
 ## Approach A: Reuse SerDes for Offload
@@ -32,7 +33,7 @@ There are a few Java-specific constraints:
 
 Keep the existing `SerDes` serialization methods source- and binary-compatible, add a default composition method and a
 core `ComposableSerDes` implementation which together chain multiple `SerDes` instances into a processing pipeline,
-and implement `FileSystemSerDes` as an optional extra package. The filesystem stage uses
+and implement `FileSystemSerDes` in the core SDK. The filesystem stage uses
 `SerDesContext.getCurrentContext()` to identify the durable execution and entity being serialized.
 
 ```java
@@ -83,17 +84,19 @@ The SDK owns setting and clearing this thread-local value around SDK-managed Ser
 
 | Concern | Decision |
 |---------|----------|
-| Maven module directory | `extra-filesystem-serdes` |
-| Maven artifact ID | `aws-durable-execution-sdk-java-extra-filesystem-serdes` |
+| Maven module directory | `sdk` |
+| Maven artifact ID | `aws-durable-execution-sdk-java` |
 | Maven group ID | `software.amazon.lambda.durable` |
-| Java package | `software.amazon.lambda.durable.extra.filesystem` |
-| Core dependency direction | Extra module depends on `aws-durable-execution-sdk-java`; core does not depend on extras. |
+| Java package | `software.amazon.lambda.durable.serde` |
+| Dependency impact | No additional artifact or production dependency is required. |
 
 ### Configuration
 
 ```java
-import software.amazon.lambda.durable.serde.ComposableSerDes;
-import software.amazon.lambda.durable.extra.filesystem.FileSystemSerDes;
+import software.amazon.lambda.durable.serde.FileSystemPathEncoding;
+import software.amazon.lambda.durable.serde.FileSystemSerDes;
+import software.amazon.lambda.durable.serde.FileSystemStorageMode;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemStorageMode.ALWAYS)
@@ -454,22 +457,19 @@ whether `withInputSerDes(...)` or `withSerDes(...)` is called first.
    `CallbackOperation`, `ChildContextOperation`, `MapOperation`, and test helpers to use `SerDesRunner`.
 7. Add invocation-scoped deserialization caching keyed by entity, payload kind, type, and serialized data hash.
 8. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
-9. Add the `extra-filesystem-serdes` Maven module with artifact ID
-   `aws-durable-execution-sdk-java-extra-filesystem-serdes`, depending on the core SDK.
-10. Implement `FileSystemSerDes` in `software.amazon.lambda.durable.extra.filesystem` with standalone compatibility and
+9. Implement `FileSystemSerDes` in the core `software.amazon.lambda.durable.serde` package with standalone compatibility and
    string-stage modes, `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file
    writes where supported by the filesystem, retryable I/O failures, and clear validation errors for missing context or
    invalid stage input.
-11. Add unit tests for pipeline ordering, reverse processing, nulls, invalid intermediate stage types, stage failures,
+10. Add unit tests for pipeline ordering, reverse processing, nulls, invalid intermediate stage types, stage failures,
     retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and restoration,
     inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception reconstruction,
-    malformed filesystem envelopes, and extra-module packaging.
-12. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
+    malformed filesystem envelopes, and core-artifact packaging.
+11. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
     state, invoke payload/result, child context results, map results, repeated `get()`, replay from file pointers, and
     custom exception types.
-13. Update README and advanced configuration docs with pipeline and retry examples, FileSystemSerDes dependency coordinates,
-    filesystem configuration, and warnings about `/tmp`, S3 Files flush behavior, and EFS/S3 Files operational
-    requirements.
+12. Update README and advanced configuration docs with pipeline and retry examples, filesystem configuration, and
+    warnings about `/tmp`, S3 Files flush behavior, and EFS/S3 Files operational requirements.
 
 ### Pros
 
@@ -478,7 +478,7 @@ whether `withInputSerDes(...)` or `withSerDes(...)` is called first.
 - Preserves inline SerDes execution by default, avoiding new thread-hop overhead for existing applications.
 - Makes serialization, compression, encryption, and storage independently composable without adding a storage-specific
   core interface.
-- Keeps the first implementation in an optional `aws-durable-execution-sdk-java-extra-*` module.
+- Makes filesystem storage available without an additional Maven dependency or release artifact.
 - Avoids committing the core SDK to a generalized offloading envelope before the storage use cases are proven.
 - Closest to the current JavaScript `createFileSystemSerdes` model and issue #463 wording.
 
@@ -689,14 +689,14 @@ This approach gives the SDK one consistent policy for root payloads, operation r
 | Envelope ownership | FileSystemSerDes owns the checkpoint envelope (`data`, `file`, preview), so the SDK treats it as opaque serialized data. | SDK owns the checkpoint/offload envelope and must guarantee it composes with replay, errors, callbacks, and test utilities. |
 | Caching | SDK can cache deserialized values, but FileSystemSerDes may still do file reads internally unless cache hits happen before SerDes. | SDK can cache at both layers: resolved offloaded payload text and final deserialized object. |
 | Exception handling | Works if every exception serialization path is routed through SerDes with `SerDesPayloadKind.EXCEPTION`. | Works uniformly because exception `errorData` is another serialized payload that can be offloaded after SerDes. |
-| Third-party storage | S3, DynamoDB, and other backends can be implemented as additional reversible SerDes stages in extra packages. | Natural home for multiple storage backends: filesystem, S3, DynamoDB, EFS, S3 Files, or custom customer storage. |
+| Third-party storage | S3, DynamoDB, and other backends can be implemented as additional reversible SerDes stages, either in core or separate artifacts based on their dependencies and support model. | Natural home for multiple storage backends: filesystem, S3, DynamoDB, EFS, S3 Files, or custom customer storage. |
 | Immediate delivery risk | Lower. Builds on existing customization point. | Higher. Requires new API and more runtime integration. |
 | Long-term design risk | Higher. Blurs SerDes semantics and may accumulate storage behavior in serializers. | Lower if offloading grows into a first-class feature, but higher if this remains a one-off filesystem parity feature. |
 
 ## Decision
 
 Adopt **Approach A: Reuse SerDes for Offload**, extended with a core `ComposableSerDes` pipeline. It delivers
-JavaScript parity, keeps filesystem behavior in an optional artifact, leaves the existing `SerDes` methods unchanged,
+JavaScript parity, includes filesystem behavior in the existing core artifact, leaves the existing `SerDes` methods unchanged,
 and lets customers assemble value encoding, compression, encryption, and storage as independently reusable stages.
 Approach B remains a possible future direction if payload offloading grows into a general multi-backend capability
 that requires SDK-owned storage envelopes and lifecycle policy.
@@ -707,9 +707,11 @@ that requires SDK-owned storage envelopes and lifecycle policy.
 
 Rejected. A filesystem-backed implementation needs stable operation identity. Without context, it cannot choose a safe file name, distinguish result and exception payloads for the same operation, or avoid collisions across durable executions.
 
-### Put filesystem-backed offloading in the core SDK artifact
+### Publish filesystem-backed offloading as a separate artifact
 
-Rejected. Filesystem-backed storage is optional, storage-specific functionality. Keeping it in an `aws-durable-execution-sdk-java-extra-*` artifact preserves a small core SDK and creates a repeatable package shape for future optional features.
+Rejected for Approach A. The implementation adds no new production dependency, is part of the accepted JavaScript
+parity feature, and already relies on core SerDes context and pipeline behavior. A separate artifact would add module,
+publishing, documentation, and dependency-management overhead without isolating a distinct dependency graph.
 
 ### Add context-aware SerDes overloads
 
@@ -749,8 +751,7 @@ Positive:
 
 - Both approaches enable filesystem-backed payload storage without changing the existing `serialize`/`deserialize`
   signatures.
-- Filesystem-specific functionality stays out of the core SDK artifact.
-- The repository gets a repeatable `aws-durable-execution-sdk-java-extra-xxx` artifact pattern for optional packages.
+- Approach A makes filesystem-backed storage available from the core SDK without an additional artifact.
 - Custom payload implementations get enough context to use external storage safely.
 - Customers can compose reusable SerDes stages without creating a bespoke wrapper for each combination.
 - Blocking payload work can be isolated from user operation threads with an explicitly configured SerDes executor and
@@ -761,7 +762,7 @@ Positive:
 Negative:
 
 - Adds optional executor, context, and caching machinery that must stay deterministic.
-- Adds at least one Maven module and published artifact to release and document.
+- Adds storage-specific public API and implementation code to the core SDK artifact.
 - Approach A requires thread-local SerDes context because the existing `SerDes` methods do not accept context.
 - Approach A relies on a documented string-stage convention that is validated at runtime rather than by Java's type
   system.
@@ -806,20 +807,20 @@ Both approaches need a stable payload identity that can be used to address exter
 
 Do not include the checkpoint token or raw user payload in the context.
 
-### Extra package pattern
+### Packaging boundary
 
-Payload offloading implementations should live outside the core SDK artifact when they target a specific storage mechanism.
-
-Use the `aws-durable-execution-sdk-java-extra-xxx` artifact pattern. The filesystem payload package name depends on which approach is chosen; the repository should not publish both a filesystem SerDes package and a filesystem offloader package for the same feature.
+Approach A's filesystem implementation is part of the core SDK because it adds no external production dependency and
+is the concrete parity feature accepted by this ADR. A future storage stage may use a separate artifact when it brings
+substantial provider-specific dependencies or has an independent support and release model.
 
 | Feature | Artifact ID | Java package |
 |---------|-------------|--------------|
-| Filesystem payload storage, Approach A | `aws-durable-execution-sdk-java-extra-filesystem-serdes` | `software.amazon.lambda.durable.extra.filesystem` |
+| Filesystem payload storage, Approach A | `aws-durable-execution-sdk-java` | `software.amazon.lambda.durable.serde` |
 | Filesystem payload storage, Approach B | `aws-durable-execution-sdk-java-extra-filesystem-offloader` | `software.amazon.lambda.durable.extra.filesystem` |
 | Event deserialization helpers | `aws-durable-execution-sdk-java-extra-event-deserialization` | `software.amazon.lambda.durable.extra.eventdeserialization` |
 | Virtual thread executor helpers | `aws-durable-execution-sdk-java-extra-virtual-thread-pool` | `software.amazon.lambda.durable.extra.virtualthreads` |
 
-Extra modules should be independently documented, tested, and versioned with the repository release. They may depend on the core SDK and normal support libraries, but the core SDK should expose stable extension points without knowing about any specific extra package. For filesystem payload storage, create exactly one extra module after choosing Approach A or Approach B.
+The repository should not publish both a filesystem SerDes and a filesystem offloader for the same feature.
 
 ### Protocol SerDes boundary
 
