@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -36,7 +37,9 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.config.CallbackConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
@@ -88,6 +91,27 @@ class SerializableDurableOperationTest {
         @SuppressWarnings("unchecked")
         public <T> T deserialize(String data, TypeToken<T> typeToken) {
             return (T) "deserialized";
+        }
+    }
+
+    private static final class PrefixedSerDes extends JacksonSerDes {
+        private final String prefix;
+
+        private PrefixedSerDes(String prefix) {
+            this.prefix = prefix;
+        }
+
+        @Override
+        public String serialize(Object value) {
+            return prefix + super.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            if (data == null || !data.startsWith(prefix)) {
+                throw new SerDesException("Expected SerDes prefix " + prefix);
+            }
+            return super.deserialize(data.substring(prefix.length()), typeToken);
         }
     }
 
@@ -560,6 +584,60 @@ class SerializableDurableOperationTest {
                     }
                 };
         replay.get();
+    }
+
+    @Test
+    void rebindForwardedExceptionUsesProducingOperationSerDesBeforeParentSerDes() {
+        var producerSerDes = new PrefixedSerDes("producer:");
+        var parentSerDes = new PrefixedSerDes("parent:");
+        var original = new IllegalStateException("callback failed");
+        var producerOperation = Operation.builder()
+                .id("callback-1")
+                .name("callback")
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.FAILED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .error(ErrorObject.builder()
+                                .errorType(original.getClass().getName())
+                                .errorMessage(original.getMessage())
+                                .errorData(producerSerDes.serialize(original))
+                                .build())
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState("callback-1")).thenReturn(producerOperation);
+
+        var producer = new CallbackOperation<>(
+                OperationIdentifier.of("callback-1", "callback", OperationSubType.CALLBACK),
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(producerSerDes).build(),
+                durableContext);
+        producer.onCheckpointComplete(producerOperation);
+        var forwarded = assertThrows(CallbackFailedException.class, producer::get);
+        assertInstanceOf(IllegalStateException.class, forwarded.deserializedError());
+
+        var rebound = new AtomicReference<ErrorObject>();
+        SerializableDurableOperation<String> parent =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, parentSerDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        rebound.set(rebindForwardedException(forwarded));
+                        return RESULT;
+                    }
+                };
+
+        parent.get();
+
+        assertTrue(rebound.get().errorData().startsWith("parent:"));
+        var decoded = parentSerDes.deserialize(rebound.get().errorData(), TypeToken.get(IllegalStateException.class));
+        assertEquals("callback failed", decoded.getMessage());
     }
 
     @Test

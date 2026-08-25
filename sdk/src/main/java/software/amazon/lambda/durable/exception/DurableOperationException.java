@@ -11,6 +11,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 public class DurableOperationException extends DurableExecutionException {
     private final Operation operation;
     private final ErrorObject errorObject;
+    private final transient Throwable deserializedError;
 
     public DurableOperationException(Operation operation, ErrorObject errorObject) {
         this(operation, errorObject, errorObject != null ? errorObject.errorMessage() : null);
@@ -36,9 +37,20 @@ public class DurableOperationException extends DurableExecutionException {
             String errorMessage,
             StackTraceElement[] stackTrace,
             Throwable cause) {
+        this(operation, errorObject, errorMessage, stackTrace, cause, null);
+    }
+
+    protected DurableOperationException(
+            Operation operation,
+            ErrorObject errorObject,
+            String errorMessage,
+            StackTraceElement[] stackTrace,
+            Throwable cause,
+            Throwable deserializedError) {
         super(errorMessage, cause, stackTrace);
         this.operation = operation;
         this.errorObject = errorObject;
+        this.deserializedError = deserializedError;
     }
 
     /** Returns the error details from the failed operation. */
@@ -59,5 +71,14 @@ public class DurableOperationException extends DurableExecutionException {
     /** Returns the ID of the operation that caused this exception. */
     public String getOperationId() {
         return operation.id();
+    }
+
+    /**
+     * Returns the original error reconstructed by the operation that produced this exception, when available.
+     *
+     * <p>This is used internally when a child context forwards an operation failure through a different SerDes.
+     */
+    public Throwable deserializedError() {
+        return deserializedError;
     }
 }

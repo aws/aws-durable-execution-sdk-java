@@ -178,10 +178,20 @@ public final class FileSystemSerDes implements SerDes {
             throw malformedEnvelope(context, e);
         }
 
-        if (!isFilesystemEnvelope(envelope)) {
+        if (!hasFilesystemMarker(envelope)) {
             if (acceptsExternalPayload(context)) {
                 return new ResolvedPayload(data, true);
             }
+            throw malformedEnvelope(context, null);
+        }
+        var marker = envelope.get(ENVELOPE_MARKER);
+        if (!marker.isIntegralNumber()) {
+            throw malformedEnvelope(context, null);
+        }
+        if (marker.intValue() != ENVELOPE_VERSION) {
+            throw unsupportedEnvelopeVersion(context, marker.asText());
+        }
+        if (!isFilesystemEnvelope(envelope)) {
             throw malformedEnvelope(context, null);
         }
 
@@ -298,6 +308,10 @@ public final class FileSystemSerDes implements SerDes {
         return envelope.size() == (hasPreview ? 5 : 4);
     }
 
+    private static boolean hasFilesystemMarker(JsonNode envelope) {
+        return envelope != null && envelope.isObject() && envelope.has(ENVELOPE_MARKER);
+    }
+
     private static boolean acceptsExternalPayload(SerDesContext context) {
         return context.payloadKind() == SerDesPayloadKind.INPUT
                 || context.operationType() == OperationType.CALLBACK
@@ -307,6 +321,14 @@ public final class FileSystemSerDes implements SerDes {
     private static SerDesException malformedEnvelope(SerDesContext context, Throwable cause) {
         var message = "Invalid filesystem SerDes envelope for entity '" + context.entityId() + "'";
         return cause == null ? new SerDesException(message) : new SerDesException(message, cause);
+    }
+
+    private static SerDesException unsupportedEnvelopeVersion(SerDesContext context, String version) {
+        return new SerDesException("Unsupported filesystem SerDes envelope version "
+                + version
+                + " for entity '"
+                + context.entityId()
+                + "'");
     }
 
     private String encodeEnvelope(String data, Path file, Map<String, Object> preview, SerDesContext context) {

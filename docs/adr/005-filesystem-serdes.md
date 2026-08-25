@@ -289,7 +289,7 @@ Path encodings:
 Envelope format:
 
 ```json
-{"__durable_execution_filesystem_serdes":1,"data":"<inline stage input>"}
+{"__durable_execution_filesystem_serdes":1,"data":"<inline stage input>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
 {"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
 {"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>","preview":{ "...": "..." }}
 ```
@@ -303,7 +303,8 @@ results, and standard Lambda invoke results may arrive before this SerDes has pr
 payload sources only, an input without the filesystem marker is decoded directly with the pipeline value codec or
 standalone delegate. Skipping every string stage is required because raw external data has not been compressed,
 encrypted, or otherwise transformed by those stages. Missing or malformed markers on SDK-checkpointed payloads are
-permanent errors.
+permanent errors. The marker name is reserved: malformed marked envelopes and unsupported envelope versions are
+rejected at external boundaries rather than being treated as raw user data.
 
 Offloaded filenames include a content hash and are immutable. Serializing new state for the same entity creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Repeating the same serialization may reuse the

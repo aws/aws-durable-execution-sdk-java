@@ -92,7 +92,9 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
         var result = invokeDetails != null ? invokeDetails.result() : null;
         return switch (op.status()) {
             case SUCCEEDED -> deserializeResult(result);
-            case FAILED -> throw new InvokeFailedException(op);
+            case FAILED ->
+                throw new InvokeFailedException(
+                        op, deserializeException(op.chainedInvokeDetails().error()));
             case TIMED_OUT -> throw new InvokeTimedOutException(op);
             case STOPPED -> throw new InvokeStoppedException(op);
             // Unexpected status which should not happen. This is added for forward-compatibility.

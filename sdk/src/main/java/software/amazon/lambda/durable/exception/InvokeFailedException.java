@@ -8,6 +8,10 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 public class InvokeFailedException extends InvokeException {
 
     public InvokeFailedException(Operation operation) {
-        super(operation);
+        this(operation, null);
+    }
+
+    public InvokeFailedException(Operation operation, Throwable deserializedError) {
+        super(operation, deserializedError);
     }
 }

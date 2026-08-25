@@ -77,7 +77,9 @@ public class CallbackOperation<T> extends SerializableDurableOperation<T> implem
 
         return switch (op.status()) {
             case SUCCEEDED -> deserializeResult(op.callbackDetails().result());
-            case FAILED -> throw new CallbackFailedException(op);
+            case FAILED ->
+                throw new CallbackFailedException(
+                        op, deserializeException(op.callbackDetails().error()));
             case TIMED_OUT -> throw new CallbackTimeoutException(op);
             default ->
                 throw terminateExecutionWithIllegalDurableOperationException(

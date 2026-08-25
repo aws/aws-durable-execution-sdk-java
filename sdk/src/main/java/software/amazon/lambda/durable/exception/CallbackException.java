@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.exception;
 
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /** Thrown when a callback operation encounters an error. */
 public class CallbackException extends DurableOperationException {
@@ -13,7 +14,20 @@ public class CallbackException extends DurableOperationException {
     }
 
     public CallbackException(Operation operation, String message, Throwable cause) {
-        super(operation, operation.callbackDetails().error(), message, cause);
+        this(operation, message, cause, null);
+    }
+
+    protected CallbackException(Operation operation, String message, Throwable cause, Throwable deserializedError) {
+        super(
+                operation,
+                operation.callbackDetails().error(),
+                message,
+                operation.callbackDetails().error() != null
+                        ? ExceptionHelper.deserializeStackTrace(
+                                operation.callbackDetails().error().stackTrace())
+                        : null,
+                cause,
+                deserializedError);
         this.callbackId = operation.callbackDetails().callbackId();
     }
 

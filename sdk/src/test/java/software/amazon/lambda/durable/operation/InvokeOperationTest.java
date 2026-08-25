@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -71,15 +72,18 @@ class InvokeOperationTest {
 
     @Test
     void getInvokeFailedExceptionWhenInvocationFailed() {
+        var serDes = new JacksonSerDes();
+        var original = new IllegalStateException("errorMessage");
+        var errorData = serDes.serialize(original);
         var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name(OPERATION_NAME)
                 .status(OperationStatus.FAILED)
                 .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
-                                .errorType("errorType")
+                                .errorType(original.getClass().getName())
                                 .errorMessage("errorMessage")
-                                .errorData("errorData")
+                                .errorData(errorData)
                                 .build())
                         .build())
                 .build();
@@ -90,14 +94,16 @@ class InvokeOperationTest {
                 "test-function",
                 "{}",
                 TypeToken.get(String.class),
-                InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
+                InvokeConfig.builder().serDes(serDes).build(),
                 durableContext);
         operation.onCheckpointComplete(op);
 
         InvokeFailedException ex = assertThrows(InvokeFailedException.class, () -> operation.get());
-        assertEquals("errorData", ex.getErrorObject().errorData());
-        assertEquals("errorType", ex.getErrorObject().errorType());
+        assertEquals(errorData, ex.getErrorObject().errorData());
+        assertEquals(original.getClass().getName(), ex.getErrorObject().errorType());
         assertEquals("errorMessage", ex.getMessage());
+        assertInstanceOf(IllegalStateException.class, ex.deserializedError());
+        assertEquals("errorMessage", ex.deserializedError().getMessage());
     }
 
     @Test

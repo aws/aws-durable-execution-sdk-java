@@ -166,8 +166,15 @@ class FileSystemSerDesTest {
                         TypeToken.get(String.class),
                         operationContext(OperationType.CHAINED_INVOKE, OperationSubType.CHAINED_INVOKE)));
         assertEquals(
-                Map.of(ENVELOPE_MARKER, 1, "data", "domain-value"),
+                Map.of("domainMarker", 1, "data", "domain-value"),
                 runner.deserialize(
+                        standalone,
+                        "{\"domainMarker\":1,\"data\":\"domain-value\"}",
+                        new TypeToken<Map<String, Object>>() {},
+                        executionContext(SerDesPayloadKind.INPUT)));
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(
                         standalone,
                         "{\"__durable_execution_filesystem_serdes\":1,\"data\":\"domain-value\"}",
                         new TypeToken<Map<String, Object>>() {},
@@ -176,6 +183,24 @@ class FileSystemSerDesTest {
         assertThrows(
                 SerDesException.class,
                 () -> runner.deserialize(stage, "\"raw-step\"", TypeToken.get(String.class), context()));
+    }
+
+    @Test
+    void rejectsUnsupportedEnvelopeVersionsAtExternalBoundaries() {
+        var serDes = FileSystemSerDes.builder(basePath).build();
+        var futureEnvelope = "{\"__durable_execution_filesystem_serdes\":2,"
+                + "\"ownerDurableExecutionArn\":\""
+                + ARN
+                + "\",\"ownerEntityId\":\"1\",\"data\":\"value\"}";
+
+        var failure = assertThrows(SerDesException.class, () -> new SerDesRunner(null)
+                .deserialize(
+                        serDes,
+                        futureEnvelope,
+                        TypeToken.get(String.class),
+                        executionContext(SerDesPayloadKind.INPUT)));
+
+        assertTrue(failure.getCause().getMessage().contains("Unsupported filesystem SerDes envelope version 2"));
     }
 
     @Test

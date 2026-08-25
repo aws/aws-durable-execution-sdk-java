@@ -65,7 +65,8 @@ delays consume time in the current Lambda invocation, so keep attempts and delay
 
 Filesystem envelopes include a reserved version marker. Raw root input, callback results, and standard Lambda invoke
 results bypass every string-processing stage and decode directly with the pipeline value codec when they have not yet
-been wrapped by this SerDes.
+been wrapped by this SerDes. Payloads containing the reserved marker must be valid supported filesystem envelopes;
+malformed marked envelopes and unsupported versions fail instead of falling back to raw-data decoding.
 
 Offloaded files are content-addressed and immutable. Updating wait-for-condition state or retry results creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Repeating the same write can safely reuse the

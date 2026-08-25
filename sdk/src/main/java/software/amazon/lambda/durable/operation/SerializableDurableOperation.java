@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.operation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -13,7 +12,6 @@ import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
@@ -170,7 +168,7 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
         if (error == null || exception.getOperation() == null) {
             return error;
         }
-        var original = deserializeExceptionWithContext(error, producerExceptionContext(exception.getOperation()));
+        var original = exception.deserializedError();
         return original != null ? serializeException(original) : error;
     }
 
@@ -229,28 +227,6 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
             logger.warn("Cannot deserialize original exception data. Falling back to generic StepFailedException.", e);
         }
         return original;
-    }
-
-    private SerDesContext producerExceptionContext(Operation operation) {
-        var attempt = operation.stepDetails() != null ? operation.stepDetails().attempt() : null;
-        return SerDesContext.forOperation(
-                getContext().getExecutionManager().getDurableExecutionArn(),
-                operation.id(),
-                operation.name(),
-                operation.parentId(),
-                operation.type(),
-                operationSubType(operation),
-                SerDesPayloadKind.EXCEPTION,
-                attempt);
-    }
-
-    private static OperationSubType operationSubType(Operation operation) {
-        for (var subType : OperationSubType.values()) {
-            if (subType.getValue().equals(operation.subType())) {
-                return subType;
-            }
-        }
-        return null;
     }
 
     public abstract T get();
