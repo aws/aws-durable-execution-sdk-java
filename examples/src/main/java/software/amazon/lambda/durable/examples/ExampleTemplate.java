@@ -12,4 +12,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 public @interface ExampleTemplate {
     String condition() default "";
+
+    boolean fileSystem() default false;
 }
