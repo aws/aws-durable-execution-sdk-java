@@ -6,23 +6,18 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 
 /**
- * A SerDes and string-stage decorator that retries transient failures from another {@link SerDes}.
+ * A string-stage decorator that retries transient failures from another {@link SerDesStage}.
  *
  * <p>Only {@link RetryableSerDesException} is retried. Other failures are propagated immediately. Retry delays block
  * the thread executing the SerDes call: the caller by default or the configured SerDes executor thread.
- *
- * <p>When the delegate also implements {@link SerDesStage}, this decorator uses its explicit string-stage behavior when
- * appended to a {@link ComposableSerDes}. Otherwise, the delegate is invoked with {@link String} values and a
- * {@code TypeToken<String>}.
  */
-public final class RetrySerDes implements SerDes, SerDesStage {
+public final class RetrySerDes implements SerDesStage {
     private static final Sleeper DEFAULT_SLEEPER = delay -> {
         if (delay.getSeconds() > 0) {
             TimeUnit.SECONDS.sleep(delay.getSeconds());
@@ -32,66 +27,39 @@ public final class RetrySerDes implements SerDes, SerDesStage {
         }
     };
 
-    private final SerDes delegate;
-    private final SerDesStage stageDelegate;
+    private final SerDesStage delegate;
     private final RetryStrategy retryStrategy;
     private final Sleeper sleeper;
 
     /**
-     * Creates a retrying SerDes decorator.
+     * Creates a retrying string-stage decorator.
      *
-     * @param delegate the SerDes to invoke
+     * @param delegate the stage to invoke
      * @param retryStrategy strategy that controls attempts and delays
      */
-    public RetrySerDes(SerDes delegate, RetryStrategy retryStrategy) {
+    public RetrySerDes(SerDesStage delegate, RetryStrategy retryStrategy) {
         this(delegate, retryStrategy, DEFAULT_SLEEPER);
     }
 
-    RetrySerDes(SerDes delegate, RetryStrategy retryStrategy, Sleeper sleeper) {
+    RetrySerDes(SerDesStage delegate, RetryStrategy retryStrategy, Sleeper sleeper) {
         this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
-        this.stageDelegate = delegate instanceof SerDesStage stage ? stage : null;
         this.retryStrategy = Objects.requireNonNull(retryStrategy, "retryStrategy cannot be null");
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper cannot be null");
     }
 
     @Override
-    public String serialize(Object value) {
-        return execute("serialization", () -> delegate.serialize(value));
-    }
-
-    @Override
     public String serialize(String value) {
-        return execute(
-                "pipeline stage serialization",
-                () -> stageDelegate == null ? delegate.serialize(value) : stageDelegate.serialize(value));
-    }
-
-    @Override
-    public <T> T deserialize(String data, TypeToken<T> typeToken) {
-        return execute("deserialization", () -> delegate.deserialize(data, typeToken));
+        return execute("pipeline stage serialization", () -> delegate.serialize(value));
     }
 
     @Override
     public String deserialize(String data) {
-        return execute(
-                "pipeline stage deserialization",
-                () -> stageDelegate == null
-                        ? delegate.deserialize(data, TypeToken.get(String.class))
-                        : stageDelegate.deserialize(data));
+        return execute("pipeline stage deserialization", () -> delegate.deserialize(data));
     }
 
     @Override
     public SerDesStageResult deserializePipelineStage(String data) {
-        return execute("pipeline stage deserialization", () -> {
-            if (stageDelegate != null) {
-                return stageDelegate.deserializePipelineStage(data);
-            }
-            var result = delegate.deserialize(data, TypeToken.get(String.class));
-            if (result == null) {
-                throw new SerDesException("Stage returned null for non-null data");
-            }
-            return SerDesStageResult.continueWith(result);
-        });
+        return execute("pipeline stage deserialization", () -> delegate.deserializePipelineStage(data));
     }
 
     @Override
@@ -101,12 +69,7 @@ public final class RetrySerDes implements SerDes, SerDesStage {
 
     @Override
     public boolean isTerminalPipelineStage() {
-        return stageDelegate != null && stageDelegate.isTerminalPipelineStage();
-    }
-
-    @Override
-    public boolean isValueCodecOnly() {
-        return delegate.isValueCodecOnly();
+        return delegate.isTerminalPipelineStage();
     }
 
     private <T> T execute(String action, Supplier<T> operation) {

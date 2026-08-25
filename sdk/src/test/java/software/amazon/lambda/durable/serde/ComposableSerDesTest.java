@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.retry.RetryStrategies;
 
 class ComposableSerDesTest {
 
@@ -200,20 +199,6 @@ class ComposableSerDesTest {
 
         assertTrue(failure.getMessage().contains("stage 1"));
         assertTrue(failure.getMessage().contains("final stage"));
-    }
-
-    @Test
-    void rejectsDecoratedNestedPipelines() {
-        var nested = new JacksonSerDes().then(stringStage("nested", "<", ">", new ArrayList<>()));
-        var decorated = new RetrySerDes(nested, RetryStrategies.Presets.NO_RETRY);
-
-        var rootFailure = assertThrows(
-                IllegalArgumentException.class,
-                () -> decorated.then(stringStage("outer", "[", "]", new ArrayList<>())));
-        var stageFailure = assertThrows(IllegalArgumentException.class, () -> new JacksonSerDes().then(decorated));
-
-        assertTrue(rootFailure.getMessage().contains("nested pipeline"));
-        assertTrue(stageFailure.getMessage().contains("nested pipeline"));
     }
 
     @Test

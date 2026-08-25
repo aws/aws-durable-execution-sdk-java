@@ -164,7 +164,7 @@ class FileSystemSerDesIntegrationTest {
         });
         var serDes = new JacksonSerDes()
                 .then(recordingStage)
-                .then(FileSystemSerDes.stageBuilder(basePath).build());
+                .then(FileSystemSerDes.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class,
@@ -282,7 +282,7 @@ class FileSystemSerDesIntegrationTest {
         });
         var serDes = new JacksonSerDes()
                 .then(countingStage)
-                .then(FileSystemSerDes.stageBuilder(basePath).build());
+                .then(FileSystemSerDes.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class,
@@ -319,7 +319,7 @@ class FileSystemSerDesIntegrationTest {
         });
         var serDes = new JacksonSerDes()
                 .then(attemptStage)
-                .then(FileSystemSerDes.stageBuilder(basePath).build());
+                .then(FileSystemSerDes.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var stepConfig = StepConfig.builder()
                 .retryStrategy(RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)))
@@ -477,7 +477,7 @@ class FileSystemSerDesIntegrationTest {
                 .build();
         return new JacksonSerDes()
                 .then(binaryStage)
-                .then(FileSystemSerDes.stageBuilder(basePath).build());
+                .then(FileSystemSerDes.builder(basePath).build());
     }
 
     private static DurableExecutionInput durableInput(

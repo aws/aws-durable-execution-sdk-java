@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.retry.RetryDecision;
@@ -27,9 +26,9 @@ class RetrySerDesTest {
         var calls = new AtomicInteger();
         var strategyAttempts = new ArrayList<Integer>();
         var delays = new ArrayList<Duration>();
-        var delegate = new SerDes() {
+        var delegate = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 if (calls.incrementAndGet() < 3) {
                     throw new RetryableSerDesException("transient");
                 }
@@ -37,8 +36,8 @@ class RetrySerDesTest {
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return null;
+            public String deserialize(String data) {
+                return data;
             }
         };
         var retrySerDes = new RetrySerDes(
@@ -58,36 +57,31 @@ class RetrySerDesTest {
     @Test
     void retriesDeserialization() {
         var calls = new AtomicInteger();
-        var delegate = new JacksonSerDes() {
+        var delegate = new SerDesStage() {
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            public String serialize(String value) {
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data) {
                 if (calls.incrementAndGet() == 1) {
                     throw new RetryableSerDesException("transient");
                 }
-                return super.deserialize(data, typeToken);
+                return data;
             }
         };
         var retrySerDes =
                 new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
 
-        assertEquals("value", retrySerDes.deserialize("\"value\"", TypeToken.get(String.class)));
+        assertEquals("value", retrySerDes.deserialize("value"));
         assertEquals(2, calls.get());
     }
 
     @Test
     void retriesPipelineStageDeserializationAndDelegatesCapabilities() {
         var calls = new AtomicInteger();
-        class RetryableStage implements SerDes, SerDesStage {
-            @Override
-            public String serialize(Object value) {
-                return value.toString();
-            }
-
-            @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return null;
-            }
-
+        class RetryableStage implements SerDesStage {
             @Override
             public String serialize(String value) {
                 return value;
@@ -115,11 +109,6 @@ class RetrySerDesTest {
             public boolean isTerminalPipelineStage() {
                 return true;
             }
-
-            @Override
-            public boolean isValueCodecOnly() {
-                return false;
-            }
         }
         var delegate = new RetryableStage();
         var retrySerDes =
@@ -132,22 +121,21 @@ class RetrySerDesTest {
         assertEquals(2, calls.get());
         assertTrue(retrySerDes.requiresDurableContext());
         assertTrue(retrySerDes.isTerminalPipelineStage());
-        assertFalse(retrySerDes.isValueCodecOnly());
     }
 
     @Test
     void doesNotRetryPermanentSerDesFailure() {
         var calls = new AtomicInteger();
-        var delegate = new SerDes() {
+        var delegate = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 calls.incrementAndGet();
                 throw new SerDesException("permanent");
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return null;
+            public String deserialize(String data) {
+                return data;
             }
         };
         var retrySerDes = new RetrySerDes(delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {
@@ -161,21 +149,22 @@ class RetrySerDesTest {
 
     @Test
     void rejectsInvalidConfigurationAndRetryDelay() {
-        var delegate = new JacksonSerDes();
+        var delegate = identityStage();
 
         assertThrows(NullPointerException.class, () -> new RetrySerDes(null, RetryStrategies.Presets.NO_RETRY));
         assertThrows(NullPointerException.class, () -> new RetrySerDes(delegate, null));
+        assertFalse(SerDes.class.isAssignableFrom(RetrySerDes.class));
 
         var retrySerDes = new RetrySerDes(
-                new SerDes() {
+                new SerDesStage() {
                     @Override
-                    public String serialize(Object value) {
+                    public String serialize(String value) {
                         throw new RetryableSerDesException("transient");
                     }
 
                     @Override
-                    public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                        return null;
+                    public String deserialize(String data) {
+                        return data;
                     }
                 },
                 (error, attempt) -> RetryDecision.retry(Duration.ofSeconds(-1)),
@@ -189,17 +178,17 @@ class RetrySerDesTest {
     void rethrowsLastRetryableFailureWhenRetriesAreExhausted() {
         var calls = new AtomicInteger();
         var lastFailure = new AtomicReference<RetryableSerDesException>();
-        var delegate = new SerDes() {
+        var delegate = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 var failure = new RetryableSerDesException("attempt-" + calls.incrementAndGet());
                 lastFailure.set(failure);
                 throw failure;
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return null;
+            public String deserialize(String data) {
+                return data;
             }
         };
         var retrySerDes = new RetrySerDes(delegate, RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)), delay -> {});
@@ -213,15 +202,15 @@ class RetrySerDesTest {
     @Test
     void restoresInterruptStatusWhenBackoffIsInterrupted() {
         var retryable = new RetryableSerDesException("transient");
-        var delegate = new SerDes() {
+        var delegate = new SerDesStage() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(String value) {
                 throw retryable;
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                return null;
+            public String deserialize(String data) {
+                return data;
             }
         };
         var retrySerDes =
@@ -237,5 +226,19 @@ class RetrySerDesTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    private static SerDesStage identityStage() {
+        return new SerDesStage() {
+            @Override
+            public String serialize(String value) {
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data) {
+                return data;
+            }
+        };
     }
 }

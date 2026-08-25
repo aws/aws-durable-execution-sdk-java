@@ -363,7 +363,7 @@ software.amazon.lambda.durable
 │   ├── Base64StringBinaryCodec # Standard Base64 string/byte conversion
 │   ├── ComposableBinarySerDesStage # Ordered binary chain exposed as one string stage
 │   ├── JacksonSerDes       # Jackson impl
-│   ├── RetrySerDes         # Retrying SerDes and string-stage decorator
+│   ├── RetrySerDes         # Retrying string-stage decorator
 │   ├── SerDesRunner        # Context, optional executor dispatch, and invocation cache
 │   ├── SerDesContext       # Read-only durable payload identity
 │   ├── SerDesPayloadKind   # Input/result/state/exception/invoke payload kind
@@ -523,7 +523,7 @@ SuspendExecutionException                  # Internal: triggers suspension (not 
 | `NonDeterministicExecutionException` | Replay finds different operation than expected | Bug in handler (non-deterministic code) |
 | `IllegalDurableOperationException` | Illegal operation detected | Bug in handler |
 | `SerDesException` | Jackson fails to serialize/deserialize | Fix data model or custom SerDes |
-| `RetryableSerDesException` | Transient SerDes or payload storage failure | Wrap the SerDes with `RetrySerDes` and a bounded retry strategy |
+| `RetryableSerDesException` | Transient stage or payload storage failure | Wrap the failing `SerDesStage` with `RetrySerDes` and a bounded retry strategy |
 
 ---
 

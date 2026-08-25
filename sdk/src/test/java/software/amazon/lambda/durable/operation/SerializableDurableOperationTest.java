@@ -543,7 +543,7 @@ class SerializableDurableOperationTest {
         when(executionManager.getDurableExecutionArn())
                 .thenReturn(
                         "arn:aws:lambda:us-east-1:123456789012:function:test:1/durable-execution/execution/invocation");
-        var serDes = FileSystemSerDes.builder(basePath).build();
+        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
         var checkpointedError = new AtomicReference<ErrorObject>();
         SerializableDurableOperation<String> producer =
                 new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {

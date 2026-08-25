@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,8 +39,8 @@ class FileSystemSerDesTest {
     Path basePath;
 
     @Test
-    void standaloneModeWritesDelegatePayloadAndReplaysIt() throws Exception {
-        var serDes = FileSystemSerDes.builder(basePath).build();
+    void writesValueCodecPayloadAndReplaysIt() throws Exception {
+        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
         var runner = new SerDesRunner(null);
 
         var envelope = runner.serialize(serDes, Map.of("id", 42), context());
@@ -56,30 +57,19 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void stageModeComposesWithValueCodec() throws Exception {
-        var stage = FileSystemSerDes.stageBuilder(basePath).build();
+    void isAContextDependentTerminalStage() {
+        var stage = FileSystemSerDes.builder(basePath).build();
         var pipeline = new JacksonSerDes().then(stage);
-        var runner = new SerDesRunner(null);
 
-        var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
-        var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
-
-        assertEquals("{\"id\":42}", Files.readString(file));
-        assertEquals(
-                Map.of("id", 42),
-                runner.deserialize(pipeline, envelope, new TypeToken<Map<String, Integer>>() {}, context()));
-        assertThrows(SerDesException.class, () -> runner.serialize(stage, Map.of("id", 42), context()));
-        assertThrows(
-                SerDesException.class,
-                () -> runner.deserialize(stage, envelope, TypeToken.get(Integer.class), context()));
-        assertThrows(IllegalStateException.class, () -> FileSystemSerDes.stageBuilder(basePath)
-                .delegate(new JacksonSerDes()));
+        assertFalse(SerDes.class.isAssignableFrom(FileSystemSerDes.class));
+        assertTrue(stage.requiresDurableContext());
+        assertTrue(stage.isTerminalPipelineStage());
         assertThrows(IllegalArgumentException.class, () -> pipeline.then(wrappingStage()));
     }
 
     @Test
     void retryDecoratorComposesAsAFileSystemStage() {
-        var stage = FileSystemSerDes.stageBuilder(basePath)
+        var stage = FileSystemSerDes.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
         var pipeline = new JacksonSerDes().then(new RetrySerDes(stage, RetryStrategies.Presets.NO_RETRY));
@@ -93,13 +83,13 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void stageModeStoresAndRestoresComposableBinaryOutput() throws Exception {
+    void storesAndRestoresComposableBinaryOutput() throws Exception {
         var binaryStage = ComposableBinarySerDesStage.builder()
                 .startWith(Utf8StringBinaryCodec.INSTANCE)
                 .then(xorBinarySerDes((byte) 0x5A))
                 .endWith(Base64StringBinaryCodec.INSTANCE)
                 .build();
-        var stage = FileSystemSerDes.stageBuilder(basePath).build();
+        var stage = FileSystemSerDes.builder(basePath).build();
         var pipeline = new JacksonSerDes().then(binaryStage).then(stage);
         var runner = new SerDesRunner(null);
 
@@ -117,20 +107,11 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void stageModeRejectsDirectBinaryValues() {
-        var stage = FileSystemSerDes.stageBuilder(basePath)
-                .storageMode(FileSystemStorageMode.OVERFLOW)
-                .build();
-        var runner = new SerDesRunner(null);
-
-        assertThrows(SerDesException.class, () -> runner.serialize(stage, new byte[] {0, 1, 2, -1}, context()));
-    }
-
-    @Test
     void overflowModeKeepsSmallPayloadInlineAndWritesLargePayload() throws Exception {
-        var serDes = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDes.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
+        var serDes = stringCodec().then(stage);
         var runner = new SerDesRunner(null);
 
         var inline = runner.serialize(serDes, "small", context());
@@ -142,7 +123,7 @@ class FileSystemSerDesTest {
 
     @Test
     void immutableContentAddressedFilesPreservePriorCheckpoints() throws Exception {
-        var serDes = FileSystemSerDes.stageBuilder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var runner = new SerDesRunner(null);
 
         var firstContext = context(1);
@@ -160,7 +141,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsUnexpectedContentInExistingContentAddressedFile() throws Exception {
-        var serDes = FileSystemSerDes.stageBuilder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var runner = new SerDesRunner(null);
         var envelope = runner.serialize(serDes, "expected", context());
         var file = payloadFile(envelope);
@@ -168,13 +149,13 @@ class FileSystemSerDesTest {
 
         var failure = assertThrows(SerDesException.class, () -> runner.serialize(serDes, "expected", context()));
 
-        assertTrue(failure.getCause().getMessage().contains("contains unexpected data"));
+        assertCauseMessage(failure, "contains unexpected data");
         assertEquals("unexpected", Files.readString(file));
     }
 
     @Test
     void rejectsMalformedUtf8StringsAndFilePayloads() throws Exception {
-        var serDes = FileSystemSerDes.stageBuilder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var runner = new SerDesRunner(null);
 
         assertThrows(SerDesException.class, () -> runner.serialize(serDes, "lone surrogate \uD800", context()));
@@ -193,9 +174,10 @@ class FileSystemSerDesTest {
 
     @Test
     void hashEncodingUsesFixedLengthSegments() throws Exception {
-        var serDes = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDes.builder(basePath)
                 .pathEncoding(FileSystemPathEncoding.HASH)
                 .build();
+        var serDes = stringCodec().then(stage);
 
         var envelope = new SerDesRunner(null).serialize(serDes, "value", context());
         var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
@@ -207,9 +189,10 @@ class FileSystemSerDesTest {
 
     @Test
     void includesBoundedPreviewWithoutChangingStoredPayload() throws Exception {
-        var serDes = FileSystemSerDes.builder(basePath)
+        var stage = FileSystemSerDes.builder(basePath)
                 .previewGenerator(value -> Map.of("summary", "order"))
                 .build();
+        var serDes = new JacksonSerDes().then(stage);
         var runner = new SerDesRunner(null);
 
         var envelope = runner.serialize(serDes, Map.of("secret", "value"), context());
@@ -220,24 +203,25 @@ class FileSystemSerDesTest {
                 "{\"secret\":\"value\"}",
                 Files.readString(Path.of(json.get("file").textValue())));
 
-        var oversizedPreview = FileSystemSerDes.builder(basePath)
+        var oversizedPreviewStage = FileSystemSerDes.builder(basePath)
                 .previewGenerator(value -> Map.of("summary", "x".repeat(256 * 1024)))
                 .build();
+        var oversizedPreview = stringCodec().then(oversizedPreviewStage);
         var failure = assertThrows(SerDesException.class, () -> runner.serialize(oversizedPreview, "value", context()));
-        assertTrue(failure.getCause().getMessage().contains("checkpoint payload limit"));
+        assertCauseMessage(failure, "checkpoint payload limit");
     }
 
     @Test
     void acceptsExternallyOriginatedRawPayloadsOnlyForSupportedSources() {
-        var standalone = FileSystemSerDes.builder(basePath).build();
-        var stage = FileSystemSerDes.stageBuilder(basePath).build();
+        var stage = FileSystemSerDes.builder(basePath).build();
+        var filesystemPipeline = new JacksonSerDes().then(stage);
         var pipeline = new JacksonSerDes().then(wrappingStage()).then(stage);
         var runner = new SerDesRunner(null);
 
         assertEquals(
                 Map.of("id", 42),
                 runner.deserialize(
-                        standalone,
+                        filesystemPipeline,
                         "{\"id\":42}",
                         new TypeToken<Map<String, Integer>>() {},
                         executionContext(SerDesPayloadKind.INPUT)));
@@ -258,26 +242,26 @@ class FileSystemSerDesTest {
         assertEquals(
                 Map.of("domainMarker", 1, "data", "domain-value"),
                 runner.deserialize(
-                        standalone,
+                        filesystemPipeline,
                         "{\"domainMarker\":1,\"data\":\"domain-value\"}",
                         new TypeToken<Map<String, Object>>() {},
                         executionContext(SerDesPayloadKind.INPUT)));
         assertThrows(
                 SerDesException.class,
                 () -> runner.deserialize(
-                        standalone,
+                        filesystemPipeline,
                         "{\"__durable_execution_filesystem_serdes\":1,\"data\":\"domain-value\"}",
                         new TypeToken<Map<String, Object>>() {},
                         executionContext(SerDesPayloadKind.INPUT)));
 
         assertThrows(
                 SerDesException.class,
-                () -> runner.deserialize(stage, "\"raw-step\"", TypeToken.get(String.class), context()));
+                () -> runner.deserialize(filesystemPipeline, "\"raw-step\"", TypeToken.get(String.class), context()));
     }
 
     @Test
     void rejectsUnsupportedEnvelopeVersionsAtExternalBoundaries() {
-        var serDes = FileSystemSerDes.builder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var futureEnvelope = "{\"__durable_execution_filesystem_serdes\":2,"
                 + "\"ownerDurableExecutionArn\":\""
                 + ARN
@@ -290,7 +274,7 @@ class FileSystemSerDesTest {
                         TypeToken.get(String.class),
                         executionContext(SerDesPayloadKind.INPUT)));
 
-        assertTrue(failure.getCause().getMessage().contains("Unsupported filesystem SerDes envelope version 2"));
+        assertCauseMessage(failure, "Unsupported filesystem SerDes envelope version 2");
     }
 
     @Test
@@ -302,7 +286,7 @@ class FileSystemSerDesTest {
 
         assertThrows(SerDesException.class, () -> new SerDesRunner(null)
                 .deserialize(
-                        FileSystemSerDes.stageBuilder(basePath).build(),
+                        stringCodec().then(FileSystemSerDes.builder(basePath).build()),
                         envelope,
                         TypeToken.get(String.class),
                         context()));
@@ -310,7 +294,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsOutOfRangeEnvelopeVersionsWithoutTruncation() {
-        var serDes = FileSystemSerDes.builder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var oversizedVersion = "{\"__durable_execution_filesystem_serdes\":4294967297,"
                 + "\"ownerDurableExecutionArn\":\""
                 + ARN
@@ -323,13 +307,12 @@ class FileSystemSerDesTest {
                         TypeToken.get(String.class),
                         executionContext(SerDesPayloadKind.INPUT)));
 
-        assertTrue(
-                failure.getCause().getMessage().contains("Unsupported filesystem SerDes envelope version 4294967297"));
+        assertCauseMessage(failure, "Unsupported filesystem SerDes envelope version 4294967297");
     }
 
     @Test
     void overflowFilesystemStageMustRemainTerminal() {
-        var filesystem = FileSystemSerDes.stageBuilder(basePath)
+        var filesystem = FileSystemSerDes.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
 
@@ -342,8 +325,7 @@ class FileSystemSerDesTest {
 
     @Test
     void fileReferencesCrossInvokeInputAndResultBoundaries() {
-        var serDes =
-                new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
+        var serDes = new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
         var runner = new SerDesRunner(null);
         var callerArn =
                 "arn:aws:lambda:us-east-1:123456789012:function:caller:1/durable-execution/caller-execution/caller-invocation";
@@ -387,8 +369,9 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsCallsWithoutContextAndMalformedOrUnsafeEnvelopes() throws Exception {
-        var serDes = FileSystemSerDes.builder(basePath).build();
-        assertThrows(SerDesException.class, () -> serDes.serialize("value"));
+        var stage = FileSystemSerDes.builder(basePath).build();
+        var serDes = stringCodec().then(stage);
+        assertThrows(SerDesException.class, () -> stage.serialize("value"));
 
         var runner = new SerDesRunner(null);
         assertThrows(
@@ -409,7 +392,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsCrossEntityAndSymbolicLinkReferences() throws Exception {
-        var serDes = FileSystemSerDes.stageBuilder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var envelope = new SerDesRunner(null).serialize(serDes, "payload", context());
 
         var otherEntity = SerDesContext.forOperation(
@@ -431,7 +414,7 @@ class FileSystemSerDesTest {
     void rejectsSymbolicLinkDirectoriesWhenWriting() throws Exception {
         var outside = Files.createTempDirectory(basePath.getParent(), "outside-payloads-");
         Files.createSymbolicLink(basePath.resolve("orders"), outside);
-        var serDes = FileSystemSerDes.stageBuilder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
 
         assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(serDes, "payload", context()));
         try (var files = Files.list(outside)) {
@@ -445,14 +428,15 @@ class FileSystemSerDesTest {
         var linkedRoot = basePath.resolve("linked-root");
         Files.createSymbolicLink(linkedRoot, outsideRoot);
 
-        var rootSerDes = FileSystemSerDes.stageBuilder(linkedRoot).build();
+        var rootSerDes = stringCodec().then(FileSystemSerDes.builder(linkedRoot).build());
         assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(rootSerDes, "payload", context()));
 
         var outsideAncestor = Files.createTempDirectory(basePath.getParent(), "outside-ancestor-");
         var linkedAncestor = basePath.resolve("linked-ancestor");
         Files.createSymbolicLink(linkedAncestor, outsideAncestor);
-        var nestedSerDes = FileSystemSerDes.stageBuilder(linkedAncestor.resolve("payloads"))
-                .build();
+        var nestedSerDes = stringCodec()
+                .then(FileSystemSerDes.builder(linkedAncestor.resolve("payloads"))
+                        .build());
 
         assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(nestedSerDes, "payload", context()));
         assertFalse(Files.exists(outsideAncestor.resolve("payloads")));
@@ -460,7 +444,7 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsExecutionPathsOutsideConfiguredBasePath() {
-        var serDes = FileSystemSerDes.builder(basePath).build();
+        var serDes = stringCodec().then(FileSystemSerDes.builder(basePath).build());
         var unsafeContext = SerDesContext.forOperation(
                 "arn:aws:lambda:us-east-1:123456789012:function:..:1/durable-execution/../..",
                 "1",
@@ -472,6 +456,33 @@ class FileSystemSerDesTest {
                 1);
 
         assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(serDes, "value", unsafeContext));
+    }
+
+    private static SerDes stringCodec() {
+        return new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return (String) value;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                if (!TypeToken.get(String.class).equals(typeToken)) {
+                    throw new SerDesException("String codec cannot deserialize " + typeToken);
+                }
+                return (T) data;
+            }
+        };
+    }
+
+    private static void assertCauseMessage(Throwable failure, String expected) {
+        var current = failure;
+        while (current != null
+                && (current.getMessage() == null || !current.getMessage().contains(expected))) {
+            current = current.getCause();
+        }
+        assertNotNull(current, "Expected exception chain to contain: " + expected);
     }
 
     private static String envelopeWithFile(String file) {

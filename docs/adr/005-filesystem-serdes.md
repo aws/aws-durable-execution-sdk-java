@@ -79,8 +79,8 @@ filesystem storage without unsafe heterogeneous top-level stages. A `ComposableB
 compression, encryption, and similar byte processing internally and encodes the result once at its string boundary.
 
 `FileSystemSerDes` acts as a terminal payload-storage stage. It writes the string produced by the previous stage to
-the filesystem when configured to do so and returns a small checkpoint envelope. For standalone compatibility, it may
-still be constructed with a value-encoding delegate; pipeline configuration is the preferred composition model.
+the filesystem when configured to do so and returns a small checkpoint envelope. It is only a `SerDesStage`; a value
+codec must precede it in a `ComposableSerDes`.
 
 Because the existing `SerDes` methods do not accept context parameters, this approach needs a thread-local
 `SerDesContext` so `FileSystemSerDes` can discover the current payload identity without changing the
@@ -123,7 +123,7 @@ import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.FileSystemStorageMode;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
-var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
+var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemStorageMode.ALWAYS)
         .pathEncoding(FileSystemPathEncoding.URI)
         .previewGenerator(optionalPreviewGenerator)
@@ -225,9 +225,9 @@ Pipeline rules:
 - Every top-level stage consumes and produces a non-null `String`. This makes all stage orderings type-compatible.
 - `SerDes.requiresDurableContext()` remains a root capability because the SDK and test runners must validate the
   configured SerDes before an initial durable context exists. `ComposableSerDes` aggregates this capability from its
-  value codec and stages, and decorators delegate it.
-- `SerDes.isValueCodecOnly()` remains a root/decorator capability so input validation and nested-pipeline validation
-  can identify a `ComposableSerDes` even when it is wrapped by `RetrySerDes`.
+  value codec and stages.
+- The test runners identify a configured input pipeline directly as `ComposableSerDes`; no generic value-codec-only
+  capability is needed because stage decorators cannot wrap the root SerDes.
 - Terminality belongs only to `SerDesStage`. A terminal stage must be last so later transformations cannot invalidate
   its checkpoint-size or storage decision.
 - `SerDes.then(...)`, `ComposableSerDes.then(...)`, and the builder accept only `SerDesStage` after the value codec.
@@ -331,8 +331,8 @@ conversion only at its two outer boundaries; binary stages pass bytes directly t
 ### Retryable SerDes stages
 
 Transient failures are explicit. `RetryableSerDesException` extends `SerDesException` and marks a failure that may
-succeed when attempted again. `RetrySerDes` implements both `SerDes` and `SerDesStage`, decorates another SerDes
-instance, and applies an existing `RetryStrategy`:
+succeed when attempted again. `RetrySerDes` implements `SerDesStage`, decorates another `SerDesStage`, and applies an
+existing `RetryStrategy`:
 
 ```java
 var resilientFileSystemStage = new RetrySerDes(
@@ -359,13 +359,13 @@ Retry rules:
   checkpoint. Strategies must therefore use short, bounded delays that fit within the Lambda invocation timeout.
 - If the invocation is interrupted or times out, replay may execute the SerDes pipeline again. Any stage with side
   effects must use stable addressing and idempotent writes.
-- `RetrySerDes` can wrap an individual component that implements both `SerDes` and `SerDesStage`, such as
-  `FileSystemSerDes`, or the complete pipeline. Wrapping the smallest transient component avoids repeating
-  deterministic encoding, compression, or encryption work.
+- `RetrySerDes` wraps an individual `SerDesStage`, such as `FileSystemSerDes`. It cannot wrap the value codec or the
+  complete pipeline. Retrying only the transient component avoids repeating deterministic encoding, compression, or
+  encryption work.
 - Pipeline error decoration must preserve retryability: a stage-level `RetryableSerDesException` must remain that type,
   with stage metadata added to its message or cause, so an enclosing `RetrySerDes` can recognize it.
 - Filesystem read and write `IOException`s are retryable. Malformed envelopes, invalid paths, unsupported types, and
-  delegate encoding errors are permanent.
+  stage transformation errors are permanent.
 
 Storage modes:
 
@@ -390,17 +390,17 @@ Envelope format:
 ```
 
 `FileSystemSerDes` must reject calls when `SerDesContext.getCurrentContext()` is `null` or does not include
-`durableExecutionArn` and `entityId`. In pipeline mode it accepts a `String`, records the payload type in the envelope,
-and restores that string during reverse processing. A preceding `ComposableBinarySerDesStage` must encode its final
-bytes to a string before filesystem storage. Standalone mode continues to use its configured string value codec.
+`durableExecutionArn` and `entityId`. It accepts a `String`, records the payload type in the envelope, and restores that
+string during reverse processing. A preceding `ComposableBinarySerDesStage` must encode its final bytes to a string
+before filesystem storage.
 
 The marker and version distinguish filesystem envelopes from raw service-originated JSON. Initial root input, callback
-results, and standard Lambda invoke results may arrive before this SerDes has processed them. For those external
-payload sources only, an input without the filesystem marker is decoded directly with the pipeline value codec or
-standalone delegate. Skipping every intermediate stage is required because raw external data has not been compressed,
-encrypted, or otherwise transformed by those stages. Missing or malformed markers on SDK-checkpointed payloads are
-permanent errors. The marker name is reserved: malformed marked envelopes and unsupported envelope versions are
-rejected at external boundaries rather than being treated as raw user data.
+results, and standard Lambda invoke results may arrive before this stage has processed them. For those external
+payload sources only, an input without the filesystem marker is decoded directly with the pipeline value codec.
+Skipping every intermediate stage is required because raw external data has not been compressed, encrypted, or
+otherwise transformed by those stages. Missing or malformed markers on SDK-checkpointed payloads are permanent errors.
+The marker name is reserved: malformed marked envelopes and unsupported envelope versions are rejected at external
+boundaries rather than being treated as raw user data.
 
 Offloaded filenames include a content hash and are immutable. Serializing new state for the same entity creates a new
 path instead of replacing a file referenced by an earlier checkpoint. Repeating the same serialization may reuse the
@@ -416,13 +416,12 @@ must be protected with the same care as the payload it references.
 The final file envelope, including any preview, must remain below the checkpoint threshold. Oversized previews are
 rejected rather than producing a checkpoint that the service cannot accept.
 
-`FileSystemSerDes` declares itself terminal in every mode. This makes its overflow decision apply to the final
-checkpoint representation and prevents a later encoding or other expanding stage from pushing an inline envelope over
-the service limit.
+`FileSystemSerDes` declares itself terminal. This makes its overflow decision apply to the final checkpoint
+representation and prevents a later encoding or other expanding stage from pushing an inline envelope over the
+service limit.
 
-In stage mode, the preview generator receives the `String` produced by the preceding stage, not the original domain
-object. A preview that needs domain fields should either parse that representation, be produced by an earlier stage,
-or use standalone compatibility mode where `FileSystemSerDes` receives the original value.
+The preview generator receives the `String` produced by the preceding stage, not the original domain object. A preview
+that needs domain fields should parse that representation or be produced by an earlier stage.
 
 ### Runtime flow
 
@@ -443,9 +442,8 @@ try {
 
 On deserialization, `FileSystemSerDes` parses its envelope. If the envelope contains `data`, it restores the inline
 text. If the envelope contains `file`, it reads the stored string. `ComposableSerDes` then passes that value to the
-preceding string stage. In standalone compatibility mode, `FileSystemSerDes` passes the resolved string to its
-configured value-encoding delegate. Raw external input, callback results, and standard invoke results skip all
-intermediate stages and go directly to the value codec when no versioned filesystem marker is present.
+preceding string stage. Raw external input, callback results, and standard invoke results skip all intermediate stages
+and go directly to the value codec when no versioned filesystem marker is present.
 
 ### Threading
 
@@ -567,10 +565,10 @@ must not synthesize a durable context and serialize initial input through the fu
 8. Add bounded, invocation-scoped deserialization caching keyed by SerDes identity, entity, payload kind, type, and
    serialized data hash.
 9. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
-10. Implement `FileSystemSerDes` in the core `software.amazon.lambda.durable.serde` package with standalone compatibility and
-   string terminal-stage modes, `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file
-   writes where supported by the filesystem, retryable I/O failures, and clear validation errors for missing context or
-   invalid stage input.
+10. Implement `FileSystemSerDes` in the core `software.amazon.lambda.durable.serde` package as a string terminal stage
+    with `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file writes where
+    supported by the filesystem, retryable I/O failures, and clear validation errors for missing context or invalid
+    stage input.
 11. Add unit tests for string and binary pipeline ordering, custom boundary codecs, reverse processing, nulls, stage
     failures, retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and
     restoration, inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception

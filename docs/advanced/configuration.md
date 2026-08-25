@@ -56,7 +56,7 @@ and uses a bounded weak-reference cache for successful deserialization results d
 The core SDK provides a reversible terminal stage for storing serialized strings on a shared filesystem:
 
 ```java
-var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
+var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.OVERFLOW)
     .pathEncoding(FileSystemPathEncoding.HASH)
     .previewGenerator(json -> Map.of("format", "json"))

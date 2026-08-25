@@ -49,15 +49,6 @@ public interface SerDes {
     }
 
     /**
-     * Returns whether this SerDes performs only value-codec processing without additional composable pipeline stages.
-     *
-     * <p>SerDes decorators should delegate this capability to their wrapped SerDes.
-     */
-    default boolean isValueCodecOnly() {
-        return true;
-    }
-
-    /**
      * Returns an immutable processing pipeline with a string stage appended.
      *
      * @param nextStage the reversible string stage to append

@@ -21,20 +21,16 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 /**
- * A SerDes and terminal string stage that stores payloads on a durable shared filesystem.
- *
- * <p>Use {@link #stageBuilder(Path)} when composing this implementation after a value codec. The compatibility
- * {@link #builder(Path)} form includes its own value codec and can be used as a standalone SerDes.
+ * A terminal string stage that stores payloads on a durable shared filesystem.
  *
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. Use a durable shared mount such as EFS, or S3 Files only when
  * its synchronization and crash-durability tradeoffs are acceptable for the workload.
  */
-public final class FileSystemSerDes implements SerDes, SerDesStage {
+public final class FileSystemSerDes implements SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
@@ -46,50 +42,35 @@ public final class FileSystemSerDes implements SerDes, SerDesStage {
     private final Path basePath;
     private final FileSystemStorageMode storageMode;
     private final FileSystemPathEncoding pathEncoding;
-    private final SerDes delegate;
-    private final Function<Object, Map<String, Object>> previewGenerator;
-    private final boolean stageMode;
+    private final Function<String, Map<String, Object>> previewGenerator;
     private volatile Path canonicalBasePath;
 
     private FileSystemSerDes(Builder builder) {
         basePath = builder.basePath.toAbsolutePath().normalize();
         storageMode = builder.storageMode;
         pathEncoding = builder.pathEncoding;
-        delegate = builder.delegate;
         previewGenerator = builder.previewGenerator;
-        stageMode = builder.stageMode;
     }
 
     /**
-     * Creates a standalone filesystem SerDes builder with {@link JacksonSerDes} as its default value codec.
+     * Creates a filesystem terminal-stage builder for use after a value codec in a composable SerDes pipeline.
      *
-     * @param basePath durable shared filesystem root
-     * @return a standalone builder
-     */
-    public static Builder builder(Path basePath) {
-        return new Builder(basePath, false);
-    }
-
-    /**
-     * Creates a filesystem terminal-stage builder for use in a composable SerDes pipeline.
-     *
-     * <p>Stage mode accepts strings. Use {@link ComposableBinarySerDesStage} before this stage when binary
-     * transformations are required.
+     * <p>Use {@link ComposableBinarySerDesStage} before this stage when binary transformations are required.
      *
      * @param basePath durable shared filesystem root
      * @return a terminal-stage builder
      */
-    public static Builder stageBuilder(Path basePath) {
-        return new Builder(basePath, true);
+    public static Builder builder(Path basePath) {
+        return new Builder(basePath);
     }
 
     @Override
-    public String serialize(Object value) {
+    public String serialize(String value) {
         if (value == null) {
             return null;
         }
         var context = requireContext();
-        var payload = serializeValue(value);
+        var payload = SerializedPayload.fromString(value);
         if (storageMode == FileSystemStorageMode.OVERFLOW) {
             var inlineEnvelope = encodeEnvelope(payload, null, null, context);
             if (fitsCheckpoint(inlineEnvelope)) {
@@ -115,39 +96,16 @@ public final class FileSystemSerDes implements SerDes, SerDesStage {
     }
 
     @Override
-    public String serialize(String value) {
-        return serialize((Object) value);
-    }
-
-    @Override
-    public <T> T deserialize(String data, TypeToken<T> typeToken) {
+    public String deserialize(String data) {
         if (data == null) {
             return null;
         }
-        Objects.requireNonNull(typeToken, "typeToken cannot be null");
         var context = requireContext();
-        var serialized = resolveSerializedPayload(data, context).value();
-        if (stageMode) {
-            if (TypeToken.get(String.class).equals(typeToken)) {
-                @SuppressWarnings("unchecked")
-                var value = (T) serialized;
-                return value;
-            }
-            throw new SerDesException("FileSystemSerDes stage payload type does not match requested type " + typeToken);
-        }
-        return delegate.deserialize(serialized, typeToken);
-    }
-
-    @Override
-    public String deserialize(String data) {
-        return deserialize(data, TypeToken.get(String.class));
+        return resolveSerializedPayload(data, context).value();
     }
 
     @Override
     public SerDesStageResult deserializePipelineStage(String data) {
-        if (!stageMode) {
-            return SerDesStage.super.deserializePipelineStage(data);
-        }
         var context = requireContext();
         var resolved = resolveSerializedPayload(data, context);
         return resolved.external()
@@ -163,21 +121,6 @@ public final class FileSystemSerDes implements SerDes, SerDesStage {
     @Override
     public boolean isTerminalPipelineStage() {
         return true;
-    }
-
-    private SerializedPayload serializeValue(Object value) {
-        if (stageMode) {
-            if (value instanceof String stringValue) {
-                return SerializedPayload.fromString(stringValue);
-            }
-            throw new SerDesException("FileSystemSerDes stage supports String values, but received "
-                    + value.getClass().getName());
-        }
-        var serialized = delegate.serialize(value);
-        if (serialized == null) {
-            throw new SerDesException("Delegate SerDes returned null for a non-null value");
-        }
-        return SerializedPayload.fromString(serialized);
     }
 
     private ResolvedPayload resolveSerializedPayload(String data, SerDesContext context) {
@@ -405,7 +348,7 @@ public final class FileSystemSerDes implements SerDes, SerDesStage {
         }
     }
 
-    private Map<String, Object> generatePreview(Object value, SerDesContext context) {
+    private Map<String, Object> generatePreview(String value, SerDesContext context) {
         if (previewGenerator == null) {
             return null;
         }
@@ -646,16 +589,12 @@ public final class FileSystemSerDes implements SerDes, SerDesStage {
     /** Builder for {@link FileSystemSerDes}. */
     public static final class Builder {
         private final Path basePath;
-        private final boolean stageMode;
         private FileSystemStorageMode storageMode = FileSystemStorageMode.ALWAYS;
         private FileSystemPathEncoding pathEncoding = FileSystemPathEncoding.URI;
-        private SerDes delegate;
-        private Function<Object, Map<String, Object>> previewGenerator;
+        private Function<String, Map<String, Object>> previewGenerator;
 
-        private Builder(Path basePath, boolean stageMode) {
+        private Builder(Path basePath) {
             this.basePath = Objects.requireNonNull(basePath, "basePath cannot be null");
-            this.stageMode = stageMode;
-            this.delegate = stageMode ? null : new JacksonSerDes();
         }
 
         public Builder storageMode(FileSystemStorageMode storageMode) {
@@ -668,20 +607,7 @@ public final class FileSystemSerDes implements SerDes, SerDesStage {
             return this;
         }
 
-        /**
-         * Sets the value codec used by standalone mode.
-         *
-         * @throws IllegalStateException when called on a stage builder
-         */
-        public Builder delegate(SerDes delegate) {
-            if (stageMode) {
-                throw new IllegalStateException("FileSystemSerDes stage mode does not use a delegate");
-            }
-            this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
-            return this;
-        }
-
-        public Builder previewGenerator(Function<Object, Map<String, Object>> previewGenerator) {
+        public Builder previewGenerator(Function<String, Map<String, Object>> previewGenerator) {
             this.previewGenerator = Objects.requireNonNull(previewGenerator, "previewGenerator cannot be null");
             return this;
         }

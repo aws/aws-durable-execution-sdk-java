@@ -15,10 +15,10 @@ envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-
 
 ## Pipeline configuration
 
-The preferred configuration uses `FileSystemSerDes` as a reversible terminal `SerDesStage` after a value codec:
+`FileSystemSerDes` is a reversible terminal `SerDesStage` and must be configured after a value codec:
 
 ```java
-var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
+var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
     .storageMode(FileSystemStorageMode.ALWAYS)
     .pathEncoding(FileSystemPathEncoding.URI)
     .previewGenerator(json -> Map.of("format", "json"))
@@ -60,9 +60,6 @@ complete compression/encryption chain.
 
 The preview generator receives the incoming stage string. Its output is included only in file envelopes and the final
 envelope must remain below the checkpoint threshold.
-
-For compatibility, `FileSystemSerDes.builder(path)` creates a standalone SerDes with `JacksonSerDes` as its default
-value codec. A custom standalone codec can be supplied with `.delegate(...)`.
 
 ## Execution and retries
 

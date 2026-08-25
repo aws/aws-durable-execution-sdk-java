@@ -19,13 +19,11 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.serde.Base64StringBinaryCodec;
 import software.amazon.lambda.durable.serde.BinarySerDes;
 import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.RetrySerDes;
 import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 
@@ -154,7 +152,7 @@ class LocalDurableTestRunnerTest {
     void contextDependentPersistedSerDesRequiresExplicitInputSerDes(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()
-                        .then(FileSystemSerDes.stageBuilder(basePath).build()))
+                        .then(FileSystemSerDes.builder(basePath).build()))
                 .build();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config);
 
@@ -167,26 +165,10 @@ class LocalDurableTestRunnerTest {
     void contextDependentPersistedSerDesRequiresValueCodecInput(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()
-                        .then(FileSystemSerDes.stageBuilder(basePath).build()))
+                        .then(FileSystemSerDes.builder(basePath).build()))
                 .build();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
                 .withInputSerDes(new JacksonSerDes().then(wrappingStage(new AtomicInteger())));
-
-        var failure = assertThrows(IllegalStateException.class, () -> runner.run("value"));
-
-        assertTrue(failure.getMessage().contains("must use a value codec"));
-    }
-
-    @Test
-    void contextDependentPersistedSerDesRejectsRetryWrappedComposableInput(@TempDir Path basePath) {
-        var config = DurableConfig.builder()
-                .withSerDes(new JacksonSerDes()
-                        .then(FileSystemSerDes.stageBuilder(basePath).build()))
-                .build();
-        var inputSerDes = new RetrySerDes(
-                new JacksonSerDes().then(wrappingStage(new AtomicInteger())), RetryStrategies.Presets.NO_RETRY);
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
-                .withInputSerDes(inputSerDes);
 
         var failure = assertThrows(IllegalStateException.class, () -> runner.run("value"));
 
@@ -198,7 +180,7 @@ class LocalDurableTestRunnerTest {
         var deserializeCalls = new AtomicInteger();
         var persistedSerDes = new JacksonSerDes()
                 .then(bytesStage(deserializeCalls))
-                .then(FileSystemSerDes.stageBuilder(basePath).build());
+                .then(FileSystemSerDes.builder(basePath).build());
         var config = DurableConfig.builder().withSerDes(persistedSerDes).build();
         var runner = LocalDurableTestRunner.create(
                         String.class, (input, context) -> input + ":" + deserializeCalls.get(), config)

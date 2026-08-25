@@ -15,10 +15,8 @@ import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.awssdk.services.lambda.model.InvokeResponse;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.RetrySerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
@@ -128,22 +126,6 @@ class CloudDurableTestRunnerTest {
     }
 
     @Test
-    void contextDependentPersistedSerDesRejectsRetryWrappedComposableInput() {
-        var mockClient = mock(LambdaClient.class);
-        var inputSerDes = new RetrySerDes(new JacksonSerDes().then(wrappingStage()), RetryStrategies.Presets.NO_RETRY);
-        var runner = CloudDurableTestRunner.create(
-                        "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
-                .withSerDes(new JacksonSerDes().then(contextDependentStage()))
-                .withInputSerDes(inputSerDes);
-
-        var failure = assertThrows(RuntimeException.class, () -> runner.startAsync("value"));
-
-        assertInstanceOf(IllegalStateException.class, failure.getCause());
-        assertTrue(failure.getCause().getMessage().contains("must use a value codec"));
-        verifyNoInteractions(mockClient);
-    }
-
-    @Test
     void valueCodecInputRoundTripsThroughFileSystemPipeline(@TempDir Path basePath) {
         var mockClient = mock(LambdaClient.class);
         var executionArn = "arn:aws:lambda:us-east-2:123:function:test:1/durable-execution/e/i";
@@ -152,7 +134,7 @@ class CloudDurableTestRunnerTest {
                         .durableExecutionArn(executionArn)
                         .build());
         var persistedSerDes =
-                new JacksonSerDes().then(FileSystemSerDes.stageBuilder(basePath).build());
+                new JacksonSerDes().then(FileSystemSerDes.builder(basePath).build());
         var runner = CloudDurableTestRunner.create(
                         "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
                 .withSerDes(persistedSerDes)
