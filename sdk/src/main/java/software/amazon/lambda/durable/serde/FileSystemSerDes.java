@@ -25,7 +25,7 @@ import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 /**
- * A terminal string stage that stores payloads on a durable shared filesystem.
+ * A string stage that stores payloads on a durable shared filesystem.
  *
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. Use a durable shared mount such as EFS, or S3 Files only when
  * its synchronization and crash-durability tradeoffs are acceptable for the workload.
@@ -53,12 +53,12 @@ public final class FileSystemSerDes implements SerDesStage {
     }
 
     /**
-     * Creates a filesystem terminal-stage builder for use after a value codec in a composable SerDes pipeline.
+     * Creates a filesystem stage builder for use after a value codec in a composable SerDes pipeline.
      *
      * <p>Use {@link ComposableBinarySerDesStage} before this stage when binary transformations are required.
      *
      * @param basePath durable shared filesystem root
-     * @return a terminal-stage builder
+     * @return a filesystem stage builder
      */
     public static Builder builder(Path basePath) {
         return new Builder(basePath);
@@ -115,11 +115,6 @@ public final class FileSystemSerDes implements SerDesStage {
 
     @Override
     public boolean requiresDurableContext() {
-        return true;
-    }
-
-    @Override
-    public boolean isTerminalPipelineStage() {
         return true;
     }
 

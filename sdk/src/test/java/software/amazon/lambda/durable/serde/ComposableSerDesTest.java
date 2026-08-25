@@ -175,33 +175,6 @@ class ComposableSerDesTest {
     }
 
     @Test
-    void rejectsStagesAfterTerminalStage() {
-        var terminal = new SerDesStage() {
-            @Override
-            public String serialize(String value) {
-                return value;
-            }
-
-            @Override
-            public String deserialize(String data) {
-                return data;
-            }
-
-            @Override
-            public boolean isTerminalPipelineStage() {
-                return true;
-            }
-        };
-
-        var failure = assertThrows(
-                IllegalArgumentException.class,
-                () -> new JacksonSerDes().then(terminal).then(stringStage("late", "", "", new ArrayList<>())));
-
-        assertTrue(failure.getMessage().contains("stage 1"));
-        assertTrue(failure.getMessage().contains("final stage"));
-    }
-
-    @Test
     void rejectsNullIntermediateValues() {
         var nullStage = new SerDesStage() {
             @Override

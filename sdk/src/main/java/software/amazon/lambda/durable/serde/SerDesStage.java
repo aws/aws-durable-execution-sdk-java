@@ -44,9 +44,4 @@ public interface SerDesStage {
     default boolean requiresDurableContext() {
         return false;
     }
-
-    /** Returns whether this stage must be the final stage in a composable pipeline. */
-    default boolean isTerminalPipelineStage() {
-        return false;
-    }
 }

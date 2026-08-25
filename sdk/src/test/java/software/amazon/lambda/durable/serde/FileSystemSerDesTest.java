@@ -57,14 +57,18 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void isAContextDependentTerminalStage() {
+    void isAContextDependentStageThatCanBeFollowedByOtherStages() {
         var stage = FileSystemSerDes.builder(basePath).build();
-        var pipeline = new JacksonSerDes().then(stage);
+        var pipeline = new JacksonSerDes().then(stage).then(wrappingStage());
+        var runner = new SerDesRunner(null);
 
         assertFalse(SerDes.class.isAssignableFrom(FileSystemSerDes.class));
         assertTrue(stage.requiresDurableContext());
-        assertTrue(stage.isTerminalPipelineStage());
-        assertThrows(IllegalArgumentException.class, () -> pipeline.then(wrappingStage()));
+        var checkpoint = runner.serialize(pipeline, Map.of("id", 42), context());
+        assertTrue(checkpoint.startsWith("<"));
+        assertEquals(
+                Map.of("id", 42),
+                runner.deserialize(pipeline, checkpoint, new TypeToken<Map<String, Integer>>() {}, context()));
     }
 
     @Test
@@ -311,16 +315,17 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void overflowFilesystemStageMustRemainTerminal() {
+    void overflowFilesystemStageCanBeFollowedByAnotherStage() {
         var filesystem = FileSystemSerDes.builder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
+        var pipeline = stringCodec().then(filesystem).then(wrappingStage());
+        var runner = new SerDesRunner(null);
 
-        var failure = assertThrows(
-                IllegalArgumentException.class,
-                () -> new JacksonSerDes().then(filesystem).then(wrappingStage()));
+        var checkpoint = runner.serialize(pipeline, "small", context());
 
-        assertTrue(failure.getMessage().contains("final stage"));
+        assertTrue(checkpoint.startsWith("<"));
+        assertEquals("small", runner.deserialize(pipeline, checkpoint, TypeToken.get(String.class), context()));
     }
 
     @Test

@@ -79,7 +79,7 @@ class RetrySerDesTest {
     }
 
     @Test
-    void retriesPipelineStageDeserializationAndDelegatesCapabilities() {
+    void retriesPipelineStageDeserializationAndDelegatesContextCapability() {
         var calls = new AtomicInteger();
         class RetryableStage implements SerDesStage {
             @Override
@@ -104,11 +104,6 @@ class RetrySerDesTest {
             public boolean requiresDurableContext() {
                 return true;
             }
-
-            @Override
-            public boolean isTerminalPipelineStage() {
-                return true;
-            }
         }
         var delegate = new RetryableStage();
         var retrySerDes =
@@ -120,7 +115,6 @@ class RetrySerDesTest {
         assertTrue(result.skipRemainingStages());
         assertEquals(2, calls.get());
         assertTrue(retrySerDes.requiresDurableContext());
-        assertTrue(retrySerDes.isTerminalPipelineStage());
     }
 
     @Test

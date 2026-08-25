@@ -15,7 +15,7 @@ envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-
 
 ## Pipeline configuration
 
-`FileSystemSerDes` is a reversible terminal `SerDesStage` and must be configured after a value codec:
+`FileSystemSerDes` is a reversible `SerDesStage` that must be configured after a value codec:
 
 ```java
 var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
@@ -37,7 +37,8 @@ var binaryStage = ComposableBinarySerDesStage.builder()
 
 var serDes = new JacksonSerDes()
     .then(binaryStage)
-    .then(resilientFileSystemStage);
+    .then(resilientFileSystemStage)
+    .then(checkpointEnvelopeStage);
 var serDesExecutor = Executors.newFixedThreadPool(4);
 
 return DurableConfig.builder()
@@ -86,8 +87,11 @@ owner, while invoke input and result boundaries may consume a file owned by the 
 functions use the same shared root and path encoding. Treat file envelopes as capabilities. Content hashes are
 verified when reading, and symbolic-link paths are rejected.
 
-`FileSystemSerDes` must be the final stage in a pipeline. Its overflow decision is therefore made against the final
-checkpoint representation; a later expanding transform cannot push an inline envelope over the service limit.
+Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. The filesystem stage's
+`OVERFLOW` and preview-size checks apply before those later transformations, so account for any expansion when staying
+within the service checkpoint limit. During deserialization of a raw external payload, later stages run before
+`FileSystemSerDes` can identify the external boundary; those stages must tolerate or explicitly bypass payloads that
+have not passed through the pipeline.
 
 The cloud and local test runners cannot use `FileSystemSerDes` for the initial Lambda invocation because an execution
 ARN is not available yet. Configure a separate context-free initial-input value codec with

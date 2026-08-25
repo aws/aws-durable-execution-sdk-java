@@ -21,16 +21,6 @@ public final class ComposableSerDes implements SerDes {
 
     private ComposableSerDes(SerDes valueCodec, List<SerDesStage> stages) {
         this.valueCodec = Objects.requireNonNull(valueCodec, "valueCodec cannot be null");
-        if (!stages.isEmpty()
-                && valueCodec instanceof SerDesStage valueCodecStage
-                && valueCodecStage.isTerminalPipelineStage()) {
-            throw terminalStageFailure(0, valueCodec);
-        }
-        for (int index = 0; index < stages.size() - 1; index++) {
-            if (isTerminal(stages.get(index))) {
-                throw terminalStageFailure(index + 1, stages.get(index));
-            }
-        }
         this.stages = List.copyOf(stages);
     }
 
@@ -169,18 +159,8 @@ public final class ComposableSerDes implements SerDes {
         return new SerDesException(message, failure);
     }
 
-    private static IllegalArgumentException terminalStageFailure(int index, Object stage) {
-        return new IllegalArgumentException(String.format(
-                "SerDes pipeline stage %d (%s) must be the final stage",
-                index, stage.getClass().getName()));
-    }
-
     private static boolean requiresContext(SerDesStage stage) {
         return stage.requiresDurableContext();
-    }
-
-    private static boolean isTerminal(SerDesStage stage) {
-        return stage.isTerminalPipelineStage();
     }
 
     /** Builder for an immutable {@link ComposableSerDes}. */

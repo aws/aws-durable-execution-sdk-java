@@ -53,7 +53,7 @@ and uses a bounded weak-reference cache for successful deserialization results d
 
 ### Filesystem-backed payload storage
 
-The core SDK provides a reversible terminal stage for storing serialized strings on a shared filesystem:
+The core SDK provides a reversible stage for storing serialized strings on a shared filesystem:
 
 ```java
 var fileSystemStage = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
@@ -75,7 +75,8 @@ var binaryStage = ComposableBinarySerDesStage.builder()
 
 var serDes = new JacksonSerDes()
     .then(binaryStage)
-    .then(resilientFileSystemStage);
+    .then(resilientFileSystemStage)
+    .then(checkpointEnvelopeStage);
 var serDesExecutor = Executors.newFixedThreadPool(4);
 
 return DurableConfig.builder()
@@ -110,8 +111,11 @@ If the persisted SerDes requires durable context, such as `FileSystemSerDes`, ca
 `withInputSerDes(...)` with a separate context-free input value codec because the durable execution ARN does not exist
 yet. In that case, the input SerDes must be a value codec rather than a composable pipeline because the external
 payload does not carry framing that identifies which stages ran.
-`FileSystemSerDes` must also be the final pipeline stage so its checkpoint-size decision cannot be invalidated by a
-later expanding transformation.
+
+Stages may follow `FileSystemSerDes` to transform its inline or file-reference envelope. `OVERFLOW` and preview-size
+checks apply to the filesystem stage's output; account for any expansion introduced by later stages when staying
+within the service checkpoint limit. At external payload boundaries, later stages run before `FileSystemSerDes` during
+deserialization, so they must tolerate or explicitly bypass raw payloads that have not passed through the pipeline.
 
 ### Dynamic plugin loading
 

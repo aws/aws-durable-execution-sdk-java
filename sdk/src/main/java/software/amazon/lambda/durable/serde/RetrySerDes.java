@@ -67,11 +67,6 @@ public final class RetrySerDes implements SerDesStage {
         return delegate.requiresDurableContext();
     }
 
-    @Override
-    public boolean isTerminalPipelineStage() {
-        return delegate.isTerminalPipelineStage();
-    }
-
     private <T> T execute(String action, Supplier<T> operation) {
         int attempt = 1;
         while (true) {
