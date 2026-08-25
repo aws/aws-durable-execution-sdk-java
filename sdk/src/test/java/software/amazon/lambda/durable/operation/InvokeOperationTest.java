@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -104,6 +105,29 @@ class InvokeOperationTest {
         assertEquals("errorMessage", ex.getMessage());
         assertInstanceOf(IllegalStateException.class, ex.deserializedError());
         assertEquals("errorMessage", ex.deserializedError().getMessage());
+    }
+
+    @Test
+    void getInvokeFailedExceptionWhenInvocationDetailsAreMissing() {
+        var op = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .status(OperationStatus.FAILED)
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
+
+        var operation = new InvokeOperation<>(
+                OPERATION_IDENTIFIER,
+                "test-function",
+                "{}",
+                TypeToken.get(String.class),
+                InvokeConfig.builder().serDes(new JacksonSerDes()).build(),
+                durableContext);
+        operation.onCheckpointComplete(op);
+
+        var exception = assertThrows(InvokeFailedException.class, operation::get);
+        assertNull(exception.getErrorObject());
+        assertNull(exception.deserializedError());
     }
 
     @Test

@@ -145,6 +145,7 @@ public class TestOperation {
                 .orElse(OperationSubType.STEP);
         var payloadKind =
                 subType == OperationSubType.WAIT_FOR_CONDITION ? SerDesPayloadKind.STATE : SerDesPayloadKind.RESULT;
+        var resultAttempt = resultAttempt(details, subType);
         return serDesRunner.deserialize(
                 serDes,
                 details.result(),
@@ -157,7 +158,18 @@ public class TestOperation {
                         operation.type(),
                         subType,
                         payloadKind,
-                        details.attempt()));
+                        resultAttempt));
+    }
+
+    private Integer resultAttempt(StepDetails details, OperationSubType subType) {
+        var attempt = details.attempt();
+        if (subType == OperationSubType.WAIT_FOR_CONDITION
+                && operation.status() == OperationStatus.FAILED
+                && attempt != null
+                && attempt > 1) {
+            return attempt - 1;
+        }
+        return attempt;
     }
 
     /** Returns the step error, or null if the step succeeded or this is not a step operation. */
