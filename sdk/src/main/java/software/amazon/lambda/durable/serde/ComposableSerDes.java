@@ -13,9 +13,8 @@ import software.amazon.lambda.durable.exception.SerDesException;
 /**
  * An immutable SerDes processing pipeline.
  *
- * <p>The first stage is the value codec. Later {@link SerDesStage} instances may exchange arbitrary intermediate Java
- * types. Serialization runs from first to last; deserialization runs from last to first. The final serialized value and
- * the value returned to the value codec during deserialization must be strings.
+ * <p>The first stage is the value codec. Every later stage consumes and produces a string. Serialization runs from
+ * first to last; deserialization runs from last to first.
  */
 public final class ComposableSerDes implements SerDes {
     private final SerDes valueCodec;
@@ -35,7 +34,7 @@ public final class ComposableSerDes implements SerDes {
     }
 
     /**
-     * Creates a pipeline with a value codec followed by zero or more typed stages.
+     * Creates a pipeline with a value codec followed by zero or more string stages.
      *
      * @param first the value codec
      * @param remaining reversible SerDes stages
@@ -88,9 +87,9 @@ public final class ComposableSerDes implements SerDes {
         return new ComposableSerDes(valueCodec, combined);
     }
 
-    /** Returns a new pipeline with the supplied typed stage appended. */
+    /** Returns a new pipeline with the supplied string stage appended. */
     @Override
-    public ComposableSerDes then(SerDesStage<?, ?> stage) {
+    public ComposableSerDes then(SerDesStage stage) {
         var combined = new ArrayList<>(stages);
         addFlattened(combined, Objects.requireNonNull(stage, "stage cannot be null"));
         return new ComposableSerDes(valueCodec, combined);
@@ -101,15 +100,11 @@ public final class ComposableSerDes implements SerDes {
         if (value == null) {
             return null;
         }
-        Object current = invokeValueCodecSerialize(valueCodec, value);
+        String current = invokeValueCodecSerialize(valueCodec, value);
         for (int index = 0; index < stages.size(); index++) {
             current = invokeStageSerialize(stages.get(index), current, index + 1);
         }
-        if (!(current instanceof String serialized)) {
-            throw new SerDesException(
-                    "SerDes pipeline final stage returned " + current.getClass().getName() + " instead of String");
-        }
-        return serialized;
+        return current;
     }
 
     @Override
@@ -118,7 +113,7 @@ public final class ComposableSerDes implements SerDes {
             return null;
         }
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
-        Object current = data;
+        String current = data;
         for (int index = stages.size() - 1; index >= 0; index--) {
             var decoded = invokeStageDeserialize(stages.get(index), current, index + 1);
             current = decoded.value();
@@ -126,20 +121,13 @@ public final class ComposableSerDes implements SerDes {
                 break;
             }
         }
-        if (!(current instanceof String valueCodecInput)) {
-            throw new SerDesException("SerDes pipeline produced "
-                    + current.getClass().getName()
-                    + " instead of String for the value codec");
-        }
-        return invokeValueCodecDeserialize(valueCodec, valueCodecInput, typeToken);
+        return invokeValueCodecDeserialize(valueCodec, current, typeToken);
     }
 
-    @SuppressWarnings("unchecked")
-    private static Object invokeStageSerialize(Object stage, Object value, int index) {
+    private static String invokeStageSerialize(Object stage, String value, int index) {
         try {
-            var result = stage instanceof SerDes serDes
-                    ? serDes.serialize(value)
-                    : ((SerDesStage<Object, Object>) stage).serialize(value);
+            var result =
+                    stage instanceof SerDes serDes ? serDes.serialize(value) : ((SerDesStage) stage).serialize(value);
             if (result == null) {
                 throw new SerDesException("Stage returned null for a non-null value");
             }
@@ -149,18 +137,13 @@ public final class ComposableSerDes implements SerDes {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static SerDesStageResult invokeStageDeserialize(Object stage, Object data, int index) {
+    private static SerDesStageResult invokeStageDeserialize(Object stage, String data, int index) {
         try {
             SerDesStageResult result;
             if (stage instanceof SerDes serDes) {
-                if (!(data instanceof String stringData)) {
-                    throw new SerDesException("SerDes stage requires String input but received "
-                            + data.getClass().getName());
-                }
-                result = serDes.deserializePipelineStage(stringData);
+                result = serDes.deserializePipelineStage(data);
             } else {
-                result = ((SerDesStage<Object, Object>) stage).deserializePipelineStage(data);
+                result = ((SerDesStage) stage).deserializePipelineStage(data);
             }
             if (result == null) {
                 throw new SerDesException("Stage returned a null pipeline result");
@@ -213,13 +196,13 @@ public final class ComposableSerDes implements SerDes {
     private static boolean requiresContext(Object stage) {
         return stage instanceof SerDes serDes
                 ? serDes.requiresDurableContext()
-                : ((SerDesStage<?, ?>) stage).requiresDurableContext();
+                : ((SerDesStage) stage).requiresDurableContext();
     }
 
     private static boolean isTerminal(Object stage) {
         return stage instanceof SerDes serDes
                 ? serDes.isTerminalPipelineStage()
-                : ((SerDesStage<?, ?>) stage).isTerminalPipelineStage();
+                : ((SerDesStage) stage).isTerminalPipelineStage();
     }
 
     private static void addFlattened(List<Object> target, SerDes stage) {
@@ -231,7 +214,7 @@ public final class ComposableSerDes implements SerDes {
         }
     }
 
-    private static void addFlattened(List<Object> target, SerDesStage<?, ?> stage) {
+    private static void addFlattened(List<Object> target, SerDesStage stage) {
         target.add(stage);
     }
 
@@ -248,14 +231,14 @@ public final class ComposableSerDes implements SerDes {
             }
         }
 
-        /** Appends a reversible typed stage. */
+        /** Appends a reversible SerDes stage. */
         public Builder then(SerDes stage) {
             addFlattened(stages, Objects.requireNonNull(stage, "stage cannot be null"));
             return this;
         }
 
-        /** Appends a reversible typed stage. */
-        public Builder then(SerDesStage<?, ?> stage) {
+        /** Appends a reversible string stage. */
+        public Builder then(SerDesStage stage) {
             addFlattened(stages, Objects.requireNonNull(stage, "stage cannot be null"));
             return this;
         }

@@ -3,31 +3,28 @@
 package software.amazon.lambda.durable.serde;
 
 /**
- * A reversible typed stage in a {@link ComposableSerDes} pipeline.
+ * A reversible string stage in a {@link ComposableSerDes} pipeline.
  *
- * <p>Serialization maps {@code I} to {@code O}; deserialization applies the inverse mapping. Intermediate stages may
- * use any Java types. The complete pipeline must still produce a {@link String} at its checkpoint boundary because that
- * is the persisted representation required by {@link SerDes}.
- *
- * @param <I> the stage input type during serialization
- * @param <O> the stage output type during serialization
+ * <p>Every top-level stage consumes and produces a string, so stages can be composed in any order without intermediate
+ * type mismatches. Use {@link ComposableBinarySerDesStage} to perform an efficient chain of binary transformations
+ * inside one string stage.
  */
-public interface SerDesStage<I, O> {
+public interface SerDesStage {
     /**
      * Applies this stage during forward serialization.
      *
-     * @param value the non-null input value
-     * @return the non-null transformed value
+     * @param value the non-null input string
+     * @return the non-null transformed string
      */
-    O serialize(I value);
+    String serialize(String value);
 
     /**
      * Reverses this stage during deserialization.
      *
-     * @param data the non-null serialized form produced by this stage
-     * @return the non-null value expected by the preceding stage
+     * @param data the non-null serialized string produced by this stage
+     * @return the non-null string expected by the preceding stage
      */
-    I deserialize(O data);
+    String deserialize(String data);
 
     /**
      * Reverses this stage with control over external-boundary processing.
@@ -39,7 +36,7 @@ public interface SerDesStage<I, O> {
      * @param data the non-null serialized form produced by this stage
      * @return the stage result
      */
-    default SerDesStageResult deserializePipelineStage(O data) {
+    default SerDesStageResult deserializePipelineStage(String data) {
         return SerDesStageResult.continueWith(deserialize(data));
     }
 

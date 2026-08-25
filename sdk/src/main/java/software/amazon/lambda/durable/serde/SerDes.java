@@ -9,7 +9,7 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * Interface for serialization and deserialization of objects at the persisted string boundary.
  *
  * <p>Implementations can also be used as string-producing stages in a {@link ComposableSerDes}. Use {@link SerDesStage}
- * for typed intermediate transformations that produce or consume non-string values.
+ * for transformations that consume and produce strings.
  */
 public interface SerDes {
     /**
@@ -87,12 +87,12 @@ public interface SerDes {
     }
 
     /**
-     * Returns an immutable processing pipeline with a typed intermediate stage appended.
+     * Returns an immutable processing pipeline with a string stage appended.
      *
-     * @param nextStage the reversible typed stage to append
+     * @param nextStage the reversible string stage to append
      * @return a composable SerDes pipeline
      */
-    default ComposableSerDes then(SerDesStage<?, ?> nextStage) {
+    default ComposableSerDes then(SerDesStage nextStage) {
         return ComposableSerDes.builder(this).then(nextStage).build();
     }
 }

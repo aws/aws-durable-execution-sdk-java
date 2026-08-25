@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.testing;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,10 +19,14 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.serde.Base64StringBinaryCodec;
+import software.amazon.lambda.durable.serde.BinarySerDes;
+import software.amazon.lambda.durable.serde.ComposableBinarySerDesStage;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesStage;
+import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 
 class LocalDurableTestRunnerTest {
 
@@ -207,18 +210,22 @@ class LocalDurableTestRunnerTest {
         };
     }
 
-    private static SerDesStage<String, byte[]> bytesStage(AtomicInteger deserializeCalls) {
-        return new SerDesStage<>() {
-            @Override
-            public byte[] serialize(String value) {
-                return value.getBytes(StandardCharsets.UTF_8);
-            }
+    private static SerDesStage bytesStage(AtomicInteger deserializeCalls) {
+        return ComposableBinarySerDesStage.builder()
+                .startWith(Utf8StringBinaryCodec.INSTANCE)
+                .then(new BinarySerDes() {
+                    @Override
+                    public byte[] serialize(byte[] value) {
+                        return value;
+                    }
 
-            @Override
-            public String deserialize(byte[] data) {
-                deserializeCalls.incrementAndGet();
-                return new String(data, StandardCharsets.UTF_8);
-            }
-        };
+                    @Override
+                    public byte[] deserialize(byte[] data) {
+                        deserializeCalls.incrementAndGet();
+                        return data;
+                    }
+                })
+                .endWith(Base64StringBinaryCodec.INSTANCE)
+                .build();
     }
 }

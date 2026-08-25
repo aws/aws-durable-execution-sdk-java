@@ -17,7 +17,6 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -77,7 +76,8 @@ public final class FileSystemSerDes implements SerDes {
     /**
      * Creates a filesystem terminal-stage builder for use in a composable SerDes pipeline.
      *
-     * <p>Stage mode accepts {@link String} and {@code byte[]} values.
+     * <p>Stage mode accepts strings. Use {@link ComposableBinarySerDesStage} before this stage when binary
+     * transformations are required.
      *
      * @param basePath durable shared filesystem root
      * @return a terminal-stage builder
@@ -126,18 +126,14 @@ public final class FileSystemSerDes implements SerDes {
         var context = requireContext();
         var serialized = resolveSerializedPayload(data, context).value();
         if (stageMode) {
-            if ((TypeToken.get(String.class).equals(typeToken) && serialized instanceof String)
-                    || (TypeToken.get(byte[].class).equals(typeToken) && serialized instanceof byte[])) {
+            if (TypeToken.get(String.class).equals(typeToken)) {
                 @SuppressWarnings("unchecked")
                 var value = (T) serialized;
                 return value;
             }
             throw new SerDesException("FileSystemSerDes stage payload type does not match requested type " + typeToken);
         }
-        if (!(serialized instanceof String serializedString)) {
-            throw new SerDesException("Standalone FileSystemSerDes cannot decode a binary stage payload");
-        }
-        return delegate.deserialize(serializedString, typeToken);
+        return delegate.deserialize(serialized, typeToken);
     }
 
     @Override
@@ -148,7 +144,7 @@ public final class FileSystemSerDes implements SerDes {
         var context = requireContext();
         var resolved = resolveSerializedPayload(data, context);
         return resolved.external()
-                ? SerDesStageResult.decodeWithValueCodec((String) resolved.value())
+                ? SerDesStageResult.decodeWithValueCodec(resolved.value())
                 : SerDesStageResult.continueWith(resolved.value());
     }
 
@@ -167,10 +163,7 @@ public final class FileSystemSerDes implements SerDes {
             if (value instanceof String stringValue) {
                 return SerializedPayload.fromString(stringValue);
             }
-            if (value instanceof byte[] bytes) {
-                return SerializedPayload.fromBytes(bytes);
-            }
-            throw new SerDesException("FileSystemSerDes stage supports String and byte[] values, but received "
+            throw new SerDesException("FileSystemSerDes stage supports String values, but received "
                     + value.getClass().getName());
         }
         var serialized = delegate.serialize(value);
@@ -596,11 +589,10 @@ public final class FileSystemSerDes implements SerDes {
 
     private record PayloadOwner(String durableExecutionArn, String entityId) {}
 
-    private record ResolvedPayload(Object value, boolean external) {}
+    private record ResolvedPayload(String value, boolean external) {}
 
     private enum PayloadType {
-        STRING,
-        BYTES
+        STRING
     }
 
     private record SerializedPayload(PayloadType type, byte[] data) {
@@ -613,15 +605,8 @@ public final class FileSystemSerDes implements SerDes {
             return new SerializedPayload(PayloadType.STRING, value.getBytes(StandardCharsets.UTF_8));
         }
 
-        private static SerializedPayload fromBytes(byte[] value) {
-            return new SerializedPayload(PayloadType.BYTES, value);
-        }
-
         private static SerializedPayload fromInlineValue(PayloadType type, String value) {
-            return switch (type) {
-                case STRING -> fromString(value);
-                case BYTES -> fromBytes(Base64.getDecoder().decode(value));
-            };
+            return fromString(value);
         }
 
         @Override
@@ -641,20 +626,14 @@ public final class FileSystemSerDes implements SerDes {
             if (data == null) {
                 throw new IllegalStateException("Serialized payload does not contain inline data");
             }
-            return switch (type) {
-                case STRING -> new String(data, StandardCharsets.UTF_8);
-                case BYTES -> Base64.getEncoder().encodeToString(data);
-            };
+            return new String(data, StandardCharsets.UTF_8);
         }
 
-        private Object value() {
+        private String value() {
             if (data == null) {
                 throw new IllegalStateException("Serialized payload does not contain data");
             }
-            return switch (type) {
-                case STRING -> new String(data, StandardCharsets.UTF_8);
-                case BYTES -> data.clone();
-            };
+            return new String(data, StandardCharsets.UTF_8);
         }
     }
 

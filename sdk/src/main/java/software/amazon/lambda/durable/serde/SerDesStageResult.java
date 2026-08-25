@@ -11,13 +11,13 @@ import java.util.Objects;
  * @param skipRemainingStages whether deserialization should skip the remaining intermediate stages and decode
  *     {@code value} directly with the pipeline's value codec
  */
-public record SerDesStageResult(Object value, boolean skipRemainingStages) {
+public record SerDesStageResult(String value, boolean skipRemainingStages) {
     public SerDesStageResult {
         Objects.requireNonNull(value, "value cannot be null");
     }
 
     /** Continues reverse processing through the remaining intermediate stages. */
-    public static SerDesStageResult continueWith(Object value) {
+    public static SerDesStageResult continueWith(String value) {
         return new SerDesStageResult(value, false);
     }
 

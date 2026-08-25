@@ -28,7 +28,16 @@ var resilientFileSystemStage = new RetrySerDes(
     fileSystemStage,
     RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
 
-var serDes = new JacksonSerDes().then(resilientFileSystemStage);
+var binaryStage = ComposableBinarySerDesStage.builder()
+    .startWith(Utf8StringBinaryCodec.INSTANCE)
+    .then(compressionBinarySerDes)
+    .then(encryptionBinarySerDes)
+    .endWith(Base64StringBinaryCodec.INSTANCE)
+    .build();
+
+var serDes = new JacksonSerDes()
+    .then(binaryStage)
+    .then(resilientFileSystemStage);
 var serDesExecutor = Executors.newFixedThreadPool(4);
 
 return DurableConfig.builder()
@@ -37,18 +46,19 @@ return DurableConfig.builder()
     .build();
 ```
 
-Serialization runs from `JacksonSerDes` to the filesystem stage. Deserialization runs in reverse. Additional reversible
-typed stages such as compression or encryption can be inserted with `then(...)`. A
-`SerDesStage<String, byte[]>` may pass compressed or encrypted bytes directly to `FileSystemSerDes`; no Base64 adapter
-is required between those stages. The complete pipeline still produces a string checkpoint envelope.
+Serialization follows the declaration order above and deserialization runs in reverse. Every top-level stage consumes
+and produces a string. `ComposableBinarySerDesStage` converts the string with its starting codec, passes bytes directly
+through each `BinarySerDes`, then converts the final bytes to a string with its ending codec. Both boundaries are
+customizable through the same `StringBinaryCodec` interface; the example performs UTF-8 and Base64 conversion once
+around the complete compression/encryption chain.
 
 - `ALWAYS` writes every non-null payload to a file.
 - `OVERFLOW` stores small payloads inline and offloads envelopes approaching the 256 KB checkpoint limit.
 - `URI` uses readable escaped path segments.
 - `HASH` uses fixed-length SHA-256 path segments.
 
-The preview generator receives the incoming stage value, which may be a `String` or `byte[]`. Its output is included
-only in file envelopes and the final envelope must remain below the checkpoint threshold.
+The preview generator receives the incoming stage string. Its output is included only in file envelopes and the final
+envelope must remain below the checkpoint threshold.
 
 For compatibility, `FileSystemSerDes.builder(path)` creates a standalone SerDes with `JacksonSerDes` as its default
 value codec. A custom standalone codec can be supplied with `.delegate(...)`.

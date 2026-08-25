@@ -2,7 +2,7 @@
 
 **Status:** Accepted — Approach A with ComposableSerDes pipeline
 **Date:** 2026-07-02
-**Updated:** 2026-08-25 — Included FileSystemSerDes in core and generalized pipelines to typed intermediate stages.
+**Updated:** 2026-08-25 — Included FileSystemSerDes in core and added string and nested binary pipelines.
 
 ## Context
 
@@ -31,18 +31,34 @@ There are a few Java-specific constraints:
 
 ### Summary
 
-Keep the existing `SerDes` serialization methods source- and binary-compatible, add a typed `SerDesStage<I, O>`
+Keep the existing `SerDes` serialization methods source- and binary-compatible, add a string-to-string `SerDesStage`
 contract and a core `ComposableSerDes` implementation which together form a processing pipeline, and implement
-`FileSystemSerDes` in the core SDK. Existing `SerDes` implementations continue to participate as string-producing
-stages without changing their binary contract, while dedicated intermediate stages may exchange arbitrary Java types.
-The filesystem stage uses
-`SerDesContext.getCurrentContext()` to identify the durable execution and entity being serialized.
+`FileSystemSerDes` in the core SDK. Every top-level stage consumes and produces a string, making stage composition
+uniform and preventing intermediate type mismatches.
+
+Binary transformations compose inside one `ComposableBinarySerDesStage`. That outer stage converts strings to bytes
+with a configurable starting codec, applies any number of reversible `BinarySerDes` implementations without
+intermediate text conversion, and converts the final bytes back to a string with a configurable ending codec. The
+filesystem stage uses `SerDesContext.getCurrentContext()` to identify the durable execution and entity being
+serialized.
 
 ```java
-public interface SerDesStage<I, O> {
-    O serialize(I value);
+public interface SerDesStage {
+    String serialize(String value);
 
-    I deserialize(O data);
+    String deserialize(String data);
+}
+
+public interface BinarySerDes {
+    byte[] serialize(byte[] value);
+
+    byte[] deserialize(byte[] data);
+}
+
+public interface StringBinaryCodec {
+    byte[] toBytes(String value);
+
+    String fromBytes(byte[] data);
 }
 
 public interface SerDes {
@@ -54,21 +70,20 @@ public interface SerDes {
         return ComposableSerDes.of(this, nextStage);
     }
 
-    default ComposableSerDes then(SerDesStage<?, ?> nextStage) {
+    default ComposableSerDes then(SerDesStage nextStage) {
         return ComposableSerDes.builder(this).then(nextStage).build();
     }
 }
 ```
 
-`ComposableSerDes` treats the first stage as the value codec and every later stage as a reversible typed
-transformation. This lets customers compose JSON encoding, binary compression, encryption, filesystem storage, or
-other processing without artificial Base64 conversion between every stage. The complete pipeline still returns a
-string because checkpoints use the existing `SerDes` boundary.
+`ComposableSerDes` treats the first stage as the value codec and every later stage as a reversible string
+transformation. This lets customers compose JSON encoding, framed string transformations, binary processing, and
+filesystem storage without unsafe heterogeneous top-level stages. A `ComposableBinarySerDesStage` performs UTF-8,
+compression, encryption, and similar byte processing internally and encodes the result once at its string boundary.
 
-`FileSystemSerDes` acts as a terminal payload-storage stage. It writes the string or byte array produced by the
-previous stage to the filesystem when configured to do so and returns a small checkpoint envelope. For standalone
-compatibility, it may still be constructed with a value-encoding delegate; pipeline configuration is the preferred
-composition model.
+`FileSystemSerDes` acts as a terminal payload-storage stage. It writes the string produced by the previous stage to
+the filesystem when configured to do so and returns a small checkpoint envelope. For standalone compatibility, it may
+still be constructed with a value-encoding delegate; pipeline configuration is the preferred composition model.
 
 Because the existing `SerDes` methods do not accept context parameters, this approach needs a thread-local
 `SerDesContext` so `FileSystemSerDes` can discover the current payload identity without changing the
@@ -139,28 +154,26 @@ public final class ComposableSerDes implements SerDes {
     public SerDes getValueCodec();
 
     public ComposableSerDes then(SerDes stage);
-    public ComposableSerDes then(SerDesStage<?, ?> stage);
+    public ComposableSerDes then(SerDesStage stage);
 
     public static final class Builder {
         public Builder then(SerDes stage);
-        public Builder then(SerDesStage<?, ?> stage);
+        public Builder then(SerDesStage stage);
 
         public ComposableSerDes build();
     }
 }
 
-public record SerDesStageResult(Object value, boolean skipRemainingStages) {
-    public static SerDesStageResult continueWith(Object value);
+public record SerDesStageResult(String value, boolean skipRemainingStages) {
+    public static SerDesStageResult continueWith(String value);
 
     public static SerDesStageResult decodeWithValueCodec(String value);
 }
 ```
 
 The first stage is the **value codec**. It converts the user value to a string and converts the final decoded string
-back to the requested `TypeToken<T>`. Every later stage is a typed `SerDesStage<I, O>`. Adjacent stages must be
-compatible: one stage's serialized output becomes the next stage's input, and deserialization applies the inverse
-mapping. Runtime stage metadata is preserved in failures because Java type erasure prevents complete validation when
-heterogeneous stages are held in one immutable pipeline.
+back to the requested `TypeToken<T>`. Every later stage consumes and produces a `String`. Stage composition is valid by
+construction; binary or other non-string intermediate representations remain encapsulated inside a string stage.
 
 Serialization runs from first to last:
 
@@ -168,9 +181,9 @@ Serialization runs from first to last:
 Object
   -> value codec
   -> String
-  -> typed stage 1
-  -> intermediate type A
-  -> typed stage 2
+  -> string stage 1
+  -> String
+  -> string stage 2
   -> ...
   -> checkpoint String
 ```
@@ -179,9 +192,9 @@ Deserialization runs in the opposite direction:
 
 ```text
 checkpoint String
-  -> last typed stage
+  -> last string stage
   -> ...
-  -> first typed stage
+  -> first string stage
   -> String
   -> value codec, deserialized as the requested TypeToken<T>
   -> T
@@ -191,15 +204,15 @@ Equivalent pseudocode:
 
 ```java
 String serialize(Object value) {
-    Object current = valueCodec.serialize(value);
+    String current = valueCodec.serialize(value);
     for (var stage : stages) {
         current = stage.serialize(current);
     }
-    return requireStringCheckpoint(current);
+    return current;
 }
 
 <T> T deserialize(String data, TypeToken<T> targetType) {
-    Object current = data;
+    String current = data;
     for (int i = stages.size() - 1; i >= 0; i--) {
         var decoded = stages.get(i).deserializePipelineStage(current);
         current = decoded.value();
@@ -207,15 +220,14 @@ String serialize(Object value) {
             break;
         }
     }
-    return valueCodec.deserialize(requireStringValueCodecInput(current), targetType);
+    return valueCodec.deserialize(current, targetType);
 }
 ```
 
 Pipeline rules:
 
-- A pipeline must contain exactly one value codec in the first position and zero or more typed intermediate stages.
-- Intermediate values may use any non-null Java type. The complete serialization pipeline must finish with a
-  `String`, and reverse processing must return a `String` to the value codec.
+- A pipeline must contain exactly one value codec in the first position and zero or more string stages.
+- Every top-level stage consumes and produces a non-null `String`. This makes all stage orderings type-compatible.
 - A stage may declare that it requires durable context or that it must be terminal. A terminal stage must be the last
   stage so later transformations cannot invalidate its checkpoint-size or storage decision.
 - `SerDes.then(...)`, `ComposableSerDes.of(...)`, and the builder flatten nested `ComposableSerDes` instances while
@@ -234,9 +246,9 @@ Pipeline rules:
 - A boundary stage may return `SerDesStageResult.decodeWithValueCodec(...)` when it receives raw data that did not pass
   through the configured pipeline. `ComposableSerDes` then skips every earlier intermediate stage and decodes the raw value
   directly with the value codec.
-- Stage order is meaningful. For example, `JSON -> compression -> encryption -> filesystem` writes encrypted,
-  compressed data to the filesystem. `FileSystemSerDes` is terminal; placing encryption or any expanding
-  transformation after it is rejected.
+- Stage order is meaningful. For example, `JSON -> binary composite -> filesystem` writes the encoded result of the
+  binary composite to the filesystem. `FileSystemSerDes` is terminal; placing any later transformation after it is
+  rejected.
 - The ordered stage list and each stage's configuration are part of the persisted checkpoint format. They must remain
   replay-compatible for in-flight executions. Reordering, removing, or incompatibly reconfiguring a stage requires a
   versioned envelope or an explicit migration boundary.
@@ -251,11 +263,68 @@ The default `SerDes.then(...)` method and immutable `ComposableSerDes.then(...)`
 independently reusable processing chains:
 
 ```java
+var binaryStage = ComposableBinarySerDesStage.builder()
+        .startWith(Utf8StringBinaryCodec.INSTANCE)
+        .then(compressionBinarySerDes)
+        .then(encryptionBinarySerDes)
+        .endWith(Base64StringBinaryCodec.INSTANCE)
+        .build();
+
 var securePayloads = new JacksonSerDes()
-        .then(compressionSerDes)
-        .then(encryptionSerDes)
+        .then(binaryStage)
         .then(fileSystemStage);
 ```
+
+### Composable binary stage
+
+`ComposableBinarySerDesStage` is one top-level `String -> String` stage containing zero or more `byte[] -> byte[]`
+transformations:
+
+```java
+public final class ComposableBinarySerDesStage implements SerDesStage {
+    public static StartBuilder builder();
+
+    public interface StartBuilder {
+        BinaryStagesBuilder startWith(StringBinaryCodec codec);
+    }
+
+    public interface BinaryStagesBuilder {
+        BinaryStagesBuilder then(BinarySerDes serDes);
+
+        CompletedBuilder endWith(StringBinaryCodec codec);
+    }
+
+    public interface CompletedBuilder {
+        ComposableBinarySerDesStage build();
+    }
+}
+```
+
+The builder follows forward serialization order and its staged return types prevent another binary transformation from
+being appended after `endWith(...)`.
+
+```text
+serialization:
+String
+  -> startingCodec.toBytes
+  -> binary SerDes 1
+  -> binary SerDes 2
+  -> endingCodec.fromBytes
+  -> String
+
+deserialization:
+String
+  -> endingCodec.toBytes
+  -> binary SerDes 2
+  -> binary SerDes 1
+  -> startingCodec.fromBytes
+  -> String
+```
+
+Both boundaries use the same `StringBinaryCodec` contract. The core SDK provides UTF-8 and standard Base64
+implementations, while callers may provide reversible alternatives. Each `BinarySerDes` must include required
+metadata, such as a format version or encryption initialization vector, in its output. The composite performs text
+conversion only at its two outer boundaries; binary stages pass bytes directly to each other.
 
 ### Retryable SerDes stages
 
@@ -287,8 +356,8 @@ Retry rules:
   checkpoint. Strategies must therefore use short, bounded delays that fit within the Lambda invocation timeout.
 - If the invocation is interrupted or times out, replay may execute the SerDes pipeline again. Any stage with side
   effects must use stable addressing and idempotent writes.
-- `RetrySerDes` can wrap an individual stage or the complete pipeline. Wrapping the smallest transient stage avoids
-  repeating deterministic encoding, compression, or encryption work.
+- `RetrySerDes` can wrap an individual SerDes stage or the complete pipeline. Wrapping the smallest transient SerDes
+  avoids repeating deterministic encoding, compression, or encryption work.
 - Pipeline error decoration must preserve retryability: a stage-level `RetryableSerDesException` must remain that type,
   with stage metadata added to its message or cause, so an enclosing `RetrySerDes` can recognize it.
 - Filesystem read and write `IOException`s are retryable. Malformed envelopes, invalid paths, unsupported types, and
@@ -311,15 +380,15 @@ Path encodings:
 Envelope format:
 
 ```json
-{"__durable_execution_filesystem_serdes":1,"data":"<inline text or Base64 bytes>","payloadType":"STRING|BYTES","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
-{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING|BYTES","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
-{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING|BYTES","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>","preview":{ "...": "..." }}
+{"__durable_execution_filesystem_serdes":1,"data":"<inline text>","payloadType":"STRING","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>","preview":{ "...": "..." }}
 ```
 
 `FileSystemSerDes` must reject calls when `SerDesContext.getCurrentContext()` is `null` or does not include
-`durableExecutionArn` and `entityId`. In pipeline mode it accepts `String` and `byte[]` values, records the payload type
-in the envelope, stores byte arrays without text conversion, and restores the same representation during reverse
-processing. Standalone mode continues to use its configured string value codec.
+`durableExecutionArn` and `entityId`. In pipeline mode it accepts a `String`, records the payload type in the envelope,
+and restores that string during reverse processing. A preceding `ComposableBinarySerDesStage` must encode its final
+bytes to a string before filesystem storage. Standalone mode continues to use its configured string value codec.
 
 The marker and version distinguish filesystem envelopes from raw service-originated JSON. Initial root input, callback
 results, and standard Lambda invoke results may arrive before this SerDes has processed them. For those external
@@ -344,12 +413,12 @@ The final file envelope, including any preview, must remain below the checkpoint
 rejected rather than producing a checkpoint that the service cannot accept.
 
 `FileSystemSerDes` declares itself terminal in every mode. This makes its overflow decision apply to the final
-checkpoint representation and prevents a later Base64, encryption, or other expanding stage from pushing an inline
-envelope over the service limit.
+checkpoint representation and prevents a later encoding or other expanding stage from pushing an inline envelope over
+the service limit.
 
-In stage mode, the preview generator receives the `String` or `byte[]` produced by the preceding stage, not the
-original domain object. A preview that needs domain fields should either parse that representation, be produced by an
-earlier stage, or use standalone compatibility mode where `FileSystemSerDes` receives the original value.
+In stage mode, the preview generator receives the `String` produced by the preceding stage, not the original domain
+object. A preview that needs domain fields should either parse that representation, be produced by an earlier stage,
+or use standalone compatibility mode where `FileSystemSerDes` receives the original value.
 
 ### Runtime flow
 
@@ -368,12 +437,11 @@ try {
 }
 ```
 
-On deserialization, `FileSystemSerDes` parses its envelope. If the envelope contains `data`, it restores inline text or
-Base64-decoded bytes according to `payloadType`. If the envelope contains `file`, it reads the raw file contents and
-restores the same representation. `ComposableSerDes` then passes that value to the preceding typed stage. In standalone
-compatibility mode, `FileSystemSerDes` passes the resolved string to its configured value-encoding delegate. Raw
-external input, callback results, and standard invoke results skip all intermediate stages and go directly to the
-value codec when no versioned filesystem marker is present.
+On deserialization, `FileSystemSerDes` parses its envelope. If the envelope contains `data`, it restores the inline
+text. If the envelope contains `file`, it reads the stored string. `ComposableSerDes` then passes that value to the
+preceding string stage. In standalone compatibility mode, `FileSystemSerDes` passes the resolved string to its
+configured value-encoding delegate. Raw external input, callback results, and standard invoke results skip all
+intermediate stages and go directly to the value codec when no versioned filesystem marker is present.
 
 ### Threading
 
@@ -483,28 +551,30 @@ must not synthesize a durable context and serialize initial input through the fu
 2. Add the binary-compatible `SerDes.then(...)` default method and `ComposableSerDes` with immutable stage ordering,
    forward serialization, reverse deserialization, external-boundary bypass, terminal-stage validation, null
    short-circuiting, and stage-aware errors.
-3. Add `RetryableSerDesException` and `RetrySerDes`, reusing `RetryStrategy` for bounded in-invocation retries.
-4. Add `SerDesRunner` with inline execution by default and optional dispatch through
+3. Add the string-only `SerDesStage` contract plus `BinarySerDes`, `StringBinaryCodec`, and
+   `ComposableBinarySerDesStage` for nested binary processing with ordered, configurable boundaries.
+4. Add `RetryableSerDesException` and `RetrySerDes`, reusing `RetryStrategy` for bounded in-invocation retries.
+5. Add `SerDesRunner` with inline execution by default and optional dispatch through
    `DurableConfig.withSerDesExecutorService(...)`. Do not create a default SerDes pool.
-5. Update root input/output handling in `DurableExecutor` to run user payload SerDes through `SerDesRunner` while
+6. Update root input/output handling in `DurableExecutor` to run user payload SerDes through `SerDesRunner` while
    leaving `DurableInputOutputSerDes` internal.
-6. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`,
+7. Update `SerializableDurableOperation`, `InvokeOperation`, `StepOperation`, `WaitForConditionOperation`,
    `CallbackOperation`, `ChildContextOperation`, `MapOperation`, and test helpers to use `SerDesRunner`.
-7. Add bounded, invocation-scoped deserialization caching keyed by SerDes identity, entity, payload kind, type, and
+8. Add bounded, invocation-scoped deserialization caching keyed by SerDes identity, entity, payload kind, type, and
    serialized data hash.
-8. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
-9. Implement `FileSystemSerDes` in the core `software.amazon.lambda.durable.serde` package with standalone compatibility and
-   typed terminal-stage modes, `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file
+9. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
+10. Implement `FileSystemSerDes` in the core `software.amazon.lambda.durable.serde` package with standalone compatibility and
+   string terminal-stage modes, `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, atomic file
    writes where supported by the filesystem, retryable I/O failures, and clear validation errors for missing context or
    invalid stage input.
-10. Add unit tests for pipeline ordering, reverse processing, nulls, invalid intermediate stage types, stage failures,
-    retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and restoration,
-    inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception reconstruction,
-    malformed filesystem envelopes, and core-artifact packaging.
-11. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
+11. Add unit tests for string and binary pipeline ordering, custom boundary codecs, reverse processing, nulls, stage
+    failures, retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and
+    restoration, inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception
+    reconstruction, malformed filesystem envelopes, and core-artifact packaging.
+12. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
     state, invoke payload/result, child context results, map results, repeated `get()`, replay from file pointers, and
     custom exception types.
-12. Update README and advanced configuration docs with pipeline and retry examples, filesystem configuration, and
+13. Update README and advanced configuration docs with pipeline and retry examples, filesystem configuration, and
     warnings about `/tmp`, S3 Files flush behavior, and EFS/S3 Files operational requirements.
 
 ### Pros
@@ -512,8 +582,8 @@ must not synthesize a durable context and serialize initial input through the fu
 - Delivers the requested parity feature with the smallest new public API surface.
 - Uses an extension point customers already understand and can configure per operation.
 - Preserves inline SerDes execution by default, avoiding new thread-hop overhead for existing applications.
-- Makes serialization, compression, encryption, and storage independently composable without adding a storage-specific
-  core interface.
+- Makes string stages safely composable while keeping compression and encryption efficiently composable inside one
+  binary stage.
 - Makes filesystem storage available without an additional Maven dependency or release artifact.
 - Avoids committing the core SDK to a generalized offloading envelope before the storage use cases are proven.
 - Closest to the current JavaScript `createFileSystemSerdes` model and issue #463 wording.
@@ -800,8 +870,8 @@ Negative:
 - Adds optional executor, context, and caching machinery that must stay deterministic.
 - Adds storage-specific public API and implementation code to the core SDK artifact.
 - Approach A requires thread-local SerDes context because the existing `SerDes` methods do not accept context.
-- Approach A uses typed stage contracts, but heterogeneous pipeline compatibility is still validated at runtime after
-  type erasure.
+- Top-level stages must encode non-string representations at their boundaries. A composable binary stage avoids
+  repeated conversion between binary substages, but its final bytes still require one string encoding.
 - Pipeline ordering and stage configuration must remain compatible with persisted checkpoints.
 - The inline default means filesystem I/O and retry delays block the caller when customers do not configure a SerDes
   executor.

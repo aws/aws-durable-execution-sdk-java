@@ -53,7 +53,7 @@ and uses a bounded weak-reference cache for successful deserialization results d
 
 ### Filesystem-backed payload storage
 
-The core SDK provides a reversible terminal stage for storing serialized text or bytes on a shared filesystem:
+The core SDK provides a reversible terminal stage for storing serialized strings on a shared filesystem:
 
 ```java
 var fileSystemStage = FileSystemSerDes.stageBuilder(Path.of("/mnt/efs/durable-payloads"))
@@ -66,7 +66,16 @@ var resilientFileSystemStage = new RetrySerDes(
     fileSystemStage,
     RetryStrategies.fixedDelay(3, Duration.ofSeconds(1)));
 
-var serDes = new JacksonSerDes().then(resilientFileSystemStage);
+var binaryStage = ComposableBinarySerDesStage.builder()
+    .startWith(Utf8StringBinaryCodec.INSTANCE)
+    .then(compressionBinarySerDes)
+    .then(encryptionBinarySerDes)
+    .endWith(Base64StringBinaryCodec.INSTANCE)
+    .build();
+
+var serDes = new JacksonSerDes()
+    .then(binaryStage)
+    .then(resilientFileSystemStage);
 var serDesExecutor = Executors.newFixedThreadPool(4);
 
 return DurableConfig.builder()
@@ -75,10 +84,11 @@ return DurableConfig.builder()
     .build();
 ```
 
-Pipelines may exchange non-string intermediate values. For example, a custom
-`SerDesStage<String, byte[]>` can compress the JSON string and feed the resulting bytes directly into
-`FileSystemSerDes`; reverse processing restores the bytes to the compression stage. The complete pipeline still
-returns a string checkpoint envelope.
+Every top-level stage consumes and produces a string, so stages compose without intermediate type mismatches.
+`ComposableBinarySerDesStage` contains an ordered chain of `BinarySerDes` implementations for compression, encryption,
+or other `byte[]` transformations. Its `startWith(...)`, `then(...)`, and `endWith(...)` calls follow serialization
+order; deserialization reverses them. Both boundaries use the customizable `StringBinaryCodec` interface. UTF-8 and
+Base64 implementations are included in the core SDK, and conversion occurs only around the complete binary chain.
 
 `ALWAYS` stores every non-null payload in a file. `OVERFLOW` keeps payloads inline until the checkpoint envelope
 approaches the 256 KB service limit. `URI` produces readable escaped paths; `HASH` produces fixed-length SHA-256 path

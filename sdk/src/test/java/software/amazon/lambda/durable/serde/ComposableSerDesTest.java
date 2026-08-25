@@ -9,9 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -37,42 +35,42 @@ class ComposableSerDesTest {
     }
 
     @Test
-    void supportsTypedIntermediateValues() {
+    void supportsDedicatedStringStages() {
         var calls = new ArrayList<String>();
-        SerDesStage<String, byte[]> utf8 = new SerDesStage<>() {
+        var first = new SerDesStage() {
             @Override
-            public byte[] serialize(String value) {
-                calls.add("bytes-serialize");
-                return value.getBytes(StandardCharsets.UTF_8);
+            public String serialize(String value) {
+                calls.add("first-serialize");
+                return "<" + value + ">";
             }
 
             @Override
-            public String deserialize(byte[] data) {
-                calls.add("bytes-deserialize");
-                return new String(data, StandardCharsets.UTF_8);
+            public String deserialize(String data) {
+                calls.add("first-deserialize");
+                return data.substring(1, data.length() - 1);
             }
         };
-        SerDesStage<byte[], String> base64 = new SerDesStage<>() {
+        var second = new SerDesStage() {
             @Override
-            public String serialize(byte[] value) {
-                calls.add("base64-serialize");
-                return Base64.getEncoder().encodeToString(value);
+            public String serialize(String value) {
+                calls.add("second-serialize");
+                return "[" + value + "]";
             }
 
             @Override
-            public byte[] deserialize(String data) {
-                calls.add("base64-deserialize");
-                return Base64.getDecoder().decode(data);
+            public String deserialize(String data) {
+                calls.add("second-deserialize");
+                return data.substring(1, data.length() - 1);
             }
         };
-        var pipeline = new JacksonSerDes().then(utf8).then(base64);
+        var pipeline = new JacksonSerDes().then(first).then(second);
 
         var serialized = pipeline.serialize("value");
         var deserialized = pipeline.deserialize(serialized, TypeToken.get(String.class));
 
-        assertEquals(Base64.getEncoder().encodeToString("\"value\"".getBytes(StandardCharsets.UTF_8)), serialized);
+        assertEquals("[<\"value\">]", serialized);
         assertEquals("value", deserialized);
-        assertEquals(List.of("bytes-serialize", "base64-serialize", "base64-deserialize", "bytes-deserialize"), calls);
+        assertEquals(List.of("first-serialize", "second-serialize", "second-deserialize", "first-deserialize"), calls);
     }
 
     @Test
@@ -200,7 +198,7 @@ class ComposableSerDesTest {
     }
 
     @Test
-    void rejectsNullIntermediateAndNonStringBoundaryValues() {
+    void rejectsNullIntermediateValues() {
         var nullStage = new SerDes() {
             @Override
             public String serialize(Object value) {
@@ -216,45 +214,6 @@ class ComposableSerDesTest {
                 SerDesException.class, () -> new JacksonSerDes().then(nullStage).serialize("value"));
         assertTrue(nullFailure.getMessage().contains("stage 1"));
         assertTrue(nullFailure.getMessage().contains(nullStage.getClass().getName()));
-
-        SerDesStage<String, Integer> nonStringFinalStage = new SerDesStage<>() {
-            @Override
-            public Integer serialize(String value) {
-                return value.length();
-            }
-
-            @Override
-            public String deserialize(Integer data) {
-                return "x".repeat(data);
-            }
-        };
-        var typeFailure = assertThrows(
-                SerDesException.class,
-                () -> new JacksonSerDes().then(nonStringFinalStage).serialize("value"));
-        assertTrue(typeFailure.getMessage().contains("final stage"));
-        assertTrue(typeFailure.getMessage().contains(Integer.class.getName()));
-    }
-
-    @Test
-    void incompatibleTypedStagesFailWithStageMetadata() {
-        SerDesStage<Integer, String> integerStage = new SerDesStage<>() {
-            @Override
-            public String serialize(Integer value) {
-                return value.toString();
-            }
-
-            @Override
-            public Integer deserialize(String data) {
-                return Integer.valueOf(data);
-            }
-        };
-
-        var failure = assertThrows(
-                SerDesException.class,
-                () -> new JacksonSerDes().then(integerStage).serialize("value"));
-
-        assertTrue(failure.getMessage().contains("stage 1"));
-        assertInstanceOf(ClassCastException.class, failure.getCause());
     }
 
     @Test

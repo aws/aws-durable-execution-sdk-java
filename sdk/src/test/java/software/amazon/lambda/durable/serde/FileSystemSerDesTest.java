@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.serde;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -14,6 +13,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -73,47 +74,37 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void stageModeStoresAndRestoresBinaryIntermediateValues() throws Exception {
-        SerDesStage<String, byte[]> utf8 = new SerDesStage<>() {
-            @Override
-            public byte[] serialize(String value) {
-                return value.getBytes(StandardCharsets.UTF_8);
-            }
-
-            @Override
-            public String deserialize(byte[] data) {
-                return new String(data, StandardCharsets.UTF_8);
-            }
-        };
+    void stageModeStoresAndRestoresComposableBinaryOutput() throws Exception {
+        var binaryStage = ComposableBinarySerDesStage.builder()
+                .startWith(Utf8StringBinaryCodec.INSTANCE)
+                .then(xorBinarySerDes((byte) 0x5A))
+                .endWith(Base64StringBinaryCodec.INSTANCE)
+                .build();
         var stage = FileSystemSerDes.stageBuilder(basePath).build();
-        var pipeline = new JacksonSerDes().then(utf8).then(stage);
+        var pipeline = new JacksonSerDes().then(binaryStage).then(stage);
         var runner = new SerDesRunner(null);
 
         var envelope = runner.serialize(pipeline, Map.of("id", 42), context());
         var json = MAPPER.readTree(envelope);
         var file = Path.of(json.get("file").textValue());
 
-        assertEquals("BYTES", json.get("payloadType").textValue());
-        assertEquals("{\"id\":42}", new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+        assertEquals("STRING", json.get("payloadType").textValue());
+        assertEquals(
+                Base64.getEncoder().encodeToString(xor("{\"id\":42}".getBytes(StandardCharsets.UTF_8), (byte) 0x5A)),
+                Files.readString(file));
         assertEquals(
                 Map.of("id", 42),
                 runner.deserialize(pipeline, envelope, new TypeToken<Map<String, Integer>>() {}, context()));
     }
 
     @Test
-    void overflowModeKeepsSmallBinaryPayloadsInline() throws Exception {
+    void stageModeRejectsDirectBinaryValues() {
         var stage = FileSystemSerDes.stageBuilder(basePath)
                 .storageMode(FileSystemStorageMode.OVERFLOW)
                 .build();
         var runner = new SerDesRunner(null);
-        var value = new byte[] {0, 1, 2, -1};
 
-        var envelope = runner.serialize(stage, value, context());
-        var json = MAPPER.readTree(envelope);
-
-        assertEquals("BYTES", json.get("payloadType").textValue());
-        assertTrue(json.has("data"));
-        assertArrayEquals(value, runner.deserialize(stage, envelope, TypeToken.get(byte[].class), context()));
+        assertThrows(SerDesException.class, () -> runner.serialize(stage, new byte[] {0, 1, 2, -1}, context()));
     }
 
     @Test
@@ -251,7 +242,7 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void rejectsMalformedBinaryInlinePayload() {
+    void rejectsUnsupportedBinaryPayloadType() {
         var envelope = "{\"__durable_execution_filesystem_serdes\":1,"
                 + "\"ownerDurableExecutionArn\":\""
                 + ARN
@@ -261,7 +252,7 @@ class FileSystemSerDesTest {
                 .deserialize(
                         FileSystemSerDes.stageBuilder(basePath).build(),
                         envelope,
-                        TypeToken.get(byte[].class),
+                        TypeToken.get(String.class),
                         context()));
     }
 
@@ -473,6 +464,28 @@ class FileSystemSerDesTest {
     private static SerDesContext operationContext(OperationType operationType, OperationSubType operationSubType) {
         return SerDesContext.forOperation(
                 ARN, "1", "operation", null, operationType, operationSubType, SerDesPayloadKind.RESULT, null);
+    }
+
+    private static BinarySerDes xorBinarySerDes(byte key) {
+        return new BinarySerDes() {
+            @Override
+            public byte[] serialize(byte[] value) {
+                return xor(value, key);
+            }
+
+            @Override
+            public byte[] deserialize(byte[] data) {
+                return xor(data, key);
+            }
+        };
+    }
+
+    private static byte[] xor(byte[] value, byte key) {
+        var result = Arrays.copyOf(value, value.length);
+        for (int index = 0; index < result.length; index++) {
+            result[index] ^= key;
+        }
+        return result;
     }
 
     private static SerDes wrappingStage() {

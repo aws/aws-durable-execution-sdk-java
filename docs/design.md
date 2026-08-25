@@ -355,8 +355,13 @@ software.amazon.lambda.durable
 │
 ├── serde/
 │   ├── SerDes              # Interface and pipeline composition entry point
-│   ├── SerDesStage         # Reversible typed intermediate pipeline stage
-│   ├── ComposableSerDes    # Immutable ordered value-codec/typed-stage pipeline
+│   ├── SerDesStage         # Reversible string-to-string pipeline stage
+│   ├── ComposableSerDes    # Immutable ordered value-codec/string-stage pipeline
+│   ├── BinarySerDes        # Reversible byte-array transformation
+│   ├── StringBinaryCodec   # Customizable string/byte boundary conversion
+│   ├── Utf8StringBinaryCodec   # UTF-8 string/byte conversion
+│   ├── Base64StringBinaryCodec # Standard Base64 string/byte conversion
+│   ├── ComposableBinarySerDesStage # Ordered binary chain exposed as one string stage
 │   ├── JacksonSerDes       # Jackson impl
 │   ├── RetrySerDes         # Retry decorator for transient SerDes failures
 │   ├── SerDesRunner        # Context, optional executor dispatch, and invocation cache
