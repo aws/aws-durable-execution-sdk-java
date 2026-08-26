@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +41,8 @@ class CheckpointManager {
     private final Map<String, List<CompletableFuture<Operation>>> pollingFutures = new ConcurrentHashMap<>();
     private final ApiRequestDelayedBatcher<OperationUpdate> checkpointApiRequestDelayedBatcher;
     private final DurableConfig config;
+    private final BooleanSupplier tryStartCheckpointProcessing;
+    private final Runnable finishCheckpointProcessing;
     private String checkpointToken;
 
     CheckpointManager(
@@ -47,10 +50,22 @@ class CheckpointManager {
             String durableExecutionArn,
             String checkpointToken,
             Consumer<List<Operation>> callback) {
+        this(config, durableExecutionArn, checkpointToken, callback, () -> true, () -> {});
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable finishCheckpointProcessing) {
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
         this.checkpointToken = checkpointToken;
+        this.tryStartCheckpointProcessing = tryStartCheckpointProcessing;
+        this.finishCheckpointProcessing = finishCheckpointProcessing;
         this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
                 MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
     }
@@ -191,6 +206,13 @@ class CheckpointManager {
                 return;
             }
 
+            // Starting the backend request is coordinated with the last-thread suspension decision. Once suspension
+            // wins that race, no later poll/checkpoint may advance backend state behind the PENDING response.
+            if (!tryStartCheckpointProcessing.getAsBoolean()) {
+                logger.debug("Skipping checkpoint API call because execution has already completed");
+                return;
+            }
+
             var startTime = System.nanoTime();
             logger.debug("Calling durable checkpoint API with {} updates: {}", updates.size(), request);
             try {
@@ -228,6 +250,8 @@ class CheckpointManager {
                 }
             } catch (AwsServiceException e) {
                 throw DurableApiErrorClassifier.classifyException(e);
+            } finally {
+                finishCheckpointProcessing.run();
             }
         }
     }
