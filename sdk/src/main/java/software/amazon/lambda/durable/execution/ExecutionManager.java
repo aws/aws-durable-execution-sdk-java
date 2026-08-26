@@ -73,6 +73,8 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
+    // Guarded by activeThreads so starting a checkpoint request is atomic with the last-thread suspension decision.
+    private int checkpointRequestsInFlight;
 
     enum FutureWaitState {
         ACTIVE,
@@ -96,8 +98,13 @@ public class ExecutionManager implements SafeCloseable {
                 input.updatedOperationIds() != null ? Set.copyOf(input.updatedOperationIds()) : Collections.emptySet();
 
         // Create checkpoint batcher for internal coordination
-        this.checkpointManager =
-                new CheckpointManager(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);
+        this.checkpointManager = new CheckpointManager(
+                config,
+                durableExecutionArn,
+                input.checkpointToken(),
+                this::onCheckpointComplete,
+                this::tryStartCheckpointProcessing,
+                this::finishCheckpointProcessing);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
@@ -208,12 +215,14 @@ public class ExecutionManager implements SafeCloseable {
             }
             // Publish the updated state and notify its waiter atomically. Otherwise, a waiter can observe the terminal
             // state before its completion future is completed and attempt to suspend with no pending operations.
-            var registeredOperation = registeredOperations.get(op.id());
-            if (registeredOperation == null) {
-                operationStorage.put(op.id(), op);
-            } else {
-                registeredOperation.processCheckpointUpdate(op, () -> operationStorage.put(op.id(), op));
-            }
+            registeredOperations.compute(op.id(), (id, registeredOperation) -> {
+                if (registeredOperation == null) {
+                    operationStorage.put(op.id(), op);
+                } else {
+                    registeredOperation.processCheckpointUpdate(op, () -> operationStorage.put(op.id(), op));
+                }
+                return registeredOperation;
+            });
         });
 
         // Fire onOperationChange when a checkpoint response changed one or more operations
@@ -365,6 +374,9 @@ public class ExecutionManager implements SafeCloseable {
     void deregisterActiveThreadForFuture(String threadId, AtomicReference<FutureWaitState> waitState) {
         var shouldSuspend = false;
         synchronized (activeThreads) {
+            if (executionExceptionFuture.isDone()) {
+                return;
+            }
             removeActiveThread(threadId);
             if (!waitState.compareAndSet(FutureWaitState.DEREGISTERING, FutureWaitState.WAITING)) {
                 if (waitState.get() == FutureWaitState.COMPLETED) {
@@ -372,13 +384,13 @@ public class ExecutionManager implements SafeCloseable {
                 }
                 return;
             }
-            if (activeThreads.isEmpty()) {
+            if (shouldSuspendExecution()) {
                 shouldSuspend = waitState.compareAndSet(FutureWaitState.WAITING, FutureWaitState.SUSPENDING);
             }
         }
         if (shouldSuspend) {
             synchronized (activeThreads) {
-                if (activeThreads.isEmpty()) {
+                if (shouldSuspendExecution()) {
                     if (waitState.compareAndSet(FutureWaitState.SUSPENDING, FutureWaitState.SUSPENDED)) {
                         signalSuspendForNoActiveThreads();
                     }
@@ -418,16 +430,16 @@ public class ExecutionManager implements SafeCloseable {
      * @param threadId the thread ID to deregister
      */
     public void deregisterActiveThread(String threadId) {
-        // Skip if already suspended
-        if (executionExceptionFuture.isDone()) {
-            return;
-        }
-
         // Add synchronized block to avoid remove then check race condition and make sure that
         // the suspendExecution is called only once
         synchronized (activeThreads) {
+            // Skip if already suspended
+            if (executionExceptionFuture.isDone()) {
+                return;
+            }
+
             removeActiveThread(threadId);
-            if (activeThreads.isEmpty()) {
+            if (shouldSuspendExecution()) {
                 suspendForNoActiveThreads();
             }
         }
@@ -450,6 +462,34 @@ public class ExecutionManager implements SafeCloseable {
         logger.info("No active threads remaining - suspending execution");
         preSuspendCheck();
         return signalSuspendExecution();
+    }
+
+    boolean tryStartCheckpointProcessing() {
+        synchronized (activeThreads) {
+            if (executionExceptionFuture.isDone()) {
+                return false;
+            }
+            checkpointRequestsInFlight++;
+            return true;
+        }
+    }
+
+    void finishCheckpointProcessing() {
+        synchronized (activeThreads) {
+            if (checkpointRequestsInFlight == 0) {
+                throw new IllegalStateException("No checkpoint request is in flight");
+            }
+            checkpointRequestsInFlight--;
+            if (shouldSuspendExecution()) {
+                logger.info("Checkpoint processing completed with no active threads - suspending execution");
+                preSuspendCheck();
+                signalSuspendExecution();
+            }
+        }
+    }
+
+    private boolean shouldSuspendExecution() {
+        return activeThreads.isEmpty() && checkpointRequestsInFlight == 0 && !executionExceptionFuture.isDone();
     }
 
     private void preSuspendCheck() {
