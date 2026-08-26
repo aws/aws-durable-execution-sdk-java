@@ -41,6 +41,7 @@ class InvocationOtelPluginIntegrationTest {
     @BeforeEach
     void setUp() {
         DeterministicIdGenerator.clearSharedStateForTest();
+        DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
@@ -58,6 +59,7 @@ class InvocationOtelPluginIntegrationTest {
     void tearDown() {
         GlobalOpenTelemetry.resetForTest();
         DeterministicIdGenerator.clearSharedStateForTest();
+        DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
 
@@ -90,10 +92,9 @@ class InvocationOtelPluginIntegrationTest {
                 .findFirst()
                 .orElseThrow()
                 .getTraceId();
-        assertNotEquals(workflowTraceId, invocationTraceId);
-        assertTrue(spans.stream()
-                .filter(span -> !span.getName().equals("Workflow"))
-                .allMatch(span -> span.getTraceId().equals(invocationTraceId)));
+        // Workflow and Invocation now share the single execution trace.
+        assertEquals(workflowTraceId, invocationTraceId);
+        assertTrue(spans.stream().allMatch(span -> span.getTraceId().equals(invocationTraceId)));
     }
 
     @Test
