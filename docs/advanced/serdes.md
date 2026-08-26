@@ -178,15 +178,27 @@ return DurableConfig.builder()
 The SerDes executor must be different from the user-operation executor to avoid deadlock when the operation pool is
 saturated.
 
-## Initial invocation payloads in test runners
+## Initial invocation payloads
 
-`CloudDurableTestRunner` and `LocalDurableTestRunner` serialize the initial Lambda invocation with a separate,
-context-free value codec because no durable execution context exists yet. They do not run the persisted pipeline's
-stages at this boundary.
+The initial Lambda invocation uses a separate, context-free value codec because no durable execution context exists
+yet. `DurableExecutor` deserializes this payload directly with `DurableConfig.getInputSerDes()` and does not run the
+persisted pipeline's stages at this boundary. This also prevents an external payload from being mistaken for a
+persisted stage frame.
 
-By default, a runner uses the configured SerDes if it is a plain value codec, or the root value codec if it is a
-`ComposableSerDes`. Use `withInputSerDes(...)` to select another input codec. The explicit input codec must not be a
-`ComposableSerDes`, and it must produce a string that the persisted pipeline's root codec can deserialize.
+By default, `DurableConfig` uses the configured SerDes if it is a plain value codec, or the root value codec if it is a
+`ComposableSerDes`. Use `DurableConfig.Builder.withInputSerDes(...)` to select another input codec. The explicit input
+codec must not be a `ComposableSerDes`, but it does not need to be wire-compatible with the persisted pipeline:
+
+```java
+var config = DurableConfig.builder()
+    .withSerDes(persistedPipeline)
+    .withInputSerDes(externalInputCodec)
+    .build();
+```
+
+`LocalDurableTestRunner.withInputSerDes(...)` updates both sides of the local boundary: the runner serializes with the
+selected codec and the local runtime deserializes with it. `CloudDurableTestRunner.withInputSerDes(...)` controls the
+invocation sent to AWS; the deployed handler must configure the same codec through `DurableConfig`.
 
 ## Filesystem-backed payload storage
 

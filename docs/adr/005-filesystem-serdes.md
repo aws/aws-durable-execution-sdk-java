@@ -554,16 +554,18 @@ When serializing `errorData`, set `SerDesPayloadKind.EXCEPTION` and use an entit
 
 Root user input and output payloads should route through `SerDesRunner` so `FileSystemSerDesStage` can see `SerDesContext`. The internal `DurableExecutionInput` and `DurableExecutionOutput` envelope stays with `DurableInputOutputSerDes`.
 
-The cloud test runner must send initial Lambda input before it receives a durable execution ARN. The cloud and local
-runners therefore always serialize that input with a separate context-free value codec. By default, they use the
-configured persisted SerDes when it is a plain value codec, or the root value codec when it is composable.
-`withInputSerDes(...)` replaces this codec, but rejects `ComposableSerDes`: persisted stages are never used as the
-initial invocation's input encoder. A custom input codec must produce data that the persisted pipeline's root value
-codec can decode after the stages pass the unrecognized input through. Fluent configuration preserves an explicit
-input-codec override when other runner configuration is replaced. `LocalDurableTestRunner` creates the execution
-operation with this raw external payload and lets `DurableExecutor` apply the persisted pipeline's pass-through
-behavior during deserialization; it does not synthesize a durable context or serialize initial input through the
-persisted pipeline.
+The cloud test runner must send initial Lambda input before it receives a durable execution ARN. Initial input
+therefore uses a separate context-free value codec configured by `DurableConfig.withInputSerDes(...)`. By default,
+`DurableConfig` uses the configured persisted SerDes when it is a plain value codec, or the root value codec when it is
+composable. An explicit input codec rejects `ComposableSerDes`: persisted stages are never used at the external
+invocation boundary.
+
+`DurableExecutor` deserializes the execution operation's initial input directly with the configured input codec rather
+than the persisted pipeline. The codecs do not need to be wire-compatible, and an external payload that resembles a
+persisted stage frame cannot be consumed by that stage accidentally. `LocalDurableTestRunner.withInputSerDes(...)`
+updates both its encoder and the copied runtime configuration. `CloudDurableTestRunner.withInputSerDes(...)` updates
+the client-side encoder, so the deployed handler must configure the same input codec through `DurableConfig`. Fluent
+runner configuration preserves an explicit input-codec override when other runner configuration is replaced.
 
 ### Implementation plan
 

@@ -27,6 +27,7 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
+import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -94,6 +95,7 @@ public final class DurableConfig {
 
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
+    private final SerDes inputSerDes;
     private final ExecutorService executorService;
     private final ExecutorService serDesExecutorService;
     private final LoggerConfig loggerConfig;
@@ -108,6 +110,7 @@ public final class DurableConfig {
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
+        this.inputSerDes = inputValueCodec(builder.inputSerDes, this.serDes);
         this.executorService =
                 Objects.requireNonNullElseGet(builder.executorService, DurableConfig::createDefaultExecutor);
         this.serDesExecutorService = builder.serDesExecutorService;
@@ -155,6 +158,19 @@ public final class DurableConfig {
      */
     public SerDes getSerDes() {
         return serDes;
+    }
+
+    /**
+     * Gets the context-free value codec used to deserialize the initial Lambda invocation payload.
+     *
+     * <p>This codec is separate from the persisted SerDes pipeline because the initial payload is received before a
+     * durable execution context exists. If it is not explicitly configured, a plain persisted SerDes is reused, while a
+     * composable persisted SerDes contributes only its root value codec.
+     *
+     * @return the initial invocation value codec
+     */
+    public SerDes getInputSerDes() {
+        return inputSerDes;
     }
 
     /**
@@ -243,6 +259,9 @@ public final class DurableConfig {
         if (getSerDes() == null) {
             throw new IllegalStateException("SerDes configuration failed");
         }
+        if (getInputSerDes() == null) {
+            throw new IllegalStateException("Input SerDes configuration failed");
+        }
         if (getExecutorService() == null) {
             throw new IllegalStateException("ExecutorService configuration failed");
         }
@@ -326,10 +345,24 @@ public final class DurableConfig {
         return DEFAULT_USER_THREAD_POOL;
     }
 
+    private static SerDes inputValueCodec(SerDes inputSerDes, SerDes persistedSerDes) {
+        var codec = inputSerDes;
+        if (codec == null) {
+            codec = persistedSerDes instanceof ComposableSerDes composable
+                    ? composable.getValueCodec()
+                    : persistedSerDes;
+        }
+        if (codec instanceof ComposableSerDes) {
+            throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
+        }
+        return codec;
+    }
+
     /** Builder for DurableConfig. Provides fluent API for configuring SDK components. */
     public static final class Builder {
         private DurableExecutionClient durableExecutionClient;
         private SerDes serDes;
+        private SerDes inputSerDes;
         private ExecutorService executorService;
         private ExecutorService serDesExecutorService;
         private LoggerConfig loggerConfig;
@@ -394,6 +427,27 @@ public final class DurableConfig {
          */
         public Builder withSerDes(SerDes serDes) {
             this.serDes = Objects.requireNonNull(serDes, "SerDes cannot be null");
+            return this;
+        }
+
+        /**
+         * Sets the context-free value codec used to deserialize the initial Lambda invocation payload.
+         *
+         * <p>The initial input codec is independent of the SerDes used for persisted execution payloads and must not be
+         * a {@link ComposableSerDes}. If not set, a plain persisted SerDes is reused, while a composable persisted
+         * SerDes contributes only its root value codec.
+         *
+         * @param inputSerDes initial invocation value codec
+         * @return this builder
+         * @throws NullPointerException if inputSerDes is null
+         * @throws IllegalArgumentException if inputSerDes is a composable pipeline
+         */
+        public Builder withInputSerDes(SerDes inputSerDes) {
+            inputSerDes = Objects.requireNonNull(inputSerDes, "inputSerDes cannot be null");
+            if (inputSerDes instanceof ComposableSerDes) {
+                throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
+            }
+            this.inputSerDes = inputSerDes;
             return this;
         }
 

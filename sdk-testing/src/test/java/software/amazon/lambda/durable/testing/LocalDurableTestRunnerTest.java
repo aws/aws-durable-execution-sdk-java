@@ -179,6 +179,51 @@ class LocalDurableTestRunnerTest {
     }
 
     @Test
+    void explicitInputSerDesIsUsedByRunnerAndRuntime() {
+        var config = DurableConfig.builder().withSerDes(new JacksonSerDes()).build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
+                .withInputSerDes(prefixedStringSerDes())
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value", result.getResult());
+    }
+
+    @Test
+    void initialInputBypassesPersistedPipelineStages() {
+        var deserializeCalls = new AtomicInteger();
+        var persistedSerDes = new JacksonSerDes().then(new SerDesStage() {
+            @Override
+            public String serialize(String value, SerDesContext context) {
+                return "persisted:" + value;
+            }
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                deserializeCalls.incrementAndGet();
+                if (data.startsWith("custom:")) {
+                    throw new SerDesException("Initial input collided with a persisted stage frame");
+                }
+                return data.startsWith("persisted:") ? data.substring("persisted:".length()) : data;
+            }
+        });
+        var config = DurableConfig.builder()
+                .withSerDes(persistedSerDes)
+                .withInputSerDes(prefixedStringSerDes())
+                .build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class, (input, context) -> input + ":" + deserializeCalls.get(), config)
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value:0", result.getResult());
+    }
+
+    @Test
     void rejectsComposableInputSerDes(@TempDir Path basePath) {
         var config = DurableConfig.builder()
                 .withSerDes(new JacksonSerDes()

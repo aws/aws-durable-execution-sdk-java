@@ -77,7 +77,7 @@ public class DurableExecutor {
                         I userInput = null;
                         Throwable inputFailure = null;
                         try {
-                            userInput = extractUserInput(executionManager, config.getSerDes(), inputType);
+                            userInput = extractUserInput(executionManager, config.getInputSerDes(), inputType);
                         } catch (Throwable t) {
                             inputFailure = t;
                         }

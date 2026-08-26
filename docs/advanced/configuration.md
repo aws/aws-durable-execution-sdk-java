@@ -17,6 +17,7 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
         return DurableConfig.builder()
             .withLambdaClientBuilder(lambdaClientBuilder)
             .withSerDes(new MyCustomSerDes())                    // Custom serialization
+            .withInputSerDes(new MyInputSerDes())                // Optional initial invocation codec
             .withExecutorService(Executors.newFixedThreadPool(10))  // Custom thread pool
             .withSerDesExecutorService(Executors.newFixedThreadPool(4)) // Optional SerDes/payload I/O pool
             .withLoggerConfig(LoggerConfig.withReplayLogging())      // Enable replay logs
@@ -33,7 +34,8 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | Option                      | Description                             | Default                       |
 |-----------------------------|-----------------------------------------|-------------------------------|
 | `withLambdaClientBuilder()` | Custom AWS Lambda client                | Auto-configured Lambda client |
-| `withSerDes()`              | Serializer for step results             | Jackson with default settings |
+| `withSerDes()`              | Serializer for persisted execution values | Jackson with default settings |
+| `withInputSerDes()`         | Context-free codec for initial invocation input | Persisted value codec, or pipeline root |
 | `withExecutorService()`     | Thread pool for user-defined operations | Cached daemon thread pool     |
 | `withSerDesExecutorService()` | Optional thread pool for SerDes and payload storage I/O | Inline on the calling thread |
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |

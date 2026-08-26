@@ -28,6 +28,7 @@ import software.amazon.lambda.durable.retry.JitterStrategy;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesStage;
 
 class DurableConfigTest {
 
@@ -53,6 +54,7 @@ class DurableConfigTest {
         assertInstanceOf(LambdaDurableFunctionsClient.class, config.getDurableExecutionClient());
         assertNotNull(config.getSerDes());
         assertInstanceOf(JacksonSerDes.class, config.getSerDes());
+        assertSame(config.getSerDes(), config.getInputSerDes());
         assertNotNull(config.getExecutorService());
         assertInstanceOf(ExecutorService.class, config.getExecutorService());
         assertNull(config.getSerDesExecutorService());
@@ -78,7 +80,40 @@ class DurableConfigTest {
         assertNotNull(config);
         assertNotNull(config.getDurableExecutionClient());
         assertEquals(mockSerDes, config.getSerDes());
+        assertSame(mockSerDes, config.getInputSerDes());
         assertNotNull(config.getExecutorService());
+    }
+
+    @Test
+    void testBuilder_ComposableSerDesDefaultsInputToRootValueCodec() {
+        var valueCodec = new JacksonSerDes();
+        var config = DurableConfig.builder()
+                .withSerDes(valueCodec.then(mock(SerDesStage.class)))
+                .build();
+
+        assertSame(valueCodec, config.getInputSerDes());
+    }
+
+    @Test
+    void testBuilder_WithCustomInputSerDes() {
+        var inputSerDes = mock(SerDes.class);
+        var config = DurableConfig.builder()
+                .withSerDes(mockSerDes)
+                .withInputSerDes(inputSerDes)
+                .build();
+
+        assertSame(inputSerDes, config.getInputSerDes());
+        assertSame(mockSerDes, config.getSerDes());
+    }
+
+    @Test
+    void testBuilder_RejectsComposableInputSerDes() {
+        var inputPipeline = new JacksonSerDes().then(mock(SerDesStage.class));
+
+        var exception = assertThrows(
+                IllegalArgumentException.class, () -> DurableConfig.builder().withInputSerDes(inputPipeline));
+
+        assertTrue(exception.getMessage().contains("value codec"));
     }
 
     @Test
@@ -187,6 +222,15 @@ class DurableConfigTest {
     }
 
     @Test
+    void testBuilder_NullInputSerDes_ThrowsException() {
+        var builder = DurableConfig.builder();
+
+        var exception = assertThrows(NullPointerException.class, () -> builder.withInputSerDes(null));
+
+        assertEquals("inputSerDes cannot be null", exception.getMessage());
+    }
+
+    @Test
     void testBuilder_NullSerDesExecutorService_ThrowsException() {
         var builder = DurableConfig.builder();
 
@@ -202,6 +246,7 @@ class DurableConfigTest {
         // Verify fluent API returns builder
         assertSame(builder, builder.withDurableExecutionClient(mockClient));
         assertSame(builder, builder.withSerDes(mockSerDes));
+        assertSame(builder, builder.withInputSerDes(mock(SerDes.class)));
         assertSame(builder, builder.withExecutorService(mockExecutor));
         assertSame(builder, builder.withSerDesExecutorService(mockSerDesExecutor));
         assertSame(builder, builder.withDeserializeAfterSerialization(false));

@@ -184,7 +184,8 @@ public class CloudDurableTestRunner<I, O> {
      *
      * <p>The input codec is independent of the SerDes used for persisted execution payloads and must not be a
      * {@link ComposableSerDes}. By default, the configured persisted SerDes is used when it is a value codec; for a
-     * composable pipeline, its root value codec is used.
+     * composable pipeline, its root value codec is used. The deployed handler must configure the same codec with
+     * {@link software.amazon.lambda.durable.DurableConfig.Builder#withInputSerDes(SerDes)}.
      */
     public CloudDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new CloudDurableTestRunner<>(

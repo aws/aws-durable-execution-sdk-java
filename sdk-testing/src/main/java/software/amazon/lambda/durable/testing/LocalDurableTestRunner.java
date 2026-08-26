@@ -23,7 +23,6 @@ import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
@@ -80,17 +79,21 @@ public class LocalDurableTestRunner<I, O> {
                     .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
                     .withDeserializeAfterSerialization(customerConfig.shouldDeserializeAfterSerialization())
                     .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]));
+            configBuilder.withInputSerDes(inputSerDes != null ? inputSerDes : customerConfig.getInputSerDes());
             if (customerConfig.getSerDesExecutorService() != null) {
                 configBuilder.withSerDesExecutorService(customerConfig.getSerDesExecutorService());
             }
             this.customerConfig = configBuilder.build();
         } else {
             // Fallback to default config with in-memory client
-            this.customerConfig =
-                    DurableConfig.builder().withDurableExecutionClient(storage).build();
+            var configBuilder = DurableConfig.builder().withDurableExecutionClient(storage);
+            if (inputSerDes != null) {
+                configBuilder.withInputSerDes(inputSerDes);
+            }
+            this.customerConfig = configBuilder.build();
         }
         this.serDes = this.customerConfig.getSerDes();
-        this.inputSerDes = inputValueCodec(inputSerDes, this.serDes);
+        this.inputSerDes = this.customerConfig.getInputSerDes();
     }
 
     /**
@@ -221,9 +224,8 @@ public class LocalDurableTestRunner<I, O> {
     /**
      * Returns a new runner with a separate value codec for the initial Lambda invocation payload.
      *
-     * <p>The input codec is independent of the SerDes used for persisted execution payloads and must not be a
-     * {@link ComposableSerDes}. By default, the configured persisted SerDes is used when it is a value codec; for a
-     * composable pipeline, its root value codec is used.
+     * <p>The returned runner uses this codec both to serialize the external payload and to configure
+     * {@link DurableExecutor} to deserialize it. Persisted pipeline stages are not invoked at this boundary.
      */
     public LocalDurableTestRunner<I, O> withInputSerDes(SerDes inputSerDes) {
         return new LocalDurableTestRunner<>(
@@ -404,19 +406,6 @@ public class LocalDurableTestRunner<I, O> {
 
     private String serializeInput(I input) {
         return inputSerDes.serialize(input);
-    }
-
-    private static SerDes inputValueCodec(SerDes inputSerDes, SerDes persistedSerDes) {
-        var codec = inputSerDes;
-        if (codec == null) {
-            codec = persistedSerDes instanceof ComposableSerDes composable
-                    ? composable.getValueCodec()
-                    : persistedSerDes;
-        }
-        if (codec instanceof ComposableSerDes) {
-            throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
-        }
-        return codec;
     }
 
     private Context mockLambdaContext() {
