@@ -86,15 +86,15 @@ python3 generate-template.py \
   --output filesystem-infrastructure-template.yaml
 aws cloudformation deploy \
   --template-file filesystem-infrastructure-template.yaml \
-  --stack-name Java17-JavaSDKFileSystemSerDesE2EInfrastructureStack
+  --stack-name JavaSDKFileSystemSerDesE2EInfrastructureStack
 ```
 
 Then generate, build, and deploy the filesystem Lambda stack with
-`FileSystemInfrastructureStackName=Java17-JavaSDKFileSystemSerDesE2EInfrastructureStack`, and include
+`FileSystemInfrastructureStackName=JavaSDKFileSystemSerDesE2EInfrastructureStack`, and include
 `-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`.
 
-GitHub Actions maintains one persistent infrastructure stack per Java version. Each E2E matrix job reuses that
-stack, deploys the filesystem Lambda separately, runs the test, and deletes only the Lambda stack.
+GitHub Actions maintains one persistent infrastructure stack shared by every Java version. Each E2E matrix job
+deploys its filesystem Lambda against that stack, runs the test, and deletes only its Lambda stack.
 
 ## Examples
 
