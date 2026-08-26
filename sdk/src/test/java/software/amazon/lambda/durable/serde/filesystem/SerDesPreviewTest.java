@@ -8,6 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -121,6 +125,20 @@ class SerDesPreviewTest {
     }
 
     @Test
+    void objectPreviewUsesJacksonSerDesTimeFormats() {
+        var instant = Instant.parse("2026-08-26T03:30:00Z");
+        var duration = Duration.ofMinutes(5);
+        var localDateTime = LocalDateTime.parse("2026-08-26T03:30:00");
+        var config = PreviewConfig.builder(PreviewMode.INCLUDE_ALL).build();
+
+        var preview = SerDesPreview.buildPreview(new TemporalPayload(instant, duration, localDateTime), config);
+
+        assertEquals("2026-08-26T03:30:00Z", preview.get("instant"));
+        assertEquals(0, new BigDecimal("300").compareTo((BigDecimal) preview.get("duration")));
+        assertEquals("2026-08-26T03:30:00", preview.get("localDateTime"));
+    }
+
+    @Test
     void jsonPreviewRejectsMalformedJsonAndSkipsDottedFieldNames() {
         var config = PreviewConfig.builder(PreviewMode.INCLUDE_ALL).build();
 
@@ -149,4 +167,6 @@ class SerDesPreviewTest {
     private static Map<String, Object> nested(Map<String, Object> value, String field) {
         return (Map<String, Object>) value.get(field);
     }
+
+    private record TemporalPayload(Instant instant, Duration duration, LocalDateTime localDateTime) {}
 }

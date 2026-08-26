@@ -76,6 +76,58 @@ class RetryBinarySerDesStageTest {
     }
 
     @Test
+    void retriesSerializationWithFreshInputForEveryAttempt() {
+        var calls = new AtomicInteger();
+        var delegate = new BinarySerDesStage() {
+            @Override
+            public byte[] serialize(byte[] value, SerDesContext context) {
+                value[0]++;
+                if (calls.incrementAndGet() == 1) {
+                    throw new RetryableSerDesException("transient");
+                }
+                return value;
+            }
+
+            @Override
+            public byte[] deserialize(byte[] data, SerDesContext context) {
+                return data;
+            }
+        };
+        var stage = new RetryBinarySerDesStage(
+                delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
+        var value = new byte[] {1, 2, 3};
+
+        assertArrayEquals(new byte[] {2, 2, 3}, stage.serialize(value, CONTEXT));
+        assertArrayEquals(new byte[] {1, 2, 3}, value);
+    }
+
+    @Test
+    void retriesDeserializationWithFreshInputForEveryAttempt() {
+        var calls = new AtomicInteger();
+        var delegate = new BinarySerDesStage() {
+            @Override
+            public byte[] serialize(byte[] value, SerDesContext context) {
+                return value;
+            }
+
+            @Override
+            public byte[] deserialize(byte[] data, SerDesContext context) {
+                data[0]--;
+                if (calls.incrementAndGet() == 1) {
+                    throw new RetryableSerDesException("transient");
+                }
+                return data;
+            }
+        };
+        var stage = new RetryBinarySerDesStage(
+                delegate, (error, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
+        var value = new byte[] {3, 2, 1};
+
+        assertArrayEquals(new byte[] {2, 2, 1}, stage.deserialize(value, CONTEXT));
+        assertArrayEquals(new byte[] {3, 2, 1}, value);
+    }
+
+    @Test
     void doesNotRetryPermanentFailures() {
         var calls = new AtomicInteger();
         var delegate = new BinarySerDesStage() {

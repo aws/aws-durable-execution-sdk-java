@@ -46,6 +46,7 @@ import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
+import software.amazon.lambda.durable.serde.internal.ChainedInvokePayloadFrame;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestResult;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
@@ -224,7 +225,7 @@ class FileSystemSerDesStageIntegrationTest {
                 .findFirst()
                 .orElseThrow()
                 .payload();
-        assertEnvelopePointsToFile(invokePayload);
+        assertEnvelopePointsToFile(ChainedInvokePayloadFrame.decode(invokePayload));
 
         var calleeClient = new LocalMemoryExecutionClient();
         var calleeConfig = DurableConfig.builder()

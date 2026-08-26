@@ -16,6 +16,7 @@ import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.internal.ChainedInvokePayloadFrame;
 
 /**
  * Durable operation that invokes another Lambda function and waits for its result.
@@ -65,17 +66,15 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
     }
 
     private void startInvocation() {
+        var serializedPayload = getSerDesRunner()
+                .serialize(payloadSerDes, this.payload, createSerDesContext(SerDesPayloadKind.INVOKE_PAYLOAD, null));
         var update = OperationUpdate.builder()
                 .action(OperationAction.START)
                 .chainedInvokeOptions(ChainedInvokeOptions.builder()
                         .functionName(functionName)
                         .tenantId(invokeConfig.tenantId())
                         .build())
-                .payload(getSerDesRunner()
-                        .serialize(
-                                payloadSerDes,
-                                this.payload,
-                                createSerDesContext(SerDesPayloadKind.INVOKE_PAYLOAD, null)));
+                .payload(ChainedInvokePayloadFrame.encode(serializedPayload));
 
         sendOperationUpdate(update);
     }

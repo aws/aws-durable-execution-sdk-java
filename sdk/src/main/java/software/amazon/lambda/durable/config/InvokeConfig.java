@@ -73,6 +73,9 @@ public class InvokeConfig {
          * per-invoke customization of serialization behavior, useful for invoke operations that need special handling
          * (e.g., custom date formats, encryption, compression).
          *
+         * <p>The target handler deserializes the framed chained-invoke payload with its configured persisted SerDes, so
+         * a custom payload SerDes must use a compatible wire format.
+         *
          * @param payloadSerDes the custom serializer to use, or null to use the default
          * @return this builder for method chaining
          */

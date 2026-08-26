@@ -369,6 +369,8 @@ Retry rules:
 - When the strategy returns `fail`, the retry wrapper rethrows the last `RetryableSerDesException`.
 - The same read-only `SerDesContext` parameter is passed to every attempt because retrying happens inside the original
   `SerDesRunner` task.
+- `RetryBinarySerDesStage` snapshots its input and passes a fresh byte-array clone to every attempt in both directions.
+  A delegate may therefore mutate its attempt-local bytes without contaminating a later retry or the caller's input.
 - A retry delay blocks the thread executing the SerDes call. This is the caller thread by default or a SerDes executor
   thread when one is explicitly configured. It is an in-invocation infrastructure retry, not a durable wait or
   checkpoint. Strategies must therefore use short, bounded delays that fit within the Lambda invocation timeout.
@@ -566,6 +568,13 @@ persisted stage frame cannot be consumed by that stage accidentally. `LocalDurab
 updates both its encoder and the copied runtime configuration. `CloudDurableTestRunner.withInputSerDes(...)` updates
 the client-side encoder, so the deployed handler must configure the same input codec through `DurableConfig`. Fluent
 runner configuration preserves an explicit input-codec override when other runner configuration is replaced.
+
+Chained invokes retain full persisted-pipeline processing. After serializing an invoke payload,
+`InvokeOperation` adds a reserved, versioned source frame outside the pipeline output. The target
+`DurableExecutor` recognizes and removes that frame before deserializing with its persisted SerDes. Unframed execution
+input always uses the context-free input codec. This separates the two sources without inspecting a filesystem,
+compression, encryption, or other stage format and prevents an external payload from colliding with those formats. A
+custom per-invoke payload SerDes must be compatible with the target handler's persisted SerDes.
 
 ### Implementation plan
 

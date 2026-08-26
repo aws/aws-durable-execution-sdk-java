@@ -162,7 +162,9 @@ var resilientStorageStage = new RetrySerDesStage(
 ```
 
 These wrappers retry only `RetryableSerDesException`. Permanent errors, such as malformed envelopes or codec failures,
-are not retried. Retry delays consume time in the current Lambda invocation, so keep strategies short and bounded.
+are not retried. `RetryBinarySerDesStage` snapshots its input and gives every attempt a fresh byte array, so a failed
+delegate cannot leak in-place mutations into the next attempt. Retry delays consume time in the current Lambda
+invocation, so keep strategies short and bounded.
 
 SerDes runs inline on the calling thread by default, preserving the existing no-thread-pool behavior and avoiding a
 thread hop for in-memory serialization. Blocking stages, including filesystem access and retry backoff, can use a
@@ -199,6 +201,12 @@ var config = DurableConfig.builder()
 `LocalDurableTestRunner.withInputSerDes(...)` updates both sides of the local boundary: the runner serializes with the
 selected codec and the local runtime deserializes with it. `CloudDurableTestRunner.withInputSerDes(...)` controls the
 invocation sent to AWS; the deployed handler must configure the same codec through `DurableConfig`.
+
+Chained invokes use the persisted pipeline instead. `InvokeOperation` adds a reserved, versioned SDK source frame
+outside the serialized invoke payload. `DurableExecutor` removes that frame and deserializes the enclosed value with
+the configured persisted SerDes. Unframed execution input always uses the context-free input codec, so an external
+payload cannot accidentally activate a persisted stage merely by resembling its format. A custom
+`InvokeConfig.payloadSerDes(...)` must remain compatible with the target handler's persisted SerDes.
 
 ## Filesystem-backed payload storage
 

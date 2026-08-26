@@ -11,7 +11,7 @@ import software.amazon.lambda.durable.retry.RetryStrategy;
  *
  * <p>Only {@link RetryableSerDesException} is retried. Other failures are propagated immediately. Retry delays block
  * the thread executing the SerDes call: the caller by default or the configured SerDes executor thread. Every attempt
- * receives the same {@link SerDesContext} supplied to this decorator.
+ * receives the same {@link SerDesContext} supplied to this decorator and a fresh copy of the original input bytes.
  */
 public final class RetryBinarySerDesStage implements BinarySerDesStage {
     private final BinarySerDesStage delegate;
@@ -35,11 +35,14 @@ public final class RetryBinarySerDesStage implements BinarySerDesStage {
 
     @Override
     public byte[] serialize(byte[] value, SerDesContext context) {
-        return retryExecutor.execute("binary stage serialization", () -> delegate.serialize(value, context));
+        var snapshot = Objects.requireNonNull(value, "value cannot be null").clone();
+        return retryExecutor.execute("binary stage serialization", () -> delegate.serialize(snapshot.clone(), context));
     }
 
     @Override
     public byte[] deserialize(byte[] data, SerDesContext context) {
-        return retryExecutor.execute("binary stage deserialization", () -> delegate.deserialize(data, context));
+        var snapshot = Objects.requireNonNull(data, "data cannot be null").clone();
+        return retryExecutor.execute(
+                "binary stage deserialization", () -> delegate.deserialize(snapshot.clone(), context));
     }
 }

@@ -32,6 +32,7 @@ import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.internal.ChainedInvokePayloadFrame;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -77,7 +78,7 @@ public class DurableExecutor {
                         I userInput = null;
                         Throwable inputFailure = null;
                         try {
-                            userInput = extractUserInput(executionManager, config.getInputSerDes(), inputType);
+                            userInput = extractUserInput(executionManager, config, inputType);
                         } catch (Throwable t) {
                             inputFailure = t;
                         }
@@ -253,13 +254,19 @@ public class DurableExecutor {
                 .build();
     }
 
-    private static <I> I extractUserInput(ExecutionManager executionManager, SerDes serDes, TypeToken<I> inputType) {
+    private static <I> I extractUserInput(
+            ExecutionManager executionManager, DurableConfig config, TypeToken<I> inputType) {
         var executionOp = executionManager.getExecutionOperation();
         if (executionOp.executionDetails() == null) {
             throw new IllegalDurableOperationException("EXECUTION operation missing executionDetails");
         }
 
         var inputPayload = executionOp.executionDetails().inputPayload();
+        var serDes = config.getInputSerDes();
+        if (ChainedInvokePayloadFrame.isFramed(inputPayload)) {
+            inputPayload = ChainedInvokePayloadFrame.decode(inputPayload);
+            serDes = config.getSerDes();
+        }
         return executionManager
                 .getSerDesRunner()
                 .deserialize(
