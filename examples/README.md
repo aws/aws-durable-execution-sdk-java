@@ -77,10 +77,24 @@ mvn test -Dtest=CloudBasedIntegrationTest \
   -Dtest.aws.region=us-east-1
 ```
 
-For manually run cloud tests, the filesystem SerDes test is disabled by default because it requires a separate VPC
-and EFS-backed stack. Generate and deploy that stack with `generate-template.py --file-system-only`, then include
-`-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`. GitHub Actions provisions this stack and
-runs the filesystem test in every E2E matrix job.
+For manually run cloud tests, the filesystem SerDes test is disabled by default because it requires VPC and EFS
+infrastructure. Create the persistent infrastructure stack once:
+
+```bash
+python3 generate-template.py \
+  --file-system-infrastructure-only \
+  --output filesystem-infrastructure-template.yaml
+aws cloudformation deploy \
+  --template-file filesystem-infrastructure-template.yaml \
+  --stack-name Java17-JavaSDKFileSystemSerDesE2EInfrastructureStack
+```
+
+Then generate, build, and deploy the filesystem Lambda stack with
+`FileSystemInfrastructureStackName=Java17-JavaSDKFileSystemSerDesE2EInfrastructureStack`, and include
+`-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`.
+
+GitHub Actions maintains one persistent infrastructure stack per Java version. Each E2E matrix job reuses that
+stack, deploys the filesystem Lambda separately, runs the test, and deletes only the Lambda stack.
 
 ## Examples
 
