@@ -155,15 +155,6 @@ jobs:
             -Djunit.jupiter.execution.parallel.config.strategy=fixed \
             -Djunit.jupiter.execution.parallel.config.fixed.parallelism=${{ env.E2E_TEST_PARALLELISM }}
         working-directory: ./examples
-      - name: Delete filesystem SerDes E2E Lambda stack
-        if: always()
-        run: |
-          if aws cloudformation describe-stacks \
-            --stack-name Java${{ matrix.java }}-JavaSDKFileSystemSerDesE2EStack >/dev/null 2>&1; then
-            sam delete --no-prompts \
-              --stack-name Java${{ matrix.java }}-JavaSDKFileSystemSerDesE2EStack
-          fi
-        working-directory: ./examples
       - name: Publish test case summary
         if: always()
         env:

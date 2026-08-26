@@ -93,8 +93,8 @@ Then generate, build, and deploy the filesystem Lambda stack with
 `FileSystemInfrastructureStackName=JavaSDKFileSystemSerDesE2EInfrastructureStack`, and include
 `-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`.
 
-GitHub Actions maintains one persistent infrastructure stack shared by every Java version. Each E2E matrix job
-deploys its filesystem Lambda against that stack, runs the test, and deletes only its Lambda stack.
+GitHub Actions maintains one persistent infrastructure stack shared by every Java version and one persistent
+filesystem Lambda stack per Java version. Each E2E matrix job updates its Lambda stack in place and runs the test.
 
 ## Examples
 
