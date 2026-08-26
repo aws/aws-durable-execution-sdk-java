@@ -98,6 +98,26 @@ class SerDesPreviewTest {
     }
 
     @Test
+    void includeAllPreservesScalarArrayFields() {
+        var preview = SerDesPreview.buildPreviewFromJson(
+                "{\"tags\":[\"a\",\"b\"]}",
+                PreviewConfig.builder(PreviewMode.INCLUDE_ALL).build());
+
+        assertEquals(Map.of("tags", List.of("a", "b")), preview);
+    }
+
+    @Test
+    void excludeAllPreservesExplicitlyIncludedScalarArrayFields() {
+        var preview = SerDesPreview.buildPreview(
+                Map.of("tags", List.of("a", "b"), "hidden", List.of("c")),
+                PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+                        .include(PreviewField.path("tags"))
+                        .build());
+
+        assertEquals(Map.of("tags", List.of("a", "b")), preview);
+    }
+
+    @Test
     void customMaskStringAndByteBudgetAreApplied() {
         var value = new LinkedHashMap<String, Object>();
         value.put("first", "one");

@@ -27,9 +27,10 @@ public final class SerDesPreview {
     /**
      * Builds a preview from an object using include, exclude, mask, path-matching, and byte-budget rules.
      *
-     * <p>Object fields are traversed in their Jackson serialization order. Arrays are flattened into their containing
-     * path, matching the Python and TypeScript preview behavior. Fields whose names contain dots are skipped because
-     * they cannot be distinguished from dot-separated paths.
+     * <p>Object fields are traversed in their Jackson serialization order. Object arrays are flattened into their
+     * containing path, while scalar arrays are preserved as field values, matching the Python and TypeScript preview
+     * behavior. Fields whose names contain dots are skipped because they cannot be distinguished from dot-separated
+     * paths.
      *
      * @return a nested preview map, or {@code null} when no fields are visible
      */
@@ -118,12 +119,26 @@ public final class SerDesPreview {
             }
             if (masked) {
                 pairs.add(new PreviewEntry(path, config.maskString()));
+            } else if (isScalarArray(field.getValue())) {
+                pairs.add(new PreviewEntry(path, MAPPER.convertValue(field.getValue(), Object.class)));
             } else if (field.getValue().isContainerNode()) {
                 collect(field.getValue(), path, config, pairs);
             } else {
                 pairs.add(new PreviewEntry(path, MAPPER.convertValue(field.getValue(), Object.class)));
             }
         }
+    }
+
+    private static boolean isScalarArray(JsonNode node) {
+        if (!node.isArray()) {
+            return false;
+        }
+        for (var item : node) {
+            if (item.isContainerNode()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isMatched(String path, List<PreviewField> fields) {
