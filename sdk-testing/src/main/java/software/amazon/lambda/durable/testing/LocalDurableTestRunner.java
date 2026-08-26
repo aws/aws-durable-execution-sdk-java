@@ -43,6 +43,10 @@ public class LocalDurableTestRunner<I, O> {
     private final SerDes serDes;
     private final DurableConfig customerConfig;
     private final Instant executionStartTime = Instant.now();
+    // The execution identity is fixed for the whole execution, matching the backend: the ARN and the EXECUTION
+    // operation ID stay stable across reinvocations, while only per-invocation values (the checkpoint token) change.
+    private final String executionName = UUID.randomUUID().toString();
+    private final String executionOperationId = UUID.randomUUID().toString();
 
     private LocalDurableTestRunner(
             TypeToken<I> inputType,
@@ -330,24 +334,56 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     private DurableExecutionInput createDurableInput(I input) {
-        var executionName = UUID.randomUUID().toString();
-        var invocationId = UUID.randomUUID().toString();
+        // The last ARN segment must equal the EXECUTION operation ID (ExecutionManager parses the ARN to find it), and
+        // both are stable across reinvocations so the execution keeps one identity — and one derived trace ID.
         var executionArn = String.format(
                 "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
-                executionName, invocationId);
+                executionName, executionOperationId);
         var inputJson = serDes.serialize(input);
-        var executionOp = Operation.builder()
-                .id(invocationId)
+
+        // The list must contain exactly one EXECUTION operation, matching the backend, which keeps a single EXECUTION
+        // operation and updates it in place. Its ID is stable across reinvocations, so a stored EXECUTION operation
+        // (for example the SUCCEEDED one written when a >6MB result is checkpointed) shares the fresh operation's ID;
+        // including both would collide when ExecutionManager builds its ID-keyed operation map. Merge them into one:
+        // start from the fresh operation, which carries the input details (EXECUTION result payloads are not stored on
+        // the operation — they live on the event stream — so the fresh op is the only source of the input), and adopt
+        // the stored operation's terminal status and end timestamp when present, so replay of an already-completed
+        // execution still looks completed.
+        var storedExecutionOps = storage.getAllOperations().stream()
+                .filter(op -> op.type() == OperationType.EXECUTION)
+                .toList();
+        if (storedExecutionOps.size() > 1) {
+            // The harness owns the single-EXECUTION-operation invariant; surface a violation loudly rather than hiding
+            // it by silently merging, since it would indicate a storage bug.
+            throw new IllegalStateException(
+                    "Expected at most one stored EXECUTION operation but found " + storedExecutionOps.size());
+        }
+        var storedExecutionOp = storedExecutionOps.isEmpty() ? null : storedExecutionOps.get(0);
+        var executionOpBuilder = Operation.builder()
+                .id(executionOperationId)
                 .name(executionName)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .startTimestamp(executionStartTime)
                 .executionDetails(
-                        ExecutionDetails.builder().inputPayload(inputJson).build())
-                .build();
+                        ExecutionDetails.builder().inputPayload(inputJson).build());
+        if (storedExecutionOp != null) {
+            // Preserve the persisted lifecycle state (e.g. SUCCEEDED when a large result was checkpointed) while
+            // keeping
+            // the input details from the fresh operation. Only status and end timestamp are adopted; start timestamp
+            // stays the (stable) fresh value.
+            executionOpBuilder.status(storedExecutionOp.status());
+            if (storedExecutionOp.endTimestamp() != null) {
+                executionOpBuilder.endTimestamp(storedExecutionOp.endTimestamp());
+            }
+        }
+        var executionOp = executionOpBuilder.build();
 
-        // Load previous operations and include them in InitialExecutionState
-        var existingOps = storage.getAllOperations();
+        // Load previous non-EXECUTION operations; the single merged EXECUTION operation above already represents the
+        // execution's state.
+        var existingOps = storage.getAllOperations().stream()
+                .filter(op -> op.type() != OperationType.EXECUTION)
+                .toList();
         var allOps = new ArrayList<>(List.of(executionOp));
         allOps.addAll(existingOps);
 

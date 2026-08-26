@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import io.opentelemetry.api.trace.SpanId;
+import io.opentelemetry.api.trace.TraceId;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,11 +30,11 @@ public class XRayContextExtractor implements ContextExtractor {
 
     @Override
     public ExtractedContext extract() {
-        // Try system property first — Lambda runtime updates this per invocation
-        // and it avoids JVM environment variable caching issues.
+        // Try system property first — the Lambda runtime interface client updates this per invocation, so it reflects
+        // the current invocation and avoids the JVM's process-lifetime environment-variable caching.
         var traceHeader = System.getProperty(XRAY_SYSTEM_PROPERTY);
         if (traceHeader == null || traceHeader.isEmpty()) {
-            // Fallback to environment variable
+            // Fallback to the environment variable (non-agent environments, local runs).
             traceHeader = System.getenv(XRAY_ENV_VAR);
         }
         if (traceHeader == null || traceHeader.isEmpty()) {
@@ -42,6 +44,7 @@ public class XRayContextExtractor implements ContextExtractor {
 
         String root = null;
         String parent = null;
+        String sampled = null;
 
         for (var part : traceHeader.split(";")) {
             var eqIdx = part.indexOf('=');
@@ -52,6 +55,7 @@ public class XRayContextExtractor implements ContextExtractor {
             switch (key) {
                 case "Root" -> root = value;
                 case "Parent" -> parent = value;
+                case "Sampled" -> sampled = value;
             }
         }
 
@@ -60,24 +64,34 @@ public class XRayContextExtractor implements ContextExtractor {
             return null;
         }
 
-        // Root format: 1-5759e988-bd862e3fe1be46a994272793
-        // Strip "1-" prefix, remove dashes → 32-char hex OTel trace ID
+        // Root format: 1-5759e988-bd862e3fe1be46a994272793 → strip "1-" and dashes → 32-char hex OTel trace ID. Reject
+        // an all-zero Root: it is well-formed but an invalid trace ID, and reusing it would anchor the execution on an
+        // invalid trace.
         var traceId = xrayRootToOtelTraceId(root);
-        if (traceId == null) {
+        if (traceId == null || !TraceId.isValid(traceId)) {
             logger.debug("Invalid X-Ray Root field: {}", root);
             return null;
         }
 
-        // Parent is a 16-char hex span ID
+        // Parent is a 16-char hex span ID; may be absent (Root-only header is still usable). Reject an all-zero Parent
+        // the same way — it is well-formed but invalid.
         String parentSpanId = null;
         if (parent != null) {
             var normalized = parent.toLowerCase();
-            if (HEX_16.matcher(normalized).matches()) {
+            if (HEX_16.matcher(normalized).matches() && SpanId.isValid(normalized)) {
                 parentSpanId = normalized;
             }
         }
 
-        return new ExtractedContext(traceId, parentSpanId);
+        // Only Sampled=1 and Sampled=0 are authoritative; anything else (missing or unusable) is undecided.
+        var sampling =
+                switch (sampled == null ? "" : sampled) {
+                    case "1" -> ExtractedContext.Sampling.SAMPLED;
+                    case "0" -> ExtractedContext.Sampling.NOT_SAMPLED;
+                    default -> ExtractedContext.Sampling.UNDECIDED;
+                };
+
+        return new ExtractedContext(traceId, parentSpanId, sampling);
     }
 
     /**

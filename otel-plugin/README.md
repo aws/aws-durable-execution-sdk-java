@@ -1,11 +1,11 @@
 # AWS Durable Execution SDK - OpenTelemetry Plugin
 
-OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK for Java. Emits a deterministic Workflow trace for durable-execution correlation while keeping each Invocation span in the ambient Lambda trace.
+OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK for Java. Anchors every durable execution on one trace so the Workflow span and its per-invocation spans stay correlated, joining the propagated backend trace when one is present.
 
 ## Features
 
-- **Deterministic Workflow Traces**: Workflow trace IDs are derived from the execution start time and ARN; stable span IDs are derived from the ARN
-- **Ambient Invocation Traces**: Invocation spans inherit the active Lambda/X-Ray context, or receive a fresh provider-generated root trace ID
+- **Backend-parented execution trace**: The Workflow span parents onto the execution ancestor resolved at invocation start — a propagated remote context, or a synthetic execution root — for one trace ID that is stable across all invocations, plus a stable span ID derived from the ARN
+- **Ambient Invocation Traces**: Invocation spans inherit the active Lambda/X-Ray context, or join the execution ancestor so they stay on the execution trace
 - **Scoped ID Generation**: Unrelated instrumentation scopes retain their provider's normal root trace ID generation
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
@@ -92,7 +92,7 @@ Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-exe
 
 ### 2. AWS X-Ray Active Tracing
 
-Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header to parent Invocation spans to the ambient Lambda/X-Ray trace. The Workflow trace remains independent and deterministic.
+Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header both to parent Invocation spans to the ambient Lambda/X-Ray trace and to anchor the execution trace on the propagated context when it carries a complete parent and an explicit sampling decision.
 
 **AWS Console:** Lambda > Configuration > Monitoring and operations tools > Active tracing > Enable
 
@@ -157,28 +157,46 @@ The function's execution role needs the `AWSXRayDaemonWriteAccess` managed polic
 
 ## Trace Structure
 
-With `InvocationOtelPlugin`, the plugin creates two correlated traces:
+The whole execution shares one trace, anchored at the execution ancestor resolved at invocation start. When the backend propagates a valid remote server span (`Root` and `Parent`), that span is the ancestor and the Workflow and Invocation spans nest under it, alongside the ambient Lambda spans on the same trace:
 
 ```
-Workflow trace:
-Workflow (deterministic trace/span IDs, exported once)
-
-Ambient invocation trace:
-Lambda/X-Ray parent
-└── Invocation
-    ├── fetch-data
-    │   └── fetch-data attempt 1
-    ├── cool-down
-    └── process
-        └── process attempt 1
+Remote backend server span (Root / Parent)
+├── Workflow (stable span ID, exported once)
+├── Ambient Lambda span 1
+│   └── Invocation 1
+├── Ambient Lambda span 2
+│   └── Invocation 2
+└── Invocation N          (direct child when no same-trace ambient span exists)
 ```
 
-- **Workflow span** — one logical root per durable execution with a deterministic, X-Ray-compatible trace ID derived from the execution start time and ARN, plus a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
-- **Invocation span** — one per Lambda invocation, parented to ambient context when available
+When no valid remote parent can be constructed, a synthetic execution root anchors the trace instead and both spans parent onto it:
+
+```
+Synthetic execution root
+├── Workflow
+├── Invocation 1
+├── Invocation 2
+└── Invocation N
+```
+
+- **Execution ancestor** — the common parent both the Workflow and Invocation spans resolve onto. A valid remote server span (`Root` and `Parent`) is used directly, whether or not `Sampled` is present; only when a valid remote parent cannot be constructed does a synthetic execution root take its place. It is a non-recording context, not an exported span.
+- **Workflow span** — one logical span per durable execution, joining the execution trace with a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
+- **Invocation span** — one per Lambda invocation, parented to the ambient span only when it is on the execution trace, otherwise to the execution ancestor
 - **Operation span** — one per durable operation, named after your step/wait names
 - **Attempt span** — one per user function execution (retries produce additional attempt spans)
 
 Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` reverses that relationship: operations are children of Workflow and link to the current Invocation span.
+
+### Sampling
+
+The plugin decides sampling once per invocation and applies that single decision to every durable span (Workflow, Invocation, operation, attempt), so the configured sampler is not re-invoked per span and the full decision — including `RECORD_ONLY` — is preserved. The decision follows this precedence, highest first:
+
+1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
+2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
+3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
+4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
+
+For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
 
 ## Span Attributes
 
@@ -305,7 +323,7 @@ The plugin's spans do not appear as nested subsegments of the Lambda platform se
 
 ### Workflow Span
 
-The Workflow span appears in a separate deterministic trace because it uses `setNoParent()`. Invocation spans remain in the ambient Lambda/X-Ray trace. Links correlate durable operations with the other trace.
+The Workflow span joins the execution trace by parenting onto the execution ancestor: the propagated remote server span when one is valid, otherwise a synthetic execution root. Either way it shares the execution trace ID and keeps its stable, ARN-derived span ID.
 
 ## Verification
 
@@ -314,8 +332,8 @@ After deploying your function with the plugin configured:
 1. **Invoke your durable function** — trigger at least one execution that includes multiple steps or a wait/resume cycle.
 
 2. **Check CloudWatch console** — Navigate to CloudWatch > Traces. Enable "Group by nodes" to see:
-   - A deterministic Workflow trace covering the entire execution
-   - Ambient Lambda traces containing one Invocation span per Lambda invocation
+   - One execution trace covering the whole execution, with the Workflow span and each Invocation span sharing its trace ID
+   - One Invocation span per Lambda invocation
    - Child spans for each durable operation (named after your step names)
    - Links between durable Workflow/operation spans and Invocation spans
 
