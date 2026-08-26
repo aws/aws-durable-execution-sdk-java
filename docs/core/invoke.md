@@ -16,7 +16,7 @@ var result = ctx.invoke("invoke-function",
 				InvokeConfig.builder()
 						.payloadSerDes(...)  // payload serializer
 						.serDes(...)         // result deserializer
-						.usePersistedSerDesForPayload(true) // compatible Java durable targets only
+						.usePersistedSerDesForPayload(true) // compatible durable targets; currently Java only
 						.tenantId(...)       // Lambda tenantId
 						.build()
 		);
@@ -25,7 +25,9 @@ var result = ctx.invoke("invoke-function",
 
 Invoke payloads use the caller's context-free input codec by default and are sent without SDK framing. This preserves
 compatibility with standard Lambda functions, non-Java durable functions, and older Java SDK versions. Enable
-`usePersistedSerDesForPayload(true)` only when the target is a compatible Java durable handler with the same persisted
-SerDes pipeline—for example, when both handlers use `FileSystemSerDesStage` with a shared filesystem. The target must
-also enable `DurableConfig.Builder.withPersistedSerDesForChainedInvokePayloads(true)`. Target acceptance is disabled by
-default, so payload bytes cannot select the persisted pipeline without callee opt-in.
+`usePersistedSerDesForPayload(true)` only when the target is a compatible durable handler with the same persisted
+SerDes pipeline and an implementation of the framed-input protocol. Java durable handlers can opt in with
+`DurableConfig.Builder.withPersistedSerDesForChainedInvokePayloads(true)`; other language SDKs do not currently
+implement the protocol. Target acceptance is disabled by default, so payload bytes cannot select the persisted
+pipeline without callee opt-in. The contract is specified in
+[Persisted SerDes wire formats](../wire-formats/persisted-serdes.md).

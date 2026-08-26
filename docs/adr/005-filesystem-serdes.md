@@ -586,7 +586,8 @@ and remove the frame before deserializing with its persisted SerDes. Without tar
 including frame-prefix collisions and spoofed frames, uses the context-free input codec. Because the frame is not
 trusted backend metadata, target opt-in should be enabled only when every permitted caller may select the persisted
 pipeline. A custom per-invoke payload SerDes in this mode must be compatible with the target handler's persisted
-SerDes.
+SerDes. The normative source-frame and filesystem-envelope contract is maintained separately in
+[Persisted SerDes wire formats](../wire-formats/persisted-serdes.md).
 
 ### Implementation plan
 

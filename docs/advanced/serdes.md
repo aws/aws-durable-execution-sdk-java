@@ -233,13 +233,16 @@ The caller opt-in adds a reserved, versioned SDK source frame outside the serial
 frame and deserializes the enclosed value with its persisted SerDes only when its own configuration enables this
 capability. Otherwise all execution input, including values that collide with or spoof the frame prefix, continues
 through the context-free input codec. The frame is not trusted backend metadata, so enable target acceptance only when
-every caller allowed to reach the handler may use the persisted pipeline.
+every caller allowed to reach the handler may use the persisted pipeline. The exact source frame and filesystem
+envelope are specified in [Persisted SerDes wire formats](../wire-formats/persisted-serdes.md).
 
 ## Filesystem-backed payload storage
 
 `FileSystemSerDesStage` stores serialized payloads on a durable shared filesystem and leaves small, versioned
 file-reference envelopes in checkpoints. It is included in the core `aws-durable-execution-sdk-java` artifact under
-the `software.amazon.lambda.durable.serde.filesystem` Java package.
+the `software.amazon.lambda.durable.serde.filesystem` Java package. See
+[Persisted SerDes wire formats](../wire-formats/persisted-serdes.md) for the normative envelope schema, digest, path,
+ownership, and cross-execution validation rules.
 
 Configure it after a value codec:
 
