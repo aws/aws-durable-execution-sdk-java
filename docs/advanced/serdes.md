@@ -202,11 +202,27 @@ var config = DurableConfig.builder()
 selected codec and the local runtime deserializes with it. `CloudDurableTestRunner.withInputSerDes(...)` controls the
 invocation sent to AWS; the deployed handler must configure the same codec through `DurableConfig`.
 
-Chained invokes use the persisted pipeline instead. `InvokeOperation` adds a reserved, versioned SDK source frame
-outside the serialized invoke payload. `DurableExecutor` removes that frame and deserializes the enclosed value with
-the configured persisted SerDes. Unframed execution input always uses the context-free input codec, so an external
-payload cannot accidentally activate a persisted stage merely by resembling its format. A custom
-`InvokeConfig.payloadSerDes(...)` must remain compatible with the target handler's persisted SerDes.
+Chained invokes preserve the existing standard-Lambda wire contract by default: the caller uses its context-free input
+codec unless `InvokeConfig.payloadSerDes(...)` is set, and sends that serialized value unchanged. This remains
+compatible with standard Lambda functions, non-Java durable functions, and older Java SDK versions.
+
+To offload or otherwise process an invoke payload through a persisted pipeline, both Java durable handlers must
+configure compatible pipelines and the caller must opt in:
+
+```java
+var result = context.invoke(
+    "invoke-compatible-handler",
+    targetFunction,
+    payload,
+    Result.class,
+    InvokeConfig.builder()
+        .usePersistedSerDesForPayload(true)
+        .build());
+```
+
+The opt-in adds a reserved, versioned SDK source frame outside the serialized payload. A compatible target removes the
+frame and deserializes the enclosed value with its persisted SerDes. Unframed execution input always uses the
+context-free input codec.
 
 ## Filesystem-backed payload storage
 
@@ -289,9 +305,12 @@ Payload files are content-hashed and immutable. Each serialization publishes a u
 `CREATE_NEW` write. Existing files are never overwritten, and publication does not require hard links or renames.
 Every inline and file envelope records the payload's SHA-256 digest. During deserialization, the stage verifies the
 restored bytes against that envelope digest; file payloads must also have a content-addressed filename consistent with
-the digest. The stage rejects symbolic-link paths and validates that ordinary checkpoint replay matches the execution
-and entity that produced the reference. Invoke input and result boundaries can consume a file owned by the other
-Lambda execution when both functions use the same shared root and path encoding.
+the digest. The stage traverses directories with `SecureDirectoryStream`, disables symbolic-link following, and holds
+the relative directory handles through each file read or write. This makes path validation and access one safe
+operation even if another process changes names on the shared filesystem. Providers without
+`SecureDirectoryStream` support are rejected. The stage also validates that ordinary checkpoint replay matches the
+execution and entity that produced the reference. Invoke input and result boundaries can consume a file owned by the
+other Lambda execution when both functions use the same shared root and path encoding.
 
 Stages may follow `FileSystemSerDesStage` to transform its inline or file-reference envelope. `OVERFLOW` and preview
 size checks occur before those later stages, so account for any expansion when staying within the service checkpoint
@@ -303,8 +322,9 @@ Do not use Lambda's ephemeral `/tmp` directory. Durable replay may run in anothe
 does not exist.
 
 Use a durable shared mount such as EFS or S3 Files. The stage does not rely on hard links or renames, which S3 Files
-does not support. S3 Files can synchronize writes asynchronously, so a runtime crash before a flush can lose recent
-data; use it only when that durability tradeoff is acceptable.
+does not support. The mounted Java filesystem provider must expose `SecureDirectoryStream`; ordinary Linux EFS and S3
+Files mounts use the default provider that supplies it. S3 Files can synchronize writes asynchronously, so a runtime
+crash before a flush can lose recent data; use it only when that durability tradeoff is acceptable.
 
 The SDK does not delete payload files. Configure an appropriate retention or lifecycle policy for the backing
 storage.

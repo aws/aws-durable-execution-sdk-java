@@ -16,8 +16,14 @@ var result = ctx.invoke("invoke-function",
 				InvokeConfig.builder()
 						.payloadSerDes(...)  // payload serializer
 						.serDes(...)         // result deserializer
+						.usePersistedSerDesForPayload(true) // compatible Java durable targets only
 						.tenantId(...)       // Lambda tenantId
 						.build()
 		);
 				
 ```
+
+Invoke payloads use the caller's context-free input codec by default and are sent without SDK framing. This preserves
+compatibility with standard Lambda functions, non-Java durable functions, and older Java SDK versions. Enable
+`usePersistedSerDesForPayload(true)` only when the target is a compatible Java durable handler with the same persisted
+SerDes pipeline—for example, when both handlers use `FileSystemSerDesStage` with a shared filesystem.

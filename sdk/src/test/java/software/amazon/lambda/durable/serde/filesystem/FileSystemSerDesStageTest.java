@@ -301,7 +301,7 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
-    void writesOnFileSystemsWithoutHardLinkSupport() throws Exception {
+    void failsClosedWhenTheFileSystemProviderLacksSecureDirectoryStreams() throws Exception {
         var archive = basePath.resolve("payloads.zip");
         try (var fileSystem =
                 FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
@@ -309,20 +309,10 @@ class FileSystemSerDesStageTest {
             var serDes = stringCodec()
                     .then(FileSystemSerDesStage.builder(archiveBasePath).build());
 
-            var envelope = new SerDesRunner(null).serialize(serDes, "expected", context());
-            var file = fileSystem.getPath(MAPPER.readTree(envelope).get("file").textValue());
-            var hash = HexFormat.of()
-                    .formatHex(
-                            MessageDigest.getInstance("SHA-256").digest("expected".getBytes(StandardCharsets.UTF_8)));
-            var fileName = file.getFileName().toString();
-            assertTrue(fileName.contains(hash));
+            var failure = assertThrows(
+                    SerDesException.class, () -> new SerDesRunner(null).serialize(serDes, "expected", context()));
 
-            assertEquals("expected", Files.readString(file));
-            assertTrue(fileName.matches(".*-" + hash + "-[0-9a-f-]{36}\\.payload"));
-            assertTrue(fileName.endsWith(".payload"));
-            assertEquals(
-                    "expected",
-                    new SerDesRunner(null).deserialize(serDes, envelope, TypeToken.get(String.class), context()));
+            assertCauseMessage(failure, "SecureDirectoryStream support");
         }
     }
 
@@ -723,6 +713,22 @@ class FileSystemSerDesStageTest {
         try (var files = Files.list(outside)) {
             assertEquals(0, files.count());
         }
+    }
+
+    @Test
+    void rejectsSymbolicLinkDirectoriesWhenReading() throws Exception {
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var envelope = runner.serialize(serDes, "payload", context());
+        var orders = basePath.resolve("orders");
+        var outside = Files.createTempDirectory(basePath.getParent(), "outside-payloads-");
+        var outsideOrders = outside.resolve("orders");
+        Files.move(orders, outsideOrders);
+        Files.createSymbolicLink(orders, outsideOrders);
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope, TypeToken.get(String.class), context()));
     }
 
     @Test

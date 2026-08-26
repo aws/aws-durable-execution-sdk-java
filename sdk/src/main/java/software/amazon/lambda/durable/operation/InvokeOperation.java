@@ -74,7 +74,10 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
                         .functionName(functionName)
                         .tenantId(invokeConfig.tenantId())
                         .build())
-                .payload(ChainedInvokePayloadFrame.encode(serializedPayload));
+                .payload(
+                        invokeConfig.usePersistedSerDesForPayload()
+                                ? ChainedInvokePayloadFrame.encode(serializedPayload)
+                                : serializedPayload);
 
         sendOperationUpdate(update);
     }

@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -74,25 +73,16 @@ public final class SerDesPreview {
             return null;
         }
 
-        var accepted = new ArrayList<PreviewEntry>();
-        int estimatedSize = 2;
+        Map<String, Object> result = new LinkedHashMap<>();
         for (var pair : pairs) {
-            int entrySize = previewEntrySize(pair);
-            if (estimatedSize + entrySize > config.maxPreviewBytes()) {
+            var candidate = copy(result);
+            insert(candidate, pair.path(), pair.value());
+            if (serializedSize(candidate) > config.maxPreviewBytes()) {
                 break;
             }
-            accepted.add(pair);
-            estimatedSize += entrySize;
+            result = candidate;
         }
-        if (accepted.isEmpty()) {
-            return null;
-        }
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        for (var pair : accepted) {
-            insert(result, pair.path(), pair.value());
-        }
-        return result;
+        return result.isEmpty() ? null : result;
     }
 
     private static void collect(JsonNode node, String pathPrefix, PreviewConfig config, List<PreviewEntry> pairs) {
@@ -153,14 +143,22 @@ public final class SerDesPreview {
         return false;
     }
 
-    private static int previewEntrySize(PreviewEntry entry) {
+    private static int serializedSize(Map<String, Object> preview) {
         try {
-            var serialized =
-                    MAPPER.writeValueAsString(entry.path()) + ":" + MAPPER.writeValueAsString(entry.value()) + ",";
-            return serialized.getBytes(StandardCharsets.UTF_8).length;
+            return MAPPER.writeValueAsBytes(preview).length;
         } catch (JsonProcessingException e) {
-            throw new SerDesException("Failed to estimate preview size", e);
+            throw new SerDesException("Failed to measure preview size", e);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> copy(Map<String, Object> source) {
+        var copy = new LinkedHashMap<String, Object>();
+        for (var entry : source.entrySet()) {
+            var value = entry.getValue();
+            copy.put(entry.getKey(), value instanceof Map<?, ?> nested ? copy((Map<String, Object>) nested) : value);
+        }
+        return copy;
     }
 
     @SuppressWarnings("unchecked")

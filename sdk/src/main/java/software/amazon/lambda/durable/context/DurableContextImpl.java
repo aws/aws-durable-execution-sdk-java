@@ -177,9 +177,10 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
         if (config.payloadSerDes() == null) {
-            config = config.toBuilder()
-                    .payloadSerDes(getDurableConfig().getSerDes())
-                    .build();
+            var payloadSerDes = config.usePersistedSerDesForPayload()
+                    ? getDurableConfig().getSerDes()
+                    : getDurableConfig().getInputSerDes();
+            config = config.toBuilder().payloadSerDes(payloadSerDes).build();
         }
         var operationId = nextOperationId();
 

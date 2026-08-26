@@ -8,18 +8,25 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.regex.Pattern;
@@ -40,6 +47,10 @@ import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
  *
  * <p>Payload files are immutable and created with a single {@code CREATE_NEW} write. Publication does not require hard
  * links or renames, so the write path is compatible with S3 Files.
+ *
+ * <p>The mounted filesystem provider must support {@link SecureDirectoryStream}. The stage traverses relative directory
+ * handles with symbolic-link following disabled and keeps those handles open through file I/O, preventing a checked
+ * path from being redirected between validation and access.
  *
  * <p>Every filesystem envelope includes a SHA-256 payload digest. Deserialization verifies inline values and file
  * contents against that digest, and file paths must contain the same digest.
@@ -66,7 +77,6 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private final FileSystemPathEncoding pathEncoding;
     private final int checkpointEnvelopeLimitBytes;
     private final BiFunction<String, SerDesContext, Map<String, Object>> previewGenerator;
-    private volatile Path canonicalBasePath;
 
     private FileSystemSerDesStage(Builder builder) {
         basePath = builder.basePath.toAbsolutePath().normalize();
@@ -186,16 +196,16 @@ public final class FileSystemSerDesStage implements SerDesStage {
             throw new SerDesException("Filesystem SerDes file path does not match its payload digest");
         }
         try {
-            var realBasePath = validateBasePath(false);
-            rejectSymbolicLinks(file);
-            var realDirectory = file.getParent().toRealPath();
-            var realFile = file.toRealPath();
-            if (!realDirectory.startsWith(realBasePath)
-                    || !realFile.getParent().equals(realDirectory)
-                    || !realFile.equals(file.toRealPath(LinkOption.NOFOLLOW_LINKS))) {
-                throw new SerDesException("Filesystem SerDes file does not resolve to the expected payload path");
+            byte[] storedData;
+            try (var directory = openSecureDirectory(file.getParent(), false);
+                    var channel = directory
+                            .directory()
+                            .newByteChannel(
+                                    file.getFileName(), Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+                    var input = Channels.newInputStream(channel)) {
+                storedData = input.readAllBytes();
             }
-            var serialized = new SerializedPayload(payloadType, Files.readAllBytes(realFile));
+            var serialized = new SerializedPayload(payloadType, storedData);
             verifyPayloadDigest(serialized, payloadDigest, context);
             return serialized;
         } catch (IOException e) {
@@ -274,17 +284,6 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private static boolean acceptsCrossExecutionReference(SerDesContext context) {
         return context.payloadKind() == SerDesPayloadKind.INPUT
                 || context.operationType() == OperationType.CHAINED_INVOKE;
-    }
-
-    private void rejectSymbolicLinks(Path file) throws IOException {
-        validateBasePath(false);
-        var current = basePath;
-        for (var component : basePath.relativize(file)) {
-            current = current.resolve(component);
-            if (Files.isSymbolicLink(current)) {
-                throw new SerDesException("Filesystem SerDes payload path must not contain symbolic links");
-            }
-        }
     }
 
     private static boolean isFilesystemEnvelope(JsonNode envelope) {
@@ -491,72 +490,94 @@ public final class FileSystemSerDesStage implements SerDesStage {
 
     private void writePayload(SerializedPayload payload, Path file) throws IOException {
         var directory = file.getParent();
-        var realBasePath = createDirectoriesWithoutSymbolicLinks(directory);
-        rejectSymbolicLinks(file);
-        var realDirectory = directory.toRealPath();
-        if (!realDirectory.startsWith(realBasePath)) {
-            throw new SerDesException("Filesystem SerDes directory resolves outside the configured base path");
-        }
-        try {
-            Files.write(file, payload.data(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-        } catch (FileAlreadyExistsException failure) {
-            throw failure;
-        } catch (IOException failure) {
-            try {
-                Files.deleteIfExists(file);
-            } catch (IOException cleanupFailure) {
-                failure.addSuppressed(cleanupFailure);
+        try (var secureDirectory = openSecureDirectory(directory, true)) {
+            var created = false;
+            try (var channel = secureDirectory
+                    .directory()
+                    .newByteChannel(
+                            file.getFileName(),
+                            Set.of(
+                                    StandardOpenOption.CREATE_NEW,
+                                    StandardOpenOption.WRITE,
+                                    LinkOption.NOFOLLOW_LINKS))) {
+                created = true;
+                var buffer = ByteBuffer.wrap(payload.data());
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
+            } catch (FileAlreadyExistsException failure) {
+                throw failure;
+            } catch (IOException failure) {
+                if (created) {
+                    try {
+                        secureDirectory.directory().deleteFile(file.getFileName());
+                    } catch (IOException cleanupFailure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+                throw failure;
             }
-            throw failure;
         }
     }
 
-    private Path createDirectoriesWithoutSymbolicLinks(Path directory) throws IOException {
-        var realBasePath = validateBasePath(true);
-        var current = basePath;
-        for (var component : basePath.relativize(directory)) {
-            current = current.resolve(component);
-            ensureRealDirectory(current, true);
+    private SecureDirectoryHandle openSecureDirectory(Path directory, boolean createMissing) throws IOException {
+        if (directory == null || !directory.startsWith(basePath)) {
+            throw new SerDesException("Filesystem SerDes directory is outside the configured base path");
         }
-        return realBasePath;
-    }
-
-    private Path validateBasePath(boolean createMissing) throws IOException {
-        var current = basePath.getRoot();
-        if (current == null) {
+        var root = basePath.getRoot();
+        if (root == null) {
             throw new SerDesException("Filesystem SerDes base path must be absolute");
         }
-        ensureRealDirectory(current, false);
-        for (var component : basePath) {
-            current = current.resolve(component);
-            ensureRealDirectory(current, createMissing);
+
+        var openedStreams = new ArrayList<DirectoryStream<Path>>();
+        try {
+            var current = requireSecureDirectoryStream(Files.newDirectoryStream(root), openedStreams);
+            var currentPath = root;
+            for (var component : root.relativize(directory)) {
+                var nextPath = currentPath.resolve(component);
+                DirectoryStream<Path> next;
+                try {
+                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+                } catch (NoSuchFileException missing) {
+                    if (!createMissing) {
+                        throw missing;
+                    }
+                    try {
+                        Files.createDirectory(nextPath);
+                    } catch (FileAlreadyExistsException ignored) {
+                        // Validate and open the entry relative to the held parent directory below.
+                    }
+                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+                }
+                current = requireSecureDirectoryStream(next, openedStreams);
+                currentPath = nextPath;
+            }
+            return new SecureDirectoryHandle(current, openedStreams);
+        } catch (IOException | RuntimeException failure) {
+            closeDirectoryStreams(openedStreams, failure);
+            throw failure;
         }
-        return retainCanonicalBasePath(basePath.toRealPath());
     }
 
-    private static void ensureRealDirectory(Path directory, boolean createMissing) throws IOException {
-        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
-            if (!createMissing) {
-                throw new NoSuchFileException(directory.toString());
-            }
+    @SuppressWarnings("unchecked")
+    private static SecureDirectoryStream<Path> requireSecureDirectoryStream(
+            DirectoryStream<Path> stream, List<DirectoryStream<Path>> openedStreams) {
+        openedStreams.add(stream);
+        if (stream instanceof SecureDirectoryStream<?> secureStream) {
+            return (SecureDirectoryStream<Path>) secureStream;
+        }
+        throw new SerDesException(
+                "FileSystemSerDesStage requires a filesystem provider with SecureDirectoryStream support");
+    }
+
+    private static void closeDirectoryStreams(List<DirectoryStream<Path>> streams, Throwable failure) {
+        for (int index = streams.size() - 1; index >= 0; index--) {
             try {
-                Files.createDirectory(directory);
-            } catch (FileAlreadyExistsException ignored) {
-                // Validate the entry created by another writer below.
+                streams.get(index).close();
+            } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
             }
         }
-        if (Files.isSymbolicLink(directory) || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
-            throw new SerDesException("Filesystem SerDes directory path must contain only real directories");
-        }
-    }
-
-    private synchronized Path retainCanonicalBasePath(Path currentBasePath) {
-        if (canonicalBasePath == null) {
-            canonicalBasePath = currentBasePath;
-        } else if (!canonicalBasePath.equals(currentBasePath)) {
-            throw new SerDesException("Filesystem SerDes base path changed after validation");
-        }
-        return canonicalBasePath;
     }
 
     private static boolean matchesPublishedPayloadFileName(String actualFileName, String expectedFileName) {
@@ -628,6 +649,40 @@ public final class FileSystemSerDesStage implements SerDesStage {
     }
 
     private record PayloadOwner(String durableExecutionArn, String entityId) {}
+
+    private static final class SecureDirectoryHandle implements AutoCloseable {
+        private final SecureDirectoryStream<Path> directory;
+        private final List<DirectoryStream<Path>> openedStreams;
+
+        private SecureDirectoryHandle(
+                SecureDirectoryStream<Path> directory, List<DirectoryStream<Path>> openedStreams) {
+            this.directory = directory;
+            this.openedStreams = List.copyOf(openedStreams);
+        }
+
+        private SecureDirectoryStream<Path> directory() {
+            return directory;
+        }
+
+        @Override
+        public void close() throws IOException {
+            IOException failure = null;
+            for (int index = openedStreams.size() - 1; index >= 0; index--) {
+                try {
+                    openedStreams.get(index).close();
+                } catch (IOException closeFailure) {
+                    if (failure == null) {
+                        failure = closeFailure;
+                    } else {
+                        failure.addSuppressed(closeFailure);
+                    }
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+    }
 
     private enum PayloadType {
         STRING

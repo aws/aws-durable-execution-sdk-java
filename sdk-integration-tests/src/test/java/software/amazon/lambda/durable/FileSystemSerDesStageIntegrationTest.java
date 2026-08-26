@@ -27,6 +27,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.execution.DurableExecutor;
@@ -171,7 +172,13 @@ class FileSystemSerDesStageIntegrationTest {
                             var callback = context.createCallback("approval", String.class);
                             var approval = callback.get();
                             return context.invoke(
-                                    "notify", "target-function", Map.of("approval", approval), String.class);
+                                    "notify",
+                                    "target-function",
+                                    Map.of("approval", approval),
+                                    String.class,
+                                    InvokeConfig.builder()
+                                            .usePersistedSerDesForPayload(true)
+                                            .build());
                         },
                         config)
                 .withOutputType(String.class);
@@ -206,8 +213,12 @@ class FileSystemSerDesStageIntegrationTest {
                 .withDurableExecutionClient(callerClient)
                 .withSerDes(serDes)
                 .build();
-        BiFunction<String, DurableContext, CrossInvokeResponse> callerHandler = (input, context) ->
-                context.invoke("call-callee", "callee", new CrossInvokeRequest(input), CrossInvokeResponse.class);
+        BiFunction<String, DurableContext, CrossInvokeResponse> callerHandler = (input, context) -> context.invoke(
+                "call-callee",
+                "callee",
+                new CrossInvokeRequest(input),
+                CrossInvokeResponse.class,
+                InvokeConfig.builder().usePersistedSerDesForPayload(true).build());
         var callerExecution =
                 executionOperation("caller-invocation", "caller-execution", "\"request\"", OperationStatus.STARTED);
 
@@ -265,6 +276,40 @@ class FileSystemSerDesStageIntegrationTest {
                         SerDesContext.forExecution(
                                 callerArn, "caller-invocation", "caller-execution", SerDesPayloadKind.OUTPUT));
         assertEquals(new CrossInvokeResponse("reply:request"), result);
+    }
+
+    @Test
+    void defaultInvokePayloadPreservesStandardAndLegacyJavaWireContracts() {
+        var callerArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:caller:1/durable-execution/caller-execution/caller-invocation";
+        var callerClient = new LocalMemoryExecutionClient();
+        var callerConfig = DurableConfig.builder()
+                .withDurableExecutionClient(callerClient)
+                .withSerDes(filesystemPipeline())
+                .build();
+        BiFunction<String, DurableContext, String> callerHandler = (input, context) ->
+                context.invoke("call-standard", "standard", new CrossInvokeRequest(input), String.class);
+        var callerExecution =
+                executionOperation("caller-invocation", "caller-execution", "\"request\"", OperationStatus.STARTED);
+
+        var pending = DurableExecutor.execute(
+                durableInput(callerArn, callerExecution, List.of(), List.of()),
+                null,
+                TypeToken.get(String.class),
+                callerHandler,
+                callerConfig);
+
+        assertEquals(ExecutionStatus.PENDING, pending.status());
+        var invokePayload = callerClient.getOperationUpdates().stream()
+                .filter(update ->
+                        update.type() == OperationType.CHAINED_INVOKE && update.action() == OperationAction.START)
+                .findFirst()
+                .orElseThrow()
+                .payload();
+        assertEquals("{\"value\":\"request\"}", invokePayload);
+        assertEquals(
+                new CrossInvokeRequest("request"),
+                new JacksonSerDes().deserialize(invokePayload, TypeToken.get(CrossInvokeRequest.class)));
     }
 
     @Test

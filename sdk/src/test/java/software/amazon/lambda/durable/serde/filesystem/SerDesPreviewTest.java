@@ -116,6 +116,25 @@ class SerDesPreviewTest {
     }
 
     @Test
+    void nestedPreviewUsesTheExactSerializedByteBudget() {
+        var value = Map.of("a", Map.of("b", "x"));
+
+        var tooSmall = SerDesPreview.buildPreview(
+                value,
+                PreviewConfig.builder(PreviewMode.INCLUDE_ALL)
+                        .maxPreviewBytes(14)
+                        .build());
+        var exactFit = SerDesPreview.buildPreview(
+                value,
+                PreviewConfig.builder(PreviewMode.INCLUDE_ALL)
+                        .maxPreviewBytes(15)
+                        .build());
+
+        assertNull(tooSmall);
+        assertEquals(value, exactFit);
+    }
+
+    @Test
     void returnsNullWhenNoFieldsAreVisibleOrValueIsNotAnObject() {
         var config = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL).build();
 

@@ -469,6 +469,11 @@ the marked envelope contains `data`, it restores the inline text; if it contains
 `ComposableSerDes` then passes that value to the preceding string stage. Raw external input, callback results, and
 standard invoke results pass unchanged through every stage whose marker is absent until they reach the value codec.
 
+Filesystem path validation and access are atomic with respect to path replacement. The implementation traverses from
+the filesystem root through relative `SecureDirectoryStream` handles with `NOFOLLOW_LINKS`, retains those handles
+through the payload read or `CREATE_NEW` write, and performs failed-write cleanup relative to the same held directory.
+It fails closed when the mounted provider does not support `SecureDirectoryStream`.
+
 ### Threading
 
 Preserve the current SDK behavior by executing SerDes inline on the calling thread by default. Do not create a default
@@ -569,12 +574,15 @@ updates both its encoder and the copied runtime configuration. `CloudDurableTest
 the client-side encoder, so the deployed handler must configure the same input codec through `DurableConfig`. Fluent
 runner configuration preserves an explicit input-codec override when other runner configuration is replaced.
 
-Chained invokes retain full persisted-pipeline processing. After serializing an invoke payload,
-`InvokeOperation` adds a reserved, versioned source frame outside the pipeline output. The target
-`DurableExecutor` recognizes and removes that frame before deserializing with its persisted SerDes. Unframed execution
-input always uses the context-free input codec. This separates the two sources without inspecting a filesystem,
-compression, encryption, or other stage format and prevents an external payload from colliding with those formats. A
-custom per-invoke payload SerDes must be compatible with the target handler's persisted SerDes.
+Chained invokes preserve their existing wire contract by default. Unless an explicit payload SerDes is configured, the
+caller uses its context-free input codec and sends the serialized value unchanged. This keeps standard Lambda targets,
+non-Java durable targets, and older Java SDK versions compatible.
+
+`InvokeConfig.usePersistedSerDesForPayload(true)` is an explicit target-capability opt-in for compatible Java durable
+handlers. In this mode the caller uses its persisted SerDes by default and `InvokeOperation` adds a reserved, versioned
+source frame outside the pipeline output. The target `DurableExecutor` recognizes and removes that frame before
+deserializing with its persisted SerDes. Unframed execution input always uses the context-free input codec. A custom
+per-invoke payload SerDes in this mode must be compatible with the target handler's persisted SerDes.
 
 ### Implementation plan
 
