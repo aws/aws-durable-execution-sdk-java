@@ -5,19 +5,27 @@ package software.amazon.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
@@ -25,12 +33,19 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesPayloadKind;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.serde.SerDesStage;
+import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 
 class StepOperationTest {
 
+    private static final String DURABLE_EXECUTION_ARN =
+            "arn:aws:lambda:us-east-1:123456789012:function:test:1/durable-execution/execution/invocation";
     private static final String OPERATION_ID = "1";
     private static final String OPERATION_NAME = "test-step";
     private static final String RESULT = "result";
@@ -38,6 +53,9 @@ class StepOperationTest {
             OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.STEP);
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
+
+    @TempDir
+    Path basePath;
 
     @BeforeEach
     void setUp() {
@@ -134,6 +152,84 @@ class StepOperationTest {
         assertEquals("cached-result", operation.get());
         assertEquals(3, observedContext.get().attempt());
         assertNull(observedContext.get().originalValue());
+    }
+
+    @Test
+    void forwardedFilesystemExceptionIsReboundForFirstExecutionAndReplay() {
+        when(executionManager.getDurableExecutionArn()).thenReturn(DURABLE_EXECUTION_ARN);
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
+        var original = new IllegalArgumentException("callback failed");
+        var forwarded = forwardedCallbackFailure(serDes, original);
+        var failedUpdate = new AtomicReference<OperationUpdate>();
+        doAnswer(invocation -> {
+                    var update = invocation.<OperationUpdate>getArgument(0);
+                    if (update.action() == OperationAction.FAIL) {
+                        failedUpdate.set(update);
+                    }
+                    return CompletableFuture.completedFuture(null);
+                })
+                .when(executionManager)
+                .sendOperationUpdate(any());
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+
+        var operation = new StepOperation<>(
+                OPERATION_IDENTIFIER,
+                ctx -> {
+                    throw forwarded;
+                },
+                TypeToken.get(String.class),
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                        .serDes(serDes)
+                        .build(),
+                durableContext);
+
+        operation.execute();
+
+        verify(executionManager, timeout(5_000))
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
+        var checkpointedError = failedUpdate.get().error();
+        var stepContext = SerDesContext.forOperation(
+                DURABLE_EXECUTION_ARN,
+                OPERATION_ID,
+                OPERATION_NAME,
+                null,
+                OperationType.STEP,
+                OperationSubType.STEP,
+                SerDesPayloadKind.EXCEPTION,
+                1);
+        var rebound = new SerDesRunner(null)
+                .deserialize(
+                        serDes,
+                        checkpointedError.errorData(),
+                        TypeToken.get(IllegalArgumentException.class),
+                        stepContext);
+        assertEquals("callback failed", rebound.getMessage());
+
+        var replayedOperation = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .subType(OperationSubType.STEP.getValue())
+                .status(OperationStatus.FAILED)
+                .stepDetails(StepDetails.builder()
+                        .attempt(1)
+                        .error(checkpointedError)
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(replayedOperation);
+        var replay = new StepOperation<>(
+                OPERATION_IDENTIFIER,
+                ctx -> RESULT,
+                TypeToken.get(String.class),
+                StepConfig.builder().serDes(serDes).build(),
+                durableContext);
+
+        replay.execute();
+
+        var thrown = assertThrows(IllegalArgumentException.class, replay::get);
+        assertEquals("callback failed", thrown.getMessage());
     }
 
     @Test
@@ -285,5 +381,34 @@ class StepOperationTest {
         public CustomTestException(String message) {
             super(message);
         }
+    }
+
+    private CallbackFailedException forwardedCallbackFailure(SerDes serDes, RuntimeException original) {
+        var sourceContext = SerDesContext.forOperation(
+                DURABLE_EXECUTION_ARN,
+                "callback-1",
+                "callback",
+                null,
+                OperationType.CALLBACK,
+                OperationSubType.CALLBACK,
+                SerDesPayloadKind.EXCEPTION,
+                null);
+        var error = ErrorObject.builder()
+                .errorType(original.getClass().getName())
+                .errorMessage(original.getMessage())
+                .errorData(new SerDesRunner(null).serialize(serDes, original, sourceContext))
+                .build();
+        var sourceOperation = Operation.builder()
+                .id("callback-1")
+                .name("callback")
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.FAILED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .error(error)
+                        .build())
+                .build();
+        return new CallbackFailedException(sourceOperation, original);
     }
 }

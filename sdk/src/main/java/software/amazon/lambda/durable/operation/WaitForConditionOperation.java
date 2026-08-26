@@ -183,7 +183,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         }
 
         final var errorObject = (exception instanceof DurableOperationException durableOpEx)
-                ? durableOpEx.getErrorObject()
+                ? rebindForwardedException(durableOpEx, attempt)
                 : serializeException(exception, attempt);
 
         // Checkpoint FAIL

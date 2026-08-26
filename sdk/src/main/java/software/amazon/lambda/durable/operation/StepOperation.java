@@ -169,7 +169,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
         final ErrorObject errorObject;
         if (exception instanceof DurableOperationException durableOperationException) {
-            errorObject = durableOperationException.getErrorObject();
+            errorObject = rebindForwardedException(durableOperationException, attempt);
         } else {
             errorObject = serializeException(exception, attempt);
         }

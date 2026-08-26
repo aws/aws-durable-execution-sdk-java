@@ -164,12 +164,24 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * that data using the parent's unrelated entity identity.
      */
     protected ErrorObject rebindForwardedException(DurableOperationException exception) {
+        return rebindForwardedException(exception, null);
+    }
+
+    /**
+     * Re-serializes an exception forwarded from another durable operation under this operation's attempt context.
+     *
+     * @param exception the forwarded durable operation exception
+     * @param attempt the receiving operation's attempt, or {@code null} when attempts do not apply
+     * @return error data owned by this operation when the original exception can be reconstructed; otherwise the
+     *     forwarded error data
+     */
+    protected ErrorObject rebindForwardedException(DurableOperationException exception, Integer attempt) {
         var error = exception.getErrorObject();
         if (error == null || exception.getOperation() == null) {
             return error;
         }
         var original = exception.deserializedError();
-        return original != null ? serializeException(original) : error;
+        return original != null ? serializeException(original, attempt) : error;
     }
 
     private boolean shouldDeserializeAfterSerialization() {
