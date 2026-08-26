@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.execution;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -63,6 +64,7 @@ public class ExecutionManager implements SafeCloseable {
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
+    private final Set<String> initialOperationIds;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
@@ -95,6 +97,11 @@ public class ExecutionManager implements SafeCloseable {
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
+
+        // The ids delivered in this invocation's initial state. Everything else in operationStorage is created during
+        // this invocation, so this set is what distinguishes replayed operations from freshly-started ones for the
+        // plugin hooks' isReplay indicators.
+        this.initialOperationIds = Set.copyOf(operationStorage.keySet());
 
         // Start in REPLAY mode if we have more than just the initial EXECUTION operation
         this.executionMode =
@@ -139,6 +146,47 @@ public class ExecutionManager implements SafeCloseable {
         return updatedOperationIdsSinceLastInvocation.contains(operationId);
     }
 
+    /**
+     * Returns {@code true} if the given operation was present in the checkpointed state delivered at the start of this
+     * invocation, i.e. it predates this invocation and is being replayed rather than started fresh. Unlike
+     * {@link #getOperationAndUpdateReplayState(String)} this does not mutate the execution's replay mode, so it is safe
+     * to call from plugin-hook firing sites.
+     *
+     * @param operationId the operation ID to check
+     * @return true if the operation was delivered in this invocation's initial state
+     */
+    public boolean wasObservedAtInvocationStart(String operationId) {
+        return initialOperationIds.contains(operationId);
+    }
+
+    /** Returns the ids of the operations delivered in this invocation's initial state. */
+    public Set<String> getInitialOperationIds() {
+        return initialOperationIds;
+    }
+
+    /**
+     * Returns an immutable snapshot of the operations currently tracked for this execution, including the initial
+     * EXECUTION operation. Non-mutating; intended for the invocation-level plugin hooks.
+     *
+     * @return a snapshot of the tracked operations
+     */
+    public Collection<Operation> getOperationsSnapshot() {
+        return List.copyOf(operationStorage.values());
+    }
+
+    /**
+     * Returns the subset of {@link #getOperationsSnapshot()} whose ids the backend reported as updated since the last
+     * successful invocation. Empty on the first invocation. Ids without a corresponding tracked operation are skipped.
+     *
+     * @return a snapshot of the externally-updated operations
+     */
+    public Collection<Operation> getUpdatedOperationsSnapshot() {
+        return updatedOperationIdsSinceLastInvocation.stream()
+                .map(operationStorage::get)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
     /** Registers an operation so it can receive checkpoint completion notifications. */
     public void registerOperation(BaseDurableOperation operation) {
         registeredOperations.put(operation.getOperationId(), operation);
@@ -172,7 +220,11 @@ public class ExecutionManager implements SafeCloseable {
             durableConfig
                     .getPluginRunner()
                     .onOperationChange(PluginInfoConverter.toOperationChangeInfo(
-                            requestId, durableExecutionArn, updatedOperations, operationStorage.values()));
+                            requestId,
+                            durableExecutionArn,
+                            updatedOperations,
+                            operationStorage.values(),
+                            initialOperationIds));
         }
     }
 

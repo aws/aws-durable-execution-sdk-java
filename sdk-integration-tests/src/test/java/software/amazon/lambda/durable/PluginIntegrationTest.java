@@ -104,6 +104,68 @@ class PluginIntegrationTest {
     }
 
     @Test
+    void plugin_invocationSnapshots_trackReplayAcrossSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.runInChildContext("child", String.class, child -> {
+                    child.wait("pause", Duration.ofMinutes(1));
+                    return "done";
+                }),
+                config);
+
+        var firstResult = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, firstResult.getStatus());
+
+        assertEquals(1, plugin.invocationStarts.size());
+        assertEquals(1, plugin.invocationEnds.size());
+        var firstStart = plugin.invocationStarts.get(0);
+        assertTrue(firstStart.isFirstInvocation());
+        assertEquals(1, firstStart.operations().size(), "first invocation starts with only the execution operation");
+        assertTrue(firstStart.updatedOperations().isEmpty());
+
+        var firstEnd = plugin.invocationEnds.get(0);
+        assertEquals(InvocationStatus.PENDING, firstEnd.invocationStatus());
+        assertTrue(firstEnd.operations().values().stream().anyMatch(op -> "child".equals(op.name())));
+        assertTrue(firstEnd.operations().values().stream().anyMatch(op -> "pause".equals(op.name())));
+
+        runner.advanceTime();
+        var secondResult = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, secondResult.getStatus());
+
+        assertEquals(2, plugin.invocationStarts.size());
+        assertEquals(2, plugin.invocationEnds.size());
+        var secondStart = plugin.invocationStarts.get(1);
+        assertFalse(secondStart.isFirstInvocation());
+        var replayedChild = secondStart.operations().values().stream()
+                .filter(op -> "child".equals(op.name()))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(replayedChild.isReplay());
+        assertEquals(1, secondStart.updatedOperations().size());
+        var updatedPause = secondStart.updatedOperations().values().iterator().next();
+        assertEquals("pause", updatedPause.name());
+        assertEquals(OperationStatus.SUCCEEDED, updatedPause.status());
+        assertTrue(updatedPause.isReplay());
+
+        var secondEnd = plugin.invocationEnds.get(1);
+        assertEquals(InvocationStatus.SUCCEEDED, secondEnd.invocationStatus());
+        assertTrue(secondEnd.operations().values().stream()
+                .anyMatch(op -> "child".equals(op.name()) && op.status() == OperationStatus.SUCCEEDED));
+        assertTrue(secondEnd.operations().values().stream()
+                .anyMatch(op -> "pause".equals(op.name()) && op.status() == OperationStatus.SUCCEEDED));
+
+        var childStarts = plugin.userFunctionStarts.stream()
+                .filter(info -> "child".equals(info.name()))
+                .toList();
+        assertEquals(2, childStarts.size());
+        assertFalse(childStarts.get(0).isReplay());
+        assertTrue(childStarts.get(1).isReplay());
+    }
+
+    @Test
     void plugin_receivesInvocationEnd_withFailedStatus_onError() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();

@@ -351,7 +351,10 @@ public abstract class BaseDurableOperation {
     protected <T> T runUserFunction(Integer attempt, Supplier<T> userFunction) {
         var pluginRunner = getPluginRunner();
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
-                operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
+                operationIdentifier,
+                durableContext.getParentId(),
+                executionManager.wasObservedAtInvocationStart(getOperationId()),
+                attempt);
         pluginRunner.onUserFunctionStart(startInfo);
         try {
             T result = userFunction.get();
