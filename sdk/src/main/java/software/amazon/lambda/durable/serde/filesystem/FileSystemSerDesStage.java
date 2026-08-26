@@ -66,8 +66,10 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private static final int ENVELOPE_VERSION = 1;
     private static final int DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
     private static final ObjectMapper ENVELOPE_MAPPER = new ObjectMapper();
-    private static final ObjectReader ENVELOPE_READER =
-            ENVELOPE_MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    private static final ObjectReader ENVELOPE_READER = ENVELOPE_MAPPER
+            .reader()
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .with(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
     private static final Pattern DURABLE_EXECUTION_ARN_PATTERN = Pattern.compile(
             "^arn:[^:]*:lambda:[^:]*:[^:]*:function:([^:/]+):[^:/]+/durable-execution/([^/]+)/([^/]+)$");
     private static final Pattern SHA_256_DIGEST_PATTERN = Pattern.compile("[0-9a-f]{64}");

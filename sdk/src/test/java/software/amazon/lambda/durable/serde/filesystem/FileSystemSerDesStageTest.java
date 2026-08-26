@@ -524,6 +524,44 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
+    void rejectsDuplicateFilesystemEnvelopeFields() throws Exception {
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var envelope = runner.serialize(serDes, "value", context());
+        var duplicateValues = Map.<String, Object>of(
+                ENVELOPE_MARKER,
+                2,
+                "ownerDurableExecutionArn",
+                "other-arn",
+                "ownerEntityId",
+                "other-entity",
+                "payloadType",
+                "BYTES",
+                "payloadDigest",
+                "0".repeat(64),
+                "file",
+                basePath.resolve("other.payload").toString());
+
+        for (var duplicate : duplicateValues.entrySet()) {
+            var duplicateEnvelope = withDuplicateField(envelope, duplicate.getKey(), duplicate.getValue());
+
+            var failure = assertThrows(
+                    SerDesException.class,
+                    () -> runner.deserialize(serDes, duplicateEnvelope, TypeToken.get(String.class), context()));
+
+            assertCauseMessage(failure, "Invalid filesystem SerDes envelope");
+        }
+    }
+
+    @Test
+    void duplicateFieldsInUnmarkedJsonPassThrough() {
+        var stage = FileSystemSerDesStage.builder(basePath).build();
+        var value = "{\"id\":\"first\",\"id\":\"second\"}";
+
+        assertEquals(value, stage.deserialize(value, null));
+    }
+
+    @Test
     void recognizesMalformedFilesystemMarkerRegardlessOfWhitespaceOrFieldOrder() {
         var stage = FileSystemSerDesStage.builder(basePath).build();
         var malformedEnvelopes = List.of(
@@ -793,6 +831,15 @@ class FileSystemSerDesStageTest {
             current = current.getCause();
         }
         assertNotNull(current, "Expected exception chain to contain: " + expected);
+    }
+
+    private static String withDuplicateField(String envelope, String field, Object value) throws Exception {
+        return "{"
+                + MAPPER.writeValueAsString(field)
+                + ":"
+                + MAPPER.writeValueAsString(value)
+                + ","
+                + envelope.substring(1);
     }
 
     private static String envelopeWithFile(String file) {
