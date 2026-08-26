@@ -80,6 +80,8 @@ public class LocalDurableTestRunner<I, O> {
                     // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
                     .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
                     .withDeserializeAfterSerialization(customerConfig.shouldDeserializeAfterSerialization())
+                    .withPersistedSerDesForChainedInvokePayloads(
+                            customerConfig.shouldUsePersistedSerDesForChainedInvokePayloads())
                     .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]));
             configBuilder.withInputSerDes(inputSerDes != null ? inputSerDes : customerConfig.getInputSerDes());
             if (customerConfig.getSerDesExecutorService() != null) {

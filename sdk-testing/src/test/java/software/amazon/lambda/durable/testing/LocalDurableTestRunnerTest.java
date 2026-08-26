@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
+import software.amazon.lambda.durable.serde.internal.ChainedInvokePayloadFrame;
 
 class LocalDurableTestRunnerTest {
 
@@ -192,6 +193,22 @@ class LocalDurableTestRunnerTest {
     }
 
     @Test
+    void preservesPersistedChainedInvokePayloadOptIn() {
+        var persistedSerDes = new JacksonSerDes();
+        var config = DurableConfig.builder()
+                .withSerDes(persistedSerDes)
+                .withInputSerDes(framedPersistedPayloadSerDes(persistedSerDes))
+                .withPersistedSerDesForChainedInvokePayloads(true)
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value", result.getResult(String.class));
+    }
+
+    @Test
     void initialInputBypassesPersistedPipelineStages() {
         var deserializeCalls = new AtomicInteger();
         var persistedSerDes = new JacksonSerDes().then(new SerDesStage() {
@@ -309,6 +326,20 @@ class LocalDurableTestRunnerTest {
                     throw new SerDesException("Invalid custom string payload");
                 }
                 return (T) data.substring("custom:".length());
+            }
+        };
+    }
+
+    private static SerDes framedPersistedPayloadSerDes(SerDes persistedSerDes) {
+        return new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return ChainedInvokePayloadFrame.encode(persistedSerDes.serialize(value));
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                throw new SerDesException("Framed persisted input used the external input codec");
             }
         };
     }
