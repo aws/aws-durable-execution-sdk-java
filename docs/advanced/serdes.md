@@ -267,9 +267,11 @@ and unsupported versions fail rather than falling back to pass-through behavior.
 
 Payload files are content-hashed and immutable. Each serialization publishes a unique filename with a single
 `CREATE_NEW` write. Existing files are never overwritten, and publication does not require hard links or renames.
-The stage verifies content hashes, rejects symbolic-link paths, and validates that ordinary checkpoint replay matches
-the execution and entity that produced the reference. Invoke input and result boundaries can consume a file owned by
-the other Lambda execution when both functions use the same shared root and path encoding.
+Every inline and file envelope records the payload's SHA-256 digest. During deserialization, the stage verifies the
+restored bytes against that envelope digest; file payloads must also have a content-addressed filename consistent with
+the digest. The stage rejects symbolic-link paths and validates that ordinary checkpoint replay matches the execution
+and entity that produced the reference. Invoke input and result boundaries can consume a file owned by the other
+Lambda execution when both functions use the same shared root and path encoding.
 
 Stages may follow `FileSystemSerDesStage` to transform its inline or file-reference envelope. `OVERFLOW` and preview
 size checks occur before those later stages, so account for any expansion when staying within the service checkpoint

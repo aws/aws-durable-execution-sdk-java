@@ -2,8 +2,9 @@
 
 **Status:** Accepted — Approach A with ComposableSerDes pipeline
 **Date:** 2026-07-02
-**Updated:** 2026-08-25 — Included FileSystemSerDesStage in core, made every post-codec pipeline component an explicit
-string stage, and documented the rejected binary-only top-level pipeline.
+**Updated:** 2026-08-26 — Included FileSystemSerDesStage in core, made every post-codec pipeline component an explicit
+string stage, documented the rejected binary-only top-level pipeline, and added envelope payload digests for integrity
+verification.
 
 ## Context
 
@@ -399,9 +400,9 @@ Path encodings:
 Envelope format:
 
 ```json
-{"__durable_execution_filesystem_serdes":1,"data":"<inline text>","payloadType":"STRING","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
-{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
-{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>","preview":{ "...": "..." }}
+{"__durable_execution_filesystem_serdes":1,"data":"<inline text>","payloadType":"STRING","payloadDigest":"<SHA-256 hex>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING","payloadDigest":"<SHA-256 hex>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>"}
+{"__durable_execution_filesystem_serdes":1,"file":"<absolute path>","payloadType":"STRING","payloadDigest":"<SHA-256 hex>","ownerDurableExecutionArn":"<producer ARN>","ownerEntityId":"<producer entity>","preview":{ "...": "..." }}
 ```
 
 `FileSystemSerDesStage` must reject recognized filesystem operations when its `SerDesContext` parameter is `null` or does
@@ -419,6 +420,11 @@ context while unrecognized input passes through even if that parameter is `null`
 Offloaded filenames include the entity identity, content hash, and a UUID. Each serialization publishes a new immutable
 file with one `CREATE_NEW` write. It does not require hard links or renames, making the write path compatible with S3
 Files as well as EFS. Serializing new state never replaces a file referenced by an earlier checkpoint.
+
+Every envelope includes the SHA-256 digest of the serialized payload. Deserialization verifies inline data and loaded
+file bytes against that digest. File references must additionally use a content-addressed filename consistent with the
+envelope digest, so changing both a file's contents and its filename cannot bypass integrity validation without also
+changing the checkpoint envelope.
 
 File envelopes identify the execution ARN and entity that produced the content. Normal checkpoint replay requires
 that owner to match the current context. Initial input and chained-invoke result boundaries may consume a reference

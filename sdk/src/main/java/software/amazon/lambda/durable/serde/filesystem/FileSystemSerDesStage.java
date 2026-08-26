@@ -41,12 +41,16 @@ import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
  * <p>Payload files are immutable and created with a single {@code CREATE_NEW} write. Publication does not require hard
  * links or renames, so the write path is compatible with S3 Files.
  *
+ * <p>Every filesystem envelope includes a SHA-256 payload digest. Deserialization verifies inline values and file
+ * contents against that digest, and file paths must contain the same digest.
+ *
  * <p>Deserialization recognizes the reserved filesystem envelope marker. Input without that marker is returned
  * unchanged; input with the marker must be a valid supported envelope. Filesystem operations use the explicit
  * {@link SerDesContext} stage parameter for durable payload identity.
  */
 public final class FileSystemSerDesStage implements SerDesStage {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
+    private static final String PAYLOAD_DIGEST_FIELD = "payloadDigest";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
     private static final int DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
@@ -55,6 +59,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
             ENVELOPE_MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final Pattern DURABLE_EXECUTION_ARN_PATTERN = Pattern.compile(
             "^arn:[^:]*:lambda:[^:]*:[^:]*:function:([^:/]+):[^:/]+/durable-execution/([^/]+)/([^/]+)$");
+    private static final Pattern SHA_256_DIGEST_PATTERN = Pattern.compile("[0-9a-f]{64}");
 
     private final Path basePath;
     private final FileSystemStorageMode storageMode;
@@ -90,16 +95,17 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
         context = requireContext(context);
         var payload = SerializedPayload.fromString(value);
+        var payloadDigest = sha256(payload.data());
         if (storageMode == FileSystemStorageMode.OVERFLOW) {
-            var inlineEnvelope = encodeEnvelope(payload, null, null, context);
+            var inlineEnvelope = encodeEnvelope(payload, payloadDigest, null, null, context);
             if (fitsCheckpoint(inlineEnvelope)) {
                 return inlineEnvelope;
             }
         }
 
-        var file = resolvePayloadPath(payload, context);
+        var file = resolvePayloadPath(payloadDigest, context);
         var preview = generatePreview(value, context);
-        var fileEnvelope = encodeEnvelope(payload.withoutData(), file, preview, context);
+        var fileEnvelope = encodeEnvelope(payload.withoutData(), payloadDigest, file, preview, context);
         if (!fitsCheckpoint(fileEnvelope)) {
             throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
                     + context.entityId()
@@ -151,24 +157,34 @@ public final class FileSystemSerDesStage implements SerDesStage {
         var hasData = envelope.has("data") && envelope.get("data").isTextual();
         var hasFile = envelope.has("file") && envelope.get("file").isTextual();
         var payloadType = payloadType(envelope, context);
+        var payloadDigest = payloadDigest(envelope, context);
         var owner = payloadOwner(envelope, context);
         if (hasData) {
             try {
-                return SerializedPayload.fromInlineValue(
-                                payloadType, envelope.get("data").textValue())
-                        .value();
+                var payload = SerializedPayload.fromInlineValue(
+                        payloadType, envelope.get("data").textValue());
+                verifyPayloadDigest(payload, payloadDigest, context);
+                return payload.value();
             } catch (IllegalArgumentException e) {
                 throw malformedEnvelope(context, e);
             }
         }
-        return readPayload(envelope.get("file").textValue(), payloadType, owner, context)
+        return readPayload(envelope.get("file").textValue(), payloadType, payloadDigest, owner, context)
                 .value();
     }
 
     private SerializedPayload readPayload(
-            String fileValue, PayloadType payloadType, PayloadOwner owner, SerDesContext context) {
+            String fileValue,
+            PayloadType payloadType,
+            String payloadDigest,
+            PayloadOwner owner,
+            SerDesContext context) {
         var file = basePath.getFileSystem().getPath(fileValue).toAbsolutePath().normalize();
         validatePayloadPath(file, owner);
+        var expectedFileName = payloadFileName(payloadDigest, owner.entityId());
+        if (!matchesPublishedPayloadFileName(file.getFileName().toString(), expectedFileName)) {
+            throw new SerDesException("Filesystem SerDes file path does not match its payload digest");
+        }
         try {
             var realBasePath = validateBasePath(false);
             rejectSymbolicLinks(file);
@@ -180,10 +196,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
                 throw new SerDesException("Filesystem SerDes file does not resolve to the expected payload path");
             }
             var serialized = new SerializedPayload(payloadType, Files.readAllBytes(realFile));
-            var expectedFileName = payloadFileName(serialized, owner.entityId());
-            if (!matchesPublishedPayloadFileName(realFile.getFileName().toString(), expectedFileName)) {
-                throw new SerDesException("Filesystem SerDes file content hash does not match its path");
-            }
+            verifyPayloadDigest(serialized, payloadDigest, context);
             return serialized;
         } catch (IOException e) {
             throw new RetryableSerDesException(
@@ -213,6 +226,24 @@ public final class FileSystemSerDesStage implements SerDesStage {
             return PayloadType.valueOf(node.textValue());
         } catch (IllegalArgumentException e) {
             throw malformedEnvelope(context, e);
+        }
+    }
+
+    private static String payloadDigest(JsonNode envelope, SerDesContext context) {
+        var node = envelope.get(PAYLOAD_DIGEST_FIELD);
+        if (node == null
+                || !node.isTextual()
+                || !SHA_256_DIGEST_PATTERN.matcher(node.textValue()).matches()) {
+            throw malformedEnvelope(context, null);
+        }
+        return node.textValue();
+    }
+
+    private static void verifyPayloadDigest(SerializedPayload payload, String expectedDigest, SerDesContext context) {
+        if (!sha256(payload.data()).equals(expectedDigest)) {
+            throw new SerDesException("Filesystem SerDes payload digest does not match stored content for entity '"
+                    + context.entityId()
+                    + "'");
         }
     }
 
@@ -271,7 +302,12 @@ public final class FileSystemSerDesStage implements SerDesStage {
                 || envelope.get("ownerEntityId").textValue().isBlank()
                 || !envelope.has(PAYLOAD_TYPE_FIELD)
                 || !envelope.get(PAYLOAD_TYPE_FIELD).isTextual()
-                || !isPayloadType(envelope.get(PAYLOAD_TYPE_FIELD).textValue())) {
+                || !isPayloadType(envelope.get(PAYLOAD_TYPE_FIELD).textValue())
+                || !envelope.has(PAYLOAD_DIGEST_FIELD)
+                || !envelope.get(PAYLOAD_DIGEST_FIELD).isTextual()
+                || !SHA_256_DIGEST_PATTERN
+                        .matcher(envelope.get(PAYLOAD_DIGEST_FIELD).textValue())
+                        .matches()) {
             return false;
         }
 
@@ -285,7 +321,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
         if (hasPreview && (hasData || !envelope.get("preview").isObject())) {
             return false;
         }
-        return envelope.size() == (hasPreview ? 6 : 5);
+        return envelope.size() == (hasPreview ? 7 : 6);
     }
 
     private static boolean isPayloadType(String value) {
@@ -377,12 +413,17 @@ public final class FileSystemSerDesStage implements SerDesStage {
     }
 
     private String encodeEnvelope(
-            SerializedPayload payload, Path file, Map<String, Object> preview, SerDesContext context) {
+            SerializedPayload payload,
+            String payloadDigest,
+            Path file,
+            Map<String, Object> preview,
+            SerDesContext context) {
         var envelope = new LinkedHashMap<String, Object>();
         envelope.put(ENVELOPE_MARKER, ENVELOPE_VERSION);
         envelope.put("ownerDurableExecutionArn", context.durableExecutionArn());
         envelope.put("ownerEntityId", context.entityId());
         envelope.put(PAYLOAD_TYPE_FIELD, payload.type().name());
+        envelope.put(PAYLOAD_DIGEST_FIELD, payloadDigest);
         if (payload.hasData()) {
             envelope.put("data", payload.inlineValue());
         } else {
@@ -429,9 +470,9 @@ public final class FileSystemSerDesStage implements SerDesStage {
         return context;
     }
 
-    private Path resolvePayloadPath(SerializedPayload payload, SerDesContext context) {
+    private Path resolvePayloadPath(String payloadDigest, SerDesContext context) {
         var directory = resolveExecutionDirectory(context.durableExecutionArn());
-        var deterministicName = payloadFileName(payload, context.entityId());
+        var deterministicName = payloadFileName(payloadDigest, context.entityId());
         var suffix = ".payload";
         var fileName = deterministicName.substring(0, deterministicName.length() - suffix.length())
                 + "-"
@@ -444,8 +485,8 @@ public final class FileSystemSerDesStage implements SerDesStage {
         return file;
     }
 
-    private String payloadFileName(SerializedPayload payload, String entityId) {
-        return encode(entityId) + "-" + sha256(payload.data()) + ".payload";
+    private String payloadFileName(String payloadDigest, String entityId) {
+        return encode(entityId) + "-" + payloadDigest + ".payload";
     }
 
     private void writePayload(SerializedPayload payload, Path file) throws IOException {

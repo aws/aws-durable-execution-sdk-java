@@ -907,6 +907,7 @@ class CloudBasedIntegrationTest {
         var envelope = MAPPER.readTree(value);
         assertEquals(1, envelope.get(FILE_SYSTEM_ENVELOPE_MARKER).intValue());
         assertEquals("STRING", envelope.get("payloadType").textValue());
+        assertTrue(envelope.get("payloadDigest").textValue().matches("[0-9a-f]{64}"));
         assertTrue(envelope.get("file").textValue().startsWith("/mnt/efs/durable-payloads/"));
         return envelope;
     }

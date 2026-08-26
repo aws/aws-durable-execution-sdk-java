@@ -69,6 +69,9 @@ class FileSystemSerDesStageTest {
 
         assertEquals(1, json.get(ENVELOPE_MARKER).intValue());
         assertEquals("STRING", json.get("payloadType").textValue());
+        assertEquals(
+                sha256("{\"id\":42}".getBytes(StandardCharsets.UTF_8)),
+                json.get("payloadDigest").textValue());
         assertTrue(file.startsWith(basePath.resolve("orders/execution-1/invocation-1")));
         assertEquals("{\"id\":42}", Files.readString(file));
         assertEquals(
@@ -223,6 +226,81 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
+    void includesPayloadDigestAndVerifiesFileIntegrity() throws Exception {
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var envelope = runner.serialize(serDes, "expected", context());
+        var json = (ObjectNode) MAPPER.readTree(envelope);
+        var expectedDigest = sha256("expected".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(expectedDigest, json.get("payloadDigest").textValue());
+
+        var tampered = "tampered".getBytes(StandardCharsets.UTF_8);
+        Files.write(payloadFile(envelope), tampered);
+
+        var failure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, json.toString(), TypeToken.get(String.class), context()));
+        assertCauseMessage(failure, "payload digest does not match stored content");
+    }
+
+    @Test
+    void verifiesFilePathUsesEnvelopePayloadDigest() throws Exception {
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var envelope = runner.serialize(serDes, "expected", context());
+        var json = (ObjectNode) MAPPER.readTree(envelope);
+        var tampered = "tampered".getBytes(StandardCharsets.UTF_8);
+        var tamperedFile = contentHashedPath(payloadFile(envelope), tampered);
+        Files.write(tamperedFile, tampered);
+        json.put("file", tamperedFile.toString());
+
+        var failure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, json.toString(), TypeToken.get(String.class), context()));
+        assertCauseMessage(failure, "file path does not match its payload digest");
+    }
+
+    @Test
+    void includesPayloadDigestAndVerifiesInlineIntegrity() throws Exception {
+        var serDes = stringCodec()
+                .then(FileSystemSerDesStage.builder(basePath)
+                        .storageMode(FileSystemStorageMode.OVERFLOW)
+                        .build());
+        var runner = new SerDesRunner(null);
+        var envelope = (ObjectNode) MAPPER.readTree(runner.serialize(serDes, "expected", context()));
+
+        assertEquals(
+                sha256("expected".getBytes(StandardCharsets.UTF_8)),
+                envelope.get("payloadDigest").textValue());
+
+        envelope.put("data", "tampered");
+        var failure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope.toString(), TypeToken.get(String.class), context()));
+        assertCauseMessage(failure, "payload digest does not match stored content");
+    }
+
+    @Test
+    void rejectsMissingOrMalformedPayloadDigest() throws Exception {
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var envelope = (ObjectNode) MAPPER.readTree(runner.serialize(serDes, "expected", context()));
+
+        envelope.remove("payloadDigest");
+        var missingFailure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope.toString(), TypeToken.get(String.class), context()));
+        assertCauseMessage(missingFailure, "Invalid filesystem SerDes envelope");
+
+        envelope.put("payloadDigest", "not-a-sha-256-digest");
+        var malformedFailure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope.toString(), TypeToken.get(String.class), context()));
+        assertCauseMessage(malformedFailure, "Invalid filesystem SerDes envelope");
+    }
+
+    @Test
     void writesOnFileSystemsWithoutHardLinkSupport() throws Exception {
         var archive = basePath.resolve("payloads.zip");
         try (var fileSystem =
@@ -261,6 +339,7 @@ class FileSystemSerDesStageTest {
         Files.write(malformedFile, malformed);
         var malformedEnvelope = (ObjectNode) MAPPER.readTree(envelope);
         malformedEnvelope.put("file", malformedFile.toString());
+        malformedEnvelope.put("payloadDigest", sha256(malformed));
 
         assertThrows(
                 SerDesException.class,
@@ -444,7 +523,10 @@ class FileSystemSerDesStageTest {
         var envelope = "{\"__durable_execution_filesystem_serdes\":1,"
                 + "\"ownerDurableExecutionArn\":\""
                 + ARN
-                + "\",\"ownerEntityId\":\"1\",\"payloadType\":\"STRING\",\"data\":\"value\"}";
+                + "\",\"ownerEntityId\":\"1\",\"payloadType\":\"STRING\","
+                + "\"payloadDigest\":\""
+                + sha256("value".getBytes(StandardCharsets.UTF_8))
+                + "\",\"data\":\"value\"}";
 
         var failure = assertThrows(SerDesException.class, () -> stage.deserialize(envelope + " true", context()));
 
@@ -719,7 +801,9 @@ class FileSystemSerDesStageTest {
                     "ownerEntityId",
                     "1",
                     "payloadType",
-                    "STRING"));
+                    "STRING",
+                    "payloadDigest",
+                    "0".repeat(64)));
         } catch (Exception e) {
             throw new AssertionError(e);
         }
@@ -735,10 +819,17 @@ class FileSystemSerDesStageTest {
 
     private static Path contentHashedPath(Path original, byte[] data) throws Exception {
         var name = original.getFileName().toString();
-        var existingHash =
-                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(original)));
-        var hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
+        var existingHash = sha256(Files.readAllBytes(original));
+        var hash = sha256(data);
         return original.resolveSibling(name.replace(existingHash, hash));
+    }
+
+    private static String sha256(byte[] data) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
     }
 
     private static SerDesContext context() {
