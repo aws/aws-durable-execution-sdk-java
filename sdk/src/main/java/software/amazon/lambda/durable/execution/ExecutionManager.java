@@ -198,7 +198,7 @@ public class ExecutionManager implements SafeCloseable {
 
     // ===== Checkpoint Completion Handler =====
     /** Called by CheckpointManager when a checkpoint completes. Updates operationStorage and notify operations . */
-    private void onCheckpointComplete(List<Operation> newOperations) {
+    void onCheckpointComplete(List<Operation> newOperations) {
         var updatedOperations = new ArrayList<Operation>();
         newOperations.forEach(op -> {
             // Detect a status change against the previously stored operation
@@ -206,13 +206,14 @@ public class ExecutionManager implements SafeCloseable {
             if (previous == null || previous.status() != op.status()) {
                 updatedOperations.add(op);
             }
-            // Update operation storage
-            operationStorage.put(op.id(), op);
-            // call registered operation's onCheckpointComplete method for completed operations
-            registeredOperations.computeIfPresent(op.id(), (id, operation) -> {
-                operation.onCheckpointComplete(op);
-                return operation;
-            });
+            // Publish the updated state and notify its waiter atomically. Otherwise, a waiter can observe the terminal
+            // state before its completion future is completed and attempt to suspend with no pending operations.
+            var registeredOperation = registeredOperations.get(op.id());
+            if (registeredOperation == null) {
+                operationStorage.put(op.id(), op);
+            } else {
+                registeredOperation.processCheckpointUpdate(op, () -> operationStorage.put(op.id(), op));
+            }
         });
 
         // Fire onOperationChange when a checkpoint response changed one or more operations

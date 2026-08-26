@@ -14,6 +14,8 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
@@ -24,7 +26,11 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 class ExecutionManagerTest {
     private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
@@ -276,5 +282,49 @@ class ExecutionManagerTest {
 
         assertThrows(SuspendExecutionException.class, () -> manager.awaitFuture(new CompletableFuture<>()));
         assertTrue(manager.isExecutionCompletedExceptionally());
+    }
+
+    @Test
+    void checkpointStateIsNotPublishedBeforeOperationCompletion() throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(manager);
+
+        class TestOperation extends BaseDurableOperation {
+            TestOperation() {
+                super(OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null);
+            }
+
+            @Override
+            protected void start() {}
+
+            @Override
+            protected void replay(Operation existing) {}
+
+            CompletableFuture<BaseDurableOperation> completionLock() {
+                return completionFuture;
+            }
+        }
+
+        var operation = new TestOperation();
+        var checkpointStarted = new CountDownLatch(1);
+        CompletableFuture<Void> checkpoint;
+        synchronized (operation.completionLock()) {
+            checkpoint = CompletableFuture.runAsync(() -> {
+                checkpointStarted.countDown();
+                manager.onCheckpointComplete(List.of(stepOp("step", OperationStatus.SUCCEEDED)));
+            });
+            assertTrue(checkpointStarted.await(5, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> checkpoint.get(500, TimeUnit.MILLISECONDS));
+            assertEquals(
+                    OperationStatus.PENDING,
+                    manager.getOperationAndUpdateReplayState("step").status());
+        }
+
+        checkpoint.get(5, TimeUnit.SECONDS);
+        assertTrue(operation.getCompletionFuture().isDone());
+        assertEquals(
+                OperationStatus.SUCCEEDED,
+                manager.getOperationAndUpdateReplayState("step").status());
     }
 }

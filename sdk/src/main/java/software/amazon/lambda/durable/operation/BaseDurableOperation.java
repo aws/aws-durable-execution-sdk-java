@@ -265,7 +265,7 @@ public abstract class BaseDurableOperation {
         // completionFuture is completed by a user thread (a step or child context thread) when the execution here
         // is between `isOperationCompleted` and `thenRun`.
         // Operations sharing a late-checkpoint owner must complete sequentially to avoid races with parent completion.
-        synchronized (parentOperation == null ? completionFuture : parentOperation.completionFuture) {
+        synchronized (completionLock()) {
             if (!isOperationCompleted()) {
                 // Add a completion stage to completionFuture so that when the completionFuture is completed,
                 // it will register the current Context thread synchronously to make sure it is always registered
@@ -552,6 +552,19 @@ public abstract class BaseDurableOperation {
         }
     }
 
+    /**
+     * Publishes a checkpoint update and notifies this operation under the same lock used by operation waiters.
+     *
+     * @param operation the updated operation state
+     * @param publishUpdate publishes the operation to execution state
+     */
+    public final void processCheckpointUpdate(Operation operation, Runnable publishUpdate) {
+        synchronized (completionLock()) {
+            publishUpdate.run();
+            onCheckpointComplete(operation);
+        }
+    }
+
     /** Marks the operation as already completed (in replay). */
     protected void markAlreadyCompleted() {
         // When the operation is already completed in a replay, we complete completionFuture immediately
@@ -563,13 +576,17 @@ public abstract class BaseDurableOperation {
     private void markCompletionFutureCompleted() {
         // It's important that we synchronize access to the future, otherwise the processing could happen
         // on someone else's thread and cause a race condition.
-        synchronized (parentOperation == null ? completionFuture : parentOperation.completionFuture) {
+        synchronized (completionLock()) {
             // Completing the future here will also run any other completion stages that have been attached
             // to the future. In our case, other contexts may have attached a function to reactivate themselves,
             // so they will definitely have a chance to reactivate before we finish completing and deactivating
             // whatever operations were just checkpointed.
             completionFuture.complete(this);
         }
+    }
+
+    private CompletableFuture<BaseDurableOperation> completionLock() {
+        return parentOperation == null ? completionFuture : parentOperation.completionFuture;
     }
 
     /**
