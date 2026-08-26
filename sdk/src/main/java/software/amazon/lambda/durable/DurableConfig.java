@@ -103,6 +103,7 @@ public final class DurableConfig {
     private final Duration checkpointDelay;
     private final boolean deserializeAfterSerialization;
     private final boolean checkpointEmptyMap;
+    private final boolean persistedSerDesForChainedInvokePayloads;
     private final PluginRunner pluginRunner;
 
     private DurableConfig(Builder builder) {
@@ -119,6 +120,7 @@ public final class DurableConfig {
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
         this.deserializeAfterSerialization = builder.deserializeAfterSerialization;
         this.checkpointEmptyMap = builder.checkpointEmptyMap;
+        this.persistedSerDesForChainedInvokePayloads = builder.persistedSerDesForChainedInvokePayloads;
         this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
 
         validateConfiguration();
@@ -239,6 +241,15 @@ public final class DurableConfig {
      */
     public boolean shouldCheckpointEmptyMap() {
         return checkpointEmptyMap;
+    }
+
+    /**
+     * Gets whether SDK-framed chained-invoke payloads may select the persisted SerDes pipeline.
+     *
+     * @return true when persisted chained-invoke payloads are accepted
+     */
+    public boolean shouldUsePersistedSerDesForChainedInvokePayloads() {
+        return persistedSerDesForChainedInvokePayloads;
     }
 
     /**
@@ -370,6 +381,7 @@ public final class DurableConfig {
         private Duration checkpointDelay;
         private boolean deserializeAfterSerialization = true;
         private boolean checkpointEmptyMap = false;
+        private boolean persistedSerDesForChainedInvokePayloads = false;
         private List<DurableExecutionPlugin> plugins = new ArrayList<>();
 
         public Builder() {}
@@ -448,6 +460,25 @@ public final class DurableConfig {
                 throw new IllegalArgumentException("inputSerDes must be a value codec, not a composable pipeline");
             }
             this.inputSerDes = inputSerDes;
+            return this;
+        }
+
+        /**
+         * Controls whether SDK-framed chained-invoke payloads may use this handler's persisted SerDes pipeline.
+         *
+         * <p>This is disabled by default. Enable it only for a Java durable handler that intentionally accepts
+         * persisted payloads from compatible callers. The frame is part of the input payload rather than trusted
+         * backend metadata, so enabling this option allows any caller that can invoke the handler to select the
+         * persisted pipeline by supplying that frame.
+         *
+         * <p>Callers must also enable
+         * {@link software.amazon.lambda.durable.config.InvokeConfig.Builder#usePersistedSerDesForPayload(boolean)}.
+         *
+         * @param enabled whether framed chained-invoke payloads may use the persisted SerDes
+         * @return this builder
+         */
+        public Builder withPersistedSerDesForChainedInvokePayloads(boolean enabled) {
+            this.persistedSerDesForChainedInvokePayloads = enabled;
             return this;
         }
 

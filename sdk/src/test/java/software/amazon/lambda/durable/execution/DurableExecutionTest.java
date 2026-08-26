@@ -13,6 +13,8 @@ import static software.amazon.lambda.durable.TypeToken.get;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -23,10 +25,15 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.internal.ChainedInvokePayloadFrame;
 
 class DurableExecutionTest {
 
@@ -282,6 +289,80 @@ class DurableExecutionTest {
     }
 
     @Test
+    void framedExternalInputDoesNotBypassConfiguredInputSerDes() {
+        var handlerCalled = new AtomicBoolean();
+        var inputPayload = ChainedInvokePayloadFrame.encode("\"spoofed\"");
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withSerDes(new JacksonSerDes())
+                .withInputSerDes(new RequiredPrefixSerDes())
+                .build();
+
+        var result = DurableExecutor.execute(
+                durableInput(inputPayload),
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    handlerCalled.set(true);
+                    return userInput;
+                },
+                config);
+
+        assertEquals(ExecutionStatus.FAILED, result.status());
+        assertEquals(SerDesException.class.getName(), result.error().errorType());
+        assertTrue(result.error().errorMessage().contains("Failed to deserialize INPUT payload"));
+        assertFalse(handlerCalled.get());
+    }
+
+    @Test
+    void reservedFramePrefixCollisionUsesConfiguredInputSerDes() {
+        var inputPayload = "__durable_execution_chained_invoke_payload:2:domain-value";
+        var observedInput = new AtomicReference<String>();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withSerDes(new JacksonSerDes())
+                .withInputSerDes(new PassThroughSerDes())
+                .build();
+
+        var result = DurableExecutor.execute(
+                durableInput(inputPayload),
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    observedInput.set(userInput);
+                    return "ok";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.status());
+        assertEquals(inputPayload, observedInput.get());
+    }
+
+    @Test
+    void calleeOptInAllowsFramedInputToUsePersistedSerDes() {
+        var observedInput = new AtomicReference<String>();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withSerDes(new JacksonSerDes())
+                .withInputSerDes(new RequiredPrefixSerDes())
+                .withPersistedSerDesForChainedInvokePayloads(true)
+                .build();
+
+        var result = DurableExecutor.execute(
+                durableInput(ChainedInvokePayloadFrame.encode("\"trusted\"")),
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    observedInput.set(userInput);
+                    return "ok";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.status());
+        assertEquals("trusted", observedInput.get());
+    }
+
+    @Test
     void testExecutorNotShutdownAfterMultipleHandlerInvocations() {
         // Create a config with a shared executor
         var config = configWithMockClient();
@@ -350,5 +431,53 @@ class DurableExecutionTest {
         // Verify both executions completed successfully and used the same executor
         assertTrue(output1.result().contains("Result 1: test-input-1"));
         assertTrue(output2.result().contains("Result 2: test-input-2"));
+    }
+
+    private static DurableExecutionInput durableInput(String inputPayload) {
+        var executionOp = Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
+                .executionDetails(
+                        ExecutionDetails.builder().inputPayload(inputPayload).build())
+                .build();
+        return new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
+    }
+
+    private static final class RequiredPrefixSerDes implements SerDes {
+        private static final String PREFIX = "external:";
+        private final SerDes delegate = new JacksonSerDes();
+
+        @Override
+        public String serialize(Object value) {
+            return PREFIX + delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            if (data == null || !data.startsWith(PREFIX)) {
+                throw new SerDesException("Input payload missing required prefix");
+            }
+            return delegate.deserialize(data.substring(PREFIX.length()), typeToken);
+        }
+    }
+
+    private static final class PassThroughSerDes implements SerDes {
+        @Override
+        public String serialize(Object value) {
+            return value == null ? null : value.toString();
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return (T) data;
+        }
     }
 }

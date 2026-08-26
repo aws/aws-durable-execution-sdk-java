@@ -58,6 +58,7 @@ class DurableConfigTest {
         assertNotNull(config.getExecutorService());
         assertInstanceOf(ExecutorService.class, config.getExecutorService());
         assertNull(config.getSerDesExecutorService());
+        assertFalse(config.shouldUsePersistedSerDesForChainedInvokePayloads());
     }
 
     @Test
@@ -104,6 +105,15 @@ class DurableConfigTest {
 
         assertSame(inputSerDes, config.getInputSerDes());
         assertSame(mockSerDes, config.getSerDes());
+    }
+
+    @Test
+    void testBuilder_WithPersistedSerDesForChainedInvokePayloadsEnabled() {
+        var config = DurableConfig.builder()
+                .withPersistedSerDesForChainedInvokePayloads(true)
+                .build();
+
+        assertTrue(config.shouldUsePersistedSerDesForChainedInvokePayloads());
     }
 
     @Test

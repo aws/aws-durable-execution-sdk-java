@@ -242,6 +242,7 @@ class FileSystemSerDesStageIntegrationTest {
         var calleeConfig = DurableConfig.builder()
                 .withDurableExecutionClient(calleeClient)
                 .withSerDes(serDes)
+                .withPersistedSerDesForChainedInvokePayloads(true)
                 .build();
         var calleeExecution =
                 executionOperation("callee-invocation", "callee-execution", invokePayload, OperationStatus.STARTED);

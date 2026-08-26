@@ -263,7 +263,8 @@ public class DurableExecutor {
 
         var inputPayload = executionOp.executionDetails().inputPayload();
         var serDes = config.getInputSerDes();
-        if (ChainedInvokePayloadFrame.isFramed(inputPayload)) {
+        if (config.shouldUsePersistedSerDesForChainedInvokePayloads()
+                && ChainedInvokePayloadFrame.isFramed(inputPayload)) {
             inputPayload = ChainedInvokePayloadFrame.decode(inputPayload);
             serDes = config.getSerDes();
         }

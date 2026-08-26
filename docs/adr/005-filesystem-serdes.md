@@ -578,11 +578,15 @@ Chained invokes preserve their existing wire contract by default. Unless an expl
 caller uses its context-free input codec and sends the serialized value unchanged. This keeps standard Lambda targets,
 non-Java durable targets, and older Java SDK versions compatible.
 
-`InvokeConfig.usePersistedSerDesForPayload(true)` is an explicit target-capability opt-in for compatible Java durable
-handlers. In this mode the caller uses its persisted SerDes by default and `InvokeOperation` adds a reserved, versioned
-source frame outside the pipeline output. The target `DurableExecutor` recognizes and removes that frame before
-deserializing with its persisted SerDes. Unframed execution input always uses the context-free input codec. A custom
-per-invoke payload SerDes in this mode must be compatible with the target handler's persisted SerDes.
+`InvokeConfig.usePersistedSerDesForPayload(true)` is the caller-side opt-in for compatible Java durable handlers. In
+this mode the caller uses its persisted SerDes by default and `InvokeOperation` adds a reserved, versioned source frame
+outside the pipeline output. The target must independently enable
+`DurableConfig.Builder.withPersistedSerDesForChainedInvokePayloads(true)`. Only then does `DurableExecutor` recognize
+and remove the frame before deserializing with its persisted SerDes. Without target opt-in, all execution input,
+including frame-prefix collisions and spoofed frames, uses the context-free input codec. Because the frame is not
+trusted backend metadata, target opt-in should be enabled only when every permitted caller may select the persisted
+pipeline. A custom per-invoke payload SerDes in this mode must be compatible with the target handler's persisted
+SerDes.
 
 ### Implementation plan
 

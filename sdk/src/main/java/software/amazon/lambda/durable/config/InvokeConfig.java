@@ -101,8 +101,9 @@ public class InvokeConfig {
          *
          * <p>This is disabled by default so standard Lambda functions, non-Java durable functions, and older Java SDK
          * versions continue to receive the configured serialized payload unchanged. Enable it only when the target is a
-         * Java durable handler that supports the SDK's chained-invoke payload frame and configures a compatible
-         * persisted SerDes pipeline.
+         * Java durable handler that supports the SDK's chained-invoke payload frame, configures a compatible persisted
+         * SerDes pipeline, and enables
+         * {@link software.amazon.lambda.durable.DurableConfig.Builder#withPersistedSerDesForChainedInvokePayloads(boolean)}.
          *
          * <p>When enabled without an explicit {@link #payloadSerDes(SerDes)}, the caller's persisted SerDes is used.
          * Otherwise, the caller's context-free input codec is the default payload serializer.

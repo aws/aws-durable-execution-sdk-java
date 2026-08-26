@@ -36,6 +36,7 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withLambdaClientBuilder()` | Custom AWS Lambda client                | Auto-configured Lambda client |
 | `withSerDes()`              | Serializer for persisted execution values | Jackson with default settings |
 | `withInputSerDes()`         | Context-free codec for initial invocation input | Persisted value codec, or pipeline root |
+| `withPersistedSerDesForChainedInvokePayloads()` | Allow framed invoke inputs to use the persisted SerDes | `false` |
 | `withExecutorService()`     | Thread pool for user-defined operations | Cached daemon thread pool     |
 | `withSerDesExecutorService()` | Optional thread pool for SerDes and payload storage I/O | Inline on the calling thread |
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |

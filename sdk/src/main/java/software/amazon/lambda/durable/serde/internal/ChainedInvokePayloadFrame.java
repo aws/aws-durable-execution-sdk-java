@@ -7,8 +7,9 @@ import software.amazon.lambda.durable.exception.SerDesException;
 /**
  * SDK-internal framing that identifies an execution input as the output of a chained-invoke SerDes pipeline.
  *
- * <p>The frame sits outside the serialized payload so the callee can distinguish it from an external invocation and
- * select the persisted SerDes pipeline without inspecting or altering the pipeline's own format.
+ * <p>The frame sits outside the serialized payload so an explicitly configured callee can distinguish it from an
+ * ordinary invocation without inspecting or altering the pipeline's own format. The frame is not trusted provenance and
+ * must not select the persisted SerDes unless the callee has opted in.
  */
 public final class ChainedInvokePayloadFrame {
     private static final String FRAME_MARKER = "__durable_execution_chained_invoke_payload:";

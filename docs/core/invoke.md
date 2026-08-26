@@ -26,4 +26,6 @@ var result = ctx.invoke("invoke-function",
 Invoke payloads use the caller's context-free input codec by default and are sent without SDK framing. This preserves
 compatibility with standard Lambda functions, non-Java durable functions, and older Java SDK versions. Enable
 `usePersistedSerDesForPayload(true)` only when the target is a compatible Java durable handler with the same persisted
-SerDes pipeline—for example, when both handlers use `FileSystemSerDesStage` with a shared filesystem.
+SerDes pipeline—for example, when both handlers use `FileSystemSerDesStage` with a shared filesystem. The target must
+also enable `DurableConfig.Builder.withPersistedSerDesForChainedInvokePayloads(true)`. Target acceptance is disabled by
+default, so payload bytes cannot select the persisted pipeline without callee opt-in.

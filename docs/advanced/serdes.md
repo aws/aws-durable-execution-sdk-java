@@ -207,7 +207,16 @@ codec unless `InvokeConfig.payloadSerDes(...)` is set, and sends that serialized
 compatible with standard Lambda functions, non-Java durable functions, and older Java SDK versions.
 
 To offload or otherwise process an invoke payload through a persisted pipeline, both Java durable handlers must
-configure compatible pipelines and the caller must opt in:
+configure compatible pipelines. The target must explicitly accept framed persisted payloads:
+
+```java
+var targetConfig = DurableConfig.builder()
+    .withSerDes(persistedPipeline)
+    .withPersistedSerDesForChainedInvokePayloads(true)
+    .build();
+```
+
+The caller must opt in for that invoke:
 
 ```java
 var result = context.invoke(
@@ -220,9 +229,11 @@ var result = context.invoke(
         .build());
 ```
 
-The opt-in adds a reserved, versioned SDK source frame outside the serialized payload. A compatible target removes the
-frame and deserializes the enclosed value with its persisted SerDes. Unframed execution input always uses the
-context-free input codec.
+The caller opt-in adds a reserved, versioned SDK source frame outside the serialized payload. A target removes the
+frame and deserializes the enclosed value with its persisted SerDes only when its own configuration enables this
+capability. Otherwise all execution input, including values that collide with or spoof the frame prefix, continues
+through the context-free input codec. The frame is not trusted backend metadata, so enable target acceptance only when
+every caller allowed to reach the handler may use the persisted pipeline.
 
 ## Filesystem-backed payload storage
 
