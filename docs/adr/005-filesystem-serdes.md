@@ -607,15 +607,16 @@ SerDes. The normative source-frame and filesystem-envelope contract is maintaine
    `CallbackOperation`, `ChildContextOperation`, `MapOperation`, and test helpers to use `SerDesRunner`.
 8. Add bounded, invocation-scoped deserialization caching keyed by SerDes identity, entity, payload kind, type, and
    serialized data hash.
-9. Update exception serialization and deserialization paths to set `SerDesPayloadKind.EXCEPTION` in TLS.
+9. Update exception serialization and deserialization paths to pass `SerDesPayloadKind.EXCEPTION` through the explicit
+   `SerDesContext`.
 10. Implement `FileSystemSerDesStage` in the core `software.amazon.lambda.durable.serde.filesystem` package as a string
     stage with
     `ALWAYS` and `OVERFLOW` storage, `URI` and `HASH` path encodings, envelope parsing, immutable `CREATE_NEW` writes
     compatible with EFS and S3 Files, retryable I/O failures, unrecognized-input pass-through, structured preview
     generation, and clear validation errors for recognized malformed input.
 11. Add unit tests for string and binary pipeline ordering, custom boundary codecs, reverse processing, nulls, stage
-    failures, retry selection, exhaustion, delay handling, interruption, context construction, TLS scoping and
-    restoration, inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception
+    failures, retry selection, exhaustion, delay handling, interruption, context construction, explicit context
+    propagation, inline execution, configured thread-pool isolation, cache hits, cache invalidation, exception
     reconstruction, malformed filesystem envelopes, and core-artifact packaging.
 12. Add integration tests with `LocalDurableTestRunner` for multi-stage pipelines, step results, wait-for-condition
     state, invoke payload/result, child context results, map results, repeated `get()`, replay from file pointers, and
@@ -921,10 +922,11 @@ publishing, documentation, and dependency-management overhead without isolating 
 ### Add context-aware SerDes overloads
 
 Rejected for the root `SerDes` interface in Approach A. Context is explicit on the new stage interfaces, where it does
-not affect compatibility. Adding it to `SerDes` itself would force every existing custom value codec to change its
-serialization method surface. Approach A keeps those signatures unchanged and root value codecs context-free. The
-pipeline enriches serialization-stage context with the original object instead. Approach B likewise passes
-`PayloadOffloadContext` explicitly to its offloader.
+not affect compatibility. Context-aware overloads could be added compatibly as default methods that delegate to the
+existing methods, without requiring custom value codecs to implement them. Approach A does not add those overloads
+because durable payload identity is needed by processing stages rather than root value codecs. Keeping context on
+`SerDesStage` preserves the narrower context-free value-codec contract, while the pipeline enriches serialization-stage
+context with the original object. Approach B likewise passes `PayloadOffloadContext` explicitly to its offloader.
 
 ### Make SerDes async
 
